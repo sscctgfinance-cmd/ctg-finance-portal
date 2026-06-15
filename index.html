@@ -5,132 +5,321 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>CTG 财务门户 · Finance Portal</title>
 <style>
-:root{color-scheme:light}*{box-sizing:border-box}
-body{margin:0;background:#f4f6fa;color:#15181f;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px}
-.wrap{max-width:1080px;margin:0 auto;padding:18px 20px 60px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
-h1{font-size:19px;margin:0}.sub{color:#6b7280;font-size:12.5px}
-.who{font-size:12.5px;color:#374151}.who b{color:#111}
-.btn{padding:7px 13px;border:1px solid #d6dae1;background:#fff;border-radius:9px;font-size:12.5px;cursor:pointer;color:#374151}
-.btn.p{background:#2563eb;color:#fff;border-color:#2563eb}.btn.d{color:#c0392b;border-color:#f0c4c0}
+/* ── CTG Dark Theme v5 ── */
+:root {
+  color-scheme: dark;
+  --bg:       #0d1117;
+  --surface:  #161b27;
+  --surface2: #1e2435;
+  --border:   #2a3042;
+  --text:     #e1e4ed;
+  --muted:    #6b7280;
+  --muted2:   #4b5563;
+  --accent:   #3b82f6;
+  --acc-h:    #2563eb;
+  --green:    #10b981;
+  --red:      #ef4444;
+  --amber:    #f59e0b;
+  --shadow:   0 8px 32px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.5}
+
+/* ── Layout ── */
+.wrap{max-width:1100px;margin:0 auto;padding:20px 20px 60px}
+
+/* ── Header ── */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-ico{width:36px;height:36px;background:linear-gradient(135deg,#2563eb,#7c3aed);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800;color:#fff;flex-shrink:0}
+h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.3px}
+.sub{color:var(--muted);font-size:11.5px;margin-top:1px}
+.who{font-size:12.5px;color:var(--muted)}
+.who b{color:var(--text)}
+.role-chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:rgba(59,130,246,.15);color:var(--accent);border:1px solid rgba(59,130,246,.25);margin-left:6px}
+
+/* ── Buttons ── */
+.btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:12.5px;cursor:pointer;color:var(--text);transition:background .15s,border-color .15s}
+.btn:hover{background:var(--surface2);border-color:#3a3d52}
+.btn.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.p:hover{background:var(--acc-h)}
+.btn.d{color:var(--red);border-color:rgba(239,68,68,.3)}
+.btn.d:hover{background:rgba(239,68,68,.1)}
 .btn:disabled{opacity:.5;cursor:default}
-.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
-select,input{padding:8px 10px;border:1px solid #d6dae1;border-radius:9px;font-size:13px;background:#fff}
-.tabs{display:flex;gap:4px;margin:10px 0 18px;border-bottom:1px solid #e6e8ee;flex-wrap:wrap}
-.tab{padding:9px 14px;cursor:pointer;font-size:13.5px;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-1px}
-.tab.active{color:#2563eb;border-bottom-color:#2563eb;font-weight:600}.tab.hide{display:none}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
-.card{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:14px 16px}
-.card .n{font-size:20px;font-weight:650}.card .l{font-size:11.5px;color:#6b7280;margin-top:4px}
-.card.green .n{color:#0a8a4a}.card.red .n{color:#c0392b}.card.blue .n{color:#2563eb}.card.amber .n{color:#b7791f}
-.bigtable{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e6e8ee;border-radius:12px;overflow:hidden}
-.bigtable th,.bigtable td{padding:10px 12px;border-bottom:1px solid #f0f1f4;font-size:12.8px;text-align:left}
-.bigtable th{color:#9aa3b2;font-size:10.5px;text-transform:uppercase;font-weight:700}
-td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-.panel{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:16px;margin-bottom:16px}
-.panel h3{font-size:14px;margin:0 0 12px}.muted{color:#9aa3b2}.empty{text-align:center;color:#6b7280;padding:28px}
-.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:#eef2ff;color:#2563eb}
+.btn.sm{padding:5px 10px;font-size:12px}
+
+/* ── Toolbar ── */
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0;padding:11px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+
+/* ── Inputs ── */
+select,input:not([type=file]){padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface2);color:var(--text)}
+select:focus,input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+textarea{padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;min-height:72px;background:var(--surface2);color:var(--text);resize:vertical;width:100%}
+
+/* ── Tabs ── */
+.tabs{display:flex;gap:2px;margin:0 0 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.tab{padding:10px 16px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:6px 6px 0 0;transition:color .15s}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.tab.hide{display:none}
+
+/* ── Cards ── */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card .c-ico{font-size:22px;margin-bottom:8px}
+.card .n{font-size:22px;font-weight:700;letter-spacing:-.5px}
+.card .l{font-size:11.5px;color:var(--muted);margin-top:4px}
+.card.green .n{color:var(--green)}.card.red .n{color:var(--red)}.card.blue .n{color:var(--accent)}.card.amber .n{color:var(--amber)}
+
+/* ── Tables ── */
+.tbl-wrap{overflow-x:auto;border-radius:12px}
+.bigtable{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.bigtable th,.bigtable td{padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;text-align:left}
+.bigtable th{color:var(--muted);font-size:10.5px;text-transform:uppercase;font-weight:700;letter-spacing:.5px;background:rgba(255,255,255,.02)}
+.bigtable tr:last-child td{border-bottom:none}
+.bigtable tbody tr:hover td{background:rgba(255,255,255,.025)}
+td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:500}
+
+/* ── Panel ── */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+.panel-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.panel h3{font-size:14px;margin:0;font-weight:600}
+.muted{color:var(--muted)}
+
+/* ── Pill / badges ── */
+.pill{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600}
+.pill-draft{background:rgba(107,114,128,.2);color:#9aa3b2}
+.pill-submit{background:rgba(245,158,11,.15);color:var(--amber)}
+.pill-blue{background:rgba(59,130,246,.15);color:var(--accent)}
+.pill-green{background:rgba(16,185,129,.15);color:var(--green)}
+
+/* ── Empty / Loading ── */
+.empty{text-align:center;color:var(--muted);padding:44px 20px}
+.empty-ico{font-size:38px;margin-bottom:10px}
+.load{text-align:center;color:var(--muted);padding:44px}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ── Row actions ── */
 .row-act{display:flex;gap:6px}
-.load{text-align:center;color:#6b7280;padding:34px}.spin{display:inline-block;width:15px;height:15px;border:2px solid #d6dae1;border-top-color:#2563eb;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:7px}@keyframes sp{to{transform:rotate(360deg)}}
-#login{min-height:100vh;display:flex;align-items:center;justify-content:center}
-.lbox{background:#fff;border:1px solid #e6e8ee;border-radius:16px;padding:30px 28px;width:340px;box-shadow:0 8px 30px rgba(0,0,0,.06)}
-.lbox h1{font-size:18px;margin:0 0 4px}.lbox .sub{margin-bottom:16px}
-.lbox input{width:100%;margin-bottom:11px}.lbox button{width:100%;padding:11px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}
-.lerr{color:#c0392b;font-size:12.5px;margin-bottom:10px}
+
+/* ── Status bar ── */
+.status-bar{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);margin-top:10px}
+.dot-green{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+
+/* ── Login ── */
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(37,99,235,.08),transparent)}
+.lbox{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:32px 28px;width:360px;box-shadow:var(--shadow)}
+.lbox-top{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.lbox-ico{width:46px;height:46px;background:linear-gradient(135deg,#2563eb,#7c3aed);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff}
+.lbox h1{font-size:20px;margin:0;font-weight:700}
+.lbox .sub{margin-bottom:20px;margin-top:2px}
+.lbox .fld label{color:var(--muted);font-size:12px;font-weight:500}
+.lbox input{width:100%}
+.lbtn{width:100%;padding:11px;border:0;border-radius:9px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;font-size:14px;transition:background .15s}
+.lbtn:hover{background:var(--acc-h)}
+.lbtn:disabled{opacity:.6;cursor:default}
+.lerr{color:var(--red);font-size:12.5px;margin-bottom:12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:9px 12px}
+
+/* ── Misc ── */
 .hide{display:none!important}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#15181f;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.2s;z-index:50}
+.divider{height:1px;background:var(--border);margin:14px 0}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;z-index:200;box-shadow:var(--shadow);white-space:nowrap}
 .toast.show{opacity:1}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
-.fld{margin-bottom:12px}.fld label{display:block;font-size:12px;color:#6b7280;margin-bottom:4px}.fld select,.fld input,.fld textarea{width:100%}
-textarea{padding:8px 10px;border:1px solid #d6dae1;border-radius:9px;font-size:13px;font-family:inherit;min-height:60px}
+
+/* ── Modal ── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:400px;box-shadow:var(--shadow);max-width:calc(100vw - 32px)}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal h3{margin:0;font-size:16px;font-weight:600}
+.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;padding:0;line-height:1}
+.modal-close:hover{color:var(--text)}
+.modal-ft{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* ── Form fields ── */
+.fld{margin-bottom:13px}
+.fld label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.fld select,.fld input:not([type=file]),.fld textarea{width:100%}
+input[type=file]{color:var(--muted);font-size:12.5px;padding:6px 0}
+
+/* ── Responsive ── */
+@media(max-width:760px){
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .bar{flex-direction:column;align-items:flex-start}
+  .lbox{width:calc(100vw - 32px);padding:24px 20px}
+  .top{gap:10px}
+}
+@media(max-width:480px){
+  .cards{grid-template-columns:1fr 1fr}
+  .bigtable th:nth-child(1),.bigtable td:nth-child(1){min-width:90px}
+}
 </style>
 </head>
 <body>
 
+<!-- ══ LOGIN ══ -->
 <div id="login">
   <form class="lbox" onsubmit="doLogin(event)">
-    <h1>CTG 财务门户</h1>
-    <div class="sub">Finance Portal · 请登录 · v4</div>
+    <div class="lbox-top">
+      <div class="lbox-ico">C</div>
+      <div>
+        <h1>CTG 财务门户</h1>
+        <div class="sub" style="font-size:12px">Finance Portal · v5</div>
+      </div>
+    </div>
     <div class="lerr hide" id="lerr"></div>
-    <input type="email" id="email" placeholder="邮箱" autocomplete="username" required/>
-    <input type="password" id="pass" placeholder="密码" autocomplete="current-password" required/>
-    <button type="submit" id="lbtn">登录</button>
+    <div class="fld"><label>邮箱 Email</label><input type="email" id="email" placeholder="your@email.com" autocomplete="username" required/></div>
+    <div class="fld" style="margin-bottom:16px"><label>密码 Password</label><input type="password" id="pass" placeholder="••••••••" autocomplete="current-password" required/></div>
+    <button class="lbtn" type="submit" id="lbtn">登录 Sign In</button>
   </form>
 </div>
 
+<!-- ══ APP SHELL ══ -->
 <div id="app" class="hide"><div class="wrap">
+
+  <!-- Header -->
   <div class="top">
-    <div><h1>CTG 财务门户</h1><div class="sub">实时来自 Xero · 按你的权限显示</div></div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <span class="who" id="who"></span>
-      <button class="btn" onclick="changePw()">改密码</button>
+    <div class="brand">
+      <div class="brand-ico">C</div>
+      <div>
+        <h1>CTG 财务门户</h1>
+        <div class="sub">Finance Portal · 实时来自 Xero · Live from Xero</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <span class="who" id="who-name"></span>
+        <span class="role-chip" id="who-role"></span>
+      </div>
+      <button class="btn" onclick="openPwModal()">改密码</button>
       <button class="btn d" onclick="logout()">登出</button>
     </div>
   </div>
 
+  <!-- Company bar -->
   <div class="bar">
-    <span class="muted">公司:</span>
-    <select id="company" onchange="onCompany()"></select>
-    <button class="btn p" onclick="reloadActive()">刷新</button>
+    <span class="muted" style="font-size:12px;white-space:nowrap">公司 Company</span>
+    <select id="company" onchange="onCompany()" style="flex:1;max-width:300px"></select>
+    <button class="btn p" onclick="reloadActive()">↺ 刷新</button>
+    <div id="last-refresh" class="status-bar" style="margin:0"></div>
   </div>
 
+  <!-- Tabs -->
   <div class="tabs">
-    <div class="tab active" data-t="overview" onclick="tab('overview')">财务总览</div>
-    <div class="tab" data-t="approvals" onclick="tab('approvals')" id="tab-appr">待审批</div>
-    <div class="tab" data-t="collections" onclick="tab('collections')" id="tab-coll">催收</div>
-    <div class="tab" data-t="upload" onclick="tab('upload')">上传单据</div>
+    <div class="tab active" data-t="overview"    onclick="tab('overview')">📊 财务总览</div>
+    <div class="tab"        data-t="approvals"   onclick="tab('approvals')"   id="tab-appr">✅ 待审批</div>
+    <div class="tab"        data-t="collections" onclick="tab('collections')" id="tab-coll">📨 催收</div>
+    <div class="tab"        data-t="upload"      onclick="tab('upload')">⬆ 上传单据</div>
   </div>
 
+  <!-- Panels -->
   <div id="overview"></div>
-  <div id="approvals" class="hide"></div>
+  <div id="approvals"   class="hide"></div>
   <div id="collections" class="hide"></div>
-  <div id="upload" class="hide"></div>
+  <div id="upload"      class="hide"></div>
+
 </div></div>
 
+<!-- ══ TOAST ══ -->
 <div class="toast" id="toast"></div>
+
+<!-- ══ CHANGE PASSWORD MODAL ══ -->
+<div class="overlay hide" id="pw-overlay">
+  <div class="modal" style="width:380px">
+    <div class="modal-hd">
+      <h3>更改密码 Change Password</h3>
+      <button class="modal-close" onclick="closePwModal()">×</button>
+    </div>
+    <div class="fld"><label>当前密码 Current Password</label><input type="password" id="pw-old" placeholder="••••••••"/></div>
+    <div class="fld"><label>新密码 New Password <span class="muted">(至少6位)</span></label><input type="password" id="pw-new" placeholder="••••••••"/></div>
+    <div class="fld"><label>确认新密码 Confirm Password</label><input type="password" id="pw-cfm" placeholder="••••••••"/></div>
+    <div class="lerr hide" id="pw-err"></div>
+    <div class="modal-ft">
+      <button class="btn" onclick="closePwModal()">取消</button>
+      <button class="btn p" id="pw-save" onclick="doChangePw()">保存 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CONFIRM MODAL ══ -->
+<div class="overlay hide" id="cf-overlay">
+  <div class="modal" style="width:340px">
+    <div class="modal-hd">
+      <h3 id="cf-title">确认操作</h3>
+    </div>
+    <p id="cf-msg" style="color:var(--muted);font-size:13.5px;margin:0 0 4px"></p>
+    <div class="modal-ft">
+      <button class="btn" onclick="cfResolve(false)">取消 Cancel</button>
+      <button class="btn d" id="cf-ok" onclick="cfResolve(true)">确认 Confirm</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 let TOKEN=localStorage.getItem("ctg_portal_token")||"";
 let ME=null, COMPANIES=[];
 const loaded={};
-const esc=x=>(x==null?'':String(x)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+/* ── Utils ── */
+const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const M=n=>'RM '+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200);}
+
+function toast(msg,isErr){
+  const e=document.getElementById('toast');
+  e.textContent=msg;
+  e.style.borderColor=isErr?'rgba(239,68,68,.4)':'';
+  e.style.color=isErr?'var(--red)':'';
+  e.classList.add('show');
+  setTimeout(()=>e.classList.remove('show'),2600);
+}
+
 async function call(body){
-  const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),25000);
+  const ctrl=new AbortController();
+  const tm=setTimeout(()=>ctrl.abort(),25000);
   try{
     const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
     return await r.json();
-  } finally { clearTimeout(tm); }
+  }finally{clearTimeout(tm);}
 }
+
+/* ── Auth ── */
 async function doLogin(e){
   e.preventDefault();
-  const email=document.getElementById('email').value.trim(), pass=document.getElementById('pass').value;
+  const email=document.getElementById('email').value.trim();
+  const pass=document.getElementById('pass').value;
   const b=document.getElementById('lbtn'),er=document.getElementById('lerr');
-  er.classList.add('hide');b.disabled=true;b.textContent='登录中…';
+  er.classList.add('hide');b.disabled=true;b.textContent='登录中… Signing in…';
   try{
     const r=await call({api:'login',email,pass,token:''});
     if(r&&r.ok){TOKEN=r.token;localStorage.setItem('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];showApp();return;}
-    er.textContent='邮箱或密码不正确';er.classList.remove('hide');
-  }catch(x){er.textContent='连接失败,请重试';er.classList.remove('hide');}
-  b.disabled=false;b.textContent='登录';
+    er.textContent='邮箱或密码不正确 · Incorrect email or password';er.classList.remove('hide');
+  }catch(x){er.textContent='连接失败，请重试 · Connection failed, please retry';er.classList.remove('hide');}
+  b.disabled=false;b.textContent='登录 Sign In';
 }
+
 function logout(){localStorage.removeItem('ctg_portal_token');location.reload();}
-function roleZh(r){return r==='admin'?'管理员':r==='approver'?'审批人':'查看者';}
+
+function roleZh(r){return r==='admin'?'管理员 Admin':r==='approver'?'审批人 Approver':'查看者 Viewer';}
+
 function showApp(){
   document.getElementById('login').classList.add('hide');
   document.getElementById('app').classList.remove('hide');
-  document.getElementById('who').innerHTML='<b>'+esc(ME.name||ME.email)+'</b> · '+roleZh(ME.role);
-  const isApprover=(ME.role==='admin'||ME.role==='approver');
-  document.getElementById('tab-appr').classList.toggle('hide',!isApprover);
-  document.getElementById('tab-coll').classList.toggle('hide',!isApprover);
+  document.getElementById('who-name').innerHTML='<b>'+esc(ME.name||ME.email)+'</b>';
+  document.getElementById('who-role').textContent=roleZh(ME.role);
+  const isAppr=ME.role==='admin'||ME.role==='approver';
+  document.getElementById('tab-appr').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-coll').classList.toggle('hide',!isAppr);
   const sel=document.getElementById('company');
-  sel.innerHTML='<option value="">全部公司</option>'+COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
+  sel.innerHTML='<option value="">— 全部公司 All Companies —</option>'+
+    COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
   for(const k in loaded)delete loaded[k];
   tab('overview');
 }
+
+/* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
   ['overview','approvals','collections','upload'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
@@ -138,114 +327,246 @@ function tab(t){
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
 function onCompany(){loaded.overview=false;loaded.approvals=false;const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';if(t==='overview'||t==='approvals')render(t);}
-function curCompany(){return document.getElementById('company').value;}
-function spin(id){document.getElementById(id).innerHTML='<div class="load"><span class="spin"></span>载入中…</div>';}
+function curCo(){return document.getElementById('company').value;}
+function spin(id){document.getElementById(id).innerHTML='<div class="load"><span class="spin"></span>载入中… Loading…</div>';}
 
 async function render(t){
   loaded[t]=true;
   try{
-    if(t==='overview')return await renderOverview();
-    if(t==='approvals')return await renderApprovals();
+    if(t==='overview')   return await renderOverview();
+    if(t==='approvals')  return await renderApprovals();
     if(t==='collections')return renderCollections();
-    if(t==='upload')return renderUpload();
-  }catch(x){loaded[t]=false;document.getElementById(t).innerHTML='<div class="empty">载入失败:'+esc(x.message||x)+'<br><button class="btn" style="margin-top:10px" onclick="reloadActive()">重试</button></div>';}
+    if(t==='upload')     return renderUpload();
+  }catch(x){
+    loaded[t]=false;
+    document.getElementById(t).innerHTML=
+      '<div class="empty"><div class="empty-ico">⚠️</div><div>载入失败 · '+esc(x.message||x)+
+      '</div><button class="btn p" style="margin-top:14px" onclick="reloadActive()">重试 Retry</button></div>';
+  }
 }
-function card(cls,n,l){return '<div class="card '+cls+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
+
+/* ── Overview ── */
+function mkCard(cls,ico,n,l){return'<div class="card '+cls+'"><div class="c-ico">'+ico+'</div><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 
 async function renderOverview(){
   spin('overview');
   const r=await call({api:'overview'});
-  if(!r||!r.companies){document.getElementById('overview').innerHTML='<div class="empty">暂无数据</div>';return;}
-  const filter=curCompany();
+  if(!r||!r.companies){
+    document.getElementById('overview').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div>暂无数据 · No data available</div></div>';return;
+  }
+  const filter=curCo();
   let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
   const tot=cs.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,bank:a.bank+ +c.bank}),{inc:0,exp:0,np:0,bank:0});
+
   let h='<div class="cards">';
-  h+=card('blue',M(tot.bank),'银行现金合计');
-  h+=card(tot.np>=0?'green':'red',M(tot.np),'净利合计(本财年)');
-  h+=card('green',M(tot.inc),'总收入');
-  h+=card('amber',M(tot.exp),'总支出');
+  h+=mkCard('blue', '🏦',M(tot.bank),'银行现金合计 Total Cash');
+  h+=mkCard(tot.np>=0?'green':'red','📈',M(tot.np),'净利合计 Net Profit (YTD)');
+  h+=mkCard('green','💰',M(tot.inc),'总收入 Total Revenue');
+  h+=mkCard('amber','📤',M(tot.exp),'总支出 Total Expenses');
   h+='</div>';
-  h+='<div class="panel"><h3>各公司财务(本财年至今)</h3><table class="bigtable"><thead><tr><th>公司</th><th class="amt">收入</th><th class="amt">支出</th><th class="amt">净利</th><th class="amt">银行现金</th></tr></thead><tbody>';
-  cs.forEach(c=>{const col=(+c.net_profit>=0)?'#0a8a4a':'#c0392b';
-    h+='<tr><td>'+esc(c.tenant_name)+'</td><td class="amt">'+M(c.income)+'</td><td class="amt" style="color:#c0392b">'+M(c.expenses)+'</td><td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td><td class="amt">'+M(c.bank)+'</td></tr>';});
-  h+='</tbody></table></div>';
-  if(r.as_of)h+='<div class="muted" style="font-size:11.5px;margin-top:8px">数据截至 '+new Date(r.as_of).toLocaleString()+' · 每小时自动刷新</div>';
+
+  if(cs.length){
+    h+='<div class="panel"><div class="panel-hd"><h3>各公司财务(本财年至今) · Company Financials YTD</h3>';
+    if(cs.length>1)h+='<span class="pill pill-blue">'+cs.length+' 家公司</span>';
+    h+='</div><div class="tbl-wrap"><table class="bigtable"><thead><tr>'+
+      '<th>公司 Company</th><th class="amt">收入 Revenue</th><th class="amt">支出 Expenses</th>'+
+      '<th class="amt">净利 Net Profit</th><th class="amt">银行现金 Cash</th>'+
+      '</tr></thead><tbody>';
+    cs.forEach(c=>{
+      const col=+c.net_profit>=0?'var(--green)':'var(--red)';
+      h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td>'+
+        '<td class="amt" style="color:var(--green)">'+M(c.income)+'</td>'+
+        '<td class="amt" style="color:var(--red)">'+M(c.expenses)+'</td>'+
+        '<td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td>'+
+        '<td class="amt">'+M(c.bank)+'</td></tr>';
+    });
+    h+='</tbody></table></div></div>';
+  }
+
+  if(r.as_of){
+    const d=new Date(r.as_of);
+    h+='<div class="status-bar"><div class="dot-green"></div>数据截至 Data as of '+
+      d.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+
+      ' · 每小时自动刷新 Auto-refresh hourly</div>';
+  }
   document.getElementById('overview').innerHTML=h;
+
+  const lr=document.getElementById('last-refresh');
+  if(lr)lr.innerHTML='<div class="dot-green"></div>已刷新 Refreshed '+new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
 }
 
+/* ── Approvals ── */
 async function renderApprovals(){
   spin('approvals');
   const r=await call({api:'pending'});
-  if(!r||!r.bills){document.getElementById('approvals').innerHTML='<div class="empty">暂无数据</div>';return;}
-  const filter=curCompany();
+  if(!r||!r.bills){
+    document.getElementById('approvals').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div>暂无数据 · No data</div></div>';return;
+  }
+  const filter=curCo();
   let bills=r.bills.filter(b=>!filter||b.tenant_id===filter);
-  let h='<div class="panel"><h3>待审批账单(Xero 草稿 / 待批)</h3>';
-  if(!bills.length){h+='<div class="empty">✅ 没有待审批的账单。</div></div>';document.getElementById('approvals').innerHTML=h;return;}
-  h+='<table class="bigtable"><thead><tr><th>公司</th><th>供应商</th><th>单号</th><th class="amt">金额</th><th>到期</th><th>状态</th><th></th></tr></thead><tbody>';
+  if(!bills.length){
+    document.getElementById('approvals').innerHTML=
+      '<div class="panel"><div class="empty"><div class="empty-ico">✅</div><div>没有待审批的账单 · No pending approvals</div></div></div>';return;
+  }
+  let h='<div class="panel"><div class="panel-hd"><h3>待审批账单 · Pending Bills (Xero)</h3>'+
+    '<span class="pill pill-submit">'+bills.length+' 待处理</span></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+
+    '<th>公司 Company</th><th>供应商 Vendor</th><th>单号 Ref</th>'+
+    '<th class="amt">金额 Amount</th><th>到期 Due</th><th>状态 Status</th><th></th>'+
+    '</tr></thead><tbody>';
   bills.forEach((b,i)=>{
-    h+='<tr id="bill'+i+'"><td style="font-size:11.5px">'+esc(b.tenant_name)+'</td><td>'+esc(b.contact||'—')+'</td><td>'+esc(b.number||'—')+'</td><td class="amt">'+M(b.total)+'</td><td class="muted">'+esc(b.due||'')+'</td><td><span class="pill">'+esc(b.status)+'</span></td>'+
-    '<td class="row-act"><button class="btn p" onclick="approve(\''+esc(b.tenant_id)+'\',\''+esc(b.invoice_id)+'\',\'approve\','+i+')">通过</button>'+
-    '<button class="btn d" onclick="approve(\''+esc(b.tenant_id)+'\',\''+esc(b.invoice_id)+'\',\'reject\','+i+')">拒绝</button></td></tr>';
+    const pillCls=b.status==='DRAFT'?'pill-draft':'pill-submit';
+    h+='<tr id="bill'+i+'">'+
+      '<td style="font-size:12px">'+esc(b.tenant_name)+'</td>'+
+      '<td>'+esc(b.contact||'—')+'</td>'+
+      '<td style="font-family:monospace;font-size:12px">'+esc(b.number||'—')+'</td>'+
+      '<td class="amt"><b>'+M(b.total)+'</b></td>'+
+      '<td class="muted">'+esc(b.due||'—')+'</td>'+
+      '<td><span class="pill '+pillCls+'">'+esc(b.status)+'</span></td>'+
+      '<td class="row-act">'+
+      '<button class="btn sm p" onclick="approve(\''+esc(b.tenant_id)+'\',\''+esc(b.invoice_id)+'\',\'approve\','+i+')">通过</button>'+
+      '<button class="btn sm d" onclick="approve(\''+esc(b.tenant_id)+'\',\''+esc(b.invoice_id)+'\',\'reject\','+i+')">拒绝</button>'+
+      '</td></tr>';
   });
-  h+='</tbody></table></div>';
+  h+='</tbody></table></div></div>';
   document.getElementById('approvals').innerHTML=h;
 }
+
+/* ── Confirm dialog ── */
+let _cfRes=null;
+function showConfirm(title,msg,okTxt,okCls){
+  document.getElementById('cf-title').textContent=title;
+  document.getElementById('cf-msg').textContent=msg;
+  const ok=document.getElementById('cf-ok');ok.textContent=okTxt||'确认';ok.className='btn '+(okCls||'d');
+  document.getElementById('cf-overlay').classList.remove('hide');
+  return new Promise(res=>{_cfRes=res;});
+}
+function cfResolve(v){document.getElementById('cf-overlay').classList.add('hide');if(_cfRes){_cfRes(v);_cfRes=null;}}
+
 async function approve(tenant,invoice,action,i){
-  if(action==='reject'&&!confirm('确定拒绝并作废这张账单?'))return;
-  const row=document.getElementById('bill'+i);row.style.opacity=.5;
+  if(action==='reject'){
+    const ok=await showConfirm('确认拒绝 Reject Bill','确定要拒绝并作废这张账单吗？此操作不可撤销。','确认拒绝','d');
+    if(!ok)return;
+  }
+  const row=document.getElementById('bill'+i);
+  row.style.opacity=.5;row.style.pointerEvents='none';
   const r=await call({api:'approve',tenant,invoice,action});
-  if(r&&r.ok){toast(action==='approve'?'已通过(Xero 已生效)':'已拒绝');row.remove();}
-  else{row.style.opacity=1;toast('失败:'+((r&&r.error)||'Xero 拒绝'));}
+  if(r&&r.ok){
+    toast(action==='approve'?'✅ 已通过，Xero 已生效':'已拒绝');
+    row.style.transition='opacity .3s';row.style.opacity=0;
+    setTimeout(()=>row.remove(),300);
+  }else{
+    row.style.opacity=1;row.style.pointerEvents='';
+    toast('失败: '+((r&&r.error)||'Xero 拒绝'),true);
+  }
 }
 
+/* ── Collections ── */
 function renderCollections(){
-  let h='<div class="panel"><h3>应收催收</h3><p class="muted">点击下方按钮,系统会立即生成「今天该催哪些客户」的预览清单,发到财务邮箱(ssc.ctgfinance)。预览模式不会直接发给客户。</p>';
-  h+='<button class="btn p" onclick="trigColl(this)">立即生成催收预览</button><div id="collres" style="margin-top:14px"></div></div>';
-  document.getElementById('collections').innerHTML=h;
-}
-async function trigColl(btn){
-  btn.disabled=true;btn.textContent='生成中…';
-  let r;try{r=await call({api:'collections'});}catch(x){r=null;}
-  btn.disabled=false;btn.textContent='立即生成催收预览';
-  const d=document.getElementById('collres');
-  if(r&&r.ok){const x=r.result||{};d.innerHTML='<div class="card green" style="max-width:560px"><div class="n">'+(x.reachable_due_count||0)+' 张待催 · '+M(x.reachable_due_amount)+'</div><div class="l">已发预览到 '+esc(x.to||'财务邮箱')+';另有 '+(x.unreachable_count||0)+' 张因客户无邮箱无法自动催。</div></div>';}
-  else d.innerHTML='<span style="color:#c0392b">失败:'+esc((r&&r.error)||'无权限或网络问题')+'</span>';
+  document.getElementById('collections').innerHTML=
+    '<div class="panel">'+
+    '<div class="panel-hd"><h3>应收催收 · Collections Preview</h3></div>'+
+    '<p class="muted" style="font-size:13px;margin:0 0 6px">点击下方按钮，系统会立即生成「今天该催哪些客户」的预览清单，发到财务邮箱(ssc.ctgfinance)。</p>'+
+    '<p class="muted" style="font-size:12px;margin:0 0 16px">Preview mode only — generates today\'s collection list and sends to finance inbox. Will NOT contact customers directly.</p>'+
+    '<button class="btn p" onclick="trigColl(this)">📨 立即生成催收预览 Generate Preview</button>'+
+    '<div id="collres" style="margin-top:16px"></div></div>';
 }
 
+async function trigColl(btn){
+  btn.disabled=true;btn.textContent='生成中… Generating…';
+  let r;try{r=await call({api:'collections'});}catch(x){r=null;}
+  btn.disabled=false;btn.textContent='📨 立即生成催收预览 Generate Preview';
+  const d=document.getElementById('collres');
+  if(r&&r.ok){
+    const x=r.result||{};
+    d.innerHTML='<div class="card green" style="max-width:560px">'+
+      '<div class="n">'+(x.reachable_due_count||0)+' 张待催 · '+M(x.reachable_due_amount)+'</div>'+
+      '<div class="l">已发预览到 '+esc(x.to||'财务邮箱')+'；另有 '+(x.unreachable_count||0)+' 张因客户无邮箱无法自动催。</div></div>';
+  }else{
+    d.innerHTML='<div class="empty" style="padding:16px"><span style="color:var(--red)">⚠ 失败 Failed: '+esc((r&&r.error)||'无权限或网络问题')+'</span></div>';
+  }
+}
+
+/* ── Upload ── */
 function renderUpload(){
   const opts=COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
-  let h='<div class="panel" style="max-width:560px"><h3>上传单据</h3><p class="muted">上传发票 / 收据 / 银行流水,进入财务处理流程。</p>'+
-    '<div class="fld"><label>公司</label><select id="up_tenant">'+opts+'</select></div>'+
-    '<div class="fld"><label>类型</label><select id="up_cat"><option>AP 供应商账单</option><option>Reimbursement 报销</option><option>Bank Statement 银行流水</option><option>Other 其他</option></select></div>'+
-    '<div class="fld"><label>文件(PDF / 图片 / Excel)</label><input type="file" id="up_file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv"/></div>'+
-    '<div class="fld"><label>备注(可选)</label><textarea id="up_note" placeholder="例如:3月房租发票"></textarea></div>'+
-    '<button class="btn p" onclick="doUpload(this)">上传</button><div id="upres" style="margin-top:12px"></div></div>';
-  document.getElementById('upload').innerHTML=h;
+  document.getElementById('upload').innerHTML=
+    '<div class="panel" style="max-width:560px">'+
+    '<div class="panel-hd"><h3>上传单据 · Document Upload</h3></div>'+
+    '<p class="muted" style="font-size:13px;margin:0 0 4px">上传发票、收据或银行流水，进入财务处理流程。</p>'+
+    '<p class="muted" style="font-size:12px;margin:0 0 16px">Upload invoices, receipts, or bank statements for processing.</p>'+
+    '<div class="fld"><label>公司 Company</label><select id="up_tenant">'+opts+'</select></div>'+
+    '<div class="fld"><label>类型 Category</label><select id="up_cat">'+
+      '<option>AP 供应商账单</option>'+
+      '<option>Reimbursement 报销</option>'+
+      '<option>Bank Statement 银行流水</option>'+
+      '<option>Other 其他</option>'+
+    '</select></div>'+
+    '<div class="fld"><label>文件 File <span class="muted">(PDF / 图片 / Excel)</span></label>'+
+      '<input type="file" id="up_file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv"/></div>'+
+    '<div class="fld"><label>备注 Note <span class="muted">(可选 Optional)</span></label>'+
+      '<textarea id="up_note" placeholder="例如: 3月房租发票 / March rent invoice"></textarea></div>'+
+    '<button class="btn p" onclick="doUpload(this)">⬆ 上传 Upload</button>'+
+    '<div id="upres" style="margin-top:14px"></div></div>';
 }
+
 async function doUpload(btn){
   const f=document.getElementById('up_file').files[0];
   const res=document.getElementById('upres');
-  if(!f){res.innerHTML='<span style="color:#c0392b">请先选择文件</span>';return;}
-  if(f.size>15*1024*1024){res.innerHTML='<span style="color:#c0392b">文件太大(上限 15MB)</span>';return;}
-  btn.disabled=true;btn.textContent='上传中…';
+  if(!f){res.innerHTML='<span style="color:var(--red)">请先选择文件 · Please select a file</span>';return;}
+  if(f.size>15*1024*1024){res.innerHTML='<span style="color:var(--red)">文件太大(上限 15MB) · File too large (max 15MB)</span>';return;}
+  btn.disabled=true;btn.textContent='上传中… Uploading…';
   try{
     const b64=await new Promise((rs,rj)=>{const r=new FileReader();r.onload=()=>rs(r.result);r.onerror=rj;r.readAsDataURL(f);});
-    const r=await call({api:'upload',tenant:document.getElementById('up_tenant').value,category:document.getElementById('up_cat').value,
-      file_name:f.name,content_base64:b64,content_type:f.type,note:document.getElementById('up_note').value});
-    if(r&&r.ok){res.innerHTML='<span style="color:#0a8a4a">✅ 已上传,财务会处理。</span>';document.getElementById('up_file').value='';document.getElementById('up_note').value='';}
-    else res.innerHTML='<span style="color:#c0392b">失败:'+esc((r&&r.error)||'')+'</span>';
-  }catch(x){res.innerHTML='<span style="color:#c0392b">上传失败:'+esc(x.message||x)+'</span>';}
-  btn.disabled=false;btn.textContent='上传';
+    const r=await call({api:'upload',tenant:document.getElementById('up_tenant').value,
+      category:document.getElementById('up_cat').value,file_name:f.name,
+      content_base64:b64,content_type:f.type,note:document.getElementById('up_note').value});
+    if(r&&r.ok){
+      res.innerHTML='<div style="color:var(--green);font-size:13px">✅ 已上传，财务会处理。· Uploaded successfully.</div>';
+      document.getElementById('up_file').value='';document.getElementById('up_note').value='';
+    }else{res.innerHTML='<span style="color:var(--red)">失败 Failed: '+esc((r&&r.error)||'')+'</span>';}
+  }catch(x){res.innerHTML='<span style="color:var(--red)">上传失败 Upload error: '+esc(x.message||x)+'</span>';}
+  btn.disabled=false;btn.textContent='⬆ 上传 Upload';
 }
 
-async function changePw(){
-  const oldp=prompt('当前密码:');if(!oldp)return;
-  const np=prompt('新密码(至少6位):');if(!np)return;
+/* ── Change Password Modal ── */
+function openPwModal(){
+  ['pw-old','pw-new','pw-cfm'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('pw-err').classList.add('hide');
+  document.getElementById('pw-overlay').classList.remove('hide');
+  setTimeout(()=>document.getElementById('pw-old').focus(),50);
+}
+function closePwModal(){document.getElementById('pw-overlay').classList.add('hide');}
+
+async function doChangePw(){
+  const oldp=document.getElementById('pw-old').value;
+  const np=document.getElementById('pw-new').value;
+  const nc=document.getElementById('pw-cfm').value;
+  const err=document.getElementById('pw-err');
+  const btn=document.getElementById('pw-save');
+  err.classList.add('hide');
+  if(!oldp||!np){err.textContent='请填写所有字段 · All fields required';err.classList.remove('hide');return;}
+  if(np.length<6){err.textContent='新密码至少6位 · Min 6 characters';err.classList.remove('hide');return;}
+  if(np!==nc){err.textContent='新密码不一致 · Passwords do not match';err.classList.remove('hide');return;}
+  btn.disabled=true;btn.textContent='保存中…';
   let res;try{res=await call({api:'changepw',old:oldp,neu:np});}catch(x){res=null;}
-  toast(res&&res.ok?'密码已更新':'失败:'+((res&&res.error)||'网络问题'));
+  btn.disabled=false;btn.textContent='保存 Save';
+  if(res&&res.ok){closePwModal();toast('✅ 密码已更新 · Password updated');}
+  else{err.textContent='失败: '+((res&&res.error)||'网络问题');err.classList.remove('hide');}
 }
 
-if(TOKEN){ call({api:'me'}).then(r=>{ if(r&&r.ok){ME=r.user;COMPANIES=r.companies||[];showApp();} else {localStorage.removeItem('ctg_portal_token');TOKEN='';} }).catch(()=>{localStorage.removeItem('ctg_portal_token');TOKEN='';}); }
+/* ESC closes modals */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){closePwModal();cfResolve(false);}
+});
+
+/* ── Auto-login on load ── */
+if(TOKEN){
+  call({api:'me'}).then(r=>{
+    if(r&&r.ok){ME=r.user;COMPANIES=r.companies||[];showApp();}
+    else{localStorage.removeItem('ctg_portal_token');TOKEN='';}
+  }).catch(()=>{localStorage.removeItem('ctg_portal_token');TOKEN='';});
+}
 </script>
 </body>
 </html>
