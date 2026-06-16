@@ -318,10 +318,16 @@ function toast(msg,isErr){
 
 async function call(body){
   const ctrl=new AbortController();
-  const tm=setTimeout(()=>ctrl.abort(),25000);
+  const tm=setTimeout(()=>ctrl.abort(),30000);
   try{
     const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
-    return await r.json();
+    let data; try{ data=await r.json(); }catch(_e){ throw new Error('Server returned an unexpected response - please retry'); }
+    if(!r.ok && data && data.error) throw new Error(data.error);
+    return data;
+  }catch(e){
+    if(e && e.name==='AbortError') throw new Error('Request timed out - server or Xero is slow, please retry');
+    if(e instanceof TypeError) throw new Error('Network error - check your connection and retry');
+    throw e;
   }finally{clearTimeout(tm);}
 }
 
@@ -635,7 +641,8 @@ function o2oParse(buf){
     for(var r=3;r<rows.length;r++){
       var row=rows[r]||[]; var pkg=row[1]; var price=row[2];
       var pv=(typeof price==='number')?price:parseFloat(price);
-      if(!pv||pv<=0||!pkg||!String(pkg).trim())continue;
+      if(!pkg||String(pkg).trim().toLowerCase().slice(0,7)!=='skindae')continue;
+      if(!pv||pv<=0)continue;
       var unit=Math.round(pv*100)/100; var key=String(pkg).trim()+'|'+unit;
       if(!groups[key])groups[key]={package:String(pkg).trim(),unit_price:unit,quantity:0};
       groups[key].quantity++;
@@ -791,7 +798,8 @@ function renderToday(){
 async function todayLoad(){
   document.getElementById('today_out').innerHTML='<div class="load"><span class="spin"></span>Gathering…</div>';
   try{
-    var ov=await call({api:'overview'}); var pend=await call({api:'pending'}); var recv=await call({api:'receivables'});
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
+    var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var cash=0,np=0; if(ov&&ov.companies){ ov.companies.forEach(function(c){cash+=+c.bank;np+=+c.net_profit;}); }
     var bills=(pend&&pend.bills)?pend.bills:[]; var od=(recv&&recv.items)?recv.items.filter(function(i){return i.days_overdue>0;}):[];
     var odtot=od.reduce(function(s,i){return s+i.amount_due;},0);
@@ -883,7 +891,8 @@ function renderSmart(){
 async function smartLoad(){
   document.getElementById('smart_out').innerHTML='<div class="load"><span class="spin"></span>Analysing your live data…</div>';
   try{
-    var ov=await call({api:'overview'}); var pend=await call({api:'pending'}); var recv=await call({api:'receivables'});
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
+    var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
     var alerts=[];
     var seen={};
