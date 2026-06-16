@@ -332,6 +332,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 let TOKEN=localStorage.getItem("ctg_portal_token")||"";
 let ME=null, COMPANIES=[];
+let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
 
 const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -380,26 +381,34 @@ function logout(){localStorage.removeItem('ctg_portal_token');location.href='ind
 
 function roleLabel(r){return r==='admin'?'Admin':r==='approver'?'Approver':'Viewer';}
 
-function showApp(){
+const ALL_FEATURES=['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon'];
+function fallbackPerms(){
+  // Used only if my_perms can't be reached — keeps the user from being locked out.
+  const appr=ME.role==='admin'||ME.role==='approver';
+  return { role:ME.role, label:roleLabel(ME.role),
+    features: appr?ALL_FEATURES.slice():['overview','recv','today'],
+    manage_users: ME.role==='admin' };
+}
+async function showApp(){
   document.getElementById('login').classList.add('hide');
   document.getElementById('app').classList.remove('hide');
   document.getElementById('who-name').innerHTML='<b>'+esc(ME.name||ME.email)+'</b>';
-  document.getElementById('who-role').textContent=roleLabel(ME.role);
-  const isAppr=ME.role==='admin'||ME.role==='approver';
-  document.getElementById('tab-appr').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-coll').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-o2o').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-qinv').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-smart').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-close').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-recon').classList.toggle('hide',!isAppr);
-  document.getElementById('tab-users').classList.toggle('hide', ME.role!=='admin');
+  // Resolve this user's permission set (role → features + manage_users).
+  try{ const p=await call({api:'my_perms'}); PERMS=(p&&p.ok)?p:fallbackPerms(); }
+  catch(_e){ PERMS=fallbackPerms(); }
+  document.getElementById('who-role').textContent=PERMS.label||roleLabel(ME.role);
+  const feats=PERMS.features||[]; const canManage=!!PERMS.manage_users;
+  document.querySelectorAll('.tab').forEach(function(el){
+    const t=el.dataset.t;
+    if(t==='users') el.classList.toggle('hide', !canManage);
+    else el.classList.toggle('hide', feats.indexOf(t)<0);
+  });
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
   for(const k in loaded)delete loaded[k];
-  tab('overview');
+  const first=feats.indexOf('overview')>=0?'overview':(feats[0]||(canManage?'users':'overview'));
+  tab(first);
 }
 
 /* ── Navigation ── */
@@ -855,14 +864,30 @@ async function todayLoad(){
 
 
 /* ---- Users (SaaS access control, admin only) ---- */
-var USERS_LIST=[], USERS_UC={}, USERS_COMPANIES=[];
+var USERS_LIST=[], USERS_UC={}, USERS_COMPANIES=[], ROLES=[];
+var USERS_VIEW='users';
 function renderUsers(){
-  document.getElementById('users').innerHTML='<div class="panel"><div class="panel-hd"><h3>User access · who can log in &amp; what they see</h3><button class="btn p" onclick="userForm(null)">+ Add user</button></div><div id="users_out" class="muted">Loading…</div></div><div id="user_modal"></div>';
-  loaded.users=true; usersLoad();
+  document.getElementById('users').innerHTML=
+    '<div class="subnav" style="display:flex;gap:8px;margin-bottom:14px">'+
+      '<button class="btn sm" id="uv_users" onclick="usersView(\'users\')">👥 Users</button>'+
+      '<button class="btn sm" id="uv_roles" onclick="usersView(\'roles\')">🛡 Roles &amp; permissions</button>'+
+      '<button class="btn sm" id="uv_audit" onclick="usersView(\'audit\')">📜 Audit log</button>'+
+    '</div>'+
+    '<div id="uv_body"></div><div id="user_modal"></div><div id="role_modal"></div>';
+  loaded.users=true; usersView(USERS_VIEW||'users');
 }
+function usersView(v){
+  USERS_VIEW=v;
+  ['users','roles','audit'].forEach(function(k){ var b=document.getElementById('uv_'+k); if(b) b.className='btn sm'+(k===v?' p':''); });
+  if(v==='users') usersLoad();
+  else if(v==='roles') rolesLoad();
+  else auditLoad();
+}
+function roleLabelFor(name){ var r=ROLES.filter(function(x){return x.name===name;})[0]; return r?(r.label||r.name):name; }
 async function usersLoad(){
-  document.getElementById('users_out').innerHTML='<div class="load"><span class="spin"></span>Loading…</div>';
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>User access · who can log in &amp; what they see</h3><button class="btn p" onclick="userForm(null)">+ Add user</button></div><div id="users_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
   try{
+    var rs=await call({api:'roles_list'}); ROLES=(rs&&rs.roles)||[];
     var co=await call({api:'companies_list'}); USERS_COMPANIES=(co&&co.companies)||[];
     var r=await call({api:'users_list'});
     if(!r||!r.ok){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
@@ -873,22 +898,32 @@ async function usersLoad(){
       var compTxt=comps.length?comps.join(', '):(u.role==='admin'?'All companies (admin)':'— none assigned —');
       var rolePill=u.role==='admin'?'pill-coral':u.role==='approver'?'pill-blue':'pill-draft';
       var act=u.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">disabled</span>';
-      return '<tr><td><b>'+esc(u.name||'')+'</b><br><span class="muted" style="font-size:11px">'+esc(u.email)+'</span></td><td><span class="pill '+rolePill+'">'+esc(u.role)+'</span></td><td class="muted" style="font-size:11.5px">'+esc(compTxt)+'</td><td>'+act+'</td><td><button class="btn sm" onclick="userEdit('+i+')">Edit</button></td></tr>';
+      return '<tr><td><b>'+esc(u.name||'')+'</b><br><span class="muted" style="font-size:11px">'+esc(u.email)+'</span></td><td><span class="pill '+rolePill+'">'+esc(roleLabelFor(u.role))+'</span></td><td class="muted" style="font-size:11.5px">'+esc(compTxt)+'</td><td>'+act+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="userEdit('+i+')">Edit</button> <button class="btn sm" onclick="userReset('+i+')">🔑 Reset</button></td></tr>';
     }).join('');
     document.getElementById('users_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Company access</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }catch(e){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 function userEdit(i){ var u=USERS_LIST[i]; userForm({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,tenants:(USERS_UC[u.id]||[])}); }
+async function userReset(i){
+  var u=USERS_LIST[i];
+  var pw=prompt('Set a new password for '+(u.name||u.email)+' (min 6 chars). The user can change it after signing in.');
+  if(pw==null) return;
+  if(pw.length<6){ toast('Password must be at least 6 characters',true); return; }
+  try{ var r=await call({api:'user_reset_password',user_id:u.id,new_pass:pw});
+    if(r&&r.ok!==false) toast('Password reset for '+(u.name||u.email)); else toast((r&&r.error)||'Reset failed',true);
+  }catch(e){ toast(e.message,true); }
+}
 var UF_EDIT_ID=null;
 function userForm(u){
   u=u||{}; var isEdit=!!u.id; UF_EDIT_ID=u.id||null;
   var compChecks=USERS_COMPANIES.map(function(c){ var ck=((u.tenants||[]).indexOf(c.tenant_id)>=0)?'checked':''; return '<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:4px"><input type="checkbox" class="uf-comp" value="'+esc(c.tenant_id)+'" '+ck+' style="width:auto"/> '+esc(c.tenant_name)+'</label>'; }).join('');
+  var roleOpts=ROLES.map(function(r){ var n=(r.features||[]).length; var d=r.manage_users?', manages users':''; return '<option value="'+esc(r.name)+'">'+esc(r.label||r.name)+' ('+n+' feature'+(n===1?'':'s')+d+')</option>'; }).join('');
   document.getElementById('user_modal').innerHTML=
     '<div class="overlay"><div class="modal" style="width:460px"><div class="modal-hd"><h3>'+(isEdit?'Edit user':'Add user')+'</h3><button class="modal-close" onclick="ufClose()">×</button></div>'+
     '<div class="fld"><label>Name</label><input id="uf_name" value="'+esc(u.name||'')+'"/></div>'+
     '<div class="fld"><label>Email</label><input id="uf_email" type="email" value="'+esc(u.email||'')+'" '+(isEdit?'disabled':'')+'/></div>'+
     (isEdit?'':'<div class="fld"><label>Password</label><input id="uf_pass" type="password" placeholder="••••••••"/></div>')+
-    '<div class="fld"><label>Role</label><select id="uf_role"><option value="viewer">Viewer (read-only)</option><option value="approver">Approver (approve bills, collections)</option><option value="admin">Admin (full access + manage users)</option></select></div>'+
+    '<div class="fld"><label>Role</label><select id="uf_role">'+roleOpts+'</select></div>'+
     '<div class="fld"><label>Company access</label><div style="max-height:150px;overflow:auto;border:1px solid var(--border-strong);border-radius:9px;padding:10px">'+compChecks+'</div><div class="muted" style="font-size:11px;margin-top:5px">Tick the companies this user may see. Admins see all regardless.</div></div>'+
     (isEdit?'<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="uf_active" '+(u.active?'checked':'')+' style="width:auto"/> Active (can log in)</label>':'')+
     '<div class="lerr hide" id="uf_err"></div>'+
@@ -918,6 +953,85 @@ async function userSave(){
     else { err.textContent=(r&&r.error)||'Save failed'; err.classList.remove('hide'); }
   }catch(e){ err.textContent=e.message; err.classList.remove('hide'); }
   btn.disabled=false; btn.textContent='Save';
+}
+
+/* ---- Roles & permissions ---- */
+var FEATURE_META=[
+  ['overview','📊 Overview'],['approvals','✅ Approvals'],['collections','📨 Collections'],
+  ['upload','⬆ Upload'],['o2o','💊 O2O Billing'],['qinv','🧾 Quick Invoice'],
+  ['recv','💰 Receivables'],['today','☀️ Today'],['smart','🧠 Smart'],
+  ['close','📋 Close'],['recon','🏦 Bank Rec']
+];
+async function rolesLoad(){
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Roles &amp; permissions · what each role can open</h3><button class="btn p" onclick="roleForm(null)">+ New role</button></div><div id="roles_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  try{
+    var r=await call({api:'roles_list'}); if(!r||!r.ok){ document.getElementById('roles_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    ROLES=r.roles||[];
+    var rows=ROLES.map(function(ro,i){
+      var feats=(ro.features||[]);
+      var chips=feats.map(function(f){ var m=FEATURE_META.filter(function(x){return x[0]===f;})[0]; return '<span class="pill pill-draft" style="font-size:9.5px;margin:2px 2px 0 0">'+esc(m?m[1]:f)+'</span>'; }).join('')||'<span class="muted" style="font-size:11px">no features</span>';
+      var mu=ro.manage_users?'<span class="pill pill-coral" style="font-size:9.5px">manage users</span>':'';
+      var sys=ro.is_system?'<span class="pill pill-blue" style="font-size:9px">system</span>':'';
+      var del=ro.is_system?'':' <button class="btn sm" onclick="roleDelete('+i+')">Delete</button>';
+      return '<tr><td><b>'+esc(ro.label||ro.name)+'</b> '+sys+'<br><span class="muted" style="font-size:11px">'+esc(ro.name)+'</span></td><td>'+chips+' '+mu+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="roleForm('+i+')">Edit</button>'+del+'</td></tr>';
+    }).join('');
+    document.getElementById('roles_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Role</th><th>Allowed features</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:12px;line-height:1.6">System roles (admin / approver / viewer) can be re-scoped but not deleted. The <b>admin</b> role always keeps user-management rights.</div>';
+  }catch(e){ document.getElementById('roles_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+var RF_NAME=null;
+function roleForm(i){
+  var ro=(i==null)?{name:'',label:'',features:[],manage_users:false,is_system:false}:ROLES[i];
+  RF_NAME=ro.is_system?ro.name:(i==null?null:ro.name);
+  var isSys=!!ro.is_system;
+  var checks=FEATURE_META.map(function(m){ var ck=(ro.features||[]).indexOf(m[0])>=0?'checked':''; return '<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:5px"><input type="checkbox" class="rf-feat" value="'+m[0]+'" '+ck+' style="width:auto"/> '+esc(m[1])+'</label>'; }).join('');
+  document.getElementById('role_modal').innerHTML=
+    '<div class="overlay"><div class="modal" style="width:480px"><div class="modal-hd"><h3>'+(i==null?'New role':'Edit role')+'</h3><button class="modal-close" onclick="rfClose()">×</button></div>'+
+    '<div class="fld"><label>Role key</label><input id="rf_name" value="'+esc(ro.name||'')+'" placeholder="e.g. billing_clerk" '+(isSys||i!=null?'disabled':'')+'/><div class="muted" style="font-size:11px;margin-top:4px">Lowercase id, used internally. Cannot change after creation.</div></div>'+
+    '<div class="fld"><label>Display name</label><input id="rf_label" value="'+esc(ro.label||'')+'" placeholder="e.g. Billing Clerk"/></div>'+
+    '<div class="fld"><label>Allowed features (tabs)</label><div style="max-height:230px;overflow:auto;border:1px solid var(--border-strong);border-radius:9px;padding:12px;columns:2">'+checks+'</div></div>'+
+    '<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="rf_manage" '+(ro.manage_users?'checked':'')+' '+(ro.name==='admin'?'disabled':'')+' style="width:auto"/> Can manage users &amp; roles (admin powers)</label>'+
+    '<div class="lerr hide" id="rf_err"></div>'+
+    '<div class="modal-ft"><button class="btn" onclick="rfClose()">Cancel</button><button class="btn p" id="rf_save" onclick="roleSave()">Save</button></div></div></div>';
+}
+function rfClose(){ var m=document.getElementById('role_modal'); if(m) m.innerHTML=''; }
+async function roleSave(){
+  var err=document.getElementById('rf_err'); var btn=document.getElementById('rf_save');
+  var name=(RF_NAME!=null)?RF_NAME:document.getElementById('rf_name').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
+  var label=document.getElementById('rf_label').value.trim();
+  var features=[].slice.call(document.querySelectorAll('.rf-feat:checked')).map(function(x){return x.value;});
+  var manage_users=document.getElementById('rf_manage').checked;
+  if(!name){ err.textContent='Role key is required'; err.classList.remove('hide'); return; }
+  err.classList.add('hide'); btn.disabled=true; btn.textContent='Saving…';
+  try{
+    var r=await call({api:'role_save',name:name,label:label||name,features:features,manage_users:manage_users});
+    if(r&&r.ok!==false){ rfClose(); toast('Role saved'); rolesLoad(); }
+    else { err.textContent=(r&&r.error)||'Save failed'; err.classList.remove('hide'); }
+  }catch(e){ err.textContent=e.message; err.classList.remove('hide'); }
+  btn.disabled=false; btn.textContent='Save';
+}
+async function roleDelete(i){
+  var ro=ROLES[i]; if(!confirm('Delete role "'+(ro.label||ro.name)+'"? Users must be reassigned first.')) return;
+  try{ var r=await call({api:'role_delete',name:ro.name});
+    if(r&&r.ok!==false){ toast('Role deleted'); rolesLoad(); } else toast((r&&r.error)||'Delete failed',true);
+  }catch(e){ toast(e.message,true); }
+}
+
+/* ---- Permission audit log ---- */
+async function auditLoad(){
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Audit log · recent admin &amp; permission changes</h3><button class="btn sm" onclick="auditLoad()">↻ Refresh</button></div><div id="audit_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  try{
+    var r=await call({api:'audit_list',limit:150}); if(!r||!r.ok){ document.getElementById('audit_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    var ev=r.events||[];
+    if(!ev.length){ document.getElementById('audit_out').innerHTML='<div class="empty"><div class="empty-ico">📜</div><div>No audit events yet</div></div>'; return; }
+    var actMeta={user_create:['pill-green','Created user'],user_update:['pill-blue','Updated user'],password_reset:['pill-coral','Reset password'],role_save:['pill-blue','Saved role'],role_delete:['pill-coral','Deleted role'],o2o_issue:['pill-draft','Issued O2O invoices'],quick_invoice:['pill-draft','Quick invoice']};
+    var rows=ev.map(function(e){
+      var m=actMeta[e.action]||['pill-draft',e.action];
+      var when=e.created_at?new Date(e.created_at).toLocaleString():'';
+      var det=e.detail?Object.keys(e.detail).map(function(k){var v=e.detail[k];return k+': '+(Array.isArray(v)?(v.length+' item(s)'):esc(String(v)));}).join(' · '):'';
+      return '<tr><td class="muted" style="font-size:11.5px;white-space:nowrap">'+esc(when)+'</td><td><span class="pill '+m[0]+'" style="font-size:9.5px">'+esc(m[1])+'</span></td><td class="muted" style="font-size:11.5px">'+esc(e.user_email||'—')+'</td><td class="muted" style="font-size:11px">'+esc(e.ref||'')+(det?' <span style="opacity:.7">('+det+')</span>':'')+'</td></tr>';
+    }).join('');
+    document.getElementById('audit_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>When</th><th>Action</th><th>By</th><th>Detail</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){ document.getElementById('audit_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
 
