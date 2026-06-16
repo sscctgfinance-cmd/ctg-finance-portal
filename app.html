@@ -211,6 +211,12 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .bigtable tbody tr:hover td{background:rgba(232,93,60,.05)}
 input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)}
 ::selection{background:rgba(232,93,60,.35)}
+
+/* skeleton loading */
+.sk-card{height:88px;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:shimmer 1.3s infinite}
+.sk-row{height:44px;border-radius:10px;margin:10px 0;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:shimmer 1.3s infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media(prefers-reduced-motion:reduce){.sk-card,.sk-row{animation:none}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -398,7 +404,7 @@ function tab(t){
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
 function onCompany(){loaded.overview=false;loaded.approvals=false;const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';if(t==='overview'||t==='approvals')render(t);}
 function curCo(){return document.getElementById('company').value;}
-function spin(id){document.getElementById(id).innerHTML='<div class="load"><span class="spin"></span>Loading…</div>';}
+function spin(id){document.getElementById(id).innerHTML='<div class="cards"><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div></div><div class="sk-row"></div><div class="sk-row"></div><div class="sk-row" style="width:65%"></div>';}
 
 async function render(t){
   loaded[t]=true;
