@@ -599,7 +599,8 @@ function renderO2O(){
     '<p class="muted" style="font-size:13px;margin:0 0 14px">Upload the monthly Skindae billing Excel. It is parsed in your browser — preview each pharmacy invoice, then issue them in Xero and email each pharmacy.</p>'+
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
     '<input type="file" id="o2o_file" accept=".xlsx" onchange="o2oPick(this)"/>'+
-    '<button class="btn p" id="o2o-issue" onclick="o2oIssue()" disabled>Issue invoices + email →</button></div>'+
+    '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft)"><input type="checkbox" id="o2o-test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
+    '<button class="btn p" id="o2o-issue" onclick="o2oIssue()" disabled>Issue invoices in Xero →</button></div>'+
     '<div id="o2o-out" style="margin-top:14px"><p class="muted">Pick the Excel to preview.</p></div></div>';
   loaded.o2o=true;
 }
@@ -613,10 +614,10 @@ function o2oParse(buf){
     if(!period&&rows[1])period=rows[1][0];
     var groups={};
     for(var r=3;r<rows.length;r++){
-      var row=rows[r]||[]; var pkg=row[1]; var net=row[10];
-      var netv=(typeof net==='number')?net:parseFloat(net);
-      if(!netv||netv<=0||!pkg||!String(pkg).trim())continue;
-      var unit=Math.round(netv*100)/100; var key=String(pkg).trim()+'|'+unit;
+      var row=rows[r]||[]; var pkg=row[1]; var price=row[2];
+      var pv=(typeof price==='number')?price:parseFloat(price);
+      if(!pv||pv<=0||!pkg||!String(pkg).trim())continue;
+      var unit=Math.round(pv*100)/100; var key=String(pkg).trim()+'|'+unit;
       if(!groups[key])groups[key]={package:String(pkg).trim(),unit_price:unit,quantity:0};
       groups[key].quantity++;
     }
@@ -650,10 +651,11 @@ function o2oRenderPreview(){
 }
 async function o2oIssue(){
   if(!O2O_DATA){showToast&&showToast('Preview first','error');return;}
-  if(!confirm('Create a Xero invoice for each pharmacy in SKINDAE SDN BHD and email them? ('+O2O_DATA.pharmacy_count+' invoices)'))return;
+  var test=document.getElementById('o2o-test'); var dry=test?test.checked:true;
+  if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in SKINDAE SDN BHD?'))return;
   var btn=document.getElementById('o2o-issue'); btn.disabled=true; btn.textContent='Issuing…';
   try{
-    var r=await call({api:'o2o_issue', period:O2O_DATA.period, invoices:O2O_DATA.pharmacies});
+    var r=await call({api:'o2o_issue', period:O2O_DATA.period, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
     if(r&&r.ok){
       var rows=(r.results||[]).map(function(x){
         var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
@@ -667,7 +669,7 @@ async function o2oIssue(){
         '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Total</th><th>Invoice</th><th>Email</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
     } else { document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'unknown')+'</div>'; }
   }catch(e){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc(e.message)+'</div>'; }
-  btn.disabled=false; btn.textContent='Issue invoices + email →';
+  btn.disabled=false; btn.textContent='Issue invoices in Xero →';
 }
 
 /* ── Auto-login on load ── */
