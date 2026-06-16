@@ -262,6 +262,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
     <span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;white-space:nowrap">Company</span>
     <select id="company" onchange="onCompany()" style="flex:1;max-width:320px"></select>
     <button class="btn p" onclick="reloadActive()">↺ Refresh</button>
+    <button class="btn" onclick="exportCurrent()" title="Export this view to Excel">⬇ Export</button>
     <div id="last-refresh" class="status-bar" style="margin:0"></div>
   </div>
 
@@ -947,6 +948,25 @@ async function smartLoad(){
     document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:#fff">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
       '<div class="muted" style="font-size:11px;margin-top:16px;line-height:1.6">Rule-based intelligence over live Xero data — duplicate &amp; anomaly detection, cash-risk &amp; profit insights. Add an AI key in the backend to unlock natural-language CFO Q&amp;A and photo→bill extraction.</div>';
   }catch(e){ document.getElementById('smart_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+
+/* ---- One-click Excel export ---- */
+function exportCurrent(){
+  var a=document.querySelector('.tab.active'); var t=a?a.dataset.t:'overview';
+  var panel=document.getElementById(t);
+  var tables=panel?panel.querySelectorAll('table.bigtable'):[];
+  if(!tables||!tables.length){ toast('Nothing to export on this tab',true); return; }
+  try{
+    var wb=XLSX.utils.book_new();
+    [].slice.call(tables).forEach(function(tb,i){
+      var ws=XLSX.utils.table_to_sheet(tb);
+      XLSX.utils.book_append_sheet(wb,ws,(t+(tables.length>1?('_'+(i+1)):'')).slice(0,31));
+    });
+    var co=document.getElementById('company'); var coName=(co&&co.selectedIndex>=0)?co.options[co.selectedIndex].text.replace(/[^A-Za-z0-9]/g,'_'):'';
+    var fn='CTG_'+t+(coName&&coName.indexOf('All')<0?('_'+coName):'')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb,fn);
+    toast('Exported '+fn);
+  }catch(e){ toast('Export failed: '+(e.message||e),true); }
 }
 
 /* ── Auto-login on load ── */
