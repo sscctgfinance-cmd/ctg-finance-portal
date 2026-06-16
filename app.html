@@ -276,6 +276,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
     <div class="tab"        data-t="recv"        onclick="tab('recv')"        id="tab-recv">💰 Receivables</div>
     <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
     <div class="tab"        data-t="smart"       onclick="tab('smart')"       id="tab-smart">🧠 Smart</div>
+    <div class="tab"        data-t="close"       onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
   </div>
 
@@ -288,6 +289,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
+  <div id="close"       class="hide"></div>
   <div id="users"       class="hide"></div>
 
 </div></div>
@@ -388,6 +390,7 @@ function showApp(){
   document.getElementById('tab-qinv').classList.toggle('hide',!isAppr);
   document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
   document.getElementById('tab-smart').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-close').classList.toggle('hide',!isAppr);
   document.getElementById('tab-users').classList.toggle('hide', ME.role!=='admin');
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
@@ -399,7 +402,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -419,6 +422,7 @@ async function render(t){
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
+    if(t==='close')      return renderClose();
     if(t==='users')      return renderUsers();
   }catch(x){
     loaded[t]=false;
@@ -969,7 +973,37 @@ function exportCurrent(){
   }catch(e){ toast('Export failed: '+(e.message||e),true); }
 }
 
+
+/* ---- Month-end close workflow ---- */
+var CLOSE_TASKS=[];
+function renderClose(){
+  var period=new Date().toISOString().slice(0,7);
+  document.getElementById('close').innerHTML='<div class="panel"><div class="panel-hd"><h3>\U0001f4cb Month-end close</h3><div style="display:flex;gap:8px;align-items:center"><input type="month" id="close_period" value="'+period+'" onchange="closeLoad()"/><button class="btn p" onclick="closeLoad()">↻ Load</button></div></div><div id="close_out" class="muted">Loading…</div></div>';
+  loaded.close=true; closeLoad();
+}
+async function closeLoad(){
+  var period=document.getElementById('close_period').value;
+  document.getElementById('close_out').innerHTML='<div class="load"><span class="spin"></span>Loading…</div>';
+  try{ var r=await call({api:'close_list',period:period});
+    if(!r||!r.ok){ document.getElementById('close_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    CLOSE_TASKS=r.tasks||[];
+    var done=CLOSE_TASKS.filter(function(t){return t.status==='done';}).length;
+    var pct=CLOSE_TASKS.length?Math.round(done/CLOSE_TASKS.length*100):0;
+    var bar='<div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><span class="muted">'+done+' / '+CLOSE_TASKS.length+' tasks done</span><span style="font-weight:800;color:'+(pct===100?'var(--green-soft)':'var(--coral-soft)')+'">'+pct+'%</span></div><div style="height:9px;border-radius:6px;background:rgba(7,13,23,.6);overflow:hidden"><div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,var(--coral),var(--green-soft));transition:width .3s"></div></div></div>';
+    var rows=CLOSE_TASKS.map(function(t){
+      return '<tr><td style="width:34px;text-align:center"><input type="checkbox" '+(t.status==='done'?'checked':'')+' onchange="closeSet(\''+t.id+'\',this.checked?\'done\':\'pending\')" style="width:auto;cursor:pointer"/></td>'+
+        '<td><b style="'+(t.status==='done'?'opacity:.55':'')+'">'+esc(t.title)+'</b>'+(t.category?' <span class="pill pill-coral" style="font-size:9px">'+esc(t.category)+'</span>':'')+'</td>'+
+        '<td><select onchange="closeSet(\''+t.id+'\',this.value)" style="font-size:11.5px;padding:5px 9px"><option value="pending"'+(t.status==='pending'?' selected':'')+'>Pending</option><option value="in_progress"'+(t.status==='in_progress'?' selected':'')+'>In progress</option><option value="done"'+(t.status==='done'?' selected':'')+'>Done</option></select></td>'+
+        '<td><input value="'+esc(t.assignee||'')+'" placeholder="assign…" onblur="closeAssign(\''+t.id+'\',this.value)" style="font-size:11.5px;padding:5px 9px;width:120px"/></td></tr>';
+    }).join('');
+    document.getElementById('close_out').innerHTML=bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th></th><th>Task</th><th>Status</th><th>Assignee</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){ document.getElementById('close_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function closeSet(id,status){ try{ var r=await call({api:'close_update',id:id,status:status}); if(r&&r.ok!==false) closeLoad(); else toast((r&&r.error)||'failed',true); }catch(e){ toast(e.message,true); } }
+async function closeAssign(id,assignee){ try{ await call({api:'close_update',id:id,assignee:assignee}); }catch(e){} }
+
 /* ── Auto-login on load ── */
+
 if(TOKEN){
   call({api:'me'}).then(r=>{
     if(r&&r.ok){ME=r.user;COMPANIES=r.companies||[];showApp();}
