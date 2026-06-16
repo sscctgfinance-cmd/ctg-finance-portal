@@ -246,6 +246,9 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
     <div class="tab"        data-t="collections" onclick="tab('collections')" id="tab-coll">📨 Collections</div>
     <div class="tab"        data-t="upload"      onclick="tab('upload')">⬆ Upload</div>
     <div class="tab"        data-t="o2o"         onclick="tab('o2o')"         id="tab-o2o">💊 O2O Billing</div>
+    <div class="tab"        data-t="qinv"        onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
+    <div class="tab"        data-t="recv"        onclick="tab('recv')"        id="tab-recv">💰 Receivables</div>
+    <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
   </div>
 
   <div id="overview"></div>
@@ -253,6 +256,9 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   <div id="collections" class="hide"></div>
   <div id="upload"      class="hide"></div>
   <div id="o2o"         class="hide"></div>
+  <div id="qinv"        class="hide"></div>
+  <div id="recv"        class="hide"></div>
+  <div id="today"       class="hide"></div>
 
 </div></div>
 
@@ -343,6 +349,8 @@ function showApp(){
   document.getElementById('tab-appr').classList.toggle('hide',!isAppr);
   document.getElementById('tab-coll').classList.toggle('hide',!isAppr);
   document.getElementById('tab-o2o').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-qinv').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
@@ -353,7 +361,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -369,6 +377,9 @@ async function render(t){
     if(t==='collections')return renderCollections();
     if(t==='upload')     return renderUpload();
     if(t==='o2o')        return renderO2O();
+    if(t==='qinv')       return renderQinv();
+    if(t==='recv')       return renderRecv();
+    if(t==='today')      return renderToday();
   }catch(x){
     loaded[t]=false;
     document.getElementById(t).innerHTML=
@@ -670,6 +681,106 @@ async function o2oIssue(){
     } else { document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'unknown')+'</div>'; }
   }catch(e){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc(e.message)+'</div>'; }
   btn.disabled=false; btn.textContent='Issue invoices in Xero →';
+}
+
+
+/* ---- Quick Invoice ---- */
+var QINV_META={contacts:[],accounts:[]};
+function renderQinv(){
+  var opts=COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('');
+  document.getElementById('qinv').innerHTML=
+    '<div class="panel" style="max-width:780px"><div class="panel-hd"><h3>Quick Invoice → Xero</h3></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Company</label><select id="qi_co" onchange="qiMeta()"><option value="">— select —</option>'+opts+'</select></div>'+
+    '<div class="fld"><label>Customer</label><input id="qi_cust" list="qi_contacts" placeholder="type or pick"/><datalist id="qi_contacts"></datalist></div></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Revenue account</label><select id="qi_acct"></select></div>'+
+    '<div class="fld"><label>Reference</label><input id="qi_ref" placeholder="optional"/></div></div>'+
+    '<div class="fld"><label>Line items</label><div id="qi_lines"></div><button class="btn sm" onclick="qiAddLine()">+ Add line</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Date</label><input type="date" id="qi_date"/></div><div class="fld"><label>Due date</label><input type="date" id="qi_due"/></div></div>'+
+    '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="qi_test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
+    '<button class="btn p" onclick="qiCreate()">Create invoice in Xero →</button><div id="qi_out" style="margin-top:12px"></div></div>';
+  document.getElementById('qi_date').value=new Date().toISOString().slice(0,10);
+  qiAddLine(); loaded.qinv=true;
+}
+function qiAddLine(){
+  var d=document.getElementById('qi_lines');
+  var row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;margin-bottom:6px';
+  row.innerHTML='<input placeholder="Description" class="qi-desc" style="flex:2"/>'+
+    '<input type="number" placeholder="Qty" value="1" class="qi-qty" style="width:64px"/>'+
+    '<input type="number" placeholder="Unit amount" class="qi-amt" style="width:120px"/>'+
+    '<button class="btn sm" onclick="this.parentNode.remove()">×</button>';
+  d.appendChild(row);
+}
+async function qiMeta(){
+  var t=document.getElementById('qi_co').value; if(!t)return;
+  try{ var r=await call({api:'inv_meta',tenant:t});
+    if(r&&r.ok){ QINV_META=r;
+      document.getElementById('qi_contacts').innerHTML=r.contacts.map(function(c){return '<option value="'+esc(c.name)+'">';}).join('');
+      document.getElementById('qi_acct').innerHTML=r.accounts.map(function(a){return '<option value="'+esc(a.code)+'">'+esc(a.code)+' · '+esc(a.name)+'</option>';}).join('');
+    }
+  }catch(e){}
+}
+async function qiCreate(){
+  var t=document.getElementById('qi_co').value; if(!t){toast('Pick a company',true);return;}
+  var cust=document.getElementById('qi_cust').value.trim(); if(!cust){toast('Enter a customer',true);return;}
+  var acct=document.getElementById('qi_acct').value;
+  var lines=[].slice.call(document.querySelectorAll('#qi_lines > div')).map(function(row){
+    return {description:row.querySelector('.qi-desc').value||'Item', quantity:Number(row.querySelector('.qi-qty').value)||1, unit_amount:Number(row.querySelector('.qi-amt').value)||0, account_code:acct};
+  }).filter(function(l){return l.unit_amount>0;});
+  if(!lines.length){toast('Add a line with an amount',true);return;}
+  var test=document.getElementById('qi_test').checked;
+  var body={api:'quick_invoice',tenant:t,contact_name:cust,line_items:lines,date:document.getElementById('qi_date').value,due_date:document.getElementById('qi_due').value||undefined,reference:document.getElementById('qi_ref').value||undefined,dry_run:test};
+  document.getElementById('qi_out').innerHTML='<span class="muted">Working…</span>';
+  try{ var r=await call(body);
+    if(r&&r.ok){
+      if(r.dry_run){ document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:380px"><div class="n" style="color:var(--amber);font-size:16px">TEST · total '+M(r.total)+'</div><div class="l">Uncheck Test mode to create for real</div></div>'; }
+      else { document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:380px"><div class="n" style="color:var(--green-soft)">'+esc(r.number||'')+' · '+M(r.total)+'</div><div class="l">Invoice created in Xero ✓</div></div>'; }
+    } else { document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
+  }catch(e){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+
+/* ---- Receivables ---- */
+function renderRecv(){
+  document.getElementById('recv').innerHTML='<div class="panel"><div class="panel-hd"><h3>Receivables · who owes you</h3><button class="btn p" onclick="recvLoad()">↻ Load from Xero</button></div><div id="recv_out" class="muted">Click load (queries all companies live in Xero).</div></div>';
+  loaded.recv=true;
+}
+async function recvLoad(){
+  document.getElementById('recv_out').innerHTML='<div class="load"><span class="spin"></span>Querying Xero…</div>';
+  try{ var r=await call({api:'receivables'});
+    if(r&&r.ok){
+      var overdue=r.items.filter(function(i){return i.days_overdue>0;}); var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
+      var rows=r.items.map(function(i){ var cls=i.days_overdue>0?' style="color:var(--red-soft)"':'';
+        return '<tr><td>'+esc(i.tenant_name||'')+'</td><td>'+esc(i.contact||'—')+'</td><td>'+esc(i.number||'')+'</td><td class="amt">'+M(i.amount_due)+'</td><td>'+esc(i.due_date||'')+'</td><td class="amt"'+cls+'>'+(i.days_overdue>0?i.days_overdue+'d':'—')+'</td></tr>';
+      }).join('');
+      document.getElementById('recv_out').innerHTML=
+        '<div class="cards"><div class="card"><div class="n" style="color:var(--sky-soft)">'+M(r.total)+'</div><div class="l">Total outstanding</div></div>'+
+        '<div class="card"><div class="n" style="color:var(--red-soft)">'+M(odtot)+'</div><div class="l">Overdue ('+overdue.length+')</div></div></div>'+
+        '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Due</th><th>Due date</th><th class="amt">Overdue</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" class="muted">Nothing outstanding ✓</td></tr>')+'</tbody></table></div>';
+    } else { document.getElementById('recv_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
+  }catch(e){ document.getElementById('recv_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+
+/* ---- Today (cockpit) ---- */
+function renderToday(){
+  document.getElementById('today').innerHTML='<div class="panel"><div class="panel-hd"><h3>Today · finance cockpit</h3><button class="btn p" onclick="todayLoad()">↻ Refresh</button></div><div id="today_out" class="muted">Loading…</div></div>';
+  loaded.today=true; todayLoad();
+}
+async function todayLoad(){
+  document.getElementById('today_out').innerHTML='<div class="load"><span class="spin"></span>Gathering…</div>';
+  try{
+    var ov=await call({api:'overview'}); var pend=await call({api:'pending'}); var recv=await call({api:'receivables'});
+    var cash=0,np=0; if(ov&&ov.companies){ ov.companies.forEach(function(c){cash+=+c.bank;np+=+c.net_profit;}); }
+    var bills=(pend&&pend.bills)?pend.bills:[]; var od=(recv&&recv.items)?recv.items.filter(function(i){return i.days_overdue>0;}):[];
+    var odtot=od.reduce(function(s,i){return s+i.amount_due;},0);
+    var billrows=bills.slice(0,8).map(function(b){return '<tr><td>'+esc(b.tenant_name||'')+'</td><td>'+esc(b.contact||'')+'</td><td class="amt">'+M(b.total)+'</td></tr>';}).join('');
+    var odrows=od.slice(0,8).map(function(i){return '<tr><td>'+esc(i.contact||'')+'</td><td class="amt">'+M(i.amount_due)+'</td><td class="amt" style="color:var(--red-soft)">'+i.days_overdue+'d</td></tr>';}).join('');
+    document.getElementById('today_out').innerHTML=
+      '<div class="cards"><div class="card"><div class="n" style="color:var(--sky-soft)">'+M(cash)+'</div><div class="l">Total cash</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--amber)">'+bills.length+'</div><div class="l">Bills to approve</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--red-soft)">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
+      '<div class="card"><div class="n" style="color:'+(np>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(np)+'</div><div class="l">Net profit (YTD)</div></div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" style="margin-top:6px"><div><h3 style="font-size:13px;margin:6px 0;color:#fff">Bills to approve</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(billrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div>'+
+      '<div><h3 style="font-size:13px;margin:6px 0;color:#fff">Overdue receivables</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(odrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div></div>';
+  }catch(e){ document.getElementById('today_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
 /* ── Auto-login on load ── */
