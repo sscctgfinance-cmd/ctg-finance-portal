@@ -249,6 +249,7 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
     <div class="tab"        data-t="qinv"        onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
     <div class="tab"        data-t="recv"        onclick="tab('recv')"        id="tab-recv">💰 Receivables</div>
     <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
+    <div class="tab"        data-t="smart"       onclick="tab('smart')"       id="tab-smart">🧠 Smart</div>
     <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
   </div>
 
@@ -260,6 +261,7 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   <div id="qinv"        class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
+  <div id="smart"       class="hide"></div>
   <div id="users"       class="hide"></div>
 
 </div></div>
@@ -353,6 +355,7 @@ function showApp(){
   document.getElementById('tab-o2o').classList.toggle('hide',!isAppr);
   document.getElementById('tab-qinv').classList.toggle('hide',!isAppr);
   document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-smart').classList.toggle('hide',!isAppr);
   document.getElementById('tab-users').classList.toggle('hide', ME.role!=='admin');
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
@@ -364,7 +367,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -383,6 +386,7 @@ async function render(t){
     if(t==='qinv')       return renderQinv();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
+    if(t==='smart')      return renderSmart();
     if(t==='users')      return renderUsers();
   }catch(x){
     loaded[t]=false;
@@ -868,6 +872,43 @@ async function userSave(){
     else { err.textContent=(r&&r.error)||'Save failed'; err.classList.remove('hide'); }
   }catch(e){ err.textContent=e.message; err.classList.remove('hide'); }
   btn.disabled=false; btn.textContent='Save';
+}
+
+
+/* ---- Smart checks & insights (rule-based, no key needed) ---- */
+function renderSmart(){
+  document.getElementById('smart').innerHTML='<div class="panel"><div class="panel-hd"><h3>🧠 Smart checks &amp; insights</h3><button class="btn p" onclick="smartLoad()">↻ Run analysis</button></div><div id="smart_out" class="muted">Scanning your bills, cash &amp; receivables…</div></div>';
+  loaded.smart=true; smartLoad();
+}
+async function smartLoad(){
+  document.getElementById('smart_out').innerHTML='<div class="load"><span class="spin"></span>Analysing your live data…</div>';
+  try{
+    var ov=await call({api:'overview'}); var pend=await call({api:'pending'}); var recv=await call({api:'receivables'});
+    var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
+    var alerts=[];
+    var seen={};
+    bills.forEach(function(b){ var key=(b.contact||'')+'|'+(Number(b.total)||0).toFixed(2);
+      if(seen[key]) alerts.push({sev:'high',t:'Possible duplicate bill',d:esc(b.contact||'?')+' · '+M(b.total)+' appears more than once in pending bills'});
+      seen[key]=true; });
+    var noDue=bills.filter(function(b){return !b.due;}); if(noDue.length) alerts.push({sev:'med',t:noDue.length+' bill(s) missing a due date',d:'Add due dates for correct payment &amp; collection timing'});
+    var big=bills.filter(function(b){return (Number(b.total)||0)>5000;}); if(big.length){ big.sort(function(a,b){return b.total-a.total;}); alerts.push({sev:'med',t:big.length+' large bill(s) over RM 5,000',d:'Review before approving — largest: '+esc(big[0].contact||'?')+' '+M(big[0].total)}); }
+    companies.filter(function(c){return (Number(c.net_profit)||0)<0;}).forEach(function(c){ alerts.push({sev:'med',t:'Running at a loss: '+esc(c.tenant_name),d:'Net profit '+M(c.net_profit)+' YTD'}); });
+    var overdue=items.filter(function(i){return i.days_overdue>0;}); var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
+    if(overdue.length){ var top=overdue.slice().sort(function(a,b){return b.amount_due-a.amount_due;})[0]; alerts.push({sev:'high',t:M(odtot)+' overdue across '+overdue.length+' invoices',d:'Biggest: '+esc(top.contact||'?')+' '+M(top.amount_due)+' ('+top.days_overdue+' days)'}); }
+    var aged=overdue.filter(function(i){return i.days_overdue>60;}); if(aged.length) alerts.push({sev:'high',t:aged.length+' invoice(s) over 60 days overdue',d:'High collection risk — consider escalating'});
+    var cash=companies.reduce(function(s,c){return s+ (+c.bank||0);},0);
+    var payDue=bills.reduce(function(s,b){return s+ (+b.total||0);},0);
+    var insights='<div class="cards">'+
+      '<div class="card"><div class="n" style="color:var(--sky-soft)">'+M(cash)+'</div><div class="l">Total cash</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--amber)">'+M(payDue)+'</div><div class="l">Bills awaiting approval</div></div>'+
+      '<div class="card"><div class="n" style="color:'+(odtot>0?'var(--red-soft)':'var(--green-soft)')+'">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
+      '<div class="card"><div class="n" style="color:'+(cash>payDue?'var(--green-soft)':'var(--red-soft)')+';font-size:18px">'+(cash>payDue?'✓ Healthy':'⚠ Tight')+'</div><div class="l">Cash vs payables</div></div></div>';
+    var sevC={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
+    var aHtml = alerts.length ? alerts.map(function(a){return '<div style="padding:12px 14px;border:1px solid var(--border);border-left:3px solid '+sevC[a.sev]+';border-radius:9px;margin-bottom:8px;background:rgba(7,13,23,.4)"><div style="font-weight:700;font-size:13px">'+a.t+'</div><div class="muted" style="font-size:12px">'+a.d+'</div></div>';}).join('')
+      : '<div class="card" style="max-width:360px"><div class="n" style="color:var(--green-soft);font-size:16px">✓ All clear</div><div class="l">No anomalies detected in your current data</div></div>';
+    document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:#fff">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
+      '<div class="muted" style="font-size:11px;margin-top:16px;line-height:1.6">Rule-based intelligence over live Xero data — duplicate &amp; anomaly detection, cash-risk &amp; profit insights. Add an AI key in the backend to unlock natural-language CFO Q&amp;A and photo→bill extraction.</div>';
+  }catch(e){ document.getElementById('smart_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
 /* ── Auto-login on load ── */

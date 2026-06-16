@@ -87,6 +87,20 @@ h2{font-size:34px;font-weight:800;letter-spacing:-.8px;margin-bottom:14px}
 
 footer{border-top:1px solid var(--border);margin-top:60px;padding:30px 0;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
 footer b{color:var(--coral-soft);letter-spacing:2px}
+
+.price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+@media(max-width:820px){.price-grid{grid-template-columns:1fr}}
+.price{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:18px;padding:28px;position:relative}
+.price.pop-card{border:2px solid var(--coral);box-shadow:0 20px 50px rgba(232,93,60,.18)}
+.price .pop{position:absolute;top:-12px;left:28px;background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;font-size:11px;font-weight:800;padding:4px 12px;border-radius:999px}
+.price h3{font-size:20px;margin-bottom:6px}
+.price .pt{color:var(--text-soft);font-size:13px;min-height:36px}
+.price .amt{font-size:38px;font-weight:800;letter-spacing:-1px;margin:14px 0 18px}
+.price .amt span{font-size:15px;font-weight:600;color:var(--muted)}
+.price ul{list-style:none;margin:0 0 22px;padding:0}
+.price li{padding:7px 0 7px 26px;position:relative;font-size:14px;color:var(--text-soft);border-bottom:1px solid var(--border)}
+.price li:before{content:"\2713";position:absolute;left:0;color:var(--green-soft);font-weight:800}
+.price .btn{width:100%;justify-content:center}
 </style>
 </head>
 <body>
@@ -97,6 +111,7 @@ footer b{color:var(--coral-soft);letter-spacing:2px}
     <a href="#product">Product</a>
     <a href="#how">How it works</a>
     <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
   </div>
   <div class="nav-cta">
     <a class="btn" href="app.html">Log In</a>
@@ -154,6 +169,33 @@ footer b{color:var(--coral-soft);letter-spacing:2px}
     <div class="feat"><div class="ic">💰</div><h3>Receivables &amp; collections</h3><p>See who owes you across every company, with aging — and chase overdue customers automatically.</p></div>
     <div class="feat"><div class="ic">☀️</div><h3>Daily cockpit</h3><p>One screen each morning: cash, bills to approve, overdue receivables, net profit — what to do today.</p></div>
     <div class="feat"><div class="ic">🔒</div><h3>Safe by design</h3><p>Admin-only, test-mode previews before anything posts, and a full audit trail of every AI action.</p></div>
+  </div>
+</section>
+
+<section id="pricing" class="wrap">
+  <div class="eyebrow">Pricing</div>
+  <h2>Simple plans that scale with you</h2>
+  <p class="sub">Every plan connects to Xero, handles AP + AR, and includes unlimited users. No long lock-in.</p>
+  <div class="price-grid">
+    <div class="price">
+      <h3>Starter</h3><p class="pt">Solo operator, one company.</p>
+      <div class="amt">RM 199<span>/mo</span></div>
+      <ul><li>1 company / entity</li><li>AP bills + AR invoices</li><li>Line-item extraction</li><li>Receivables &amp; collections</li><li>Daily cockpit</li><li>Email support</li></ul>
+      <a class="btn" href="app.html">Get started</a>
+    </div>
+    <div class="price pop-card">
+      <div class="pop">Most popular</div>
+      <h3>Business</h3><p class="pt">Growing groups, up to 5 companies.</p>
+      <div class="amt">RM 599<span>/mo</span></div>
+      <ul><li>Up to 5 companies</li><li>Everything in Starter</li><li>O2O batch billing</li><li>Smart anomaly detection</li><li>User access control (SaaS)</li><li>Priority support</li></ul>
+      <a class="btn p" href="app.html">Get started</a>
+    </div>
+    <div class="price">
+      <h3>Enterprise</h3><p class="pt">Multi-entity operations.</p>
+      <div class="amt">Custom</div>
+      <ul><li>Unlimited companies</li><li>Everything in Business</li><li>AI CFO Q&amp;A + insights</li><li>API access</li><li>Dedicated support</li><li>Custom onboarding</li></ul>
+      <a class="btn" href="mailto:finance@ctg.my">Contact us</a>
+    </div>
   </div>
 </section>
 
