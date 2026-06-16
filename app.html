@@ -632,26 +632,31 @@ function renderO2O(){
 function o2oParse(buf){
   var wb=XLSX.read(new Uint8Array(buf),{type:'array'});
   var period=null, pharmacies=[], grand=0;
+  function findVal(rows,label){
+    for(var r=0;r<rows.length;r++){ var row=rows[r]||[];
+      for(var c=0;c<5;c++){ var v=row[c];
+        if(v&&typeof v==='string'&&v.trim().toLowerCase().indexOf(label)>=0){
+          for(var i=1;i<=3;i++){ var rv=row[c+i]; if(typeof rv==='number') return rv; }
+        }
+      }
+    }
+    return null;
+  }
   wb.SheetNames.forEach(function(sn){
     if(sn.trim().toLowerCase()==='sample')return;
     var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:null});
     var name=(rows[0]&&rows[0][0])?String(rows[0][0]).trim():sn;
     if(!period&&rows[1])period=rows[1][0];
-    var groups={};
-    for(var r=3;r<rows.length;r++){
-      var row=rows[r]||[]; var pkg=row[1]; var price=row[2];
-      var pv=(typeof price==='number')?price:parseFloat(price);
-      if(!pkg||String(pkg).trim().toLowerCase().slice(0,7)!=='skindae')continue;
-      if(!pv||pv<=0)continue;
-      var unit=Math.round(pv*100)/100; var key=String(pkg).trim()+'|'+unit;
-      if(!groups[key])groups[key]={package:String(pkg).trim(),unit_price:unit,quantity:0};
-      groups[key].quantity++;
-    }
-    var lines=Object.keys(groups).map(function(k){var g=groups[k];return {package:g.package,unit_price:g.unit_price,quantity:g.quantity,amount:Math.round(g.quantity*g.unit_price*100)/100};});
-    if(!lines.length)return;
-    lines.sort(function(a,b){return b.amount-a.amount;});
-    var total=Math.round(lines.reduce(function(s,l){return s+l.amount;},0)*100)/100;
-    pharmacies.push({pharmacy:name,line_count:lines.length,total:total,lines:lines}); grand+=total;
+    var ts=findVal(rows,'total sales');
+    var billed=findVal(rows,'billed amount'); if(billed===null)billed=findVal(rows,'billing');
+    if(!ts||ts<=0)return;
+    ts=Math.round(ts*100)/100; billed=(billed!==null&&billed>0)?Math.round(billed*100)/100:ts;
+    var commission=Math.round((ts-billed)*100)/100;
+    var per=String(period||'').replace(/^Skindae Overall Billing\s*/i,'');
+    var lines=[{package:'Skindae products ('+per+')',unit_price:ts,quantity:1,amount:ts}];
+    if(commission>0) lines.push({package:'Commission -19.2%',unit_price:-commission,quantity:1,amount:-commission});
+    pharmacies.push({pharmacy:name,line_count:lines.length,total:billed,total_sales:ts,commission:commission,lines:lines});
+    grand+=billed;
   });
   return {period:String(period||''),pharmacy_count:pharmacies.length,grand_total:Math.round(grand*100)/100,pharmacies:pharmacies};
 }
@@ -665,14 +670,13 @@ function o2oPick(input){
 function o2oRenderPreview(){
   var d=O2O_DATA;
   var rows=d.pharmacies.map(function(p){
-    var lines=p.lines.map(function(l){return esc(l.package)+' ×'+l.quantity+' @'+M(l.unit_price)+' = '+M(l.amount);}).join('<br>');
-    return '<tr><td><b>'+esc(p.pharmacy)+'</b></td><td class="muted" style="font-size:11px">'+lines+'</td><td class="amt"><b>'+M(p.total)+'</b></td></tr>';
+    return '<tr><td><b>'+esc(p.pharmacy)+'</b></td><td class="amt">'+M(p.total_sales)+'</td><td class="amt" style="color:var(--coral-soft)">'+(p.commission>0?'-'+M(p.commission):'-')+'</td><td class="amt"><b>'+M(p.total)+'</b></td></tr>';
   }).join('');
   document.getElementById('o2o-out').innerHTML=
     '<div class="cards"><div class="card"><div class="n" style="color:var(--coral-soft)">'+d.pharmacy_count+'</div><div class="l">Pharmacies</div></div>'+
-    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(d.grand_total)+'</div><div class="l">Grand total</div></div></div>'+
-    '<div class="status-bar" style="margin:2px 0 12px"><div class="dot-green"></div>'+esc(d.period||'')+'</div>'+
-    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th>Lines (grouped by package)</th><th class="amt">Invoice total</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(d.grand_total)+'</div><div class="l">Total billed</div></div></div>'+
+    '<div class="status-bar" style="margin:2px 0 12px"><div class="dot-green"></div>'+esc(d.period||'')+' &middot; read from your Excel Total Sales &amp; Billed amount cells</div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Full price</th><th class="amt">Commission -19.2%</th><th class="amt">Billed (invoice)</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   document.getElementById('o2o-issue').disabled=false;
 }
 async function o2oIssue(){
