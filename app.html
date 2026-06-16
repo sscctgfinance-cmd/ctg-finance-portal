@@ -192,6 +192,25 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
 @media(max-width:480px){
   .cards{grid-template-columns:1fr 1fr}
 }
+
+/* ===== Professional UI polish ===== */
+body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.tabs{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;gap:2px;border-bottom:1px solid var(--border)}
+.tabs::-webkit-scrollbar{display:none}
+.tab{white-space:nowrap;padding:11px 16px;font-weight:600;letter-spacing:.1px}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.035)}
+.tab.active{color:#fff;border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(232,93,60,.12),transparent)}
+.card{transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.card:hover{transform:translateY(-2px);border-color:rgba(232,93,60,.28);box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.btn{transition:transform .12s ease,filter .12s ease,background .14s ease}
+.btn:active{transform:scale(.97)}
+.btn.p{box-shadow:0 4px 16px rgba(232,93,60,.32)}
+.btn.p:hover{box-shadow:0 7px 22px rgba(232,93,60,.45)}
+.panel{box-shadow:0 6px 24px rgba(0,0,0,.16)}
+.bigtable tbody tr{transition:background .12s}
+.bigtable tbody tr:hover td{background:rgba(232,93,60,.05)}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)}
+::selection{background:rgba(232,93,60,.35)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
