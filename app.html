@@ -249,6 +249,7 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
     <div class="tab"        data-t="qinv"        onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
     <div class="tab"        data-t="recv"        onclick="tab('recv')"        id="tab-recv">💰 Receivables</div>
     <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
+    <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
   </div>
 
   <div id="overview"></div>
@@ -259,6 +260,7 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   <div id="qinv"        class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
+  <div id="users"       class="hide"></div>
 
 </div></div>
 
@@ -351,6 +353,7 @@ function showApp(){
   document.getElementById('tab-o2o').classList.toggle('hide',!isAppr);
   document.getElementById('tab-qinv').classList.toggle('hide',!isAppr);
   document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-users').classList.toggle('hide', ME.role!=='admin');
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
@@ -361,7 +364,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -380,6 +383,7 @@ async function render(t){
     if(t==='qinv')       return renderQinv();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
+    if(t==='users')      return renderUsers();
   }catch(x){
     loaded[t]=false;
     document.getElementById(t).innerHTML=
@@ -797,6 +801,73 @@ async function todayLoad(){
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" style="margin-top:6px"><div><h3 style="font-size:13px;margin:6px 0;color:#fff">Bills to approve</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(billrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div>'+
       '<div><h3 style="font-size:13px;margin:6px 0;color:#fff">Overdue receivables</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(odrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div></div>';
   }catch(e){ document.getElementById('today_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+
+
+/* ---- Users (SaaS access control, admin only) ---- */
+var USERS_LIST=[], USERS_UC={}, USERS_COMPANIES=[];
+function renderUsers(){
+  document.getElementById('users').innerHTML='<div class="panel"><div class="panel-hd"><h3>User access · who can log in &amp; what they see</h3><button class="btn p" onclick="userForm(null)">+ Add user</button></div><div id="users_out" class="muted">Loading…</div></div><div id="user_modal"></div>';
+  loaded.users=true; usersLoad();
+}
+async function usersLoad(){
+  document.getElementById('users_out').innerHTML='<div class="load"><span class="spin"></span>Loading…</div>';
+  try{
+    var co=await call({api:'companies_list'}); USERS_COMPANIES=(co&&co.companies)||[];
+    var r=await call({api:'users_list'});
+    if(!r||!r.ok){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    USERS_LIST=r.users||[]; USERS_UC={};
+    (r.user_companies||[]).forEach(function(x){ (USERS_UC[x.user_id]=USERS_UC[x.user_id]||[]).push(x.tenant_id); });
+    var rows=USERS_LIST.map(function(u,i){
+      var comps=(USERS_UC[u.id]||[]).map(function(tid){ var c=USERS_COMPANIES.filter(function(x){return x.tenant_id===tid;})[0]; return c?c.tenant_name:tid; });
+      var compTxt=comps.length?comps.join(', '):(u.role==='admin'?'All companies (admin)':'— none assigned —');
+      var rolePill=u.role==='admin'?'pill-coral':u.role==='approver'?'pill-blue':'pill-draft';
+      var act=u.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">disabled</span>';
+      return '<tr><td><b>'+esc(u.name||'')+'</b><br><span class="muted" style="font-size:11px">'+esc(u.email)+'</span></td><td><span class="pill '+rolePill+'">'+esc(u.role)+'</span></td><td class="muted" style="font-size:11.5px">'+esc(compTxt)+'</td><td>'+act+'</td><td><button class="btn sm" onclick="userEdit('+i+')">Edit</button></td></tr>';
+    }).join('');
+    document.getElementById('users_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Company access</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+function userEdit(i){ var u=USERS_LIST[i]; userForm({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,tenants:(USERS_UC[u.id]||[])}); }
+var UF_EDIT_ID=null;
+function userForm(u){
+  u=u||{}; var isEdit=!!u.id; UF_EDIT_ID=u.id||null;
+  var compChecks=USERS_COMPANIES.map(function(c){ var ck=((u.tenants||[]).indexOf(c.tenant_id)>=0)?'checked':''; return '<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:4px"><input type="checkbox" class="uf-comp" value="'+esc(c.tenant_id)+'" '+ck+' style="width:auto"/> '+esc(c.tenant_name)+'</label>'; }).join('');
+  document.getElementById('user_modal').innerHTML=
+    '<div class="overlay"><div class="modal" style="width:460px"><div class="modal-hd"><h3>'+(isEdit?'Edit user':'Add user')+'</h3><button class="modal-close" onclick="ufClose()">×</button></div>'+
+    '<div class="fld"><label>Name</label><input id="uf_name" value="'+esc(u.name||'')+'"/></div>'+
+    '<div class="fld"><label>Email</label><input id="uf_email" type="email" value="'+esc(u.email||'')+'" '+(isEdit?'disabled':'')+'/></div>'+
+    (isEdit?'':'<div class="fld"><label>Password</label><input id="uf_pass" type="password" placeholder="••••••••"/></div>')+
+    '<div class="fld"><label>Role</label><select id="uf_role"><option value="viewer">Viewer (read-only)</option><option value="approver">Approver (approve bills, collections)</option><option value="admin">Admin (full access + manage users)</option></select></div>'+
+    '<div class="fld"><label>Company access</label><div style="max-height:150px;overflow:auto;border:1px solid var(--border-strong);border-radius:9px;padding:10px">'+compChecks+'</div><div class="muted" style="font-size:11px;margin-top:5px">Tick the companies this user may see. Admins see all regardless.</div></div>'+
+    (isEdit?'<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="uf_active" '+(u.active?'checked':'')+' style="width:auto"/> Active (can log in)</label>':'')+
+    '<div class="lerr hide" id="uf_err"></div>'+
+    '<div class="modal-ft"><button class="btn" onclick="ufClose()">Cancel</button><button class="btn p" id="uf_save" onclick="userSave()">Save</button></div></div></div>';
+  document.getElementById('uf_role').value=u.role||'viewer';
+}
+function ufClose(){ var m=document.getElementById('user_modal'); if(m) m.innerHTML=''; }
+async function userSave(){
+  var err=document.getElementById('uf_err'); var btn=document.getElementById('uf_save');
+  var name=document.getElementById('uf_name').value.trim();
+  var role=document.getElementById('uf_role').value;
+  var tenants=[].slice.call(document.querySelectorAll('.uf-comp:checked')).map(function(x){return x.value;});
+  err.classList.add('hide'); btn.disabled=true; btn.textContent='Saving…';
+  try{
+    var r;
+    if(UF_EDIT_ID){
+      var body={api:'user_update',user_id:UF_EDIT_ID,name:name,role:role,tenants:tenants};
+      var actEl=document.getElementById('uf_active'); if(actEl) body.active=actEl.checked;
+      r=await call(body);
+    } else {
+      var email=document.getElementById('uf_email').value.trim();
+      var pass=document.getElementById('uf_pass').value;
+      if(!email||!pass){ err.textContent='Email and password are required'; err.classList.remove('hide'); btn.disabled=false; btn.textContent='Save'; return; }
+      r=await call({api:'user_create',email:email,name:name||email,pass:pass,role:role,tenants:tenants});
+    }
+    if(r && r.ok!==false){ ufClose(); toast('User saved'); usersLoad(); }
+    else { err.textContent=(r&&r.error)||'Save failed'; err.classList.remove('hide'); }
+  }catch(e){ err.textContent=e.message; err.classList.remove('hide'); }
+  btn.disabled=false; btn.textContent='Save';
 }
 
 /* ── Auto-login on load ── */
