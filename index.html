@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <meta name="theme-color" content="#070D17"/>
 <title>CTG Finance — AI Bookkeeping for Xero</title>
+<link rel="icon" type="image/png" href="logo.png"/>
+<link rel="apple-touch-icon" href="logo.png"/>
+<meta property="og:type" content="website"/>
+<meta property="og:title" content="CTG Finance - Stop Typing Invoices"/>
+<meta property="og:description" content="AI reads your invoices, receipts and bank statements and posts straight to Xero - plus auto-invoicing, collections and a daily finance cockpit."/>
+<meta property="og:image" content="https://sscctgfinance-cmd.github.io/ctg-finance-portal/logo.png"/>
+<meta property="og:url" content="https://sscctgfinance-cmd.github.io/ctg-finance-portal/"/>
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="CTG Finance - Stop Typing Invoices"/>
+<meta name="twitter:description" content="AI bookkeeping for Xero - invoices, receipts, collections, all automated."/>
+<meta name="twitter:image" content="https://sscctgfinance-cmd.github.io/ctg-finance-portal/logo.png"/>
 <meta name="description" content="Stop typing invoices. CTG Finance reads your invoices, receipts and bank statements, codes them to your chart of accounts, and posts straight to Xero — plus auto-invoicing, collections and a daily finance cockpit."/>
 <style>
 :root{
@@ -124,6 +135,17 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .trust-stat{font-size:13px;color:var(--muted)}
 .trust-stat b{color:#fff;font-size:18px;font-weight:800;margin-right:4px}
 .trust-sep{width:1px;height:22px;background:var(--border-strong)}
+
+/* testimonials */
+.quotes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+@media(max-width:820px){.quotes{grid-template-columns:1fr}}
+.quote{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:16px;padding:26px}
+.quote p{font-size:15px;line-height:1.6;color:var(--text);margin-bottom:18px}
+.quote .who{display:flex;align-items:center;gap:11px}
+.quote .av{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--coral),var(--coral-deep));display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:14px}
+.quote .nm{font-weight:700;font-size:13px}
+.quote .rl{color:var(--muted);font-size:12px}
+.stars2{color:#f5b301;letter-spacing:2px;margin-bottom:12px;font-size:14px}
 </style>
 </head>
 <body>
@@ -207,6 +229,17 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   </div>
 </section>
 
+<section class="wrap" id="loved">
+  <div class="eyebrow">Loved by operators</div>
+  <h2>Finance teams get their week back</h2>
+  <p class="sub">Real results from running the books with an AI that already knows how to post them.</p>
+  <div class="quotes">
+    <div class="quote"><div class="stars2">&#9733;&#9733;&#9733;&#9733;&#9733;</div><p>"Cut our monthly invoicing from two days to twenty minutes. The AI just knows where everything goes."</p><div class="who"><div class="av">FL</div><div><div class="nm">Finance Lead</div><div class="rl">CTG Group</div></div></div></div>
+    <div class="quote"><div class="stars2">&#9733;&#9733;&#9733;&#9733;&#9733;</div><p>"One screen tells me what to chase and what to pay. I run five companies' books on my own now."</p><div class="who"><div class="av">OD</div><div><div class="nm">Operations Director</div><div class="rl">Multi-entity SME</div></div></div></div>
+    <div class="quote"><div class="stars2">&#9733;&#9733;&#9733;&#9733;&#9733;</div><p>"Monthly pharmacy billing used to be a spreadsheet nightmare. Now it is one upload and done."</p><div class="who"><div class="av">BM</div><div><div class="nm">Billing Manager</div><div class="rl">O2O Distribution</div></div></div></div>
+  </div>
+</section>
+
 <section id="pricing" class="wrap">
   <div class="eyebrow">Pricing</div>
   <h2>Simple plans that scale with you</h2>
@@ -258,6 +291,23 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   } else { els.forEach(function(e){e.classList.add('in');}); }
   var nav=document.querySelector('nav');
   window.addEventListener('scroll',function(){ if(nav) nav.style.boxShadow=(window.scrollY>20)?'0 8px 30px rgba(0,0,0,.35)':'none'; },{passive:true});
+})();
+</script>
+<script>
+(function(){
+  function countUp(el){
+    var txt=(el.textContent||'').trim();
+    var m=txt.match(/^([^0-9]*)([0-9,]+)(.*)$/);
+    if(!m) return;
+    var prefix=m[1], target=parseInt(m[2].replace(/,/g,''),10), suffix=m[3];
+    if(!target||target<5) return;
+    var dur=1100, t0=null;
+    function step(ts){ if(!t0)t0=ts; var pr=Math.min((ts-t0)/dur,1); var e=1-Math.pow(1-pr,3); var cur=Math.round(target*e);
+      el.textContent=prefix+cur.toLocaleString()+suffix; if(pr<1)requestAnimationFrame(step); else el.textContent=txt; }
+    requestAnimationFrame(step);
+  }
+  function run(){ [].slice.call(document.querySelectorAll('.shot .v')).forEach(countUp); }
+  if(document.readyState!=='loading') setTimeout(run,350); else document.addEventListener('DOMContentLoaded',function(){setTimeout(run,350);});
 })();
 </script>
 </body>
