@@ -277,6 +277,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
     <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
     <div class="tab"        data-t="smart"       onclick="tab('smart')"       id="tab-smart">🧠 Smart</div>
     <div class="tab"        data-t="close"       onclick="tab('close')"       id="tab-close">📋 Close</div>
+    <div class="tab"        data-t="recon"       onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
   </div>
 
@@ -290,6 +291,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
   <div id="close"       class="hide"></div>
+  <div id="recon"       class="hide"></div>
   <div id="users"       class="hide"></div>
 
 </div></div>
@@ -391,6 +393,7 @@ function showApp(){
   document.getElementById('tab-recv').classList.toggle('hide',!isAppr);
   document.getElementById('tab-smart').classList.toggle('hide',!isAppr);
   document.getElementById('tab-close').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-recon').classList.toggle('hide',!isAppr);
   document.getElementById('tab-users').classList.toggle('hide', ME.role!=='admin');
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
@@ -402,7 +405,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -423,6 +426,7 @@ async function render(t){
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
     if(t==='close')      return renderClose();
+    if(t==='recon')      return renderRecon();
     if(t==='users')      return renderUsers();
   }catch(x){
     loaded[t]=false;
@@ -1002,7 +1006,66 @@ async function closeLoad(){
 async function closeSet(id,status){ try{ var r=await call({api:'close_update',id:id,status:status}); if(r&&r.ok!==false) closeLoad(); else toast((r&&r.error)||'failed',true); }catch(e){ toast(e.message,true); } }
 async function closeAssign(id,assignee){ try{ await call({api:'close_update',id:id,assignee:assignee}); }catch(e){} }
 
+
+/* ---- Bank reconciliation ---- */
+function bankParse(buf,isCsv){
+  var wb=isCsv?XLSX.read(new TextDecoder().decode(new Uint8Array(buf)),{type:'string'}):XLSX.read(new Uint8Array(buf),{type:'array'});
+  var ws=wb.Sheets[wb.SheetNames[0]];
+  var rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:null});
+  function find(row,keys){ for(var c=0;c<row.length;c++){ var v=String(row[c]||'').trim().toLowerCase(); for(var k=0;k<keys.length;k++){ if(v.indexOf(keys[k])>=0) return c; } } return -1; }
+  var hdr=-1,map={};
+  for(var r=0;r<Math.min(rows.length,18);r++){
+    var row=rows[r]||[];
+    var di=find(row,['date']); var ai=find(row,['amount']); var debi=find(row,['debit','withdraw']); var credi=find(row,['credit','deposit']); var desci=find(row,['desc','detail','narrat','particular','reference']);
+    if(di>=0 && (ai>=0||debi>=0||credi>=0)){ hdr=r; map={date:di,amount:ai,debit:debi,credit:credi,desc:desci}; break; }
+  }
+  if(hdr<0) throw new Error('Could not detect columns. Statement needs headers like Date, Description, Amount (or Debit/Credit).');
+  var out=[];
+  for(var r=hdr+1;r<rows.length;r++){
+    var row=rows[r]||[]; var dt=row[map.date]; if(dt==null||String(dt).trim()==='')continue;
+    var amt=0;
+    if(map.amount>=0 && row[map.amount]!=null && String(row[map.amount]).trim()!=='') amt=parseFloat(String(row[map.amount]).replace(/[^0-9.\-]/g,''))||0;
+    else { var deb=map.debit>=0?parseFloat(String(row[map.debit]||'').replace(/[^0-9.\-]/g,''))||0:0; var cre=map.credit>=0?parseFloat(String(row[map.credit]||'').replace(/[^0-9.\-]/g,''))||0:0; amt=cre-deb; }
+    if(!amt) continue;
+    out.push({date:String(dt),amount:amt,description:map.desc>=0?String(row[map.desc]||''):''});
+  }
+  return out;
+}
+var RECON_LINES=null;
+function renderRecon(){
+  var opts=COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('');
+  document.getElementById('recon').innerHTML='<div class="panel"><div class="panel-hd"><h3>\U0001f3e6 Bank reconciliation <span class="pill pill-submit" style="font-size:9px">beta</span></h3></div>'+
+    '<p class="muted" style="font-size:12.5px;margin:0 0 12px">Upload a bank statement (CSV/Excel with Date, Description, Amount or Debit/Credit). Each line is matched by amount to your outstanding Xero invoices &amp; bills.</p>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="rc_co" style="max-width:300px">'+opts+'</select><input type="file" id="rc_file" accept=".csv,.xlsx,.xls" onchange="reconPick(this)"/></div>'+
+    '<div id="rc_out" style="margin-top:14px"></div></div>';
+  loaded.recon=true;
+}
+function reconPick(input){
+  var f=input.files[0]; if(!f)return;
+  var rd=new FileReader();
+  rd.onload=function(e){ try{ RECON_LINES=bankParse(e.target.result,/\.csv$/i.test(f.name)); if(!RECON_LINES.length){document.getElementById('rc_out').innerHTML='<div style="color:var(--amber)">No usable rows found in the statement.</div>';return;} reconRun(); }
+    catch(err){ document.getElementById('rc_out').innerHTML='<div style="color:var(--red-soft)">'+esc(err.message)+'</div>'; } };
+  rd.readAsArrayBuffer(f);
+}
+async function reconRun(){
+  var t=document.getElementById('rc_co').value; if(!t){toast('Pick a company',true);return;}
+  if(!RECON_LINES||!RECON_LINES.length)return;
+  document.getElementById('rc_out').innerHTML='<div class="load"><span class="spin"></span>Matching '+RECON_LINES.length+' lines against Xero…</div>';
+  try{ var r=await call({api:'bank_reconcile',tenant:t,lines:RECON_LINES});
+    if(!r||!r.ok){ document.getElementById('rc_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    var rows=(r.results||[]).map(function(x){ var m=x.match;
+      return '<tr><td>'+esc(x.date)+'</td><td class="muted" style="font-size:11.5px">'+esc((x.description||'').slice(0,40))+'</td><td class="amt">'+M(Math.abs(x.amount))+'</td><td>'+(m?'<span class="pill pill-green">✓</span> '+esc(m.kind)+' &middot; '+esc(m.contact||'')+' '+esc(m.number||''):'<span class="pill pill-draft">no match</span>')+'</td></tr>';
+    }).join('');
+    document.getElementById('rc_out').innerHTML=
+      '<div class="cards"><div class="card"><div class="n" style="color:var(--green-soft)">'+r.matched+'</div><div class="l">Matched</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--amber)">'+(r.total-r.matched)+'</div><div class="l">Unmatched</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--sky-soft)">'+r.total+'</div><div class="l">Bank lines</div></div></div>'+
+      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Date</th><th>Description</th><th class="amt">Amount</th><th>Xero match</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){ document.getElementById('rc_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+
 /* ── Auto-login on load ── */
+
 
 if(TOKEN){
   call({api:'me'}).then(r=>{
