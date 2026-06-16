@@ -193,6 +193,7 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   .cards{grid-template-columns:1fr 1fr}
 }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -244,12 +245,14 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
     <div class="tab"        data-t="approvals"   onclick="tab('approvals')"   id="tab-appr">✅ Approvals</div>
     <div class="tab"        data-t="collections" onclick="tab('collections')" id="tab-coll">📨 Collections</div>
     <div class="tab"        data-t="upload"      onclick="tab('upload')">⬆ Upload</div>
+    <div class="tab"        data-t="o2o"         onclick="tab('o2o')"         id="tab-o2o">💊 O2O Billing</div>
   </div>
 
   <div id="overview"></div>
   <div id="approvals"   class="hide"></div>
   <div id="collections" class="hide"></div>
   <div id="upload"      class="hide"></div>
+  <div id="o2o"         class="hide"></div>
 
 </div></div>
 
@@ -339,6 +342,7 @@ function showApp(){
   const isAppr=ME.role==='admin'||ME.role==='approver';
   document.getElementById('tab-appr').classList.toggle('hide',!isAppr);
   document.getElementById('tab-coll').classList.toggle('hide',!isAppr);
+  document.getElementById('tab-o2o').classList.toggle('hide',!isAppr);
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
@@ -349,7 +353,7 @@ function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -364,6 +368,7 @@ async function render(t){
     if(t==='approvals')  return await renderApprovals();
     if(t==='collections')return renderCollections();
     if(t==='upload')     return renderUpload();
+    if(t==='o2o')        return renderO2O();
   }catch(x){
     loaded[t]=false;
     document.getElementById(t).innerHTML=
@@ -584,6 +589,86 @@ async function doChangePw(){
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){closePwModal();cfResolve(false);}
 });
+
+
+/* ---- O2O Pharmacy Billing ---- */
+var O2O_DATA=null;
+function renderO2O(){
+  document.getElementById('o2o').innerHTML=
+    '<div class="panel"><div class="panel-hd"><h3>O2O Pharmacy Billing → Xero (SKINDAE SDN BHD)</h3></div>'+
+    '<p class="muted" style="font-size:13px;margin:0 0 14px">Upload the monthly Skindae billing Excel. It is parsed in your browser — preview each pharmacy invoice, then issue them in Xero and email each pharmacy.</p>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+    '<input type="file" id="o2o_file" accept=".xlsx" onchange="o2oPick(this)"/>'+
+    '<button class="btn p" id="o2o-issue" onclick="o2oIssue()" disabled>Issue invoices + email →</button></div>'+
+    '<div id="o2o-out" style="margin-top:14px"><p class="muted">Pick the Excel to preview.</p></div></div>';
+  loaded.o2o=true;
+}
+function o2oParse(buf){
+  var wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+  var period=null, pharmacies=[], grand=0;
+  wb.SheetNames.forEach(function(sn){
+    if(sn.trim().toLowerCase()==='sample')return;
+    var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:null});
+    var name=(rows[0]&&rows[0][0])?String(rows[0][0]).trim():sn;
+    if(!period&&rows[1])period=rows[1][0];
+    var groups={};
+    for(var r=3;r<rows.length;r++){
+      var row=rows[r]||[]; var pkg=row[1]; var net=row[10];
+      var netv=(typeof net==='number')?net:parseFloat(net);
+      if(!netv||netv<=0||!pkg||!String(pkg).trim())continue;
+      var unit=Math.round(netv*100)/100; var key=String(pkg).trim()+'|'+unit;
+      if(!groups[key])groups[key]={package:String(pkg).trim(),unit_price:unit,quantity:0};
+      groups[key].quantity++;
+    }
+    var lines=Object.keys(groups).map(function(k){var g=groups[k];return {package:g.package,unit_price:g.unit_price,quantity:g.quantity,amount:Math.round(g.quantity*g.unit_price*100)/100};});
+    if(!lines.length)return;
+    lines.sort(function(a,b){return b.amount-a.amount;});
+    var total=Math.round(lines.reduce(function(s,l){return s+l.amount;},0)*100)/100;
+    pharmacies.push({pharmacy:name,line_count:lines.length,total:total,lines:lines}); grand+=total;
+  });
+  return {period:String(period||''),pharmacy_count:pharmacies.length,grand_total:Math.round(grand*100)/100,pharmacies:pharmacies};
+}
+function o2oPick(input){
+  var f=input.files[0]; if(!f)return;
+  var rd=new FileReader();
+  rd.onload=function(e){ try{ O2O_DATA=o2oParse(e.target.result); o2oRenderPreview(); }
+    catch(err){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>'; } };
+  rd.readAsArrayBuffer(f);
+}
+function o2oRenderPreview(){
+  var d=O2O_DATA;
+  var rows=d.pharmacies.map(function(p){
+    var lines=p.lines.map(function(l){return esc(l.package)+' ×'+l.quantity+' @'+M(l.unit_price)+' = '+M(l.amount);}).join('<br>');
+    return '<tr><td><b>'+esc(p.pharmacy)+'</b></td><td class="muted" style="font-size:11px">'+lines+'</td><td class="amt"><b>'+M(p.total)+'</b></td></tr>';
+  }).join('');
+  document.getElementById('o2o-out').innerHTML=
+    '<div class="cards"><div class="card"><div class="n" style="color:var(--coral-soft)">'+d.pharmacy_count+'</div><div class="l">Pharmacies</div></div>'+
+    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(d.grand_total)+'</div><div class="l">Grand total</div></div></div>'+
+    '<div class="status-bar" style="margin:2px 0 12px"><div class="dot-green"></div>'+esc(d.period||'')+'</div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th>Lines (grouped by package)</th><th class="amt">Invoice total</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  document.getElementById('o2o-issue').disabled=false;
+}
+async function o2oIssue(){
+  if(!O2O_DATA){showToast&&showToast('Preview first','error');return;}
+  if(!confirm('Create a Xero invoice for each pharmacy in SKINDAE SDN BHD and email them? ('+O2O_DATA.pharmacy_count+' invoices)'))return;
+  var btn=document.getElementById('o2o-issue'); btn.disabled=true; btn.textContent='Issuing…';
+  try{
+    var r=await call({api:'o2o_issue', period:O2O_DATA.period, invoices:O2O_DATA.pharmacies});
+    if(r&&r.ok){
+      var rows=(r.results||[]).map(function(x){
+        var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
+        return '<tr><td>'+esc(x.pharmacy)+'</td><td class="amt">'+M(x.total)+'</td><td>'+esc(x.number||'')+' <span class="pill '+pill+'">'+esc(x.status)+'</span></td><td class="muted">'+esc(x.email||'')+'</td></tr>';
+      }).join('');
+      document.getElementById('o2o-out').innerHTML=
+        '<div class="cards"><div class="card"><div class="n" style="color:var(--green-soft)">'+(r.issued||0)+'</div><div class="l">Issued</div></div>'+
+        '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.emailed||0)+'</div><div class="l">Emailed</div></div>'+
+        '<div class="card"><div class="n" style="color:'+((r.failed||0)?'var(--red-soft)':'var(--muted)')+'">'+(r.failed||0)+'</div><div class="l">Failed</div></div></div>'+
+        (r.dry_run?'<div class="status-bar" style="margin:0 0 10px"><div class="dot-green"></div>DRY-RUN — nothing posted (set live in backend)</div>':'')+
+        '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Total</th><th>Invoice</th><th>Email</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    } else { document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'unknown')+'</div>'; }
+  }catch(e){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc(e.message)+'</div>'; }
+  btn.disabled=false; btn.textContent='Issue invoices + email →';
+}
 
 /* ── Auto-login on load ── */
 if(TOKEN){
