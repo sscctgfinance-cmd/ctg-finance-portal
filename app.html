@@ -1181,7 +1181,8 @@ async function auditLoad(){
 
 /* ---- Xero sync (live webhook activity + cache) ---- */
 async function xeroSyncLoad(){
-  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px"><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Sync now</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div><div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>💰 AR aging snapshot <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· instant, from local cache (real-time synced)</span></h3></div><div id="ar_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  arAgingLoad();
   try{
     var r=await call({api:'webhook_events',limit:80});
     if(!r||!r.ok){ document.getElementById('xero_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
@@ -1212,6 +1213,32 @@ async function xeroSyncNow(){
     else toast((r&&r.error)||'Sync failed',true);
   }catch(e){ toast(e.message,true); }
   xeroSyncLoad();
+}
+async function xeroBackfill(){
+  var btn=document.getElementById('xbackfill_btn'); if(btn){ btn.disabled=true; btn.textContent='Syncing all invoices…'; }
+  try{ var r=await call({api:'xero_backfill'});
+    if(r&&r.ok!==false) toast('Full sync done · '+(r.upserted||0)+' invoices cached across '+(r.tenants||0)+' companies');
+    else toast((r&&r.error)||'Backfill failed',true);
+  }catch(e){ toast(e.message,true); }
+  xeroSyncLoad();
+}
+async function arAgingLoad(){
+  var el=document.getElementById('ar_out'); if(!el) return;
+  try{
+    var r=await call({api:'cached_receivables'});
+    if(!r||!r.ok){ el.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    if(!r.count){ el.innerHTML='<div class="empty"><div class="empty-ico">💤</div><div>No cached receivables yet — click <b>Full sync from Xero</b> above to populate, or wait for the next webhook.</div></div>'; return; }
+    var bk=r.buckets||{};
+    var defs=[['current','Current','var(--green-soft)'],['d1_30','1–30 days','var(--sky-soft)'],['d31_60','31–60 days','var(--amber)'],['d61_90','61–90 days','var(--coral-soft)'],['d90p','90+ days','var(--red-soft)']];
+    var cards='<div class="cards">'+defs.map(function(d){ return '<div class="card"><div class="n" style="color:'+d[2]+';font-size:18px">'+M(bk[d[0]]||0)+'</div><div class="l">'+d[1]+'</div></div>'; }).join('')+'</div>';
+    var top=(r.items||[]).slice(0,10);
+    var rows=top.map(function(i){
+      var col=i.days_overdue>60?'var(--red-soft)':i.days_overdue>0?'var(--amber)':'var(--muted)';
+      return '<tr><td class="muted" style="font-size:11.5px">'+esc(i.tenant_name||'')+'</td><td><b style="font-size:12.5px">'+esc(i.contact||'?')+'</b></td><td class="muted" style="font-size:11.5px">'+esc(i.number||'')+'</td><td class="amt" style="font-weight:700">'+M(i.amount_due)+'</td><td class="muted" style="font-size:11.5px">'+esc(i.due_date||'')+'</td><td style="color:'+col+';font-weight:700;font-size:12px">'+(i.days_overdue>0?(i.days_overdue+'d'):'—')+'</td></tr>';
+    }).join('');
+    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px"><div class="muted" style="font-size:12px">'+r.count+' open invoice(s)</div><div style="font-size:17px;font-weight:800;color:#fff">'+M(r.total)+' <span class="muted" style="font-size:11px;font-weight:600">total outstanding</span></div></div>'+cards+
+      '<h4 style="font-size:12.5px;margin:18px 0 8px;color:#fff">Top exposures</h4><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
 
