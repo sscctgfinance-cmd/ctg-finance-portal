@@ -1179,26 +1179,39 @@ async function auditLoad(){
   }catch(e){ document.getElementById('audit_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
-/* ---- Xero sync (live webhook activity) ---- */
+/* ---- Xero sync (live webhook activity + cache) ---- */
 async function xeroSyncLoad(){
-  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px"><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Sync now</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
   try{
     var r=await call({api:'webhook_events',limit:80});
     if(!r||!r.ok){ document.getElementById('xero_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
     var cfg = r.configured
-      ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default"><div class="nt">✓ Webhook key configured — Xero can push live events</div><div class="nd">Invoice &amp; Contact changes in Xero now sync to this portal in real time.</div></div>'
+      ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default"><div class="nt">✓ Webhook key configured — Xero can push live events</div><div class="nd">Invoice &amp; Contact changes in Xero auto-sync into the local cache in real time.</div></div>'
       : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default"><div class="nt">⚠ Webhook not activated yet</div><div class="nd">Add the <b>XERO_WEBHOOK_KEY</b> secret in Supabase, then register the delivery URL below in the Xero developer portal (Webhooks → Invoices + Contacts).</div></div>';
+    var stats='<div class="cards" style="margin:14px 0">'+
+      '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.contact_cache||0).toLocaleString()+'</div><div class="l">Contacts cached</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.invoice_cache||0).toLocaleString()+'</div><div class="l">Invoices cached</div></div>'+
+      '<div class="card"><div class="n" style="color:'+((r.pending||0)>0?'var(--amber)':'var(--green-soft)')+'">'+(r.pending||0)+'</div><div class="l">Pending sync</div></div></div>';
     var ev=r.events||[];
     var rows = ev.length ? ev.map(function(e){
       var when=e.received_at?new Date(e.received_at).toLocaleString():'';
       var typ=e.event_type||''; var cat=e.event_category||'';
       var pill = typ==='CREATE'?'pill-green':typ==='UPDATE'?'pill-blue':'pill-draft';
-      return '<tr><td class="muted" style="font-size:11.5px;white-space:nowrap">'+esc(when)+'</td><td><span class="pill '+pill+'" style="font-size:9.5px">'+esc(cat)+' · '+esc(typ)+'</span></td><td class="muted" style="font-size:11.5px">'+esc(e.tenant_name||'')+'</td><td class="muted" style="font-size:10.5px;font-family:monospace">'+esc(e.resource_id||'')+'</td></tr>';
-    }).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">No events received yet — they appear here the moment Xero pushes a change.</td></tr>';
-    document.getElementById('xero_out').innerHTML=cfg+
-      '<div class="tbl-wrap" style="margin-top:12px"><table class="bigtable"><thead><tr><th>Received</th><th>Event</th><th>Company</th><th>Resource ID</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      var st = e.processed?'<span class="pill pill-green" style="font-size:9px">synced</span>':'<span class="pill pill-draft" style="font-size:9px">queued</span>';
+      return '<tr><td class="muted" style="font-size:11.5px;white-space:nowrap">'+esc(when)+'</td><td><span class="pill '+pill+'" style="font-size:9.5px">'+esc(cat)+' · '+esc(typ)+'</span></td><td class="muted" style="font-size:11.5px">'+esc(e.tenant_name||'')+'</td><td>'+st+'</td><td class="muted" style="font-size:10.5px;font-family:monospace">'+esc(e.resource_id||'')+'</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">No events received yet — they appear here the moment Xero pushes a change.</td></tr>';
+    document.getElementById('xero_out').innerHTML=cfg+stats+
+      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Received</th><th>Event</th><th>Company</th><th>Status</th><th>Resource ID</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
       '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Webhook delivery URL (paste into Xero developer portal):<br><code style="font-size:11px;color:var(--coral-soft);word-break:break-all">'+esc(API)+'</code></div>';
   }catch(e){ document.getElementById('xero_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function xeroSyncNow(){
+  var btn=document.getElementById('xsync_btn'); if(btn){ btn.disabled=true; btn.textContent='Syncing…'; }
+  try{ var r=await call({api:'sync_now'});
+    if(r&&r.ok!==false) toast('Synced '+(r.processed||0)+' event(s)'+((r.remaining||0)?(' · '+r.remaining+' still queued'):''));
+    else toast((r&&r.error)||'Sync failed',true);
+  }catch(e){ toast(e.message,true); }
+  xeroSyncLoad();
 }
 
 
