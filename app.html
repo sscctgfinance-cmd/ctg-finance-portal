@@ -1188,7 +1188,7 @@ async function xeroSyncLoad(){
     if(!r||!r.ok){ document.getElementById('xero_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
     var cfg = r.configured
       ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default"><div class="nt">✓ Webhook key configured — Xero can push live events</div><div class="nd">Invoice &amp; Contact changes in Xero auto-sync into the local cache in real time.</div></div>'
-      : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default"><div class="nt">⚠ Webhook not activated yet</div><div class="nd">Add the <b>XERO_WEBHOOK_KEY</b> secret in Supabase, then register the delivery URL below in the Xero developer portal (Webhooks → Invoices + Contacts).</div></div>';
+      : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default"><div class="nt">⚠ Webhook not activated yet</div><div class="nd">① In the Xero developer portal → <b>Webhooks</b>, set the delivery URL below &amp; subscribe to <b>Invoices + Contacts</b>. ② Paste the <b>Webhook signing key</b> Xero gives you here (saved securely server-side — no Supabase dashboard needed):</div><div style="display:flex;gap:8px;margin-top:11px"><input id="wk_input" type="password" placeholder="Xero webhook signing key" style="flex:1"/><button class="btn p sm" onclick="saveWebhookKey()">Save key</button></div></div>';
     var stats='<div class="cards" style="margin:14px 0">'+
       '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.contact_cache||0).toLocaleString()+'</div><div class="l">Contacts cached</div></div>'+
       '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.invoice_cache||0).toLocaleString()+'</div><div class="l">Invoices cached</div></div>'+
@@ -1230,15 +1230,43 @@ async function arAgingLoad(){
     if(!r.count){ el.innerHTML='<div class="empty"><div class="empty-ico">💤</div><div>No cached receivables yet — click <b>Full sync from Xero</b> above to populate, or wait for the next webhook.</div></div>'; return; }
     var bk=r.buckets||{};
     var defs=[['current','Current','var(--green-soft)'],['d1_30','1–30 days','var(--sky-soft)'],['d31_60','31–60 days','var(--amber)'],['d61_90','61–90 days','var(--coral-soft)'],['d90p','90+ days','var(--red-soft)']];
-    var cards='<div class="cards">'+defs.map(function(d){ return '<div class="card"><div class="n" style="color:'+d[2]+';font-size:18px">'+M(bk[d[0]]||0)+'</div><div class="l">'+d[1]+'</div></div>'; }).join('')+'</div>';
+    var cards='<div class="cards">'+defs.map(function(d){ return '<div class="card" style="cursor:pointer" onclick="arBucket(\''+d[0]+'\',\''+d[1]+'\')" title="Click to view invoices in this band"><div class="n" style="color:'+d[2]+';font-size:18px">'+M(bk[d[0]]||0)+'</div><div class="l">'+d[1]+' ▸</div></div>'; }).join('')+'</div>';
     var top=(r.items||[]).slice(0,10);
     var rows=top.map(function(i){
       var col=i.days_overdue>60?'var(--red-soft)':i.days_overdue>0?'var(--amber)':'var(--muted)';
       return '<tr><td class="muted" style="font-size:11.5px">'+esc(i.tenant_name||'')+'</td><td><b style="font-size:12.5px">'+esc(i.contact||'?')+'</b></td><td class="muted" style="font-size:11.5px">'+esc(i.number||'')+'</td><td class="amt" style="font-weight:700">'+M(i.amount_due)+'</td><td class="muted" style="font-size:11.5px">'+esc(i.due_date||'')+'</td><td style="color:'+col+';font-weight:700;font-size:12px">'+(i.days_overdue>0?(i.days_overdue+'d'):'—')+'</td></tr>';
     }).join('');
     el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px"><div class="muted" style="font-size:12px">'+r.count+' open invoice(s)</div><div style="font-size:17px;font-weight:800;color:#fff">'+M(r.total)+' <span class="muted" style="font-size:11px;font-weight:600">total outstanding</span></div></div>'+cards+
+      '<div id="ar_drill"></div>'+
       '<h4 style="font-size:12.5px;margin:18px 0 8px;color:#fff">Top exposures</h4><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function saveWebhookKey(){
+  var inp=document.getElementById('wk_input'); var v=inp?inp.value.trim():'';
+  if(v.length<10){ toast('Please paste the full signing key',true); return; }
+  try{ var r=await call({api:'set_webhook_key',key:v});
+    if(r&&r.ok!==false){ toast('Webhook key saved — Xero can now push events'); xeroSyncLoad(); }
+    else toast((r&&r.error)||'Save failed',true);
+  }catch(e){ toast(e.message,true); }
+}
+async function arBucket(key,label){
+  var d=document.getElementById('ar_drill'); if(!d) return;
+  d.innerHTML='<div class="load"><span class="spin"></span>Loading '+esc(label)+'…</div>';
+  try{ var r=await call({api:'cached_receivables',bucket:key});
+    if(!r||!r.ok){ d.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    var items=r.items||[];
+    var sum=items.reduce(function(s,i){return s+i.amount_due;},0);
+    var rows=items.map(function(i){ var col=i.days_overdue>60?'var(--red-soft)':i.days_overdue>0?'var(--amber)':'var(--muted)'; return '<tr><td class="muted" style="font-size:11.5px">'+esc(i.tenant_name||'')+'</td><td><b style="font-size:12.5px">'+esc(i.contact||'?')+'</b></td><td class="muted" style="font-size:11.5px">'+esc(i.number||'')+'</td><td class="amt" style="font-weight:700">'+M(i.amount_due)+'</td><td class="muted" style="font-size:11.5px">'+esc(i.due_date||'')+'</td><td style="color:'+col+';font-weight:700;font-size:12px">'+(i.days_overdue>0?(i.days_overdue+'d'):'—')+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:14px">No invoices in this band</td></tr>';
+    d.innerHTML='<div class="panel" style="margin:14px 0;border-color:var(--coral-deep)"><div class="panel-hd"><h3 style="font-size:13px">'+esc(label)+' · '+items.length+' invoice(s) · '+M(sum)+'</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" onclick="arRunCollections()">📨 Run collections</button><button class="btn sm" onclick="document.getElementById(\'ar_drill\').innerHTML=\'\'">× Close</button></div></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    d.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(e){ d.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function arRunCollections(){
+  if(!confirm('Generate the collections preview for overdue receivables and send it to the finance inbox? (Customers are NOT contacted directly.)')) return;
+  try{ var r=await call({api:'collections'});
+    if(r&&r.ok!==false){ var x=(r.result)||{}; toast('Collections preview sent · '+(x.reachable_due_count||0)+' due'); }
+    else toast((r&&r.error)||'Failed',true);
+  }catch(e){ toast(e.message,true); }
 }
 
 
