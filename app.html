@@ -485,49 +485,102 @@ async function render(t){
 /* ── Overview ── */
 function mkCard(cls,ico,n,l){return'<div class="card '+cls+'"><div class="c-ico">'+ico+'</div><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 
+// Date range state for Overview. null = current YTD (use legacy `overview` action).
+var OV_RANGE = null;   // { from, to, label }
+function ovDates(){
+  var n=new Date(); var y=n.getFullYear(), m=n.getMonth();
+  // Build local-date YYYY-MM-DD (toISOString would shift by timezone — MYT is UTC+8 so midnight Jun 1 became May 31).
+  var p=function(d){ var yy=d.getFullYear(), mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return yy+'-'+mm+'-'+dd; };
+  return {
+    today:           { from:p(n), to:p(n), label:'Today' },
+    this_month:      { from:p(new Date(y,m,1)),    to:p(new Date(y,m+1,0)),  label:'This month' },
+    last_month:      { from:p(new Date(y,m-1,1)),  to:p(new Date(y,m,0)),    label:'Last month' },
+    this_quarter:    (()=>{ var q=Math.floor(m/3); return { from:p(new Date(y,q*3,1)), to:p(new Date(y,q*3+3,0)), label:'This quarter' }; })(),
+    last_quarter:    (()=>{ var q=Math.floor(m/3)-1; var yy=y; if(q<0){q=3;yy=y-1;} return { from:p(new Date(yy,q*3,1)), to:p(new Date(yy,q*3+3,0)), label:'Last quarter' }; })(),
+    ytd:             { from:p(new Date(y,0,1)),    to:p(n),                  label:'Year to date' },
+    last_year:       { from:p(new Date(y-1,0,1)),  to:p(new Date(y-1,11,31)),label:'Last year' }
+  };
+}
+function ovSetPreset(key){
+  if(key==='current'){ OV_RANGE=null; loaded.overview=false; render('overview'); return; }
+  var d=ovDates()[key]; if(!d) return;
+  OV_RANGE = d; loaded.overview=false; render('overview');
+}
+function ovApplyCustom(){
+  var f=document.getElementById('ov_from').value, t=document.getElementById('ov_to').value;
+  if(!f||!t){ toast('Pick both From and To dates',true); return; }
+  if(t<f){ toast('To date is before From date',true); return; }
+  OV_RANGE = { from:f, to:t, label:f+' → '+t };
+  loaded.overview=false; render('overview');
+}
+function ovHeader(){
+  var presets = [['current','Current'],['today','Today'],['this_month','This month'],['last_month','Last month'],['this_quarter','This quarter'],['ytd','YTD'],['last_year','Last year']];
+  var active = OV_RANGE ? '' : 'current';
+  if(OV_RANGE){
+    var d=ovDates();
+    for(var k in d){ if(d[k].from===OV_RANGE.from && d[k].to===OV_RANGE.to){ active=k; break; } }
+  }
+  var btns = presets.map(function(p){ return '<button class="btn sm '+(active===p[0]?'p':'')+'" onclick="ovSetPreset(\''+p[0]+'\')">'+p[1]+'</button>'; }).join(' ');
+  var today=new Date().toISOString().slice(0,10);
+  var fromV = (OV_RANGE&&active==='')?OV_RANGE.from:'';
+  var toV   = (OV_RANGE&&active==='')?OV_RANGE.to:'';
+  return '<div class="panel" style="padding:14px 16px;margin-bottom:14px"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">Period</span>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:6px">'+btns+'</div>'+
+    '<span class="muted" style="font-size:11px">·</span>'+
+    '<span class="muted" style="font-size:11.5px">Custom:</span>'+
+    '<input type="date" id="ov_from" value="'+esc(fromV)+'" max="'+today+'" style="font-size:12px;padding:5px 8px;width:auto"/>'+
+    '<span class="muted">→</span>'+
+    '<input type="date" id="ov_to" value="'+esc(toV)+'" max="'+today+'" style="font-size:12px;padding:5px 8px;width:auto"/>'+
+    '<button class="btn sm" onclick="ovApplyCustom()">Apply</button>'+
+    (OV_RANGE?'<span class="pill pill-coral" style="margin-left:6px">'+esc(OV_RANGE.label)+'</span>':'')+
+    '</div></div>';
+}
+
 async function renderOverview(){
+  // Default (no range) → legacy YTD overview (with bank balances).
+  // With range → portal_overview_range from the local invoice cache (income+expenses+net only; bank is point-in-time and excluded).
   spin('overview');
-  const r=await call({api:'overview'});
-  if(!r||!r.companies){
-    document.getElementById('overview').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div>No data available</div></div>';return;
-  }
-  const filter=curCo();
-  let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
-  const tot=cs.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,bank:a.bank+ +c.bank}),{inc:0,exp:0,np:0,bank:0});
-
-  let h='<div class="cards">';
-  h+=mkCard('blue', '🏦',M(tot.bank),'Total Cash');
-  h+=mkCard(tot.np>=0?'green':'red','📈',M(tot.np),'Net Profit (YTD)');
-  h+=mkCard('green','💰',M(tot.inc),'Total Revenue');
-  h+=mkCard('amber','📤',M(tot.exp),'Total Expenses');
-  h+='</div>';
-
-  if(cs.length){
-    h+='<div class="panel"><div class="panel-hd"><h3>Company Financials (YTD)</h3>';
+  if(!OV_RANGE){
+    const r=await call({api:'overview'});
+    if(!r||!r.companies){ document.getElementById('overview').innerHTML=ovHeader()+'<div class="empty"><div class="empty-ico">📭</div><div>No data available</div></div>'; return; }
+    const filter=curCo();
+    let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
+    const tot=cs.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,bank:a.bank+ +c.bank}),{inc:0,exp:0,np:0,bank:0});
+    let h=ovHeader()+'<div class="cards">';
+    h+=mkCard('blue', '🏦',M(tot.bank),'Total Cash');
+    h+=mkCard(tot.np>=0?'green':'red','📈',M(tot.np),'Net Profit (YTD)');
+    h+=mkCard('green','💰',M(tot.inc),'Total Revenue');
+    h+=mkCard('amber','📤',M(tot.exp),'Total Expenses');
+    h+='</div>';
+    if(cs.length){
+      h+='<div class="panel"><div class="panel-hd"><h3>Company Financials (YTD)</h3>';
+      if(cs.length>1)h+='<span class="pill pill-coral">'+cs.length+' companies</span>';
+      h+='</div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Revenue</th><th class="amt">Expenses</th><th class="amt">Net Profit</th><th class="amt">Cash</th></tr></thead><tbody>';
+      cs.forEach(c=>{ const col=+c.net_profit>=0?'var(--green-soft)':'var(--red-soft)'; h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td><td class="amt" style="color:var(--green-soft)">'+M(c.income)+'</td><td class="amt" style="color:var(--red-soft)">'+M(c.expenses)+'</td><td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td><td class="amt">'+M(c.bank)+'</td></tr>'; });
+      h+='</tbody></table></div></div>';
+    }
+    if(r.as_of){ const d=new Date(r.as_of); h+='<div class="status-bar"><div class="dot-green"></div>Data as of '+d.toLocaleString('en-GB',{year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})+' · Auto-refreshed hourly</div>'; }
+    document.getElementById('overview').innerHTML=h;
+  } else {
+    const r=await call({api:'overview_range', from:OV_RANGE.from, to:OV_RANGE.to});
+    if(!r||!r.companies){ document.getElementById('overview').innerHTML=ovHeader()+'<div class="empty"><div class="empty-ico">📭</div><div>'+esc((r&&r.error)||'No data in this period')+'</div></div>'; return; }
+    const filter=curCo();
+    let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
+    const tot=cs.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,ar:a.ar+(+c.ar_count||0),ap:a.ap+(+c.ap_count||0)}),{inc:0,exp:0,np:0,ar:0,ap:0});
+    let h=ovHeader()+'<div class="cards">';
+    h+=mkCard(tot.np>=0?'green':'red','📈',M(tot.np),'Net (in period)');
+    h+=mkCard('green','💰',M(tot.inc),'Revenue (in period)');
+    h+=mkCard('amber','📤',M(tot.exp),'Expenses (in period)');
+    h+=mkCard('blue','📄',(tot.ar+tot.ap).toLocaleString(),'Invoices in period');
+    h+='</div>';
+    h+='<div class="panel"><div class="panel-hd"><h3>Company Financials · '+esc(OV_RANGE.label)+'</h3>';
     if(cs.length>1)h+='<span class="pill pill-coral">'+cs.length+' companies</span>';
-    h+='</div><div class="tbl-wrap"><table class="bigtable"><thead><tr>'+
-      '<th>Company</th><th class="amt">Revenue</th><th class="amt">Expenses</th>'+
-      '<th class="amt">Net Profit</th><th class="amt">Cash</th>'+
-      '</tr></thead><tbody>';
-    cs.forEach(c=>{
-      const col=+c.net_profit>=0?'var(--green-soft)':'var(--red-soft)';
-      h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td>'+
-        '<td class="amt" style="color:var(--green-soft)">'+M(c.income)+'</td>'+
-        '<td class="amt" style="color:var(--red-soft)">'+M(c.expenses)+'</td>'+
-        '<td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td>'+
-        '<td class="amt">'+M(c.bank)+'</td></tr>';
-    });
+    h+='</div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Revenue</th><th class="amt">Expenses</th><th class="amt">Net</th><th class="amt">Invoices</th></tr></thead><tbody>';
+    cs.forEach(c=>{ const col=+c.net_profit>=0?'var(--green-soft)':'var(--red-soft)'; h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td><td class="amt" style="color:var(--green-soft)">'+M(c.income)+'</td><td class="amt" style="color:var(--red-soft)">'+M(c.expenses)+'</td><td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td><td class="amt muted" style="font-size:11.5px">'+((+c.ar_count||0)+'·AR / '+(+c.ap_count||0)+'·AP')+'</td></tr>'; });
     h+='</tbody></table></div></div>';
+    h+='<div class="status-bar"><div class="dot-green"></div>'+esc(OV_RANGE.from)+' → '+esc(OV_RANGE.to)+' · From cached invoices (AR + AP). Bank balance excluded for period view.</div>';
+    document.getElementById('overview').innerHTML=h;
   }
-
-  if(r.as_of){
-    const d=new Date(r.as_of);
-    h+='<div class="status-bar"><div class="dot-green"></div>Data as of '+
-      d.toLocaleString('en-GB',{year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})+
-      ' · Auto-refreshed hourly</div>';
-  }
-  document.getElementById('overview').innerHTML=h;
-
   const lr=document.getElementById('last-refresh');
   if(lr)lr.innerHTML='<div class="dot-green"></div>Refreshed '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
 }
