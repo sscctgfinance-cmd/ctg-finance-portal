@@ -159,6 +159,16 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .pw-meter{height:5px;border-radius:4px;background:rgba(7,13,23,.6);overflow:hidden;margin:7px 0 3px}
 .pw-meter>span{display:block;height:100%;width:0;border-radius:4px;transition:width .25s,background .25s}
 .pw-hint{font-size:11px;color:var(--muted);min-height:14px}
+.bell{position:relative}
+.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--coral);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:17px;text-align:center;box-shadow:0 2px 8px rgba(232,93,60,.5)}
+.notif-panel{position:fixed;top:62px;right:20px;width:344px;max-width:92vw;max-height:72vh;overflow:auto;background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow);z-index:90;padding:14px}
+.notif-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.notif-hd h4{font-size:13px;color:#fff;margin:0}
+.notif-item{padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--coral);border-radius:9px;margin-bottom:8px;cursor:pointer;background:rgba(7,13,23,.4);transition:background .14s}
+.notif-item:hover{background:rgba(232,93,60,.09)}
+.notif-item .nt{font-weight:700;font-size:12.5px;color:#fff}
+.notif-item .nd{font-size:11.5px;color:var(--muted);margin-top:2px}
+@media(max-width:560px){.notif-panel{top:56px;right:8px;left:8px;width:auto}}
 .lfoot{margin-top:30px;font-size:11px;color:var(--muted);letter-spacing:1px}
 .lfoot b{color:var(--coral-soft);letter-spacing:2.5px;font-weight:800}
 
@@ -273,6 +283,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
         <span class="who" id="who-name"></span>
         <span class="role-chip" id="who-role"></span>
       </div>
+      <button class="btn bell" id="notif-btn" onclick="toggleNotif(event)" title="Alerts">🔔<span class="bell-badge" id="notif-badge"></span></button>
       <button class="btn" onclick="openPwModal()">Change Password</button>
       <button class="btn d" onclick="logout()">Sign Out</button>
     </div>
@@ -317,6 +328,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
 </div></div>
 
 <div class="toast" id="toast"></div>
+<div class="notif-panel hide" id="notif-panel"></div>
 
 <!-- ══ CHANGE PASSWORD MODAL ══ -->
 <div class="overlay hide" id="pw-overlay">
@@ -433,6 +445,7 @@ async function showApp(){
   const first=feats.indexOf('overview')>=0?'overview':(feats[0]||(canManage?'users':'overview'));
   tab(first);
   resetIdle();
+  loadNotifs();
 }
 
 /* ── Navigation ── */
@@ -726,9 +739,65 @@ function resetIdle(){ if(!TOKEN) return; clearTimeout(idleTimer); idleTimer=setT
 function idleLogout(){ if(!TOKEN) return; localStorage.removeItem('ctg_portal_token'); TOKEN=''; location.href='index.html?idle=1'; }
 ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev){ document.addEventListener(ev,resetIdle,{passive:true}); });
 
+/* ── In-app alert centre (bell) ── */
+var NOTIFS=[];
+var SEV_COL={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
+function computeAlerts(ov,pend,recv){
+  var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
+  var a=[];
+  var overdue=items.filter(function(i){return i.days_overdue>0;});
+  var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
+  if(overdue.length){ var top=overdue.slice().sort(function(x,y){return y.amount_due-x.amount_due;})[0];
+    a.push({sev:'high',t:M(odtot)+' overdue across '+overdue.length+' invoices',d:'Biggest: '+(top.contact||'?')+' '+M(top.amount_due)+' ('+top.days_overdue+'d)',tab:'recv'}); }
+  var aged=overdue.filter(function(i){return i.days_overdue>60;});
+  if(aged.length) a.push({sev:'high',t:aged.length+' invoice(s) 60+ days overdue',d:'High collection risk — consider escalating',tab:'recv'});
+  var payDue=bills.reduce(function(s,b){return s+(+b.total||0);},0);
+  if(bills.length) a.push({sev:'med',t:bills.length+' bill(s) awaiting approval',d:M(payDue)+' total pending your review',tab:'approvals'});
+  var big=bills.filter(function(b){return (+b.total||0)>5000;});
+  if(big.length){ big.sort(function(x,y){return y.total-x.total;}); a.push({sev:'med',t:big.length+' large bill(s) over RM 5,000',d:'Largest: '+(big[0].contact||'?')+' '+M(big[0].total),tab:'approvals'}); }
+  var seen={}; bills.forEach(function(b){ var k=(b.contact||'')+'|'+(+b.total||0).toFixed(2);
+    if(seen[k]) a.push({sev:'high',t:'Possible duplicate bill',d:(b.contact||'?')+' '+M(b.total)+' appears more than once',tab:'approvals'}); seen[k]=true; });
+  companies.filter(function(c){return (+c.net_profit||0)<0;}).forEach(function(c){
+    a.push({sev:'med',t:'Running at a loss: '+c.tenant_name,d:'Net profit '+M(c.net_profit)+' YTD',tab:'overview'}); });
+  return a;
+}
+async function loadNotifs(){
+  try{
+    var feats=(PERMS&&PERMS.features)||[];
+    var jobs=[ feats.indexOf('overview')>=0?call({api:'overview'}):Promise.resolve(null),
+               feats.indexOf('approvals')>=0?call({api:'pending'}):Promise.resolve(null),
+               feats.indexOf('recv')>=0?call({api:'receivables'}):Promise.resolve(null) ];
+    var s=await Promise.allSettled(jobs);
+    var ov=s[0].status==='fulfilled'?s[0].value:null, pend=s[1].status==='fulfilled'?s[1].value:null, recv=s[2].status==='fulfilled'?s[2].value:null;
+    NOTIFS=computeAlerts(ov,pend,recv).filter(function(x){return feats.indexOf(x.tab)>=0;});
+  }catch(e){ NOTIFS=[]; }
+  renderNotifBadge();
+}
+function renderNotifBadge(){
+  var b=document.getElementById('notif-badge'); if(!b) return;
+  var n=NOTIFS.length;
+  if(n>0){ b.textContent=n>9?'9+':String(n); b.style.display='flex'; }
+  else b.style.display='none';
+}
+function renderNotifPanel(){
+  var p=document.getElementById('notif-panel'); if(!p) return;
+  var body = NOTIFS.length
+    ? NOTIFS.map(function(a,i){ return '<div class="notif-item" style="border-left-color:'+SEV_COL[a.sev]+'" onclick="notifGo('+i+')"><div class="nt">'+esc(a.t)+'</div><div class="nd">'+esc(a.d)+'</div></div>'; }).join('')
+    : '<div class="muted" style="font-size:12.5px;padding:14px 4px;text-align:center">✓ All clear — nothing needs your attention</div>';
+  p.innerHTML='<div class="notif-hd"><h4>🔔 Alerts'+(NOTIFS.length?' ('+NOTIFS.length+')':'')+'</h4><button class="btn sm" onclick="refreshNotifs(event)">↻</button></div>'+body;
+}
+function toggleNotif(e){ if(e) e.stopPropagation(); var p=document.getElementById('notif-panel');
+  if(p.classList.contains('hide')){ renderNotifPanel(); p.classList.remove('hide'); } else p.classList.add('hide'); }
+function notifGo(i){ var a=NOTIFS[i]; document.getElementById('notif-panel').classList.add('hide'); if(a&&a.tab) tab(a.tab); }
+async function refreshNotifs(e){ if(e) e.stopPropagation(); await loadNotifs(); renderNotifPanel(); }
+document.addEventListener('click',function(e){
+  var p=document.getElementById('notif-panel'); var btn=document.getElementById('notif-btn');
+  if(p&&!p.classList.contains('hide') && !p.contains(e.target) && btn && !btn.contains(e.target)) p.classList.add('hide');
+});
+
 /* ESC closes modals */
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){closePwModal();cfResolve(false);}
+  if(e.key==='Escape'){closePwModal();cfResolve(false);var np=document.getElementById('notif-panel');if(np)np.classList.add('hide');}
 });
 
 
