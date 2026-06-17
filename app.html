@@ -248,7 +248,232 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)
 .sk-row{height:44px;border-radius:10px;margin:10px 0;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:shimmer 1.3s infinite}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 @media(prefers-reduced-motion:reduce){.sk-card,.sk-row{animation:none}}
+
+/* ============================================================
+   PREMIUM POLISH — Stripe/Linear-grade refinement layer
+   Layered on top of the existing system, no breaking changes.
+   ============================================================ */
+
+/* Typography: real Inter Variable + tabular figures for finance UI.
+   tabular-nums = digits all have the same width, so columns of money
+   numbers line up perfectly — what every premium finance product does. */
+body, button, input, select, textarea {
+  font-feature-settings: "cv11", "ss01", "ss03";
+  font-variant-ligatures: contextual;
+  letter-spacing: -0.005em;
+}
+.amt, .n, .bigtable td.amt, .bigtable th.amt,
+input[type="number"], input[type="date"], input[type="month"],
+.c-ico + .n, .pill, code { font-variant-numeric: tabular-nums; }
+
+/* Refined panel surface: more depth, more glass, more sophistication. */
+.panel{
+  border-color: rgba(255,255,255,.06);
+  background:
+    linear-gradient(180deg, rgba(20,30,48,.85), rgba(11,18,30,.78)),
+    radial-gradient(120% 60% at 50% 0%, rgba(91,155,213,.04), transparent 70%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.04) inset,
+    0 24px 60px -28px rgba(0,0,0,.55);
+}
+.panel h3{ letter-spacing: -0.01em; font-size: 14px; }
+
+/* Premium KPI cards: discreet inner highlight + soft outer glow on hover. */
+.card{
+  background:
+    linear-gradient(180deg, rgba(22,32,52,.92), rgba(12,20,33,.82));
+  border: 1px solid rgba(255,255,255,.05);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.05) inset,
+    0 18px 40px -28px rgba(0,0,0,.6);
+  transition: transform .25s cubic-bezier(.2,.7,.2,1), border-color .25s, box-shadow .25s;
+}
+.card::before{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background: linear-gradient(135deg, rgba(255,255,255,.06), transparent 35%);
+  border-radius: inherit;
+}
+.card:hover{
+  transform: translateY(-3px);
+  border-color: rgba(255,255,255,.11);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 28px 60px -30px rgba(0,0,0,.7),
+    0 0 0 1px rgba(232,93,60,.10);
+}
+.card .n{
+  font-size: 26px;
+  font-weight: 660;
+  letter-spacing: -.025em;
+  color: #fff;
+  line-height: 1.1;
+}
+.card .l{
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: #8597b3;
+  font-weight: 600;
+}
+.card .c-ico{
+  font-size: 18px;
+  opacity: .85;
+  margin-bottom: 12px;
+}
+
+/* Tables: subtle row striping, refined hover, monospaced numbers, less border noise. */
+.bigtable th{
+  font-size: 10px;
+  letter-spacing: 1.1px;
+  color: #7a8aa5;
+  background: rgba(7,13,23,.4);
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  padding: 11px 15px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.bigtable td{
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  font-size: 13px;
+  padding: 12px 15px;
+}
+.bigtable tbody tr:nth-child(even) td{ background: rgba(255,255,255,.012); }
+.bigtable tbody tr:hover td{ background: rgba(232,93,60,.05); }
+.bigtable td.amt{
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+  letter-spacing: -.005em;
+}
+.bigtable th.amt{ text-align: right; }
+
+/* Buttons: more sophisticated states — subtle press, refined gradient on primary. */
+.btn{
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .005em;
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(255,255,255,.07);
+  transition: background .15s, border-color .15s, transform .12s, box-shadow .15s;
+}
+.btn:hover{
+  background: rgba(255,255,255,.05);
+  border-color: rgba(255,255,255,.13);
+}
+.btn:active{ transform: scale(.985); }
+.btn.p{
+  background: linear-gradient(180deg, #ee6d4d, #C04A2E);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.18) inset,
+    0 8px 24px -8px rgba(232,93,60,.5);
+}
+.btn.p:hover{
+  filter: brightness(1.05);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.22) inset,
+    0 12px 28px -8px rgba(232,93,60,.6);
+}
+
+/* Brand title: tighter, more confident. */
+.brand h1, .top h1, body h1:not(.lbox h1){
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+/* Tabs: more refined — calmer inactive, sharper active state. */
+.tabs{ gap: 1px; border-bottom: 1px solid rgba(255,255,255,.05); margin-bottom: 18px; }
+.tab{
+  padding: 10px 16px;
+  font-size: 12.5px;
+  color: #7a8aa5;
+  font-weight: 600;
+  border-radius: 7px 7px 0 0;
+  letter-spacing: .005em;
+  transition: color .14s, background .14s;
+}
+.tab:hover{ color: #cdd6e4; background: rgba(255,255,255,.022); }
+.tab.active{
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(232,93,60,.10), transparent 80%);
+  border-bottom: 2px solid var(--coral);
+}
+
+/* Inputs / Select: tighter, more refined focus ring. */
+input:not([type=file]), select, textarea{
+  background: rgba(7,13,23,.55);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px;
+  font-size: 13px;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+input:focus, select:focus, textarea:focus{
+  border-color: rgba(232,93,60,.55);
+  background: rgba(7,13,23,.75);
+  box-shadow: 0 0 0 3px rgba(232,93,60,.14);
+}
+
+/* Top bar: refined company/refresh control. */
+.bar{
+  background: linear-gradient(180deg, rgba(20,30,48,.7), rgba(11,18,30,.55));
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 30px -16px rgba(0,0,0,.5);
+}
+
+/* Pills: refined corners + slightly more contrast. */
+.pill{ font-size: 10px; letter-spacing: .6px; padding: 3px 9px; }
+
+/* Status bar at panel bottoms ("Data as of...") — softer separator. */
+.status-bar{
+  font-size: 11.5px; color: #7a8aa5; letter-spacing: .1px;
+  display:flex; align-items:center; gap:8px; padding:10px 0 4px;
+  border-top: 1px solid rgba(255,255,255,.04); margin-top: 14px;
+}
+
+/* Subtle scrollbar restyling (where visible) — premium detail. */
+*::-webkit-scrollbar{ width: 10px; height: 10px; }
+*::-webkit-scrollbar-track{ background: transparent; }
+*::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,.06);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover{ background: rgba(232,93,60,.3); background-clip: content-box; }
+
+/* Top user widget: refined avatar/role pill. */
+.role-chip{
+  font-size: 10px;
+  letter-spacing: .8px;
+  padding: 2px 9px;
+  background: linear-gradient(180deg, rgba(232,93,60,.18), rgba(232,93,60,.10));
+  border: 1px solid rgba(232,93,60,.32);
+  color: #ffb59c;
+}
+
+/* Brand wordmark accent — a thin coral underline that doesn't shout. */
+.top .brand > div > h1, .top .brand h1{
+  position: relative;
+  padding-bottom: 1px;
+}
+
+/* Skeleton: more refined shimmer. */
+.sk-card, .sk-row{
+  background: linear-gradient(90deg,
+    rgba(255,255,255,.03),
+    rgba(255,255,255,.07),
+    rgba(255,255,255,.03));
+  background-size: 220% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
 </style>
+<link rel="preconnect" href="https://rsms.me/">
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<style>html{font-family:'Inter var',Inter,system-ui,-apple-system,sans-serif}</style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
