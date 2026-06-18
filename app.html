@@ -1384,66 +1384,143 @@ async function o2oIssue(){
 
 
 /* ---- Quick Invoice ---- */
-var QINV_META={contacts:[],accounts:[]};
+var QINV_META={contacts:[],accounts:[],items:[]};
 function renderQinv(){
   var opts=COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('');
   document.getElementById('qinv').innerHTML=
-    '<div class="panel" style="max-width:780px"><div class="panel-hd"><h3>Quick Invoice → Xero</h3></div>'+
+    '<div class="panel" style="max-width:880px"><div class="panel-hd"><h3>Quick Invoice → Xero</h3></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Company</label><select id="qi_co" onchange="qiMeta()"><option value="">— select —</option>'+opts+'</select></div>'+
     '<div class="fld"><label>Customer</label><input id="qi_cust" list="qi_contacts" placeholder="type or pick"/><datalist id="qi_contacts"></datalist></div></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Revenue account</label><select id="qi_acct"></select></div>'+
-    '<div class="fld"><label>Reference</label><input id="qi_ref" placeholder="optional"/></div></div>'+
+    '<div class="fld"><label>Reference</label><input id="qi_ref" placeholder="optional"/></div>'+
     '<div class="fld"><label>Line items</label><div id="qi_lines"></div><button class="btn sm" onclick="qiAddLine()">+ Add line</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Date</label><input type="date" id="qi_date"/></div><div class="fld"><label>Due date</label><input type="date" id="qi_due"/></div></div>'+
     '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="qi_test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
-    '<button class="btn p" onclick="qiCreate()">Create invoice in Xero →</button><div id="qi_out" style="margin-top:12px"></div></div>';
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="qiPreview()">👁 Preview invoice</button><button class="btn p" onclick="qiCreate()">Create invoice in Xero →</button></div>'+
+    '<div id="qi_out" style="margin-top:12px"></div></div>';
   document.getElementById('qi_date').value=new Date().toISOString().slice(0,10);
   qiAddLine(); loaded.qinv=true;
 }
 function qiProductOptions(){
   return '<option value="">— product —</option>'+(QINV_META.items||[]).map(function(it,ix){return '<option value="'+ix+'">'+esc(it.name)+(it.price?(' · '+M(it.price)):'')+'</option>';}).join('');
 }
+function qiAccountOptions(selectedCode){
+  return '<option value="">— account —</option>'+(QINV_META.accounts||[]).map(function(a){
+    return '<option value="'+esc(a.code)+'"'+(selectedCode===a.code?' selected':'')+'>'+esc(a.code)+' · '+esc(a.name)+'</option>';
+  }).join('');
+}
 function qiFillProduct(sel){
   var ix=sel.value; if(ix==='')return; var it=(QINV_META.items||[])[ix]; if(!it)return;
   var row=sel.parentNode;
   row.querySelector('.qi-desc').value=it.description||it.name;
   row.querySelector('.qi-amt').value=it.price||0;
-  if(it.account){ var ac=document.getElementById('qi_acct'); if(ac && ac.querySelector('option[value="'+it.account+'"]')) ac.value=it.account; }
+  // Per-line account: set THIS row's account, not a global one.
+  if(it.account){
+    var acctSel=row.querySelector('.qi-acct');
+    if(acctSel && acctSel.querySelector('option[value="'+it.account+'"]')) acctSel.value=it.account;
+  }
 }
 function qiAddLine(){
   var d=document.getElementById('qi_lines');
-  var row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap';
-  row.innerHTML='<select class="qi-prod" onchange="qiFillProduct(this)" style="width:180px">'+qiProductOptions()+'</select>'+
-    '<input placeholder="Description" class="qi-desc" style="flex:2;min-width:150px"/>'+
-    '<input type="number" placeholder="Qty" value="1" class="qi-qty" style="width:60px"/>'+
-    '<input type="number" placeholder="Unit amount" class="qi-amt" style="width:110px"/>'+
+  var row=document.createElement('div'); row.style.cssText='display:grid;grid-template-columns:160px 1fr 60px 110px 200px 36px;gap:6px;margin-bottom:6px;align-items:center';
+  row.innerHTML='<select class="qi-prod" onchange="qiFillProduct(this)">'+qiProductOptions()+'</select>'+
+    '<input placeholder="Description" class="qi-desc"/>'+
+    '<input type="number" placeholder="Qty" value="1" class="qi-qty"/>'+
+    '<input type="number" placeholder="Unit amount" class="qi-amt"/>'+
+    '<select class="qi-acct" title="Revenue account for this line">'+qiAccountOptions()+'</select>'+
     '<button class="btn sm" onclick="this.parentNode.remove()">×</button>';
   d.appendChild(row);
 }
 async function qiMeta(){
   var t=document.getElementById('qi_co').value; if(!t)return;
-  document.getElementById('qi_out').innerHTML='<span class="muted">Loading Xero contacts & products…</span>';
+  document.getElementById('qi_out').innerHTML='<span class="muted">Loading Xero contacts, products & accounts…</span>';
   try{ var r=await call({api:'inv_meta',tenant:t});
     if(r&&r.ok){ QINV_META=r;
       document.getElementById('qi_contacts').innerHTML=(r.contacts||[]).map(function(c){return '<option value="'+esc(c.name)+'">';}).join('');
-      document.getElementById('qi_acct').innerHTML=(r.accounts||[]).map(function(a){return '<option value="'+esc(a.code)+'">'+esc(a.code)+' · '+esc(a.name)+'</option>';}).join('');
+      // Refresh BOTH the product dropdown AND the per-line account dropdown on every existing row.
       [].slice.call(document.querySelectorAll('.qi-prod')).forEach(function(sl){sl.innerHTML=qiProductOptions();});
-      document.getElementById('qi_out').innerHTML='<span class="muted">✓ '+(r.contacts||[]).length+' Xero contacts · '+(r.items||[]).length+' products loaded</span>';
+      [].slice.call(document.querySelectorAll('.qi-acct')).forEach(function(sl){var cur=sl.value; sl.innerHTML=qiAccountOptions(cur);});
+      document.getElementById('qi_out').innerHTML='<span class="muted">✓ '+(r.contacts||[]).length+' contacts · '+(r.items||[]).length+' products · '+(r.accounts||[]).length+' revenue accounts</span>';
     } else { document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
   }catch(e){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-async function qiCreate(){
-  var t=document.getElementById('qi_co').value; if(!t){toast('Pick a company',true);return;}
-  var cust=document.getElementById('qi_cust').value.trim(); if(!cust){toast('Enter a customer',true);return;}
-  var acct=document.getElementById('qi_acct').value;
-  var lines=[].slice.call(document.querySelectorAll('#qi_lines > div')).map(function(row){
-    return {description:row.querySelector('.qi-desc').value||'Item', quantity:Number(row.querySelector('.qi-qty').value)||1, unit_amount:Number(row.querySelector('.qi-amt').value)||0, account_code:acct};
+// Read lines from the form. Returns {lines, contactMatch, tenant, customer, errors[]}.
+function qiCollect(){
+  var errors=[];
+  var t=document.getElementById('qi_co').value; if(!t) errors.push('Pick a company');
+  var cust=document.getElementById('qi_cust').value.trim(); if(!cust) errors.push('Enter a customer');
+  var rows=[].slice.call(document.querySelectorAll('#qi_lines > div'));
+  var lines=rows.map(function(row){
+    return {
+      description: row.querySelector('.qi-desc').value || 'Item',
+      quantity:    Number(row.querySelector('.qi-qty').value)||1,
+      unit_amount: Number(row.querySelector('.qi-amt').value)||0,
+      account_code:row.querySelector('.qi-acct').value
+    };
   }).filter(function(l){return l.unit_amount>0;});
-  if(!lines.length){toast('Add a line with an amount',true);return;}
-  var test=document.getElementById('qi_test').checked;
+  if(!lines.length) errors.push('Add a line with an amount');
+  var missingAcct=lines.filter(function(l){return !l.account_code;});
+  if(missingAcct.length) errors.push(missingAcct.length+' line(s) have no account selected');
   var match=(QINV_META.contacts||[]).filter(function(c){return (c.name||'').toLowerCase()===cust.toLowerCase();})[0];
-  var body={api:'quick_invoice',tenant:t,line_items:lines,date:document.getElementById('qi_date').value,due_date:document.getElementById('qi_due').value||undefined,reference:document.getElementById('qi_ref').value||undefined,dry_run:test};
-  if(match){ body.contact_id=match.contact_id; } else { body.contact_name=cust; }
+  return { tenant:t, customer:cust, lines:lines, contactMatch:match, errors:errors };
+}
+// Look up an account's display name from its code (e.g. "500-0100 · Retail Sales (O2O)").
+function qiAccountLabel(code){
+  if(!code) return '<span style="color:var(--red-soft)">⚠ no account</span>';
+  var a=(QINV_META.accounts||[]).filter(function(x){return x.code===code;})[0];
+  return a ? esc(a.code+' · '+a.name) : esc(code);
+}
+// 👁 Preview — render an invoice-style summary and confirm before posting.
+function qiPreview(){
+  var d=qiCollect();
+  if(d.errors.length){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft);font-size:13px">⚠ '+d.errors.map(esc).join(' · ')+'</div>'; return; }
+  var co=COMPANIES.filter(function(c){return c.tenant_id===d.tenant;})[0];
+  var date=document.getElementById('qi_date').value, due=document.getElementById('qi_due').value;
+  var ref =document.getElementById('qi_ref').value;
+  var test=document.getElementById('qi_test').checked;
+  var subtotal=d.lines.reduce(function(s,l){return s+l.quantity*l.unit_amount;},0);
+  var lineRows=d.lines.map(function(l,i){
+    return '<tr><td style="padding:8px;border-top:1px solid var(--panel-border);font-size:12.5px">'+qiAccountLabel(l.account_code)+'</td>'+
+      '<td style="padding:8px;border-top:1px solid var(--panel-border);font-size:12.5px">'+esc(l.description)+'</td>'+
+      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right">'+l.quantity+'</td>'+
+      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right">'+M(l.unit_amount)+'</td>'+
+      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right"><b>'+M(l.quantity*l.unit_amount)+'</b></td></tr>';
+  }).join('');
+  var contactBadge=d.contactMatch
+    ? '<span class="pill pill-green" style="margin-left:8px">✓ existing Xero contact</span>'
+    : '<span class="pill pill-coral" style="margin-left:8px">⚠ new contact will be created</span>';
+  var modeBadge=test
+    ? '<span class="pill pill-submit" style="margin-left:8px">TEST mode — not posted</span>'
+    : '<span class="pill pill-green" style="margin-left:8px">LIVE — will be created in Xero</span>';
+  document.getElementById('qi_out').innerHTML=
+    '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:20px;margin-top:14px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px">'+
+        '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">INVOICE PREVIEW</div>'+
+        '<h2 style="margin:6px 0 0;font-size:18px;letter-spacing:-.02em">'+esc((co&&co.tenant_name)||d.tenant)+'</h2></div>'+
+        '<div style="text-align:right;font-size:12px;color:var(--text-soft)"><div><b>Date:</b> '+esc(date||'today')+'</div>'+
+        '<div><b>Due:</b> '+esc(due||'—')+'</div>'+
+        (ref?'<div><b>Ref:</b> '+esc(ref)+'</div>':'')+'</div>'+
+      '</div>'+
+      '<div style="margin-bottom:10px;font-size:13px"><b>Bill to:</b> '+esc(d.customer)+contactBadge+modeBadge+'</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:13px">'+
+        '<thead><tr style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+
+        '<th style="padding:8px;text-align:left">Account</th>'+
+        '<th style="padding:8px;text-align:left">Description</th>'+
+        '<th style="padding:8px;text-align:right">Qty</th>'+
+        '<th style="padding:8px;text-align:right">Unit</th>'+
+        '<th style="padding:8px;text-align:right">Amount</th></tr></thead>'+
+        '<tbody>'+lineRows+'</tbody>'+
+        '<tfoot><tr><td colspan="4" style="padding:12px 8px 6px;text-align:right;font-size:13px;border-top:2px solid var(--panel-border)">Subtotal (tax exclusive)</td><td style="padding:12px 8px 6px;text-align:right;font-size:15px"><b>'+M(subtotal)+'</b></td></tr></tfoot>'+
+      '</table>'+
+      '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end"><button class="btn" onclick="document.getElementById(\'qi_out\').innerHTML=\'\'">← Back to edit</button>'+
+      '<button class="btn p" onclick="qiCreate()">'+(test?'Run test (no posting)':'✓ Confirm & create in Xero')+'</button></div>'+
+    '</div>';
+}
+async function qiCreate(){
+  var d=qiCollect();
+  if(d.errors.length){ d.errors.forEach(function(e){toast(e,true);}); return; }
+  var test=document.getElementById('qi_test').checked;
+  var body={api:'quick_invoice',tenant:d.tenant,line_items:d.lines,date:document.getElementById('qi_date').value,due_date:document.getElementById('qi_due').value||undefined,reference:document.getElementById('qi_ref').value||undefined,dry_run:test};
+  if(d.contactMatch){ body.contact_id=d.contactMatch.contact_id; } else { body.contact_name=d.customer; }
   document.getElementById('qi_out').innerHTML='<span class="muted">Working…</span>';
   try{ var r=await call(body);
     if(r&&r.ok){
