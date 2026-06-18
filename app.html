@@ -510,6 +510,7 @@ input:focus, select:focus, textarea:focus{
         <span class="role-chip" id="who-role"></span>
       </div>
       <button class="btn bell" id="notif-btn" onclick="toggleNotif(event)" title="Alerts">🔔<span class="bell-badge" id="notif-badge"></span></button>
+      <button class="btn" onclick="openSecurityModal()" title="Two-factor authentication">🔐 Security</button>
       <button class="btn" onclick="openPwModal()">Change Password</button>
       <button class="btn d" onclick="logout()">Sign Out</button>
     </div>
@@ -631,11 +632,44 @@ async function doLogin(e){
   try{
     const r=await call({api:'login',email,pass,token:''});
     if(r&&r.ok){TOKEN=r.token;localStorage.setItem('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];enterApp();return;}
+    if(r&&r.need_2fa){ show2faPrompt(r.login_token); b.disabled=false; b.textContent='Sign In'; return; }
     if(r&&r.locked){er.textContent='🔒 Account locked after too many failed attempts. Try again in '+(r.retry_minutes||15)+' min.';}
     else er.textContent='Incorrect email or password';
     er.classList.remove('hide');
   }catch(x){er.textContent='Connection failed, please retry';er.classList.remove('hide');}
   b.disabled=false;b.textContent='Sign In';
+}
+var TFA_TOKEN=null;
+function show2faPrompt(loginToken){
+  TFA_TOKEN = loginToken;
+  document.getElementById('login').classList.add('hide');
+  var ex=document.getElementById('tfa_overlay'); if(ex) ex.remove();
+  var html='<div class="overlay" id="tfa_overlay"><div class="modal" style="width:380px">'+
+    '<div class="modal-hd"><h3>🔐 Two-factor verification</h3></div>'+
+    '<p class="muted" style="font-size:12.5px;margin:0 0 14px;line-height:1.6">Open your authenticator app (Google Authenticator, Authy, 1Password…) and enter the 6-digit code for <b>CTG Finance Portal</b>.</p>'+
+    '<div class="fld"><label>6-digit code</label><input id="tfa_code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="7" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:8px;font-variant-numeric:tabular-nums"/></div>'+
+    '<div class="lerr hide" id="tfa_err"></div>'+
+    '<div class="modal-ft"><button class="btn" onclick="cancel2fa()">Cancel</button><button class="btn p" id="tfa_btn" onclick="submit2fa()">Verify</button></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  setTimeout(function(){ var i=document.getElementById('tfa_code'); if(i){ i.focus(); i.addEventListener('keydown', function(e){ if(e.key==='Enter') submit2fa(); }); } },30);
+}
+function cancel2fa(){ TFA_TOKEN=null; var o=document.getElementById('tfa_overlay'); if(o) o.remove(); document.getElementById('login').classList.remove('hide'); }
+async function submit2fa(){
+  var er=document.getElementById('tfa_err'); var btn=document.getElementById('tfa_btn');
+  var code=(document.getElementById('tfa_code').value||'').replace(/\s|-/g,'');
+  er.classList.add('hide');
+  if(!/^\d{6}$/.test(code)){ er.textContent='Enter the 6-digit code from your authenticator app'; er.classList.remove('hide'); return; }
+  btn.disabled=true; btn.textContent='Verifying…';
+  try{
+    var r=await call({api:'login_2fa', login_token:TFA_TOKEN, code:code, token:''});
+    if(r&&r.ok){
+      TOKEN=r.token; localStorage.setItem('ctg_portal_token',TOKEN); ME=r.user; COMPANIES=r.companies||[];
+      var o=document.getElementById('tfa_overlay'); if(o) o.remove();
+      enterApp(); return;
+    }
+    er.textContent=(r&&r.error)||'Incorrect code'; er.classList.remove('hide');
+  }catch(x){ er.textContent='Network error, please retry'; er.classList.remove('hide'); }
+  btn.disabled=false; btn.textContent='Verify';
 }
 
 function logout(){localStorage.removeItem('ctg_portal_token');location.href='index.html';}
@@ -965,6 +999,73 @@ function pwMeter(){
   hint.textContent=p?(pwValid(p)?labs[sc]+' password':'Need 8+ chars with letters and numbers'):'';
 }
 
+/* ── Security: TOTP (Google Authenticator) self-service ── */
+function closeSecurityModal(){ var m=document.getElementById('sec_overlay'); if(m) m.remove(); }
+async function openSecurityModal(){
+  closeSecurityModal();
+  var enabled = !!(ME && ME.totp_enabled);
+  var inner;
+  if(enabled){
+    inner = '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default"><div class="nt">✓ Two-factor authentication is ON</div><div class="nd">Your account requires a 6-digit code at login.</div></div>'+
+      '<div style="margin-top:14px"><button class="btn" onclick="disable2fa()">Disable two-factor authentication</button></div>';
+  } else {
+    inner = '<div class="notif-item" style="border-left-color:var(--amber);cursor:default"><div class="nt">⚠ Two-factor authentication is OFF</div><div class="nd">Enable it to require a 6-digit code from an authenticator app at every login. Highly recommended for finance accounts.</div></div>'+
+      '<div style="margin-top:14px"><button class="btn p" onclick="start2faEnroll()">Set up two-factor authentication</button></div>';
+  }
+  var html='<div class="overlay" id="sec_overlay"><div class="modal" style="width:480px">'+
+    '<div class="modal-hd"><h3>🔐 Account security</h3><button class="modal-close" onclick="closeSecurityModal()">×</button></div>'+
+    '<div id="sec_body">'+inner+'</div>'+
+    '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+async function start2faEnroll(){
+  document.getElementById('sec_body').innerHTML='<div class="load"><span class="spin"></span>Generating secret…</div>';
+  try{
+    var r=await call({api:'totp_setup'});
+    if(!r||!r.ok){ document.getElementById('sec_body').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    var qrSrc='https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=0&data='+encodeURIComponent(r.otpauth_url);
+    document.getElementById('sec_body').innerHTML=
+      '<div style="text-align:center;margin-bottom:10px">'+
+        '<img src="'+esc(qrSrc)+'" alt="QR" width="180" height="180" style="border-radius:8px;background:#fff;padding:8px"/>'+
+      '</div>'+
+      '<p class="muted" style="font-size:12.5px;line-height:1.6">1. Open <b>Google Authenticator</b> (or Authy / 1Password) on your phone.<br/>'+
+      '2. Tap <b>+</b> → <b>Scan a QR code</b> and point at the code above.<br/>'+
+      '3. Enter the 6-digit code your app shows below to confirm.</p>'+
+      '<div class="fld" style="margin-top:12px"><label>Can\'t scan? Enter this secret manually</label>'+
+      '<input value="'+esc(r.secret)+'" readonly onclick="this.select()" style="font-family:monospace;font-size:12.5px;letter-spacing:1.5px"/></div>'+
+      '<div class="fld"><label>Verification code</label><input id="sec_code" type="text" inputmode="numeric" maxlength="7" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:8px;font-variant-numeric:tabular-nums"/></div>'+
+      '<div class="lerr hide" id="sec_err"></div>'+
+      '<div class="modal-ft"><button class="btn" onclick="closeSecurityModal()">Cancel</button><button class="btn p" id="sec_btn" onclick="finish2faEnroll()">Enable two-factor</button></div>';
+    setTimeout(function(){ var i=document.getElementById('sec_code'); if(i){ i.focus(); i.addEventListener('keydown', function(e){ if(e.key==='Enter') finish2faEnroll(); }); } },30);
+  }catch(e){ document.getElementById('sec_body').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function finish2faEnroll(){
+  var er=document.getElementById('sec_err'); var btn=document.getElementById('sec_btn');
+  var code=(document.getElementById('sec_code').value||'').replace(/\s|-/g,'');
+  er.classList.add('hide');
+  if(!/^\d{6}$/.test(code)){ er.textContent='Enter the 6-digit code from your app'; er.classList.remove('hide'); return; }
+  btn.disabled=true; btn.textContent='Verifying…';
+  try{
+    var r=await call({api:'totp_verify_enroll', code:code});
+    if(r&&r.ok){
+      if(ME) ME.totp_enabled=true;
+      closeSecurityModal();
+      toast('✅ Two-factor authentication enabled');
+      return;
+    }
+    er.textContent=(r&&r.error)||'Verification failed'; er.classList.remove('hide');
+  }catch(e){ er.textContent=e.message; er.classList.remove('hide'); }
+  btn.disabled=false; btn.textContent='Enable two-factor';
+}
+async function disable2fa(){
+  if(!confirm('Disable two-factor authentication? Your account will only require a password.')) return;
+  try{
+    var r=await call({api:'totp_disable'});
+    if(r&&r.ok){ if(ME) ME.totp_enabled=false; closeSecurityModal(); toast('Two-factor disabled'); }
+    else toast((r&&r.error)||'Failed',true);
+  }catch(e){ toast(e.message,true); }
+}
+
 /* ── Change Password Modal ── */
 var PW_FORCED=false;
 function openPwModal(forced){
@@ -1285,13 +1386,14 @@ async function todayLoad(){
 
 
 /* ---- Users (SaaS access control, admin only) ---- */
-var USERS_LIST=[], USERS_UC={}, USERS_COMPANIES=[], ROLES=[];
+var USERS_LIST=[], USERS_UC={}, USERS_UC_ROLE={}, USERS_COMPANIES=[], ROLES=[];
 var USERS_VIEW='users';
 function renderUsers(){
   document.getElementById('users').innerHTML=
     '<div class="subnav" style="display:flex;gap:8px;margin-bottom:14px">'+
       '<button class="btn sm" id="uv_users" onclick="usersView(\'users\')">👥 Users</button>'+
       '<button class="btn sm" id="uv_roles" onclick="usersView(\'roles\')">🛡 Roles &amp; permissions</button>'+
+      '<button class="btn sm" id="uv_sessions" onclick="usersView(\'sessions\')">🖥 Active sessions</button>'+
       '<button class="btn sm" id="uv_audit" onclick="usersView(\'audit\')">📜 Audit log</button>'+
       '<button class="btn sm" id="uv_xero" onclick="usersView(\'xero\')">🔗 Xero sync</button>'+
     '</div>'+
@@ -1300,11 +1402,47 @@ function renderUsers(){
 }
 function usersView(v){
   USERS_VIEW=v;
-  ['users','roles','audit','xero'].forEach(function(k){ var b=document.getElementById('uv_'+k); if(b) b.className='btn sm'+(k===v?' p':''); });
+  ['users','roles','sessions','audit','xero'].forEach(function(k){ var b=document.getElementById('uv_'+k); if(b) b.className='btn sm'+(k===v?' p':''); });
   if(v==='users') usersLoad();
   else if(v==='roles') rolesLoad();
+  else if(v==='sessions') sessionsLoad();
   else if(v==='xero') xeroSyncLoad();
   else auditLoad();
+}
+async function sessionsLoad(){
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Active sessions · who is currently logged in</h3><button class="btn sm" onclick="sessionsLoad()">↻ Refresh</button></div><div id="sess_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  try{
+    var r=await call({api:'sessions_list'});
+    if(!r||!r.ok){ document.getElementById('sess_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    var ss=r.sessions||[];
+    function relSec(iso){ if(!iso) return '—'; var d=new Date(iso); var s=Math.floor((Date.now()-d.getTime())/1000); if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+    var rowsArr=ss.map(function(s){
+      var fresh = s.last_seen_at && (Date.now()-new Date(s.last_seen_at).getTime()) < 5*60*1000;
+      var dot = fresh ? '<span class="dot-green" style="display:inline-block;margin-right:6px"></span>' : '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#445;margin-right:6px;vertical-align:1px"></span>';
+      var selfPill = s.is_self ? ' <span class="pill pill-coral" style="font-size:9px">this device</span>' : '';
+      var rolePill = s.user_role==='admin' ? 'pill-coral' : s.user_role==='approver' ? 'pill-blue' : 'pill-draft';
+      // Pass session token + safe display name into the revoke button without quote-escape hell.
+      var whoSafe = String(s.user_name||s.user_email||'').replace(/['\\]/g,'');
+      var revokeBtn = s.is_self
+        ? '<span class="muted" style="font-size:11px">—</span>'
+        : '<button class="btn sm" data-tok="'+esc(s.token_full)+'" data-who="'+esc(whoSafe)+'" onclick="sessionRevoke(this.dataset.tok,this.dataset.who)">Revoke</button>';
+      return '<tr><td>'+dot+'<b>'+esc(s.user_name||s.user_email||'')+'</b>'+selfPill+'<br><span class="muted" style="font-size:11px">'+esc(s.user_email||'')+'</span></td>'+
+        '<td><span class="pill '+rolePill+'">'+esc(s.user_role||'')+'</span></td>'+
+        '<td class="muted" style="font-size:11.5px;font-family:monospace">'+esc(s.token_short||'')+'</td>'+
+        '<td class="muted" style="font-size:11.5px">'+esc(relSec(s.created_at))+'</td>'+
+        '<td class="muted" style="font-size:11.5px">'+esc(relSec(s.last_seen_at))+'</td>'+
+        '<td>'+revokeBtn+'</td></tr>';
+    });
+    var rows = rowsArr.join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No active sessions</td></tr>';
+    document.getElementById('sess_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Token</th><th>Started</th><th>Last seen</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Green dot = active in the last 5 minutes. Revoking a session logs that user out immediately. Sessions auto-expire after 30 days, or 14 days of inactivity.</div>';
+  }catch(e){ document.getElementById('sess_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+}
+async function sessionRevoke(tok, who){
+  if(!confirm('Revoke session for '+who+'? They will be signed out immediately.')) return;
+  try{ var r=await call({api:'session_revoke', session_token:tok});
+    if(r&&r.ok!==false){ toast('Session revoked'); sessionsLoad(); }
+    else toast((r&&r.error)||'Failed',true);
+  }catch(e){ toast(e.message,true); }
 }
 function roleLabelFor(name){ var r=ROLES.filter(function(x){return x.name===name;})[0]; return r?(r.label||r.name):name; }
 async function usersLoad(){
@@ -1314,19 +1452,44 @@ async function usersLoad(){
     var co=await call({api:'companies_list'}); USERS_COMPANIES=(co&&co.companies)||[];
     var r=await call({api:'users_list'});
     if(!r||!r.ok){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
-    USERS_LIST=r.users||[]; USERS_UC={};
-    (r.user_companies||[]).forEach(function(x){ (USERS_UC[x.user_id]=USERS_UC[x.user_id]||[]).push(x.tenant_id); });
+    USERS_LIST=r.users||[]; USERS_UC={}; USERS_UC_ROLE={};
+    (r.user_companies||[]).forEach(function(x){
+      (USERS_UC[x.user_id]=USERS_UC[x.user_id]||[]).push(x.tenant_id);
+      if(x.role){ (USERS_UC_ROLE[x.user_id]=USERS_UC_ROLE[x.user_id]||{})[x.tenant_id]=x.role; }
+    });
+    function relTime(iso){
+      if(!iso) return '<span class="muted">never</span>';
+      var d=new Date(iso); var s=Math.floor((Date.now()-d.getTime())/1000);
+      if(s<60) return 'just now';
+      if(s<3600) return Math.floor(s/60)+' min ago';
+      if(s<86400) return Math.floor(s/3600)+' h ago';
+      if(s<2592000) return Math.floor(s/86400)+' d ago';
+      return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'});
+    }
     var rows=USERS_LIST.map(function(u,i){
-      var comps=(USERS_UC[u.id]||[]).map(function(tid){ var c=USERS_COMPANIES.filter(function(x){return x.tenant_id===tid;})[0]; return c?c.tenant_name:tid; });
+      var comps=(USERS_UC[u.id]||[]).map(function(tid){
+        var c=USERS_COMPANIES.filter(function(x){return x.tenant_id===tid;})[0];
+        var nm=c?c.tenant_name:tid;
+        var ov=(USERS_UC_ROLE[u.id]||{})[tid];
+        return ov ? nm+' <span style="color:var(--coral-soft);font-size:10.5px">('+esc(ov)+')</span>' : nm;
+      });
       var compTxt=comps.length?comps.join(', '):(u.role==='admin'?'All companies (admin)':'— none assigned —');
       var rolePill=u.role==='admin'?'pill-coral':u.role==='approver'?'pill-blue':'pill-draft';
       var act=u.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">disabled</span>';
-      return '<tr><td><b>'+esc(u.name||'')+'</b><br><span class="muted" style="font-size:11px">'+esc(u.email)+'</span></td><td><span class="pill '+rolePill+'">'+esc(roleLabelFor(u.role))+'</span></td><td class="muted" style="font-size:11.5px">'+esc(compTxt)+'</td><td>'+act+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="userEdit('+i+')">Edit</button> <button class="btn sm" onclick="userReset('+i+')">🔑 Reset</button></td></tr>';
+      var tfa = u.totp_enabled ? '<span class="pill pill-green" style="font-size:9px" title="Two-factor authentication on">🔐 2FA</span>' : '';
+      var loginInfo = '<div class="muted" style="font-size:11px">'+relTime(u.last_login_at)+(u.last_login_ip?(' · <span style="font-family:monospace">'+esc(u.last_login_ip)+'</span>'):'')+(u.login_count?(' · '+u.login_count+'×'):'')+'</div>';
+      return '<tr><td><b>'+esc(u.name||'')+'</b> '+tfa+'<br><span class="muted" style="font-size:11px">'+esc(u.email)+'</span></td><td><span class="pill '+rolePill+'">'+esc(roleLabelFor(u.role))+'</span></td><td class="muted" style="font-size:11.5px">'+compTxt+'</td><td>'+loginInfo+'</td><td>'+act+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="userEdit('+i+')">Edit</button> <button class="btn sm" onclick="userReset('+i+')">🔑 Reset</button></td></tr>';
     }).join('');
-    document.getElementById('users_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Company access</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    document.getElementById('users_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Company access</th><th>Last login</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }catch(e){ document.getElementById('users_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-function userEdit(i){ var u=USERS_LIST[i]; userForm({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,tenants:(USERS_UC[u.id]||[])}); }
+function userEdit(i){
+  var u=USERS_LIST[i];
+  var tids=(USERS_UC[u.id]||[]);
+  var roleMap=USERS_UC_ROLE[u.id]||{};
+  var ts = tids.map(function(tid){ return { tenant_id:tid, role:(roleMap[tid]||'') }; });
+  userForm({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,tenants:ts});
+}
 async function userReset(i){
   var u=USERS_LIST[i];
   var pw=prompt('Set a new password for '+(u.name||u.email)+' (min 6 chars). The user can change it after signing in.');
@@ -1339,26 +1502,51 @@ async function userReset(i){
 var UF_EDIT_ID=null;
 function userForm(u){
   u=u||{}; var isEdit=!!u.id; UF_EDIT_ID=u.id||null;
-  var compChecks=USERS_COMPANIES.map(function(c){ var ck=((u.tenants||[]).indexOf(c.tenant_id)>=0)?'checked':''; return '<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:4px"><input type="checkbox" class="uf-comp" value="'+esc(c.tenant_id)+'" '+ck+' style="width:auto"/> '+esc(c.tenant_name)+'</label>'; }).join('');
+  var existingMap={}; (u.tenants||[]).forEach(function(t){ if(typeof t==='string') existingMap[t]={tenant_id:t,role:''}; else existingMap[t.tenant_id]=t; });
+  var perCoRoleOpts = '<option value="">(inherit global)</option>'+ ROLES.map(function(r){ return '<option value="'+esc(r.name)+'">'+esc(r.label||r.name)+'</option>'; }).join('');
+  var compRows=USERS_COMPANIES.map(function(c){
+    var existing=existingMap[c.tenant_id];
+    var ck=existing?'checked':'';
+    var roleVal=(existing&&existing.role)?existing.role:'';
+    return '<div class="uf-comp-row" style="display:flex;align-items:center;gap:9px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,.04)">'+
+      '<input type="checkbox" class="uf-comp" data-tid="'+esc(c.tenant_id)+'" value="'+esc(c.tenant_id)+'" '+ck+' style="width:auto;flex-shrink:0" onchange="ufToggleRow(this)"/>'+
+      '<span style="flex:1;font-size:12.5px;color:var(--text-soft)">'+esc(c.tenant_name)+'</span>'+
+      '<select class="uf-comp-role" data-tid="'+esc(c.tenant_id)+'" style="font-size:11.5px;padding:4px 8px;width:auto;min-width:135px" '+(ck?'':'disabled')+'>'+
+        perCoRoleOpts.replace('value="'+roleVal+'"','value="'+roleVal+'" selected') +
+      '</select></div>';
+  }).join('');
   var roleOpts=ROLES.map(function(r){ var n=(r.features||[]).length; var d=r.manage_users?', manages users':''; return '<option value="'+esc(r.name)+'">'+esc(r.label||r.name)+' ('+n+' feature'+(n===1?'':'s')+d+')</option>'; }).join('');
   document.getElementById('user_modal').innerHTML=
-    '<div class="overlay"><div class="modal" style="width:460px"><div class="modal-hd"><h3>'+(isEdit?'Edit user':'Add user')+'</h3><button class="modal-close" onclick="ufClose()">×</button></div>'+
+    '<div class="overlay"><div class="modal" style="width:520px"><div class="modal-hd"><h3>'+(isEdit?'Edit user':'Add user')+'</h3><button class="modal-close" onclick="ufClose()">×</button></div>'+
     '<div class="fld"><label>Name</label><input id="uf_name" value="'+esc(u.name||'')+'"/></div>'+
     '<div class="fld"><label>Email</label><input id="uf_email" type="email" value="'+esc(u.email||'')+'" '+(isEdit?'disabled':'')+'/></div>'+
     (isEdit?'':'<div class="fld"><label>Password <span style="color:var(--muted);text-transform:none;letter-spacing:0">(min 8, letters + numbers · user changes it on first login)</span></label><input id="uf_pass" type="password" placeholder="••••••••"/></div>')+
-    '<div class="fld"><label>Role</label><select id="uf_role">'+roleOpts+'</select></div>'+
-    '<div class="fld"><label>Company access</label><div style="max-height:150px;overflow:auto;border:1px solid var(--border-strong);border-radius:9px;padding:10px">'+compChecks+'</div><div class="muted" style="font-size:11px;margin-top:5px">Tick the companies this user may see. Admins see all regardless.</div></div>'+
+    '<div class="fld"><label>Default role <span style="color:var(--muted);text-transform:none;letter-spacing:0">(applied to all companies unless overridden below)</span></label><select id="uf_role">'+roleOpts+'</select></div>'+
+    '<div class="fld"><label>Company access &amp; per-company role</label><div style="max-height:220px;overflow:auto;border:1px solid var(--border-strong);border-radius:9px;padding:8px 6px">'+compRows+'</div><div class="muted" style="font-size:11px;margin-top:5px">Tick companies, optionally override the role per company. Admins see all regardless.</div></div>'+
     (isEdit?'<label style="display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="uf_active" '+(u.active?'checked':'')+' style="width:auto"/> Active (can log in)</label>':'')+
     '<div class="lerr hide" id="uf_err"></div>'+
     '<div class="modal-ft"><button class="btn" onclick="ufClose()">Cancel</button><button class="btn p" id="uf_save" onclick="userSave()">Save</button></div></div></div>';
   document.getElementById('uf_role').value=u.role||'viewer';
+}
+function ufToggleRow(cb){
+  var row=cb.closest('.uf-comp-row'); if(!row) return;
+  var sel=row.querySelector('.uf-comp-role'); if(!sel) return;
+  sel.disabled = !cb.checked;
+  if(!cb.checked) sel.value='';
 }
 function ufClose(){ var m=document.getElementById('user_modal'); if(m) m.innerHTML=''; }
 async function userSave(){
   var err=document.getElementById('uf_err'); var btn=document.getElementById('uf_save');
   var name=document.getElementById('uf_name').value.trim();
   var role=document.getElementById('uf_role').value;
-  var tenants=[].slice.call(document.querySelectorAll('.uf-comp:checked')).map(function(x){return x.value;});
+  // Collect (tenant_id, role) pairs from the form. Per-company role overrides the global default;
+  // empty string means "inherit global" (sent as null to backend).
+  var tenants=[].slice.call(document.querySelectorAll('.uf-comp:checked')).map(function(cb){
+    var tid=cb.getAttribute('data-tid');
+    var sel=document.querySelector('.uf-comp-role[data-tid="'+tid+'"]');
+    var ov=sel?sel.value:'';
+    return ov ? { tenant_id:tid, role:ov } : { tenant_id:tid, role:null };
+  });
   err.classList.add('hide'); btn.disabled=true; btn.textContent='Saving…';
   try{
     var r;
@@ -1602,6 +1790,12 @@ function exportCurrent(){
     var fn='CTG_'+t+(coName&&coName.indexOf('All')<0?('_'+coName):'')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
     XLSX.writeFile(wb,fn);
     toast('Exported '+fn);
+    // Fire-and-forget audit so admins can see who exported what (data_export action).
+    try{
+      var rowsTotal=0;
+      [].slice.call(tables).forEach(function(tb){ rowsTotal += Math.max(0, tb.querySelectorAll('tbody tr').length); });
+      call({api:'export_log', what:t, tab:t, rows:rowsTotal, filename:fn}).catch(function(){});
+    }catch(_e){}
   }catch(e){ toast('Export failed: '+(e.message||e),true); }
 }
 
