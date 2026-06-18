@@ -609,19 +609,75 @@ function toast(msg,isErr){
   setTimeout(()=>e.classList.remove('show'),2600);
 }
 
+// ── Network resilience (v28.1) ──
+// • 30s timeout with AbortController
+// • Auto-retry once on transient 5xx (502/503/504) — Supabase edge cold-starts
+// • Detect session-expired (401 / "unauthorized" on a token-bearing call) → graceful sign-out modal
+// • Convert raw network errors into human-readable messages
+let SESSION_EXPIRED_SHOWN=false;
 async function call(body){
-  const ctrl=new AbortController();
-  const tm=setTimeout(()=>ctrl.abort(),30000);
-  try{
-    const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
-    let data; try{ data=await r.json(); }catch(_e){ throw new Error('Server returned an unexpected response - please retry'); }
-    if(!r.ok && data && data.error) throw new Error(data.error);
-    return data;
-  }catch(e){
-    if(e && e.name==='AbortError') throw new Error('Request timed out - server or Xero is slow, please retry');
-    if(e instanceof TypeError) throw new Error('Network error - check your connection and retry');
-    throw e;
-  }finally{clearTimeout(tm);}
+  const reqToken = body && body.token !== undefined ? body.token : TOKEN;
+  // Don't make calls after we already know the session is dead — except for login/me probes.
+  const isAuthExempt = body && (body.api==='login' || body.api==='login_2fa');
+  for(let attempt=0; attempt<2; attempt++){
+    const ctrl=new AbortController();
+    const tm=setTimeout(()=>ctrl.abort(),30000);
+    try{
+      const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
+      // Retry once on transient 5xx
+      if((r.status===502||r.status===503||r.status===504) && attempt===0){
+        clearTimeout(tm);
+        await new Promise(rs=>setTimeout(rs, 1000));
+        continue;
+      }
+      let data; try{ data=await r.json(); }catch(_e){
+        if(r.status>=500) throw new Error('Server returned an unexpected response — please retry');
+        throw new Error('Server returned an unexpected response');
+      }
+      // Session-expired detection: if we had a token and the server says unauthorized → token died.
+      const isUnauth = (r.status===401) || (data && data.ok===false && data.error==='unauthorized');
+      if(isUnauth && reqToken && !isAuthExempt){
+        handleSessionExpired();
+        // Throw so callers don't try to render data; the modal will guide the user.
+        throw new Error('Session expired — please sign in again');
+      }
+      if(!r.ok && data && data.error) throw new Error(data.error);
+      return data;
+    }catch(e){
+      if(e && e.name==='AbortError') throw new Error('Request timed out — server or Xero is slow, please retry');
+      if(e instanceof TypeError) throw new Error('Network error — check your connection and retry');
+      throw e;
+    }finally{clearTimeout(tm);}
+  }
+}
+// ── Unsaved-changes guard ──
+// Modules call setDirty(true/false). On window close/reload, the browser asks
+// for confirmation. Avoids "I closed the tab and lost my Company Info edits".
+let UNSAVED_CHANGES=false;
+function setDirty(v){ UNSAVED_CHANGES=!!v; }
+window.addEventListener('beforeunload', function(e){
+  if(UNSAVED_CHANGES){ e.preventDefault(); e.returnValue=''; return ''; }
+});
+// ── Double-submit lock ──
+// Wrap an async action so the trigger button can't be clicked while a request
+// is in flight. Used by Create-invoice / Save / Issue paths.
+async function runOnce(btnId, busyText, fn){
+  const btn = document.getElementById(btnId);
+  const orig = btn ? btn.textContent : null;
+  if(btn){ btn.disabled=true; btn.textContent=busyText||'Working…'; }
+  try { return await fn(); }
+  finally { if(btn){ btn.disabled=false; btn.textContent=orig; } }
+}
+// Show a modal explaining the session ended, with one button to sign back in.
+function handleSessionExpired(){
+  if(SESSION_EXPIRED_SHOWN) return;
+  SESSION_EXPIRED_SHOWN=true;
+  localStorage.removeItem('ctg_portal_token'); TOKEN='';
+  const html='<div class="overlay" id="sess-expired"><div class="modal" style="width:380px">'+
+    '<div class="modal-hd"><h3>🔒 Session expired</h3></div>'+
+    '<p style="color:var(--text-soft);font-size:13.5px;margin:0 0 18px;line-height:1.6">For your security, you have been signed out. Please sign in again to continue.</p>'+
+    '<div class="modal-ft" style="justify-content:flex-end"><button class="btn p" onclick="location.href=\'index.html\'">Sign in</button></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
 }
 
 /* ── Auth ── */
@@ -1395,7 +1451,7 @@ function renderQinv(){
     '<div class="fld"><label>Line items</label><div id="qi_lines"></div><button class="btn sm" onclick="qiAddLine()">+ Add line</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Date</label><input type="date" id="qi_date"/></div><div class="fld"><label>Due date</label><input type="date" id="qi_due"/></div></div>'+
     '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="qi_test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="qiPreview()">👁 Preview invoice</button><button class="btn p" onclick="qiCreate()">Create invoice in Xero →</button></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="qiPreview()">👁 Preview invoice</button><button class="btn p" id="qi-create-btn" onclick="qiCreate()">Create invoice in Xero →</button></div>'+
     '<div id="qi_out" style="margin-top:12px"></div></div>';
   document.getElementById('qi_date').value=new Date().toISOString().slice(0,10);
   qiAddLine(); loaded.qinv=true;
@@ -1593,15 +1649,22 @@ async function qiCreate(){
   var d=qiCollect();
   if(d.errors.length){ d.errors.forEach(function(e){toast(e,true);}); return; }
   var test=document.getElementById('qi_test').checked;
+  // Last-chance confirm before posting a LIVE invoice — protects against accidental clicks.
+  if(!test){
+    if(!confirm('Create a LIVE invoice in Xero for '+d.customer+'? This cannot be undone via this app.')) return;
+  }
   var body={api:'quick_invoice',tenant:d.tenant,line_items:d.lines,date:document.getElementById('qi_date').value,due_date:document.getElementById('qi_due').value||undefined,reference:document.getElementById('qi_ref').value||undefined,dry_run:test};
   if(d.contactMatch){ body.contact_id=d.contactMatch.contact_id; } else { body.contact_name=d.customer; }
   document.getElementById('qi_out').innerHTML='<span class="muted">Working…</span>';
-  try{ var r=await call(body);
-    if(r&&r.ok){
-      if(r.dry_run){ document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:420px"><div class="n" style="color:var(--amber);font-size:16px">TEST · total '+M(r.total)+'</div><div class="l">Customer: '+(r.contact==='existing'?'✓ existing Xero contact':'⚠ new contact will be created')+' · uncheck Test mode to create</div></div>'; }
-      else { document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:380px"><div class="n" style="color:var(--green-soft)">'+esc(r.number||'')+' · '+M(r.total)+'</div><div class="l">Invoice created in Xero ✓</div></div>'; }
-    } else { document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
-  }catch(e){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  // runOnce locks the button so a frantic double-click can't double-post.
+  await runOnce('qi-create-btn', test?'Testing…':'Posting to Xero…', async()=>{
+    try{ var r=await call(body);
+      if(r&&r.ok){
+        if(r.dry_run){ document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:420px"><div class="n" style="color:var(--amber);font-size:16px">TEST · total '+M(r.total)+'</div><div class="l">Customer: '+(r.contact==='existing'?'✓ existing Xero contact':'⚠ new contact will be created')+' · uncheck Test mode to create</div></div>'; }
+        else { document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:380px"><div class="n" style="color:var(--green-soft)">'+esc(r.number||'')+' · '+M(r.total)+'</div><div class="l">Invoice created in Xero ✓</div></div>'; toast('Invoice '+esc(r.number||'')+' created'); }
+      } else { document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
+    }catch(e){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  });
 }
 
 /* ---- Receivables ---- */
@@ -2520,7 +2583,9 @@ function infoRender(){
   // Wire up dirty-tracking
   if(isEdit){
     const form=document.getElementById('info-form');
-    form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
+    form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty(true); const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
+  } else {
+    setDirty(false);
   }
   infoRenderSearch();
 }
@@ -2629,7 +2694,7 @@ async function infoSave(){
     const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
     if(r&&r.ok){
       if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
-      INFO_DIRTY=false;
+      INFO_DIRTY=false; setDirty(false);
       // Refresh from server to pick up updated_at/updated_by
       const fresh=await call({api:'company_info_get'});
       if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
