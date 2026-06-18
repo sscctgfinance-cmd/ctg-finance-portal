@@ -1194,6 +1194,37 @@ function renderO2O(){
     '<div id="o2o-out" style="margin-top:14px"><p class="muted">Pick the Excel to preview.</p></div></div>';
   loaded.o2o=true;
 }
+// v28: per-SKU O2O parser — INV-1183 style. Group rows by package suffix → one line per SKU
+// (Quantity = row count, UnitAmount = Price, DiscountRate = 19.2% applied per line).
+// Reference is converted from "Skindae Overall Billing 21 Apr-20 May 2026" → "O2O Sales 21/04/2026 - 20/05/2026".
+var O2O_SKU_MAP=[
+  {match:/basic[\s\-]*a[\s\-]*3/i, code:'SKO2OB3', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - BASIC A-3', label:'Basic A-3'},
+  {match:/basic[\s\-]*b[\s\-]*1/i, code:'SKO2OB1', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - BASIC B-1', label:'Basic B-1'},
+  {match:/promo[\s\-]*b\b/i,        code:'SKO2OPB', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO B',   label:'Promo B'},
+  {match:/promo[\s\-]*c\b/i,        code:'SKO2OPC', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO C',   label:'Promo C'},
+  {match:/promo[\s\-]*d\b/i,        code:'SKO2OPD', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO D',   label:'Promo D'}
+];
+var O2O_DISCOUNT_RATE=19.2;
+function o2oMatchSku(pkgName){
+  var s=String(pkgName||'');
+  for(var i=0;i<O2O_SKU_MAP.length;i++){ if(O2O_SKU_MAP[i].match.test(s)) return O2O_SKU_MAP[i]; }
+  return null;
+}
+// "21 Apr-20 May 2026" → "21/04/2026 - 20/05/2026"
+function o2oFormatReference(periodRaw){
+  var per=String(periodRaw||'').replace(/^Skindae\s+Overall\s+Billing\s*/i,'').trim();
+  var mo={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+  // accept "21 Apr-20 May 2026" or "21 Apr 2026-20 May 2026" or "21/04/2026-20/05/2026"
+  var m=per.match(/(\d{1,2})\s*([A-Za-z]{3,})\.?\s*(\d{4})?\s*[-–]\s*(\d{1,2})\s*([A-Za-z]{3,})\.?\s*(\d{4})/);
+  if(m){
+    var y2=m[6], y1=m[3]||y2;
+    var m1=mo[m[2].slice(0,3).toLowerCase()]||'01';
+    var m2=mo[m[5].slice(0,3).toLowerCase()]||'01';
+    var d1=('0'+m[1]).slice(-2), d2=('0'+m[4]).slice(-2);
+    return 'O2O Sales '+d1+'/'+m1+'/'+y1+' - '+d2+'/'+m2+'/'+y2;
+  }
+  return 'O2O Sales '+per; // fallback — keep raw if unparsable
+}
 function o2oParse(buf){
   var wb=XLSX.read(new Uint8Array(buf),{type:'array'});
   var period=null, pharmacies=[], grand=0;
@@ -1207,23 +1238,80 @@ function o2oParse(buf){
     }
     return null;
   }
+  function findHeaderRow(rows){
+    for(var r=0;r<Math.min(rows.length,20);r++){
+      var row=rows[r]||[];
+      var hasDate=false,hasPkg=false,hasPrice=false;
+      for(var c=0;c<row.length;c++){
+        var v=String(row[c]||'').toLowerCase();
+        if(v==='date') hasDate=true;
+        if(v==='package') hasPkg=true;
+        if(v==='price') hasPrice=true;
+      }
+      if(hasDate&&hasPkg&&hasPrice) return r;
+    }
+    return -1;
+  }
+  function colIdx(row,name){ for(var c=0;c<row.length;c++) if(String(row[c]||'').toLowerCase()===name) return c; return -1; }
   wb.SheetNames.forEach(function(sn){
     if(sn.trim().toLowerCase()==='sample')return;
     var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:null});
     var name=(rows[0]&&rows[0][0])?String(rows[0][0]).trim():sn;
     if(!period&&rows[1])period=rows[1][0];
+    // Find the data-section header row (Date | Package | Price | ...)
+    var hdrRow=findHeaderRow(rows);
+    var grouped={}, unmatched=[];
+    if(hdrRow>=0){
+      var hdr=rows[hdrRow];
+      var cDate=colIdx(hdr,'date'), cPkg=colIdx(hdr,'package'), cPrice=colIdx(hdr,'price');
+      for(var r=hdrRow+1;r<rows.length;r++){
+        var row=rows[r]||[];
+        var pkg=row[cPkg], price=row[cPrice];
+        if(!pkg||typeof price!=='number'||price<=0) continue;
+        var hit=o2oMatchSku(pkg);
+        if(!hit){ unmatched.push({pkg:String(pkg),price:price}); continue; }
+        var key=hit.code;
+        if(!grouped[key]) grouped[key]={code:hit.code,description:hit.desc,label:hit.label,unit_price:price,quantity:0,gross:0};
+        grouped[key].quantity++;
+        grouped[key].gross+=price;
+        // last-write-wins for unit_price (in case of slight rounding diffs in source)
+        grouped[key].unit_price=price;
+      }
+    }
+    var lines=[];
+    Object.keys(grouped).forEach(function(k){
+      var g=grouped[k];
+      lines.push({
+        item_code:g.code,
+        package:g.description,        // shown in invoice description column
+        quantity:g.quantity,
+        unit_price:g.unit_price,
+        discount_rate:O2O_DISCOUNT_RATE,
+        amount:Math.round(g.gross*(1-O2O_DISCOUNT_RATE/100)*100)/100
+      });
+    });
+    // Fallback to old behaviour if no data-row breakdown found (single-line invoice).
     var ts=findVal(rows,'total sales');
     var billed=findVal(rows,'billed amount'); if(billed===null)billed=findVal(rows,'billing');
-    if(!ts||ts<=0)return;
-    ts=Math.round(ts*100)/100; billed=(billed!==null&&billed>0)?Math.round(billed*100)/100:ts;
-    var commission=Math.round((ts-billed)*100)/100;
-    var per=String(period||'').replace(/^Skindae Overall Billing\s*/i,'');
-    var lines=[{package:'Skindae products ('+per+')',unit_price:ts,quantity:1,amount:ts}];
-    if(commission>0) lines.push({package:'Commission -19.2%',unit_price:-commission,quantity:1,amount:-commission});
-    pharmacies.push({pharmacy:name,line_count:lines.length,total:billed,total_sales:ts,commission:commission,lines:lines});
-    grand+=billed;
+    if(!lines.length){
+      if(!ts||ts<=0)return;
+      ts=Math.round(ts*100)/100; billed=(billed!==null&&billed>0)?Math.round(billed*100)/100:ts;
+      var per=o2oFormatReference(period).replace(/^O2O Sales\s*/,'');
+      lines=[{package:'Skindae products ('+per+')',unit_price:ts,quantity:1,amount:ts}];
+      var commission=Math.round((ts-billed)*100)/100;
+      if(commission>0) lines.push({package:'Commission -19.2%',unit_price:-commission,quantity:1,amount:-commission});
+      pharmacies.push({pharmacy:name,line_count:lines.length,total:billed,total_sales:ts,commission:commission,lines:lines,unmatched:unmatched,fallback:true});
+      grand+=billed; return;
+    }
+    // Per-SKU mode: total_sales = sum of gross before discount; billed = sum after 19.2% discount.
+    var totalSales=lines.reduce(function(s,x){ return s+(x.unit_price*x.quantity); }, 0);
+    var totalBilled=lines.reduce(function(s,x){ return s+(x.amount||0); }, 0);
+    totalSales=Math.round(totalSales*100)/100; totalBilled=Math.round(totalBilled*100)/100;
+    var commission2=Math.round((totalSales-totalBilled)*100)/100;
+    pharmacies.push({pharmacy:name,line_count:lines.length,total:totalBilled,total_sales:totalSales,commission:commission2,lines:lines,unmatched:unmatched,fallback:false});
+    grand+=totalBilled;
   });
-  return {period:String(period||''),pharmacy_count:pharmacies.length,grand_total:Math.round(grand*100)/100,pharmacies:pharmacies};
+  return {period:String(period||''),reference:o2oFormatReference(period),pharmacy_count:pharmacies.length,grand_total:Math.round(grand*100)/100,pharmacies:pharmacies};
 }
 function o2oPick(input){
   var f=input.files[0]; if(!f)return;
@@ -1234,14 +1322,37 @@ function o2oPick(input){
 }
 function o2oRenderPreview(){
   var d=O2O_DATA;
-  var rows=d.pharmacies.map(function(p){
-    return '<tr><td><b>'+esc(p.pharmacy)+'</b></td><td class="amt">'+M(p.total_sales)+'</td><td class="amt" style="color:var(--coral-soft)">'+(p.commission>0?'-'+M(p.commission):'-')+'</td><td class="amt"><b>'+M(p.total)+'</b></td></tr>';
+  var anyUnmatched=d.pharmacies.some(function(p){ return p.unmatched&&p.unmatched.length; });
+  var anyFallback=d.pharmacies.some(function(p){ return p.fallback; });
+  // Per-pharmacy collapsible blocks showing each SKU line item.
+  var blocks=d.pharmacies.map(function(p){
+    var pid='o2ode_'+Math.random().toString(36).slice(2,8);
+    var lineRows=(p.lines||[]).map(function(l){
+      var sku=l.item_code?('<span class="pill pill-blue" style="margin-right:6px;font-family:monospace">'+esc(l.item_code)+'</span>'):'';
+      var disc=l.discount_rate?('<span class="muted">Disc '+l.discount_rate+'%</span>'):'<span class="muted">—</span>';
+      return '<tr><td>'+sku+esc(l.package||'')+'</td><td class="amt">'+l.quantity+'</td><td class="amt">'+M(l.unit_price)+'</td><td class="amt">'+disc+'</td><td class="amt"><b>'+M(l.amount||(l.unit_price*l.quantity))+'</b></td></tr>';
+    }).join('');
+    var unmatchedNote=(p.unmatched&&p.unmatched.length)?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">⚠ '+p.unmatched.length+' row(s) skipped (no SKU match): '+esc(p.unmatched.slice(0,3).map(function(u){return u.pkg;}).join(' · '))+(p.unmatched.length>3?'…':'')+'</div>':'';
+    var fbNote=p.fallback?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">⚠ Fallback mode: no per-row data found, using single Total-Sales line.</div>':'';
+    return '<div style="border:1px solid var(--panel-border);border-radius:10px;margin-bottom:10px;background:var(--panel)">'+
+      '<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="document.getElementById(\''+pid+'\').style.display=document.getElementById(\''+pid+'\').style.display===\'none\'?\'block\':\'none\'">'+
+      '<b style="flex:1">'+esc(p.pharmacy)+'</b>'+
+      '<span class="muted">'+p.line_count+' line'+(p.line_count===1?'':'s')+'</span>'+
+      '<span class="amt">Full '+M(p.total_sales)+'</span>'+
+      '<span class="amt" style="color:var(--coral-soft)">'+(p.commission>0?'-'+M(p.commission):'—')+'</span>'+
+      '<span class="amt"><b>'+M(p.total)+'</b></span>'+
+      '</div>'+
+      '<div id="'+pid+'" style="display:none;padding:0 14px 12px"><table class="bigtable"><thead><tr><th>Item / Description</th><th class="amt">Qty</th><th class="amt">Unit Price</th><th class="amt">Disc.</th><th class="amt">Amount</th></tr></thead><tbody>'+lineRows+'</tbody></table>'+unmatchedNote+fbNote+'</div>'+
+      '</div>';
   }).join('');
   document.getElementById('o2o-out').innerHTML=
     '<div class="cards"><div class="card"><div class="n" style="color:var(--coral-soft)">'+d.pharmacy_count+'</div><div class="l">Pharmacies</div></div>'+
     '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(d.grand_total)+'</div><div class="l">Total billed</div></div></div>'+
-    '<div class="status-bar" style="margin:2px 0 12px"><div class="dot-green"></div>'+esc(d.period||'')+' &middot; read from your Excel Total Sales &amp; Billed amount cells</div>'+
-    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Full price</th><th class="amt">Commission -19.2%</th><th class="amt">Billed (invoice)</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    '<div class="status-bar" style="margin:2px 0 6px"><div class="dot-green"></div>Reference → <b>'+esc(d.reference||'')+'</b></div>'+
+    '<div class="muted" style="font-size:12px;margin:0 0 12px">From Excel: '+esc(d.period||'')+'</div>'+
+    (anyUnmatched?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ Some rows had no SKU match (Basic A-3 / Basic B-1 / Promo B / Promo C / Promo D). They were skipped — expand a pharmacy to see which.</div>':'')+
+    (anyFallback?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ One or more sheets had no Date/Package/Price rows. Falling back to single Total-Sales line for those.</div>':'')+
+    blocks;
   document.getElementById('o2o-issue').disabled=false;
 }
 async function o2oIssue(){
@@ -1250,7 +1361,7 @@ async function o2oIssue(){
   if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in SKINDAE SDN BHD?'))return;
   var btn=document.getElementById('o2o-issue'); btn.disabled=true; btn.textContent='Issuing…';
   try{
-    var r=await call({api:'o2o_issue', period:O2O_DATA.period, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
+    var r=await call({api:'o2o_issue', period:O2O_DATA.period, reference:O2O_DATA.reference, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
     if(r&&r.ok){
       var rows=(r.results||[]).map(function(x){
         var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
