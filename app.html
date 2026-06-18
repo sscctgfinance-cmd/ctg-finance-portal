@@ -698,6 +698,7 @@ async function showApp(){
   document.querySelectorAll('.tab').forEach(function(el){
     const t=el.dataset.t;
     if(t==='users') el.classList.toggle('hide', !canManage);
+    else if(t==='info') el.classList.remove('hide');   // Company Info: always visible (admin edits, others read-only — gated server-side)
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   const sel=document.getElementById('company');
