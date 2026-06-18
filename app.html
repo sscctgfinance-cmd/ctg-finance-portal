@@ -537,6 +537,7 @@ input:focus, select:focus, textarea:focus{
     <div class="tab"        data-t="close"       onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="recon"       onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
+    <div class="tab"        data-t="info"        onclick="tab('info')"        id="tab-info">🏢 Company Info</div>
   </div>
 
   <div id="overview"></div>
@@ -551,6 +552,7 @@ input:focus, select:focus, textarea:focus{
   <div id="close"       class="hide"></div>
   <div id="recon"       class="hide"></div>
   <div id="users"       class="hide"></div>
+  <div id="info"        class="hide"></div>
 
 </div></div>
 
@@ -711,7 +713,7 @@ async function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t])render(t);
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
@@ -734,6 +736,7 @@ async function render(t){
     if(t==='close')      return renderClose();
     if(t==='recon')      return renderRecon();
     if(t==='users')      return renderUsers();
+    if(t==='info')       return renderInfo();
   }catch(x){
     loaded[t]=false;
     document.getElementById(t).innerHTML=
@@ -2054,6 +2057,184 @@ async function reconRun(){
 
 /* ── Auto-login on load ── */
 
+
+/* ── Company Info ── */
+let INFO_DATA=null, INFO_ACTIVE=null, INFO_EDITABLE=false;
+const MY_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
+
+async function renderInfo(){
+  spin('info');
+  try{
+    const r=await call({api:'company_info_get'});
+    if(!r||!r.ok){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🔒</div><div>'+esc(r&&r.error||'Failed to load')+'</div></div>'; return; }
+    INFO_DATA=r.companies||[]; INFO_EDITABLE=!!r.editable;
+    if(!INFO_DATA.length){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🏢</div><div>No companies you can access yet.</div></div>'; return; }
+    if(!INFO_ACTIVE||!INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE)) INFO_ACTIVE=INFO_DATA[0].tenant_id;
+    infoRender();
+    loaded.info=true;
+  }catch(e){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
+}
+
+function infoRender(){
+  const c=INFO_DATA.find(x=>x.tenant_id===INFO_ACTIVE)||INFO_DATA[0];
+  const tabs=INFO_DATA.map(x=>'<button class="btn'+(x.tenant_id===INFO_ACTIVE?' p':'')+'" style="margin-right:6px;margin-bottom:6px" onclick="infoSwitch(\''+esc(x.tenant_id)+'\')">'+esc(x.tenant_name)+'</button>').join('');
+  const updatedLine = c.updated_at ? '<div class="muted" style="font-size:12px">Last edit: '+esc(String(c.updated_at).replace('T',' ').slice(0,16))+(c.updated_by_email?' · by '+esc(c.updated_by_email):'')+'</div>' : '';
+  const readonly = INFO_EDITABLE ? '' : ' disabled';
+  function fld(label, key, val, ph, type){
+    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><input type="'+(type||'text')+'" data-k="'+esc(key)+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px"/></div>';
+  }
+  function textarea(label, key, val, ph, rows){
+    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><textarea data-k="'+esc(key)+'" placeholder="'+esc(ph||'')+'" rows="'+(rows||2)+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(val||'')+'</textarea></div>';
+  }
+  function selectState(label, key, val){
+    const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(val===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
+    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><select data-k="'+esc(key)+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select></div>';
+  }
+  function section(title, body){
+    return '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px"><h3 style="margin:0 0 12px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660">'+esc(title)+'</h3>'+body+'</div>';
+  }
+  function row(){ return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+Array.from(arguments).join('')+'</div>'; }
+
+  // People — directors/shareholders/bank accounts: JSON arrays of objects
+  function listEditor(label, key, items, cols){
+    const colKeys=cols.map(c=>c.k);
+    const header='<tr>'+cols.map(c=>'<th style="text-align:left;font-size:11px;padding:6px;color:var(--muted)">'+esc(c.l)+'</th>').join('')+(INFO_EDITABLE?'<th style="width:38px"></th>':'')+'</tr>';
+    const rows=(items||[]).map((it,i)=>'<tr data-i="'+i+'">'+
+      colKeys.map(k=>'<td style="padding:4px"><input type="text" data-sk="'+esc(k)+'" value="'+esc(it[k]==null?'':it[k])+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:6px 8px;border-radius:5px;font-size:12.5px"/></td>').join('')+
+      (INFO_EDITABLE?'<td style="padding:4px;text-align:center"><button class="btn" style="padding:4px 8px;font-size:11px" onclick="infoRowDel(\''+esc(key)+'\','+i+')">×</button></td>':'')+
+    '</tr>').join('');
+    const addBtn=INFO_EDITABLE?'<button class="btn" style="margin-top:8px;font-size:12px" onclick="infoRowAdd(\''+esc(key)+'\','+JSON.stringify(colKeys).replace(/"/g,'&quot;')+')">+ Add row</button>':'';
+    return '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse" data-list="'+esc(key)+'"><thead>'+header+'</thead><tbody>'+rows+'</tbody></table></div>'+addBtn+'</div>';
+  }
+
+  const saveBar = INFO_EDITABLE
+    ? '<div style="position:sticky;bottom:0;background:linear-gradient(180deg,transparent,var(--bg) 30%);padding:14px 0;margin-top:10px;display:flex;gap:10px;align-items:center"><button class="btn p" onclick="infoSave()" id="info-save-btn">💾 Save changes</button><span class="muted" style="font-size:12px" id="info-save-status"></span></div>'
+    : '<div class="muted" style="font-size:12px;margin-top:10px">🔒 Read-only — only Admin role can edit. Ask your Super Admin to update.</div>';
+
+  document.getElementById('info').innerHTML=
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabs+'</div>'+
+    '<div id="info-form">'+
+      '<h2 style="margin:0 0 4px;font-size:20px;letter-spacing:-.02em">'+esc(c.tenant_name)+'</h2>'+
+      updatedLine+
+      '<div style="margin-top:14px">'+
+      section('Identity (SSM)', row(
+        fld('Legal name (as per SSM)','legal_name',c.legal_name,'CTG4U DRSMILE WHITENING SDN BHD'),
+        fld('Trade / brand name','trade_name',c.trade_name,'DrSmile'),
+        fld('SSM new no. (12-digit)','ssm_new',c.ssm_new,'199801012345'),
+        fld('SSM old no.','ssm_old',c.ssm_old,'123456-X'),
+        fld('Date of incorporation','incorporation_date',c.incorporation_date,'YYYY-MM-DD','date'),
+        fld('Business type','business_type',c.business_type,'Wholesale of cosmetics'),
+        fld('MSIC code','msic_code',c.msic_code,'46494')
+      ))+
+      section('Registered office address', row(
+        fld('Address (street)','reg_address',c.reg_address,'No. 12, Jalan ...'),
+        fld('Postcode','reg_postcode',c.reg_postcode,'47301'),
+        fld('City','reg_city',c.reg_city,'Petaling Jaya'),
+        selectState('State','reg_state',c.reg_state)
+      ))+
+      section('Principal place of business', row(
+        fld('Address (street)','biz_address',c.biz_address,''),
+        fld('Postcode','biz_postcode',c.biz_postcode,''),
+        fld('City','biz_city',c.biz_city,''),
+        selectState('State','biz_state',c.biz_state)
+      ))+
+      section('Contact', row(
+        fld('Phone','phone',c.phone,'+60 3 ...','tel'),
+        fld('Email','email',c.email,'admin@example.com','email'),
+        fld('Website','website',c.website,'https://...','url')
+      ))+
+      section('Tax & MyInvois', row(
+        fld('Income Tax No. (LHDN)','income_tax_no',c.income_tax_no,'C 12345678901'),
+        fld('SST registration no.','sst_no',c.sst_no,'B16-1808-12345678'),
+        fld('MyInvois TIN','myinvois_tin',c.myinvois_tin,'C12345678910')
+      ))+
+      section('Statutory employer numbers', row(
+        fld('EPF / KWSP','epf_no',c.epf_no,'12345678'),
+        fld('SOCSO / PERKESO','socso_no',c.socso_no,'C12345678'),
+        fld('EIS','eis_no',c.eis_no,''),
+        fld('HRD Corp levy','hrdc_no',c.hrdc_no,'')
+      ))+
+      section('Capital & financial year', row(
+        fld('Authorised capital (RM)','authorised_capital',c.authorised_capital,'400000','number'),
+        fld('Paid-up capital (RM)','paid_up_capital',c.paid_up_capital,'100000','number'),
+        fld('Financial year end (MM-DD)','financial_year_end',c.financial_year_end,'12-31')
+      ))+
+      section('Directors', listEditor('Directors','directors', c.directors||[], [
+        {k:'name',l:'Name'},{k:'ic',l:'IC / Passport'},{k:'role',l:'Role'},{k:'appointed_on',l:'Appointed (YYYY-MM-DD)'}
+      ]))+
+      section('Shareholders', listEditor('Shareholders','shareholders', c.shareholders||[], [
+        {k:'name',l:'Name'},{k:'ic_or_no',l:'IC / Reg no.'},{k:'shares',l:'Shares'},{k:'percent',l:'%'}
+      ]))+
+      section('Secretary / Auditor', row(
+        fld('Company secretary (name)','company_secretary',c.company_secretary,''),
+        fld('Secretarial firm','secretary_firm',c.secretary_firm,''),
+        fld('Auditor','auditor',c.auditor,'')
+      ))+
+      section('Bank accounts', listEditor('Bank accounts','bank_accounts', c.bank_accounts||[], [
+        {k:'bank',l:'Bank'},{k:'account_no',l:'Account no.'},{k:'account_name',l:'Account name'},{k:'branch',l:'Branch'},{k:'purpose',l:'Purpose'}
+      ]))+
+      section('Notes', textarea('Free text','notes',c.notes,'Any other info worth recording — e.g. licences, key dates, MoUs',4))+
+      saveBar+
+      '</div>'+
+    '</div>';
+}
+
+function infoSwitch(tid){
+  if(INFO_EDITABLE){ const dirty=infoCollect(); INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE).__pending=dirty; }
+  INFO_ACTIVE=tid; infoRender();
+}
+
+function infoCollect(){
+  const out={};
+  document.querySelectorAll('#info-form [data-k]').forEach(el=>{ out[el.dataset.k]=el.value; });
+  ['directors','shareholders','bank_accounts'].forEach(key=>{
+    const tbl=document.querySelector('#info-form [data-list="'+key+'"]');
+    if(!tbl) return;
+    const rows=[];
+    tbl.querySelectorAll('tbody tr').forEach(tr=>{
+      const obj={};
+      tr.querySelectorAll('input[data-sk]').forEach(inp=>{ const v=inp.value.trim(); if(v) obj[inp.dataset.sk]=v; });
+      if(Object.keys(obj).length) rows.push(obj);
+    });
+    out[key]=rows;
+  });
+  ['authorised_capital','paid_up_capital'].forEach(k=>{ if(out[k]==='') delete out[k]; else if(out[k]!=null) out[k]=Number(out[k]); });
+  if(out.incorporation_date==='') delete out.incorporation_date;
+  return out;
+}
+
+function infoRowAdd(key, colKeys){
+  const c=INFO_DATA.find(x=>x.tenant_id===INFO_ACTIVE); if(!c[key]) c[key]=[];
+  const blank={}; colKeys.forEach(k=>blank[k]='');
+  c[key].push(blank); infoRender();
+}
+function infoRowDel(key, idx){
+  const c=INFO_DATA.find(x=>x.tenant_id===INFO_ACTIVE); if(!c[key]) return;
+  c[key].splice(idx,1); infoRender();
+}
+
+async function infoSave(){
+  if(!INFO_EDITABLE) return;
+  const patch=infoCollect();
+  const btn=document.getElementById('info-save-btn'); const st=document.getElementById('info-save-status');
+  btn.disabled=true; btn.textContent='Saving…'; if(st) st.textContent='';
+  try{
+    const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
+    if(r&&r.ok){
+      if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
+      // Refresh from server to pick up updated_at/updated_by
+      const fresh=await call({api:'company_info_get'});
+      if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
+      infoRender();
+    } else {
+      if(st){ st.textContent='✗ '+(r&&r.error||'failed'); st.style.color='var(--red-soft)'; }
+    }
+  }catch(e){
+    if(st){ st.textContent='✗ '+(e.message||e); st.style.color='var(--red-soft)'; }
+  } finally {
+    btn.disabled=false; btn.textContent='💾 Save changes';
+  }
+}
 
 if(TOKEN){
   call({api:'me'}).then(r=>{
