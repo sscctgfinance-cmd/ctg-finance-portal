@@ -1469,51 +1469,125 @@ function qiAccountLabel(code){
   var a=(QINV_META.accounts||[]).filter(function(x){return x.code===code;})[0];
   return a ? esc(a.code+' · '+a.name) : esc(code);
 }
-// 👁 Preview — render an invoice-style summary and confirm before posting.
+// Look up the matched contact's address details from Xero contacts cache (if loaded).
+function qiCustomerAddress(){
+  var match = (QINV_META.contacts||[]).filter(function(c){return (c.name||'').toLowerCase()===document.getElementById('qi_cust').value.trim().toLowerCase();})[0];
+  if(!match) return null;
+  // Address fields aren't always returned by inv_meta — guard for undefined.
+  return match.address || null;
+}
+// 👁 Preview — render a Xero-PDF-style invoice mockup (white paper, dark text, A4 ratio).
 function qiPreview(){
   var d=qiCollect();
   if(d.errors.length){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft);font-size:13px">⚠ '+d.errors.map(esc).join(' · ')+'</div>'; return; }
   var co=COMPANIES.filter(function(c){return c.tenant_id===d.tenant;})[0];
-  var date=document.getElementById('qi_date').value, due=document.getElementById('qi_due').value;
+  var date=document.getElementById('qi_date').value || new Date().toISOString().slice(0,10);
+  var due =document.getElementById('qi_due').value;
   var ref =document.getElementById('qi_ref').value;
   var test=document.getElementById('qi_test').checked;
   var subtotal=d.lines.reduce(function(s,l){return s+l.quantity*l.unit_amount;},0);
-  var lineRows=d.lines.map(function(l,i){
-    return '<tr><td style="padding:8px;border-top:1px solid var(--panel-border);font-size:12.5px">'+qiAccountLabel(l.account_code)+'</td>'+
-      '<td style="padding:8px;border-top:1px solid var(--panel-border);font-size:12.5px">'+esc(l.description)+'</td>'+
-      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right">'+l.quantity+'</td>'+
-      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right">'+M(l.unit_amount)+'</td>'+
-      '<td style="padding:8px;border-top:1px solid var(--panel-border);text-align:right"><b>'+M(l.quantity*l.unit_amount)+'</b></td></tr>';
+  var currency = 'MYR';
+
+  // Format "31 May 2026" — matches Xero PDF date style
+  function fmtDate(iso){ if(!iso) return ''; var dt=new Date(iso+'T00:00:00'); var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return dt.getDate()+' '+months[dt.getMonth()]+' '+dt.getFullYear(); }
+  function pdfAmt(n){ return Number(n||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  var lineRows=d.lines.map(function(l){
+    // Resolve a SKU code from QINV_META.items if any item matches this description (best-effort)
+    var sku=''; (QINV_META.items||[]).forEach(function(it){ if(it.name===l.description||it.description===l.description) sku=it.code||''; });
+    var amt = l.quantity * l.unit_amount;
+    return '<tr>'+
+      '<td style="padding:14px 8px 14px 0;border-top:1px solid #d9dde2;vertical-align:top;color:#7c8694;font-size:11px;letter-spacing:.02em">'+(sku?esc(sku):'&nbsp;')+'</td>'+
+      '<td style="padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;color:#202632;font-size:13px;line-height:1.45">'+esc(l.description)+'</td>'+
+      '<td style="padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#202632;font-size:13px">'+l.quantity+'</td>'+
+      '<td style="padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#202632;font-size:13px">'+pdfAmt(l.unit_amount)+'</td>'+
+      '<td style="padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#7c8694;font-size:11px">'+qiAccountLabel(l.account_code)+'</td>'+
+      '<td style="padding:14px 0 14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#202632;font-size:13px">'+pdfAmt(amt)+'</td>'+
+    '</tr>';
   }).join('');
-  var contactBadge=d.contactMatch
-    ? '<span class="pill pill-green" style="margin-left:8px">✓ existing Xero contact</span>'
-    : '<span class="pill pill-coral" style="margin-left:8px">⚠ new contact will be created</span>';
-  var modeBadge=test
-    ? '<span class="pill pill-submit" style="margin-left:8px">TEST mode — not posted</span>'
-    : '<span class="pill pill-green" style="margin-left:8px">LIVE — will be created in Xero</span>';
-  document.getElementById('qi_out').innerHTML=
-    '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:20px;margin-top:14px">'+
-      '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px">'+
-        '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">INVOICE PREVIEW</div>'+
-        '<h2 style="margin:6px 0 0;font-size:18px;letter-spacing:-.02em">'+esc((co&&co.tenant_name)||d.tenant)+'</h2></div>'+
-        '<div style="text-align:right;font-size:12px;color:var(--text-soft)"><div><b>Date:</b> '+esc(date||'today')+'</div>'+
-        '<div><b>Due:</b> '+esc(due||'—')+'</div>'+
-        (ref?'<div><b>Ref:</b> '+esc(ref)+'</div>':'')+'</div>'+
-      '</div>'+
-      '<div style="margin-bottom:10px;font-size:13px"><b>Bill to:</b> '+esc(d.customer)+contactBadge+modeBadge+'</div>'+
+
+  // Mode + customer-match status — rendered ABOVE the PDF (not inside) so the PDF looks clean.
+  var modeBanner = test
+    ? '<div style="background:rgba(255,187,86,.12);border:1px solid rgba(255,187,86,.4);color:#ffbb56;padding:8px 14px;border-radius:8px;font-size:12.5px;margin-bottom:12px">⚠ <b>TEST mode</b> — this is a preview only. Nothing will be posted to Xero.</div>'
+    : '<div style="background:rgba(126,224,160,.12);border:1px solid rgba(126,224,160,.4);color:#7ee0a0;padding:8px 14px;border-radius:8px;font-size:12.5px;margin-bottom:12px">✓ <b>LIVE</b> — confirming will create this invoice in Xero.</div>';
+  var contactStatus = d.contactMatch
+    ? '<span style="font-size:11px;color:#7ee0a0;margin-left:8px">✓ existing Xero contact</span>'
+    : '<span style="font-size:11px;color:var(--coral-soft);margin-left:8px">⚠ new contact will be created</span>';
+
+  var coName = (co&&co.tenant_name)||d.tenant;
+
+  // ── Xero-PDF-style invoice (white paper, A4-ratio) ──
+  var pdf = '<div id="qi-pdf" style="background:#fff;color:#202632;border-radius:8px;padding:48px 54px;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;line-height:1.5;box-shadow:0 8px 32px rgba(0,0,0,.4);max-width:780px;margin:0 auto">'+
+    // Header — Tax Invoice title + company on the right (mirroring Xero Standard branding)
+    '<table style="width:100%;border-collapse:collapse;margin-bottom:36px"><tr>'+
+      '<td style="width:55%;vertical-align:top">'+
+        '<div style="font-size:11px;letter-spacing:.15em;color:#7c8694;text-transform:uppercase;font-weight:600;margin-bottom:6px">Tax Invoice</div>'+
+        '<div style="font-size:24px;color:#202632;font-weight:300;letter-spacing:-.02em">'+esc(coName)+'</div>'+
+      '</td>'+
+      '<td style="width:45%;vertical-align:top;text-align:right">'+
+        '<div style="font-size:30px;color:#1a73e8;font-weight:300;letter-spacing:-.01em">INVOICE</div>'+
+        '<div style="font-size:12px;color:#7c8694;margin-top:2px;letter-spacing:.05em">'+(test?'(TEST preview — no number assigned)':'(number will be assigned by Xero)')+'</div>'+
+      '</td>'+
+    '</tr></table>'+
+    // Two-column: customer (left) + invoice meta (right)
+    '<table style="width:100%;border-collapse:collapse;margin-bottom:36px"><tr>'+
+      '<td style="width:55%;vertical-align:top;padding-right:24px">'+
+        '<div style="font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;font-weight:600">Bill To</div>'+
+        '<div style="font-size:14px;color:#202632;font-weight:500">'+esc(d.customer)+'</div>'+
+      '</td>'+
+      '<td style="width:45%;vertical-align:top">'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+          '<tr><td style="padding:3px 0;color:#7c8694">Invoice Date</td><td style="padding:3px 0;text-align:right;color:#202632">'+esc(fmtDate(date))+'</td></tr>'+
+          (due?'<tr><td style="padding:3px 0;color:#7c8694">Due Date</td><td style="padding:3px 0;text-align:right;color:#202632">'+esc(fmtDate(due))+'</td></tr>':'')+
+          (ref?'<tr><td style="padding:3px 0;color:#7c8694">Reference</td><td style="padding:3px 0;text-align:right;color:#202632">'+esc(ref)+'</td></tr>':'')+
+          '<tr><td style="padding:3px 0;color:#7c8694">Currency</td><td style="padding:3px 0;text-align:right;color:#202632">'+currency+'</td></tr>'+
+        '</table>'+
+      '</td>'+
+    '</tr></table>'+
+    // Line items table
+    '<div style="font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;text-align:right;margin-bottom:4px;font-weight:600">Amounts are tax exclusive</div>'+
+    '<table style="width:100%;border-collapse:collapse">'+
+      '<thead><tr style="border-bottom:2px solid #202632">'+
+        '<th style="padding:8px 8px 8px 0;text-align:left;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Item</th>'+
+        '<th style="padding:8px;text-align:left;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Description</th>'+
+        '<th style="padding:8px;text-align:right;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Qty</th>'+
+        '<th style="padding:8px;text-align:right;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Unit Price</th>'+
+        '<th style="padding:8px;text-align:right;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Account</th>'+
+        '<th style="padding:8px 0 8px 8px;text-align:right;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600">Amount '+currency+'</th>'+
+      '</tr></thead>'+
+      '<tbody>'+lineRows+'</tbody>'+
+    '</table>'+
+    // Totals — right-aligned block in Xero style
+    '<table style="width:100%;border-collapse:collapse;margin-top:14px"><tr><td style="width:60%"></td><td style="width:40%">'+
       '<table style="width:100%;border-collapse:collapse;font-size:13px">'+
-        '<thead><tr style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+
-        '<th style="padding:8px;text-align:left">Account</th>'+
-        '<th style="padding:8px;text-align:left">Description</th>'+
-        '<th style="padding:8px;text-align:right">Qty</th>'+
-        '<th style="padding:8px;text-align:right">Unit</th>'+
-        '<th style="padding:8px;text-align:right">Amount</th></tr></thead>'+
-        '<tbody>'+lineRows+'</tbody>'+
-        '<tfoot><tr><td colspan="4" style="padding:12px 8px 6px;text-align:right;font-size:13px;border-top:2px solid var(--panel-border)">Subtotal (tax exclusive)</td><td style="padding:12px 8px 6px;text-align:right;font-size:15px"><b>'+M(subtotal)+'</b></td></tr></tfoot>'+
+        '<tr><td style="padding:8px 8px 8px 0;color:#202632">Subtotal</td><td style="padding:8px 0 8px 8px;text-align:right;color:#202632">'+pdfAmt(subtotal)+'</td></tr>'+
+        '<tr><td style="padding:8px 8px 8px 0;color:#202632">Total Tax</td><td style="padding:8px 0 8px 8px;text-align:right;color:#202632">0.00</td></tr>'+
+        '<tr style="border-top:2px solid #202632"><td style="padding:12px 8px 12px 0;color:#202632;font-weight:600;font-size:15px">TOTAL '+currency+'</td><td style="padding:12px 0 12px 8px;text-align:right;color:#202632;font-weight:600;font-size:15px">'+pdfAmt(subtotal)+'</td></tr>'+
+        '<tr><td colspan="2" style="padding-top:8px;text-align:right;color:#7c8694;font-size:11px">Due Date: '+esc(fmtDate(due)||'—')+'</td></tr>'+
       '</table>'+
-      '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end"><button class="btn" onclick="document.getElementById(\'qi_out\').innerHTML=\'\'">← Back to edit</button>'+
-      '<button class="btn p" onclick="qiCreate()">'+(test?'Run test (no posting)':'✓ Confirm & create in Xero')+'</button></div>'+
+    '</td></tr></table>'+
+    '<div style="margin-top:48px;padding-top:14px;border-top:1px solid #d9dde2;text-align:center;font-size:10px;color:#7c8694;letter-spacing:.05em">CTG Finance Portal · Preview · '+new Date().toISOString().slice(0,10)+'</div>'+
+  '</div>';
+
+  document.getElementById('qi_out').innerHTML=
+    modeBanner+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:12.5px;color:var(--text-soft)">'+
+      '<div><b>Customer:</b> '+esc(d.customer)+contactStatus+'</div>'+
+      '<div class="muted">Preview the invoice as Xero will render it. ✓ Confirm below to '+(test?'run a test':'create in Xero')+'.</div>'+
+    '</div>'+
+    pdf+
+    '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">'+
+      '<button class="btn" onclick="document.getElementById(\'qi_out\').innerHTML=\'\'">← Back to edit</button>'+
+      '<button class="btn" onclick="qiPrintPdf()">🖨 Print preview</button>'+
+      '<button class="btn p" onclick="qiCreate()">'+(test?'Run test (no posting)':'✓ Confirm & create in Xero')+'</button>'+
     '</div>';
+}
+// Print the PDF-styled preview block on its own — opens a new tab with just the white invoice.
+function qiPrintPdf(){
+  var node=document.getElementById('qi-pdf'); if(!node){toast&&toast('No preview to print',true);return;}
+  var w=window.open('','_blank','width=900,height=1100'); if(!w){toast&&toast('Pop-up blocked',true);return;}
+  w.document.write('<!doctype html><html><head><title>Invoice Preview</title><style>body{font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;background:#fff;margin:30px;color:#202632}@media print{body{margin:0}}</style></head><body>'+node.outerHTML.replace('box-shadow:0 8px 32px rgba(0,0,0,.4);','')+'</body></html>');
+  w.document.close(); setTimeout(function(){w.print();}, 250);
 }
 async function qiCreate(){
   var d=qiCollect();
