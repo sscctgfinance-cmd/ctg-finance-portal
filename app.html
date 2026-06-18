@@ -505,11 +505,12 @@ input:focus, select:focus, textarea:focus{
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="conn-indicator" aria-label="Connection status" title="Online" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green-soft);box-shadow:0 0 0 3px rgba(126,224,160,.12);transition:background .2s,box-shadow .2s"></span>
         <span class="who" id="who-name"></span>
         <span class="role-chip" id="who-role"></span>
       </div>
-      <button class="btn bell" id="notif-btn" onclick="toggleNotif(event)" title="Alerts">🔔<span class="bell-badge" id="notif-badge"></span></button>
+      <button class="btn bell" id="notif-btn" onclick="toggleNotif(event)" aria-label="Notifications" title="Alerts">🔔<span class="bell-badge" id="notif-badge"></span></button>
       <button class="btn" onclick="openSecurityModal()" title="Two-factor authentication">🔐 Security</button>
       <button class="btn" onclick="openPwModal()">Change Password</button>
       <button class="btn d" onclick="logout()">Sign Out</button>
@@ -564,7 +565,7 @@ input:focus, select:focus, textarea:focus{
   <div class="modal" style="width:380px">
     <div class="modal-hd">
       <h3 id="pw-title">Change Password</h3>
-      <button class="modal-close" id="pw-close" onclick="closePwModal()">×</button>
+      <button class="modal-close" id="pw-close" aria-label="Close" onclick="closePwModal()">×</button>
     </div>
     <div class="pw-forced-note hide" id="pw-forced-note">🔒 For your security, please set a new password before continuing.</div>
     <div class="fld"><label>Current Password</label><input type="password" id="pw-old" placeholder="••••••••"/></div>
@@ -658,6 +659,48 @@ function setDirty(v){ UNSAVED_CHANGES=!!v; }
 window.addEventListener('beforeunload', function(e){
   if(UNSAVED_CHANGES){ e.preventDefault(); e.returnValue=''; return ''; }
 });
+// ── Keyboard shortcuts ──
+// Cmd/Ctrl+S → save current context (Company Info edit mode → Save; Quick Invoice → Preview)
+// Esc       → close any open modal overlay
+window.addEventListener('keydown', function(e){
+  // Ctrl/Cmd+S
+  if((e.ctrlKey||e.metaKey) && e.key==='s'){
+    const active=document.querySelector('.tab.active');
+    const which=active?active.dataset.t:null;
+    // Company Info, edit mode → Save
+    if(which==='info' && typeof INFO_MODE!=='undefined' && INFO_MODE==='edit' && typeof infoSave==='function'){
+      e.preventDefault(); infoSave(); return;
+    }
+    // Quick Invoice → trigger preview (safer than Create)
+    if(which==='qinv' && typeof qiPreview==='function'){
+      e.preventDefault(); qiPreview(); return;
+    }
+  }
+  // Esc — close any visible overlay
+  if(e.key==='Escape'){
+    const overlay=document.querySelector('.overlay:not(.hide)');
+    if(overlay && overlay.id!=='sess-expired'){
+      const cancelBtn=overlay.querySelector('.modal-ft button:first-child, .modal-close');
+      if(cancelBtn) cancelBtn.click();
+    }
+  }
+});
+// ── Online / offline awareness ──
+// Visual indicator in the top bar + auto-toast on transitions. Optimistic — the
+// browser reports network changes, but a working network ≠ working backend.
+let WAS_ONLINE = navigator.onLine;
+function updateConnIndicator(){
+  const dot=document.getElementById('conn-indicator'); if(!dot) return;
+  const online=navigator.onLine;
+  dot.title = online ? 'Online' : 'Offline — changes will be queued until connection returns';
+  dot.style.background = online ? 'var(--green-soft)' : 'var(--red-soft)';
+  dot.style.boxShadow = online ? '0 0 0 3px rgba(126,224,160,.12)' : '0 0 0 3px rgba(239,68,68,.18)';
+  if(WAS_ONLINE && !online) toast('⚠ You are offline', true);
+  else if(!WAS_ONLINE && online) toast('✓ Back online');
+  WAS_ONLINE = online;
+}
+window.addEventListener('online', updateConnIndicator);
+window.addEventListener('offline', updateConnIndicator);
 // ── Double-submit lock ──
 // Wrap an async action so the trigger button can't be clicked while a request
 // is in flight. Used by Create-invoice / Save / Issue paths.
@@ -771,7 +814,12 @@ async function showApp(){
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
   ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
-  if(!loaded[t])render(t);
+  if(!loaded[t]){
+    // Show a skeleton immediately for tabs that fetch on load; renderXxx replaces it on success.
+    const asyncTabs = ['overview','approvals','collections','recv','today','smart','close','users','info'];
+    if(asyncTabs.indexOf(t)>=0) spin(t);
+    render(t);
+  }
 }
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
 function onCompany(){loaded.overview=false;loaded.approvals=false;const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';if(t==='overview'||t==='approvals')render(t);}
@@ -796,9 +844,32 @@ async function render(t){
     if(t==='info')       return renderInfo();
   }catch(x){
     loaded[t]=false;
+    const msg = String(x.message||x);
+    // Categorize: session > network > server > other → tailor copy + actions.
+    const isSession = /session expired/i.test(msg);
+    const isNetwork = /network|connection|timed out|offline/i.test(msg);
+    const ico  = isSession ? '🔒' : isNetwork ? '📡' : '⚠️';
+    const head = isSession ? 'Session expired'
+              : isNetwork ? "Can't reach the server"
+              : 'Something went wrong';
+    const body = isSession ? 'For your security, you have been signed out. Sign in again to continue.'
+              : isNetwork ? 'Check your connection and try again. If the problem persists, the portal backend may be briefly unavailable.'
+              : 'The portal had trouble loading this section. Try again, and if it keeps happening, send the technical detail below to support.';
+    const actions = isSession
+      ? '<button class="btn p" onclick="location.href=\'index.html\'">Sign in</button>'
+      : '<button class="btn p" onclick="reloadActive()">↻ Retry</button>'+
+        '<button class="btn" onclick="tab(\'overview\')">Go to Overview</button>';
+    const techDetail = !isSession
+      ? '<details style="margin-top:18px;font-size:11.5px;color:var(--muted);text-align:left;max-width:500px;margin-left:auto;margin-right:auto"><summary style="cursor:pointer">Technical detail</summary><pre style="white-space:pre-wrap;background:var(--panel-2);padding:10px;border-radius:6px;margin-top:6px;color:var(--text-soft)">'+esc(msg)+'</pre></details>'
+      : '';
     document.getElementById(t).innerHTML=
-      '<div class="empty"><div class="empty-ico">⚠️</div><div>Failed to load · '+esc(x.message||x)+
-      '</div><button class="btn p" style="margin-top:16px" onclick="reloadActive()">Retry</button></div>';
+      '<div class="empty" style="padding:48px 24px">'+
+        '<div class="empty-ico" style="font-size:42px">'+ico+'</div>'+
+        '<div style="font-size:16px;font-weight:600;margin-top:8px;color:var(--text)">'+head+'</div>'+
+        '<div style="font-size:13px;color:var(--text-soft);max-width:420px;margin:8px auto 0;line-height:1.55">'+body+'</div>'+
+        '<div style="display:flex;gap:8px;justify-content:center;margin-top:18px">'+actions+'</div>'+
+        techDetail+
+      '</div>';
   }
 }
 
