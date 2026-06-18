@@ -2173,7 +2173,29 @@ function infoRender(){
       section('Bank accounts', listEditor('Bank accounts','bank_accounts', c.bank_accounts||[], [
         {k:'bank',l:'Bank'},{k:'account_no',l:'Account no.'},{k:'account_name',l:'Account name'},{k:'branch',l:'Branch'},{k:'purpose',l:'Purpose'}
       ]))+
-      section('Notes', textarea('Free text','notes',c.notes,'Any other info worth recording — e.g. licences, key dates, MoUs',4))+
+      section('Licences & permits', listEditor('Licences / permits','licences', c.licences||[], [
+        {k:'name',l:'Licence / permit'},{k:'authority',l:'Issuing authority'},{k:'license_no',l:'No.'},{k:'valid_from',l:'Valid from (YYYY-MM-DD)'},{k:'valid_to',l:'Valid to (YYYY-MM-DD)'}
+      ]))+
+      section('Key employees / contacts', listEditor('Key contacts','key_contacts', c.key_contacts||[], [
+        {k:'name',l:'Name'},{k:'position',l:'Position / role'},{k:'phone',l:'Phone'},{k:'email',l:'Email'}
+      ]))+
+      section('Group structure / related companies', listEditor('Related companies','group_structure', c.group_structure||[], [
+        {k:'relationship',l:'Relationship (parent/sister/subsidiary)'},{k:'name',l:'Company name'},{k:'shareholding_pct',l:'Shareholding %'},{k:'notes',l:'Notes'}
+      ]))+
+      section('Insurance policies', listEditor('Insurance','insurance_policies', c.insurance_policies||[], [
+        {k:'insurer',l:'Insurer'},{k:'policy_no',l:'Policy no.'},{k:'type',l:'Type (Property / Liability / PA / etc.)'},{k:'sum_insured',l:'Sum insured (RM)'},{k:'expiry',l:'Expiry (YYYY-MM-DD)'}
+      ]))+
+      section('Lease / Property', listEditor('Leases / properties','leases', c.leases||[], [
+        {k:'address',l:'Address'},{k:'landlord',l:'Landlord'},{k:'monthly_rent',l:'Monthly rent (RM)'},{k:'contract_start',l:'Contract start (YYYY-MM-DD)'},{k:'expiry',l:'Expiry (YYYY-MM-DD)'}
+      ]))+
+      section('Compliance dates', row(
+        fld('Annual Return due','annual_return_due',c.annual_return_due,'YYYY-MM-DD','date'),
+        fld('AGM date','agm_date',c.agm_date,'YYYY-MM-DD','date'),
+        fld('Audit submission due','audit_submission_due',c.audit_submission_due,'YYYY-MM-DD','date'),
+        fld('Tax Return (Form C) due','tax_return_due',c.tax_return_due,'YYYY-MM-DD','date'),
+        fld('SST return period','sst_return_period',c.sst_return_period,'Bi-monthly / Quarterly')
+      ))+
+      section('Notes', textarea('Free text','notes',c.notes,'Any other info worth recording',4))+
       saveBar+
       '</div>'+
     '</div>';
@@ -2187,7 +2209,7 @@ function infoSwitch(tid){
 function infoCollect(){
   const out={};
   document.querySelectorAll('#info-form [data-k]').forEach(el=>{ out[el.dataset.k]=el.value; });
-  ['directors','shareholders','bank_accounts'].forEach(key=>{
+  ['directors','shareholders','bank_accounts','licences','key_contacts','group_structure','insurance_policies','leases'].forEach(key=>{
     const tbl=document.querySelector('#info-form [data-list="'+key+'"]');
     if(!tbl) return;
     const rows=[];
