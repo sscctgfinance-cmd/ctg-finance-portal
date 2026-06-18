@@ -1648,8 +1648,11 @@ async function auditLoad(){
 
 /* ---- Xero sync (live webhook activity + cache) ---- */
 async function xeroSyncLoad(){
-  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div><div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>💰 AR aging snapshot <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· instant, from local cache (real-time synced)</span></h3></div><div id="ar_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
+  document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xdelta_btn" onclick="xeroDeltaNow()">⚡ Delta sync (changes only)</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Drift check vs Xero</button></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>💰 AR aging snapshot <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· instant, from local cache (real-time synced)</span></h3></div><div id="ar_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
   arAgingLoad();
+  syncHealthLoad();
   try{
     var r=await call({api:'webhook_events',limit:80});
     if(!r||!r.ok){ document.getElementById('xero_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
@@ -1688,6 +1691,58 @@ async function xeroBackfill(){
     else toast((r&&r.error)||'Backfill failed',true);
   }catch(e){ toast(e.message,true); }
   xeroSyncLoad();
+}
+async function xeroDeltaNow(){
+  var btn=document.getElementById('xdelta_btn'); if(btn){ btn.disabled=true; btn.textContent='Delta syncing…'; }
+  try{ var r=await call({api:'delta_now'});
+    if(r&&r.ok!==false) toast('Delta sync done · '+(r.upserted||0)+' invoices updated');
+    else toast((r&&r.error)||'Delta failed',true);
+  }catch(e){ toast(e.message,true); }
+  syncHealthLoad();
+  if(btn){ btn.disabled=false; btn.textContent='⚡ Delta sync (changes only)'; }
+}
+async function xeroDriftCheck(){
+  var btn=document.getElementById('xdrift_btn'); if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+  try{ var r=await call({api:'drift_check'});
+    if(r&&r.ok!==false){
+      var anyDrift=(r.results||[]).some(function(x){ return Math.abs(x.drift||0)>0 || x.error; });
+      toast(anyDrift?'Drift detected — see panel for details':'✓ All companies in sync with Xero');
+    }
+    else toast((r&&r.error)||'Drift check failed',true);
+  }catch(e){ toast(e.message,true); }
+  syncHealthLoad();
+  if(btn){ btn.disabled=false; btn.textContent='🔍 Drift check vs Xero'; }
+}
+async function syncHealthLoad(){
+  var el=document.getElementById('syncH_out'); if(!el) return;
+  try{
+    var r=await call({api:'sync_health'});
+    if(!r||!r.ok){ el.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; return; }
+    function rel(iso){ if(!iso) return '<span class="muted">never</span>'; var d=new Date(iso); var s=Math.floor((Date.now()-d.getTime())/1000); if(s<60) return s+'s ago'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+    function staleness(iso){ if(!iso) return 'red'; var s=(Date.now()-new Date(iso).getTime())/1000; if(s<3600) return 'green'; if(s<86400) return 'amber'; return 'red'; }
+    var alertBanner='';
+    if((r.pending_events_total||0) > 0){
+      alertBanner += '<div class="notif-item" style="border-left-color:'+((r.pending_events_failing||0)>0?'var(--red-soft)':'var(--amber)')+';cursor:default;margin-bottom:12px"><div class="nt">⚠ '+r.pending_events_total+' webhook event(s) pending</div><div class="nd">'+(r.pending_events_old||0)+' older than 15 min · '+(r.pending_events_failing||0)+' have failed ≥3× (rate-limit or Xero error). Auto-retry runs every 5 min.</div></div>';
+    }
+    var rows=(r.tenants||[]).map(function(t){
+      var color={green:'var(--green-soft)',amber:'var(--amber)',red:'var(--red-soft)'};
+      var freshColor = color[staleness(t.cache_last_updated)];
+      var driftPill = (t.cache_drift_count===null||t.cache_drift_count===undefined)
+        ? '<span class="muted" style="font-size:11px">not checked</span>'
+        : (Math.abs(t.cache_drift_count)===0 ? '<span class="pill pill-green" style="font-size:9px">in sync</span>' : '<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">drift '+(t.cache_drift_count>0?'+':'')+t.cache_drift_count+'</span>');
+      var errCell = t.last_error ? '<span style="color:var(--red-soft);font-size:11px" title="'+esc(t.last_error)+'">⚠ '+esc((t.last_error||'').slice(0,60))+'…</span>' : '<span class="muted" style="font-size:11px">—</span>';
+      return '<tr><td><b style="font-size:12.5px">'+esc(t.tenant_name||'')+'</b></td>'+
+        '<td class="amt muted" style="font-size:11.5px">'+(t.cached_invoices||0).toLocaleString()+'</td>'+
+        '<td class="amt" style="font-size:11.5px">'+(t.cached_open_ar||0).toLocaleString()+'</td>'+
+        '<td style="font-size:11.5px;color:'+freshColor+'">'+rel(t.cache_last_updated)+'</td>'+
+        '<td style="font-size:11.5px"><span class="muted">F:</span> '+rel(t.last_full_sync_at)+' · <span class="muted">Δ:</span> '+rel(t.last_delta_sync_at)+'</td>'+
+        '<td>'+driftPill+'</td>'+
+        '<td>'+errCell+'</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px">No companies</td></tr>';
+    el.innerHTML = alertBanner +
+      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cached</th><th class="amt">Open AR</th><th>Cache age</th><th>Last sync (F=full, Δ=delta)</th><th>Drift</th><th>Last error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Hourly delta sync runs at :07 past every hour. Daily full sync at 02:00 MYT. Webhook retry every 5 min. <b>If you see drift &gt; 50</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b> again.</div>';
+  }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 async function arAgingLoad(){
   var el=document.getElementById('ar_out'); if(!el) return;
