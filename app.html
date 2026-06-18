@@ -2138,7 +2138,124 @@ async function reconRun(){
 
 /* ── Company Info ── */
 let INFO_DATA=null, INFO_ACTIVE=null, INFO_EDITABLE=false;
+let INFO_MODE='view';        // 'view' | 'edit'
+let INFO_SEARCH='';          // global search query
+let INFO_DIRTY=false;        // any unsaved edits in current company?
 const MY_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
+
+// Section schema — single source of truth used for: nav, filling-progress, view rendering, search.
+const INFO_SECTIONS = [
+  { id:'identity', icon:'🪪', title:'Identity (SSM)',
+    fields:[
+      {k:'legal_name',l:'Legal name (as per SSM)',ph:'CTG4U DRSMILE WHITENING SDN BHD'},
+      {k:'trade_name',l:'Trade / brand name',ph:'DrSmile'},
+      {k:'ssm_new',l:'SSM new no. (12-digit)',ph:'199801012345',copy:true},
+      {k:'ssm_old',l:'SSM old no.',ph:'123456-X',copy:true},
+      {k:'incorporation_date',l:'Date of incorporation',type:'date'},
+      {k:'business_type',l:'Business type',ph:'Wholesale of cosmetics'},
+      {k:'msic_code',l:'MSIC code',ph:'46494'}
+    ]},
+  { id:'reg', icon:'🏠', title:'Registered office address',
+    fields:[
+      {k:'reg_address',l:'Address (street)',ph:'No. 12, Jalan ...',wide:true},
+      {k:'reg_postcode',l:'Postcode',ph:'47301'},
+      {k:'reg_city',l:'City',ph:'Petaling Jaya'},
+      {k:'reg_state',l:'State',state:true}
+    ]},
+  { id:'biz', icon:'🏪', title:'Principal place of business',
+    fields:[
+      {k:'biz_address',l:'Address (street)',wide:true},
+      {k:'biz_postcode',l:'Postcode'},
+      {k:'biz_city',l:'City'},
+      {k:'biz_state',l:'State',state:true}
+    ]},
+  { id:'contact', icon:'📞', title:'Contact',
+    fields:[
+      {k:'phone',l:'Phone',type:'tel',copy:true},
+      {k:'email',l:'Email',type:'email',copy:true},
+      {k:'website',l:'Website',type:'url',link:'web'}
+    ]},
+  { id:'tax', icon:'💰', title:'Tax & MyInvois',
+    fields:[
+      {k:'income_tax_no',l:'Income Tax No. (LHDN)',ph:'C 12345678901',copy:true},
+      {k:'sst_no',l:'SST registration no.',ph:'B16-1808-12345678',copy:true},
+      {k:'myinvois_tin',l:'MyInvois TIN',ph:'C12345678910',copy:true}
+    ]},
+  { id:'stat', icon:'📋', title:'Statutory employer numbers',
+    fields:[
+      {k:'epf_no',l:'EPF / KWSP',ph:'12345678',copy:true},
+      {k:'socso_no',l:'SOCSO / PERKESO',ph:'C12345678',copy:true},
+      {k:'eis_no',l:'EIS',copy:true},
+      {k:'hrdc_no',l:'HRD Corp levy',copy:true}
+    ]},
+  { id:'capital', icon:'💼', title:'Capital & financial year',
+    fields:[
+      {k:'authorised_capital',l:'Authorised capital (RM)',type:'number',ph:'400000',money:true},
+      {k:'paid_up_capital',l:'Paid-up capital (RM)',type:'number',ph:'100000',money:true},
+      {k:'financial_year_end',l:'Financial year end (MM-DD)',ph:'12-31'}
+    ]},
+  { id:'directors', icon:'👔', title:'Directors',
+    list:'directors',
+    cols:[{k:'name',l:'Name'},{k:'ic',l:'IC / Passport'},{k:'role',l:'Role'},{k:'appointed_on',l:'Appointed (YYYY-MM-DD)'}]},
+  { id:'sharehold', icon:'📊', title:'Shareholders',
+    list:'shareholders',
+    cols:[{k:'name',l:'Name'},{k:'ic_or_no',l:'IC / Reg no.'},{k:'shares',l:'Shares'},{k:'percent',l:'%'}]},
+  { id:'secaud', icon:'🖋', title:'Secretary / Auditor',
+    fields:[
+      {k:'company_secretary',l:'Company secretary (name)'},
+      {k:'secretary_firm',l:'Secretarial firm'},
+      {k:'auditor',l:'Auditor'}
+    ]},
+  { id:'bank', icon:'🏦', title:'Bank accounts',
+    list:'bank_accounts',
+    cols:[{k:'bank',l:'Bank'},{k:'account_no',l:'Account no.',copy:true},{k:'account_name',l:'Account name'},{k:'branch',l:'Branch'},{k:'purpose',l:'Purpose'}]},
+  { id:'licences', icon:'📜', title:'Licences & permits',
+    list:'licences',
+    cols:[{k:'name',l:'Licence / permit'},{k:'authority',l:'Issuing authority'},{k:'license_no',l:'No.',copy:true},{k:'valid_from',l:'Valid from'},{k:'valid_to',l:'Valid to'}]},
+  { id:'contacts', icon:'👥', title:'Key employees / contacts',
+    list:'key_contacts',
+    cols:[{k:'name',l:'Name'},{k:'position',l:'Position'},{k:'phone',l:'Phone',copy:true},{k:'email',l:'Email',copy:true}]},
+  { id:'group', icon:'🏗', title:'Group structure',
+    list:'group_structure',
+    cols:[{k:'relationship',l:'Relationship'},{k:'name',l:'Company name'},{k:'shareholding_pct',l:'Shareholding %'},{k:'notes',l:'Notes'}]},
+  { id:'ins', icon:'🛡', title:'Insurance policies',
+    list:'insurance_policies',
+    cols:[{k:'insurer',l:'Insurer'},{k:'policy_no',l:'Policy no.',copy:true},{k:'type',l:'Type'},{k:'sum_insured',l:'Sum insured (RM)'},{k:'expiry',l:'Expiry'}]},
+  { id:'lease', icon:'🔑', title:'Lease / Property',
+    list:'leases',
+    cols:[{k:'address',l:'Address'},{k:'landlord',l:'Landlord'},{k:'monthly_rent',l:'Rent (RM)'},{k:'contract_start',l:'Start'},{k:'expiry',l:'Expiry'}]},
+  { id:'compl', icon:'📅', title:'Compliance dates',
+    fields:[
+      {k:'annual_return_due',l:'Annual Return due',type:'date'},
+      {k:'agm_date',l:'AGM date',type:'date'},
+      {k:'audit_submission_due',l:'Audit submission due',type:'date'},
+      {k:'tax_return_due',l:'Tax Return (Form C) due',type:'date'},
+      {k:'sst_return_period',l:'SST return period',ph:'Bi-monthly / Quarterly'}
+    ]},
+  { id:'notes', icon:'📝', title:'Notes', fields:[{k:'notes',l:'Free text',textarea:true,rows:4}] }
+];
+
+// Summary card — 8 most-looked-up fields shown at the top of every view.
+const INFO_SUMMARY_KEYS = [
+  {k:'ssm_new',l:'SSM No.',copy:true},
+  {k:'income_tax_no',l:'Income Tax',copy:true},
+  {k:'sst_no',l:'SST No.',copy:true},
+  {k:'myinvois_tin',l:'MyInvois TIN',copy:true},
+  {k:'epf_no',l:'EPF',copy:true},
+  {k:'financial_year_end',l:'FY end'},
+  {k:'phone',l:'Phone',copy:true},
+  {k:'email',l:'Email',copy:true}
+];
+
+function infoFilled(v){ if(v==null) return false; if(typeof v==='string') return v.trim()!==''; if(Array.isArray(v)) return v.length>0; return v!==0; }
+function infoSectionFilled(c, sec){
+  if(sec.list) return infoFilled(c[sec.list]);
+  return (sec.fields||[]).some(f=>infoFilled(c[f.k]));
+}
+function infoCompanyProgress(c){
+  let n=0; INFO_SECTIONS.forEach(s=>{ if(infoSectionFilled(c, s)) n++; });
+  return { filled:n, total:INFO_SECTIONS.length };
+}
 
 async function renderInfo(){
   spin('info');
@@ -2146,6 +2263,7 @@ async function renderInfo(){
     const r=await call({api:'company_info_get'});
     if(!r||!r.ok){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🔒</div><div>'+esc(r&&r.error||'Failed to load')+'</div></div>'; return; }
     INFO_DATA=r.companies||[]; INFO_EDITABLE=!!r.editable;
+    if(!INFO_EDITABLE) INFO_MODE='view';
     if(!INFO_DATA.length){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🏢</div><div>No companies you can access yet.</div></div>'; return; }
     if(!INFO_ACTIVE||!INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE)) INFO_ACTIVE=INFO_DATA[0].tenant_id;
     infoRender();
@@ -2153,134 +2271,249 @@ async function renderInfo(){
   }catch(e){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
 }
 
+// Search across ALL companies — match field/section title + value text. Returns flat array of hits.
+function infoSearchAll(query){
+  const q=String(query||'').trim().toLowerCase(); if(!q) return [];
+  const hits=[];
+  INFO_DATA.forEach(c=>{
+    INFO_SECTIONS.forEach(sec=>{
+      if(sec.fields){
+        sec.fields.forEach(f=>{
+          const v=c[f.k]; if(v==null||v==='') return;
+          const sv=String(v).toLowerCase();
+          if(sv.indexOf(q)>=0 || f.l.toLowerCase().indexOf(q)>=0 || sec.title.toLowerCase().indexOf(q)>=0){
+            hits.push({company:c.tenant_name, tenant_id:c.tenant_id, section:sec, label:f.l, value:String(v)});
+          }
+        });
+      } else if(sec.list){
+        const arr=c[sec.list]||[]; if(!arr.length) return;
+        arr.forEach((item,i)=>{
+          const flat=Object.values(item).map(x=>String(x||'')).join(' ').toLowerCase();
+          if(flat.indexOf(q)>=0 || sec.title.toLowerCase().indexOf(q)>=0){
+            const summary=(sec.cols||[]).slice(0,3).map(col=>item[col.k]).filter(Boolean).join(' · ');
+            hits.push({company:c.tenant_name, tenant_id:c.tenant_id, section:sec, label:sec.title+' #'+(i+1), value:summary});
+          }
+        });
+      }
+    });
+  });
+  return hits;
+}
+
+function infoSearchInput(){ INFO_SEARCH=document.getElementById('info-search').value; infoRenderSearch(); }
+function infoRenderSearch(){
+  const box=document.getElementById('info-search-results'); if(!box) return;
+  if(!INFO_SEARCH.trim()){ box.innerHTML=''; box.style.display='none'; return; }
+  const hits=infoSearchAll(INFO_SEARCH);
+  box.style.display='block';
+  if(!hits.length){ box.innerHTML='<div class="muted" style="padding:10px 12px;font-size:13px">No matches for "'+esc(INFO_SEARCH)+'"</div>'; return; }
+  box.innerHTML='<div class="muted" style="padding:6px 12px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">'+hits.length+' match'+(hits.length===1?'':'es')+'</div>'+
+    hits.slice(0,30).map(h=>'<div style="padding:10px 12px;border-top:1px solid var(--panel-border);cursor:pointer;display:flex;gap:10px;align-items:center" onclick="infoJump(\''+esc(h.tenant_id)+'\',\''+esc(h.section.id)+'\')">' +
+      '<div style="font-size:18px">'+h.section.icon+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(h.company)+' · '+esc(h.section.title)+'</div>'+
+        '<div style="font-size:13px;margin-top:2px"><b>'+esc(h.label)+':</b> <span style="color:var(--text-soft)">'+esc(h.value)+'</span></div>'+
+      '</div>'+
+      '<div class="muted" style="font-size:11px">↪ open</div>'+
+    '</div>').join('');
+}
+function infoJump(tid, sectionId){
+  INFO_ACTIVE=tid;
+  INFO_SEARCH=''; const sb=document.getElementById('info-search'); if(sb) sb.value='';
+  infoRender();
+  setTimeout(()=>{ const el=document.getElementById('info-sec-'+sectionId); if(el){ el.scrollIntoView({behavior:'smooth',block:'start'}); el.style.boxShadow='0 0 0 2px var(--coral-soft)'; setTimeout(()=>{ el.style.boxShadow=''; },1800); } }, 80);
+}
+
+function infoSetMode(mode){
+  if(!INFO_EDITABLE && mode==='edit') return;
+  if(INFO_MODE==='edit' && INFO_DIRTY && mode==='view'){
+    if(!confirm('You have unsaved changes. Discard?')) return;
+    INFO_DIRTY=false;
+  }
+  INFO_MODE=mode; infoRender();
+}
+function infoCopy(text, btn){
+  navigator.clipboard.writeText(String(text||'')).then(()=>{
+    if(!btn) return;
+    const old=btn.textContent; btn.textContent='✓'; btn.style.color='var(--green-soft)';
+    setTimeout(()=>{ btn.textContent=old; btn.style.color=''; }, 1000);
+  });
+}
+function infoPrint(){
+  const c=INFO_DATA.find(x=>x.tenant_id===INFO_ACTIVE); if(!c) return;
+  const w=window.open('','_blank','width=900,height=1000');
+  if(!w){ toast&&toast('Pop-up blocked',true); return; }
+  function val(v){ return v==null||v===''?'—':String(v); }
+  function fldRow(f, val){ return '<div style="display:grid;grid-template-columns:200px 1fr;padding:6px 0;border-bottom:1px solid #eee"><div style="color:#666;font-size:12px">'+f.l+'</div><div>'+esc(val)+'</div></div>'; }
+  let body='<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:30px auto;padding:0 40px;color:#222;line-height:1.5}h1{font-size:24px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:#666;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #222}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}th,td{text-align:left;padding:6px 10px;border:1px solid #ddd}th{background:#f4f4f4;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#555}.meta{color:#888;font-size:12px;margin-bottom:24px}</style>';
+  body+='<h1>'+esc(c.tenant_name)+'</h1><div class="meta">Company Information Report · printed '+(new Date().toISOString().slice(0,10))+(c.updated_at?' · last edit '+esc(String(c.updated_at).slice(0,10)):'')+'</div>';
+  INFO_SECTIONS.forEach(sec=>{
+    if(!infoSectionFilled(c, sec)) return;
+    body+='<h2>'+sec.icon+' '+esc(sec.title)+'</h2>';
+    if(sec.fields){ body+='<div>'+sec.fields.map(f=>fldRow(f, val(c[f.k]))).join('')+'</div>'; }
+    else if(sec.list){
+      const arr=c[sec.list]||[];
+      body+='<table><thead><tr>'+sec.cols.map(col=>'<th>'+esc(col.l)+'</th>').join('')+'</tr></thead>';
+      body+='<tbody>'+arr.map(item=>'<tr>'+sec.cols.map(col=>'<td>'+esc(val(item[col.k]))+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+    }
+  });
+  w.document.write('<!doctype html><html><head><title>'+esc(c.tenant_name)+' — Company Info</title></head><body>'+body+'</body></html>');
+  w.document.close(); setTimeout(()=>w.print(), 250);
+}
+
 function infoRender(){
   const c=INFO_DATA.find(x=>x.tenant_id===INFO_ACTIVE)||INFO_DATA[0];
-  const tabs=INFO_DATA.map(x=>'<button class="btn'+(x.tenant_id===INFO_ACTIVE?' p':'')+'" style="margin-right:6px;margin-bottom:6px" onclick="infoSwitch(\''+esc(x.tenant_id)+'\')">'+esc(x.tenant_name)+'</button>').join('');
-  const updatedLine = c.updated_at ? '<div class="muted" style="font-size:12px">Last edit: '+esc(String(c.updated_at).replace('T',' ').slice(0,16))+(c.updated_by_email?' · by '+esc(c.updated_by_email):'')+'</div>' : '';
-  const readonly = INFO_EDITABLE ? '' : ' disabled';
-  function fld(label, key, val, ph, type){
-    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><input type="'+(type||'text')+'" data-k="'+esc(key)+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px"/></div>';
-  }
-  function textarea(label, key, val, ph, rows){
-    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><textarea data-k="'+esc(key)+'" placeholder="'+esc(ph||'')+'" rows="'+(rows||2)+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(val||'')+'</textarea></div>';
-  }
-  function selectState(label, key, val){
-    const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(val===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
-    return '<div class="fld" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><select data-k="'+esc(key)+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select></div>';
-  }
-  function section(title, body){
-    return '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px"><h3 style="margin:0 0 12px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660">'+esc(title)+'</h3>'+body+'</div>';
-  }
-  function row(){ return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+Array.from(arguments).join('')+'</div>'; }
+  const isEdit = INFO_MODE==='edit' && INFO_EDITABLE;
 
-  // People — directors/shareholders/bank accounts: JSON arrays of objects
-  function listEditor(label, key, items, cols){
-    const colKeys=cols.map(c=>c.k);
-    const header='<tr>'+cols.map(c=>'<th style="text-align:left;font-size:11px;padding:6px;color:var(--muted)">'+esc(c.l)+'</th>').join('')+(INFO_EDITABLE?'<th style="width:38px"></th>':'')+'</tr>';
-    const rows=(items||[]).map((it,i)=>'<tr data-i="'+i+'">'+
-      colKeys.map(k=>'<td style="padding:4px"><input type="text" data-sk="'+esc(k)+'" value="'+esc(it[k]==null?'':it[k])+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:6px 8px;border-radius:5px;font-size:12.5px"/></td>').join('')+
-      (INFO_EDITABLE?'<td style="padding:4px;text-align:center"><button class="btn" style="padding:4px 8px;font-size:11px" onclick="infoRowDel(\''+esc(key)+'\','+i+')">×</button></td>':'')+
-    '</tr>').join('');
-    const addBtn=INFO_EDITABLE?'<button class="btn" style="margin-top:8px;font-size:12px" onclick="infoRowAdd(\''+esc(key)+'\','+JSON.stringify(colKeys).replace(/"/g,'&quot;')+')">+ Add row</button>':'';
-    return '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</label><div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse" data-list="'+esc(key)+'"><thead>'+header+'</thead><tbody>'+rows+'</tbody></table></div>'+addBtn+'</div>';
-  }
+  // Top toolbar — search + mode toggle + print
+  const modeBtn = INFO_EDITABLE
+    ? '<button class="btn'+(isEdit?' p':'')+'" onclick="infoSetMode(\''+(isEdit?'view':'edit')+'\')">'+(isEdit?'👁 View mode':'✎ Edit mode')+'</button>'
+    : '';
+  const toolbar=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+      '<div style="position:relative;flex:1;min-width:240px;max-width:520px"><input id="info-search" value="'+esc(INFO_SEARCH)+'" oninput="infoSearchInput()" placeholder="🔍 Search across all companies (e.g. EPF, SST, bank, director name)" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/></div>'+
+      modeBtn+
+      '<button class="btn" onclick="infoPrint()">🖨 Print</button>'+
+    '</div>'+
+    '<div id="info-search-results" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;margin-bottom:14px;max-height:340px;overflow-y:auto;display:none"></div>';
 
-  const saveBar = INFO_EDITABLE
-    ? '<div style="position:sticky;bottom:0;background:linear-gradient(180deg,transparent,var(--bg) 30%);padding:14px 0;margin-top:10px;display:flex;gap:10px;align-items:center"><button class="btn p" onclick="infoSave()" id="info-save-btn">💾 Save changes</button><span class="muted" style="font-size:12px" id="info-save-status"></span></div>'
-    : '<div class="muted" style="font-size:12px;margin-top:10px">🔒 Read-only — only Admin role can edit. Ask your Super Admin to update.</div>';
+  // Company tabs with fill-progress badges
+  const tabs=INFO_DATA.map(x=>{
+    const p=infoCompanyProgress(x);
+    const pct=Math.round(p.filled/p.total*100);
+    const pctColor = pct>=80?'var(--green-soft)':pct>=40?'var(--amber)':'var(--red-soft)';
+    return '<button class="btn'+(x.tenant_id===INFO_ACTIVE?' p':'')+'" style="margin-right:6px;margin-bottom:6px;display:inline-flex;align-items:center;gap:8px" onclick="infoSwitch(\''+esc(x.tenant_id)+'\')">' +
+      '<span>'+esc(x.tenant_name)+'</span>'+
+      '<span style="font-size:10px;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;color:'+pctColor+'">'+p.filled+'/'+p.total+'</span>'+
+    '</button>';
+  }).join('');
+
+  // Updated metadata line
+  const updatedLine = c.updated_at ? '<div class="muted" style="font-size:12px;margin-top:2px">Last edit: '+esc(String(c.updated_at).replace('T',' ').slice(0,16))+(c.updated_by_email?' · by '+esc(c.updated_by_email):'')+'</div>' : '';
+
+  // Sidebar — section navigation with ✓/○ filled indicators
+  const nav = '<div id="info-nav" style="position:sticky;top:8px;align-self:start;background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:10px;max-height:calc(100vh - 100px);overflow-y:auto">'+
+    '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:6px 8px">Jump to section</div>'+
+    INFO_SECTIONS.map(sec=>{
+      const filled=infoSectionFilled(c, sec);
+      const mark=filled?'<span style="color:var(--green-soft)">●</span>':'<span style="color:var(--muted);opacity:.4">○</span>';
+      return '<a href="#info-sec-'+sec.id+'" onclick="event.preventDefault();document.getElementById(\'info-sec-'+sec.id+'\').scrollIntoView({behavior:\'smooth\',block:\'start\'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px"><span style="font-size:13px;width:14px">'+sec.icon+'</span><span style="flex:1">'+esc(sec.title)+'</span>'+mark+'</a>';
+    }).join('')+
+  '</div>';
+
+  // Summary card — 8 key fields at the top
+  const summary='<div style="background:linear-gradient(135deg,rgba(255,165,89,.06),rgba(255,165,89,.02));border:1px solid rgba(255,165,89,.12);border-radius:12px;padding:14px 16px;margin-bottom:14px">'+
+    '<div style="font-size:10px;color:var(--coral-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-weight:660">Quick view</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px">'+
+    INFO_SUMMARY_KEYS.map(k=>{
+      const v=c[k.k];
+      const filled = infoFilled(v);
+      return '<div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(k.l)+'</div>'+
+        '<div style="font-size:13px;'+(filled?'':'color:var(--muted);opacity:.5')+';margin-top:2px;display:flex;align-items:center;gap:6px">'+
+          '<span style="flex:1;word-break:break-all">'+(filled?esc(String(v)):'—')+'</span>'+
+          (filled && k.copy?'<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy('+JSON.stringify(String(v)).replace(/"/g,'&quot;')+',this)">📋</button>':'')+
+        '</div></div>';
+    }).join('')+
+    '</div></div>';
+
+  // Build sections — view mode renders compact key/value lists; edit mode renders form inputs.
+  const sectionHtml = INFO_SECTIONS.map(sec=>{
+    const filled=infoSectionFilled(c, sec);
+    const head='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div style="font-size:18px">'+sec.icon+'</div><h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">'+esc(sec.title)+'</h3>'+(filled?'<span class="pill pill-green" style="font-size:10px">filled</span>':'<span class="pill" style="font-size:10px;background:rgba(255,255,255,.05);color:var(--muted)">empty</span>')+'</div>';
+    let body='';
+    if(isEdit){ body = infoSecEditBody(sec, c); }
+    else { body = infoSecViewBody(sec, c); }
+    return '<div id="info-sec-'+sec.id+'" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">'+head+body+'</div>';
+  }).join('');
+
+  const saveBar = isEdit
+    ? '<div style="position:sticky;bottom:0;background:linear-gradient(180deg,transparent,var(--bg) 30%);padding:14px 0;margin-top:10px;display:flex;gap:10px;align-items:center;z-index:5"><button class="btn p" onclick="infoSave()" id="info-save-btn">💾 Save changes</button><span class="muted" style="font-size:12px" id="info-save-status">'+(INFO_DIRTY?'⚠ unsaved changes':'')+'</span></div>'
+    : (INFO_EDITABLE?'<div class="muted" style="font-size:12px;margin-top:10px">View mode — click <b>✎ Edit mode</b> to make changes.</div>':'<div class="muted" style="font-size:12px;margin-top:10px">🔒 Read-only — only Admin role can edit.</div>');
 
   document.getElementById('info').innerHTML=
+    toolbar+
     '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabs+'</div>'+
-    '<div id="info-form">'+
-      '<h2 style="margin:0 0 4px;font-size:20px;letter-spacing:-.02em">'+esc(c.tenant_name)+'</h2>'+
-      updatedLine+
-      '<div style="margin-top:14px">'+
-      section('Identity (SSM)', row(
-        fld('Legal name (as per SSM)','legal_name',c.legal_name,'CTG4U DRSMILE WHITENING SDN BHD'),
-        fld('Trade / brand name','trade_name',c.trade_name,'DrSmile'),
-        fld('SSM new no. (12-digit)','ssm_new',c.ssm_new,'199801012345'),
-        fld('SSM old no.','ssm_old',c.ssm_old,'123456-X'),
-        fld('Date of incorporation','incorporation_date',c.incorporation_date,'YYYY-MM-DD','date'),
-        fld('Business type','business_type',c.business_type,'Wholesale of cosmetics'),
-        fld('MSIC code','msic_code',c.msic_code,'46494')
-      ))+
-      section('Registered office address', row(
-        fld('Address (street)','reg_address',c.reg_address,'No. 12, Jalan ...'),
-        fld('Postcode','reg_postcode',c.reg_postcode,'47301'),
-        fld('City','reg_city',c.reg_city,'Petaling Jaya'),
-        selectState('State','reg_state',c.reg_state)
-      ))+
-      section('Principal place of business', row(
-        fld('Address (street)','biz_address',c.biz_address,''),
-        fld('Postcode','biz_postcode',c.biz_postcode,''),
-        fld('City','biz_city',c.biz_city,''),
-        selectState('State','biz_state',c.biz_state)
-      ))+
-      section('Contact', row(
-        fld('Phone','phone',c.phone,'+60 3 ...','tel'),
-        fld('Email','email',c.email,'admin@example.com','email'),
-        fld('Website','website',c.website,'https://...','url')
-      ))+
-      section('Tax & MyInvois', row(
-        fld('Income Tax No. (LHDN)','income_tax_no',c.income_tax_no,'C 12345678901'),
-        fld('SST registration no.','sst_no',c.sst_no,'B16-1808-12345678'),
-        fld('MyInvois TIN','myinvois_tin',c.myinvois_tin,'C12345678910')
-      ))+
-      section('Statutory employer numbers', row(
-        fld('EPF / KWSP','epf_no',c.epf_no,'12345678'),
-        fld('SOCSO / PERKESO','socso_no',c.socso_no,'C12345678'),
-        fld('EIS','eis_no',c.eis_no,''),
-        fld('HRD Corp levy','hrdc_no',c.hrdc_no,'')
-      ))+
-      section('Capital & financial year', row(
-        fld('Authorised capital (RM)','authorised_capital',c.authorised_capital,'400000','number'),
-        fld('Paid-up capital (RM)','paid_up_capital',c.paid_up_capital,'100000','number'),
-        fld('Financial year end (MM-DD)','financial_year_end',c.financial_year_end,'12-31')
-      ))+
-      section('Directors', listEditor('Directors','directors', c.directors||[], [
-        {k:'name',l:'Name'},{k:'ic',l:'IC / Passport'},{k:'role',l:'Role'},{k:'appointed_on',l:'Appointed (YYYY-MM-DD)'}
-      ]))+
-      section('Shareholders', listEditor('Shareholders','shareholders', c.shareholders||[], [
-        {k:'name',l:'Name'},{k:'ic_or_no',l:'IC / Reg no.'},{k:'shares',l:'Shares'},{k:'percent',l:'%'}
-      ]))+
-      section('Secretary / Auditor', row(
-        fld('Company secretary (name)','company_secretary',c.company_secretary,''),
-        fld('Secretarial firm','secretary_firm',c.secretary_firm,''),
-        fld('Auditor','auditor',c.auditor,'')
-      ))+
-      section('Bank accounts', listEditor('Bank accounts','bank_accounts', c.bank_accounts||[], [
-        {k:'bank',l:'Bank'},{k:'account_no',l:'Account no.'},{k:'account_name',l:'Account name'},{k:'branch',l:'Branch'},{k:'purpose',l:'Purpose'}
-      ]))+
-      section('Licences & permits', listEditor('Licences / permits','licences', c.licences||[], [
-        {k:'name',l:'Licence / permit'},{k:'authority',l:'Issuing authority'},{k:'license_no',l:'No.'},{k:'valid_from',l:'Valid from (YYYY-MM-DD)'},{k:'valid_to',l:'Valid to (YYYY-MM-DD)'}
-      ]))+
-      section('Key employees / contacts', listEditor('Key contacts','key_contacts', c.key_contacts||[], [
-        {k:'name',l:'Name'},{k:'position',l:'Position / role'},{k:'phone',l:'Phone'},{k:'email',l:'Email'}
-      ]))+
-      section('Group structure / related companies', listEditor('Related companies','group_structure', c.group_structure||[], [
-        {k:'relationship',l:'Relationship (parent/sister/subsidiary)'},{k:'name',l:'Company name'},{k:'shareholding_pct',l:'Shareholding %'},{k:'notes',l:'Notes'}
-      ]))+
-      section('Insurance policies', listEditor('Insurance','insurance_policies', c.insurance_policies||[], [
-        {k:'insurer',l:'Insurer'},{k:'policy_no',l:'Policy no.'},{k:'type',l:'Type (Property / Liability / PA / etc.)'},{k:'sum_insured',l:'Sum insured (RM)'},{k:'expiry',l:'Expiry (YYYY-MM-DD)'}
-      ]))+
-      section('Lease / Property', listEditor('Leases / properties','leases', c.leases||[], [
-        {k:'address',l:'Address'},{k:'landlord',l:'Landlord'},{k:'monthly_rent',l:'Monthly rent (RM)'},{k:'contract_start',l:'Contract start (YYYY-MM-DD)'},{k:'expiry',l:'Expiry (YYYY-MM-DD)'}
-      ]))+
-      section('Compliance dates', row(
-        fld('Annual Return due','annual_return_due',c.annual_return_due,'YYYY-MM-DD','date'),
-        fld('AGM date','agm_date',c.agm_date,'YYYY-MM-DD','date'),
-        fld('Audit submission due','audit_submission_due',c.audit_submission_due,'YYYY-MM-DD','date'),
-        fld('Tax Return (Form C) due','tax_return_due',c.tax_return_due,'YYYY-MM-DD','date'),
-        fld('SST return period','sst_return_period',c.sst_return_period,'Bi-monthly / Quarterly')
-      ))+
-      section('Notes', textarea('Free text','notes',c.notes,'Any other info worth recording',4))+
-      saveBar+
+    '<div id="info-form" style="display:grid;grid-template-columns:240px 1fr;gap:18px;align-items:start">'+
+      nav+
+      '<div>'+
+        '<h2 style="margin:0 0 4px;font-size:20px;letter-spacing:-.02em">'+esc(c.tenant_name)+'</h2>'+
+        updatedLine+
+        '<div style="margin-top:14px">'+summary+sectionHtml+saveBar+'</div>'+
       '</div>'+
+    '</div>'+
+    '<style>@media(max-width:880px){#info-form{grid-template-columns:1fr!important}#info-nav{position:static!important;max-height:none!important}}</style>';
+
+  // Wire up dirty-tracking
+  if(isEdit){
+    const form=document.getElementById('info-form');
+    form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
+  }
+  infoRenderSearch();
+}
+
+// View-mode body: read-only key/value pairs (or table for lists). Always includes copy buttons where useful.
+function infoSecViewBody(sec, c){
+  if(sec.fields){
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">'+
+      sec.fields.map(f=>{
+        const v=c[f.k]; const filled=infoFilled(v);
+        const display = !filled ? '<span style="color:var(--muted);opacity:.5">—</span>'
+          : f.money ? esc(M(v))
+          : f.link==='web' ? '<a href="'+esc(String(v).indexOf('http')===0?v:'https://'+v)+'" target="_blank" style="color:var(--coral-soft);text-decoration:none">'+esc(v)+' ↗</a>'
+          : esc(String(v));
+        const copyBtn = (filled && f.copy) ? '<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy('+JSON.stringify(String(v)).replace(/"/g,'&quot;')+',this)">📋</button>' : '';
+        return '<div'+(f.textarea?' style="grid-column:1/-1"':'')+'><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">'+esc(f.l)+'</div><div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">'+
+          '<span style="flex:1;'+(f.textarea?'white-space:pre-wrap;line-height:1.55':'word-break:break-word')+'">'+display+'</span>'+copyBtn+
+        '</div></div>';
+      }).join('')+
     '</div>';
+  }
+  // list section
+  const arr=c[sec.list]||[];
+  if(!arr.length) return '<div class="muted" style="font-size:13px;text-align:center;padding:18px 0">No '+esc(sec.title.toLowerCase())+' recorded.</div>';
+  return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+
+    sec.cols.map(col=>'<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">'+esc(col.l)+'</th>').join('')+
+    '</tr></thead><tbody>'+
+    arr.map(item=>'<tr>'+sec.cols.map(col=>{
+      const v=item[col.k]; const filled=v!=null && String(v).trim()!=='';
+      const display=!filled?'<span style="color:var(--muted);opacity:.5">—</span>':esc(String(v));
+      const copyBtn=(filled && col.copy)?'<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy('+JSON.stringify(String(v)).replace(/"/g,'&quot;')+',this)">📋</button>':'';
+      return '<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">'+display+copyBtn+'</td>';
+    }).join('')+'</tr>').join('')+
+    '</tbody></table></div>';
+}
+
+// Edit-mode body: form inputs (per-field or list editor).
+function infoSecEditBody(sec, c){
+  function input(f, val){
+    if(f.textarea) return '<textarea data-k="'+esc(f.k)+'" rows="'+(f.rows||3)+'" placeholder="'+esc(f.ph||'')+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(val||'')+'</textarea>';
+    if(f.state){
+      const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(val===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
+      return '<select data-k="'+esc(f.k)+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select>';
+    }
+    return '<input type="'+(f.type||'text')+'" data-k="'+esc(f.k)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(f.ph||'')+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px"/>';
+  }
+  if(sec.fields){
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">'+
+      sec.fields.map(f=>'<div'+(f.textarea?' style="grid-column:1/-1"':'')+'><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:4px">'+esc(f.l)+'</label>'+input(f, c[f.k])+'</div>').join('')+
+    '</div>';
+  }
+  // list editor
+  const arr=c[sec.list]||[]; const colKeys=sec.cols.map(c=>c.k);
+  const header='<tr>'+sec.cols.map(col=>'<th style="text-align:left;font-size:11px;padding:6px;color:var(--muted)">'+esc(col.l)+'</th>').join('')+'<th style="width:38px"></th></tr>';
+  const rows=arr.map((it,i)=>'<tr data-i="'+i+'">'+
+    colKeys.map(k=>'<td style="padding:4px"><input type="text" data-sk="'+esc(k)+'" value="'+esc(it[k]==null?'':it[k])+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:6px 8px;border-radius:5px;font-size:12.5px"/></td>').join('')+
+    '<td style="padding:4px;text-align:center"><button class="btn" style="padding:4px 8px;font-size:11px" onclick="infoRowDel(\''+esc(sec.list)+'\','+i+')">×</button></td>'+
+  '</tr>').join('');
+  const addBtn='<button class="btn" style="margin-top:8px;font-size:12px" onclick="infoRowAdd(\''+esc(sec.list)+'\','+JSON.stringify(colKeys).replace(/"/g,'&quot;')+')">+ Add row</button>';
+  return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse" data-list="'+esc(sec.list)+'"><thead>'+header+'</thead><tbody>'+rows+'</tbody></table></div>'+addBtn;
 }
 
 function infoSwitch(tid){
-  if(INFO_EDITABLE){ const dirty=infoCollect(); INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE).__pending=dirty; }
+  if(INFO_MODE==='edit' && INFO_DIRTY){
+    if(!confirm('You have unsaved changes on this company. Switch and discard?')) return;
+    INFO_DIRTY=false;
+  }
   INFO_ACTIVE=tid; infoRender();
 }
 
@@ -2322,6 +2555,7 @@ async function infoSave(){
     const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
     if(r&&r.ok){
       if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
+      INFO_DIRTY=false;
       // Refresh from server to pick up updated_at/updated_by
       const fresh=await call({api:'company_info_get'});
       if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
