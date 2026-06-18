@@ -470,6 +470,20 @@ input:focus, select:focus, textarea:focus{
   background-size: 220% 100%;
   animation: shimmer 1.6s ease-in-out infinite;
 }
+
+/* ── Print styles — black-on-white, hide chrome, expand content ── */
+@media print {
+  body, .wrap { background:#fff !important; color:#202632 !important; }
+  .tabs, .bar, .toast, .overlay, .notif-panel, button, .role-chip, #conn-indicator, #notif-btn { display:none !important; }
+  .panel, .card { background:#fff !important; border:1px solid #ccc !important; color:#202632 !important; box-shadow:none !important; }
+  .hide { display:none !important; }
+  /* Show only the active tab */
+  div[id]:not(.active-print) { /* default: visible */ }
+  details[open] { display:block; }
+  a { color:#0066cc; text-decoration:none; }
+  h1, h2, h3 { color:#202632 !important; page-break-after:avoid; }
+  table { page-break-inside:avoid; }
+}
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -601,13 +615,20 @@ const loaded={};
 const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const M=n=>'RM '+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 
-function toast(msg,isErr){
+// Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
+// + "5 contacts"), play them sequentially instead of overwriting each other.
+const _toastQueue=[]; let _toastPlaying=false;
+function toast(msg,isErr){ _toastQueue.push({msg,isErr}); if(!_toastPlaying) _playNextToast(); }
+function _playNextToast(){
+  const next=_toastQueue.shift();
+  if(!next){ _toastPlaying=false; return; }
+  _toastPlaying=true;
   const e=document.getElementById('toast');
-  e.textContent=msg;
-  e.style.borderColor=isErr?'rgba(239,68,68,.45)':'';
-  e.style.color=isErr?'var(--red-soft)':'';
+  e.textContent=next.msg;
+  e.style.borderColor=next.isErr?'rgba(239,68,68,.45)':'';
+  e.style.color=next.isErr?'var(--red-soft)':'';
   e.classList.add('show');
-  setTimeout(()=>e.classList.remove('show'),2600);
+  setTimeout(()=>{ e.classList.remove('show'); setTimeout(_playNextToast, 240); }, 2400);
 }
 
 // ── Network resilience (v28.1) ──
@@ -1244,9 +1265,35 @@ function enterApp(){
   } else { showApp(); }
 }
 
-/* ── Idle auto-logout (20 min) ── */
-var IDLE_MS=20*60*1000, idleTimer=null;
-function resetIdle(){ if(!TOKEN) return; clearTimeout(idleTimer); idleTimer=setTimeout(idleLogout,IDLE_MS); }
+/* ── Idle auto-logout (20 min total: 17 active + 3 warning) ── */
+var IDLE_WARN_MS=17*60*1000, IDLE_FINAL_MS=3*60*1000, idleTimer=null, idleFinalTimer=null;
+function resetIdle(){
+  if(!TOKEN) return;
+  clearTimeout(idleTimer); clearTimeout(idleFinalTimer);
+  // Hide the warning modal if user moved (any interaction)
+  var w=document.getElementById('idle-warn'); if(w) w.remove();
+  idleTimer=setTimeout(showIdleWarning, IDLE_WARN_MS);
+}
+function showIdleWarning(){
+  if(!TOKEN || document.getElementById('idle-warn')) return;
+  // If user has unsaved changes, give them an extra grace period instead of auto-logging out.
+  if(UNSAVED_CHANGES){ idleTimer=setTimeout(showIdleWarning, IDLE_FINAL_MS); return; }
+  var html='<div class="overlay" id="idle-warn"><div class="modal" style="width:380px">'+
+    '<div class="modal-hd"><h3>⏱ Still there?</h3></div>'+
+    '<p style="color:var(--text-soft);font-size:13.5px;margin:0 0 16px;line-height:1.6">You will be signed out in <b id="idle-countdown">3:00</b> for security. Click anywhere to stay signed in.</p>'+
+    '<div class="modal-ft" style="justify-content:flex-end"><button class="btn" onclick="(function(){var w=document.getElementById(\'idle-warn\');if(w)w.remove();resetIdle();})()">Stay signed in</button>'+
+    '<button class="btn d" onclick="idleLogout()">Sign out now</button></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  var remain=IDLE_FINAL_MS;
+  var iv=setInterval(function(){
+    remain -= 1000;
+    var w=document.getElementById('idle-warn'); if(!w){ clearInterval(iv); return; }
+    var mm=Math.max(0,Math.floor(remain/60000)), ss=Math.max(0,Math.floor((remain%60000)/1000));
+    var el=document.getElementById('idle-countdown'); if(el) el.textContent=mm+':'+(ss<10?'0':'')+ss;
+    if(remain<=0){ clearInterval(iv); idleLogout(); }
+  }, 1000);
+  idleFinalTimer=setTimeout(idleLogout, IDLE_FINAL_MS+500);
+}
 function idleLogout(){ if(!TOKEN) return; localStorage.removeItem('ctg_portal_token'); TOKEN=''; location.href='index.html?idle=1'; }
 ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev){ document.addEventListener(ev,resetIdle,{passive:true}); });
 
