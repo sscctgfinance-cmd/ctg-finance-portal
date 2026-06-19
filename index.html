@@ -563,10 +563,25 @@ footer b{ font-weight: 720; }
   var sel='.feat,.step,.price,.band,.trust-in,section .eyebrow,section h2,section .sub';
   var els=[].slice.call(document.querySelectorAll(sel));
   els.forEach(function(e){e.classList.add('reveal');});
+  function reveal(e){ if(!e.classList.contains('in')) e.classList.add('in'); }
   if('IntersectionObserver' in window){
-    var io=new IntersectionObserver(function(ents){ents.forEach(function(en){if(en.isIntersecting){en.target.classList.add('in');io.unobserve(en.target);}});},{threshold:.12,rootMargin:'0px 0px -40px 0px'});
+    // threshold 0 + positive bottom rootMargin = trigger as soon as a single pixel is in (or 200px below) the viewport.
+    var io=new IntersectionObserver(function(ents){ents.forEach(function(en){if(en.isIntersecting){reveal(en.target);io.unobserve(en.target);}});},{threshold:0,rootMargin:'0px 0px 200px 0px'});
     els.forEach(function(e){io.observe(e);});
-  } else { els.forEach(function(e){e.classList.add('in');}); }
+    // Continuous safety net: any scroll event reveals everything currently near the viewport.
+    // Catches edge cases where IO doesn't fire (some Chromium versions w/ programmatic scroll, iOS Safari).
+    function sweep(){
+      var vh=window.innerHeight;
+      els.forEach(function(e){
+        if(e.classList.contains('in')) return;
+        var r=e.getBoundingClientRect();
+        if(r.top < vh + 200 && r.bottom > -200) reveal(e);
+      });
+    }
+    window.addEventListener('scroll', sweep, {passive:true});
+    // Final fallback: after 3s, reveal anything still hidden regardless of position — prevents permanent blank blocks.
+    setTimeout(function(){ els.forEach(reveal); }, 3000);
+  } else { els.forEach(reveal); }
   var nav=document.querySelector('nav');
   window.addEventListener('scroll',function(){ if(nav) nav.style.boxShadow=(window.scrollY>20)?'0 8px 30px rgba(0,0,0,.35)':'none'; },{passive:true});
 })();
