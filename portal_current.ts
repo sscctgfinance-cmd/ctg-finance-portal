@@ -850,6 +850,65 @@ Deno.serve(async (req)=>{
       const { data } = await sb.rpc("portal_sync_health");
       return j({ ok:true, ...(data||{}) });
     }
+    if (api === "compliance_calendar") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_compliance_calendar", { p_token: b.token||"", p_days: Number(b.days)||365 });
+      return j(data || { ok:true, deadlines:[] });
+    }
+    if (api === "cashflow_forecast") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_cashflow_forecast", { p_token: b.token||"", p_days: Number(b.days)||90, p_tenant: b.tenant||null });
+      return j(data || { ok:true });
+    }
+    if (api === "ocr_extract") {
+      const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!apiKey) return j({ ok:false, error:"ANTHROPIC_API_KEY not configured — set it as a Supabase Edge secret to enable receipt OCR" });
+      const b64 = String(b.content_base64||"").split(",").pop() || "";
+      if (!b64) return j({ ok:false, error:"no image provided" });
+      const mime = String(b.content_type||"image/jpeg");
+      const sys = "You are an expert bookkeeper for a Malaysian accounting practice. Extract structured data from a supplier invoice / receipt / bill image. Reply ONLY with a single JSON object — no prose, no markdown fences. Schema: { vendor_name: string, invoice_no: string|null, invoice_date: 'YYYY-MM-DD'|null, due_date: 'YYYY-MM-DD'|null, currency: 'MYR'|'USD'|'SGD', subtotal: number, tax_amount: number, total: number, line_items: [{ description: string, quantity: number, unit_amount: number, account_code_guess: string }], suggested_gl_account: string, confidence: 'high'|'medium'|'low', notes: string }. If a value can't be read, use null (string fields) or 0 (numeric). MYR (Malaysian Ringgit) is the most common currency. Common GL accounts in this org: 200-1000 Sales — Retail, 400-1000 Consulting Revenue, 500-0100 Retail Sales (O2O), 600-1000 Inventory, 610-1000 Office Supplies, 620-1000 Rent, 630-1000 Utilities, 640-1000 Professional Fees, 650-1000 Marketing, 660-1000 Software/Subscriptions, 670-1000 Bank Charges, 800-1000 Travel & Entertainment.";
+      const body = { model: "claude-haiku-4-5-20251001", max_tokens: 1500, system: sys, messages: [ { role: "user", content: [ { type: "image", source: { type: "base64", media_type: mime, data: b64 } }, { type: "text", text: "Extract the structured fields per the schema. Reply with JSON only." } ] } ] };
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key": apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) { const t = await r.text(); return j({ ok:false, error: "Claude API: " + r.status + " " + t.slice(0,400) }); }
+        const out = await r.json();
+        const txt = (out.content && out.content[0] && out.content[0].text) || "";
+        // Extract JSON from response — strip any fence/prose if model didn't comply.
+        let parsed = null; const m = txt.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
+        if (!parsed) return j({ ok:false, error:"Could not parse JSON from Claude response", raw: txt.slice(0,500) });
+        await logAudit(me, "ocr_extract", String((parsed && parsed.vendor_name) || "(unknown)"), { total: parsed && parsed.total, confidence: parsed && parsed.confidence });
+        return j({ ok:true, extracted: parsed });
+      } catch (e) { return j({ ok:false, error: String(e).slice(0,400) }); }
+    }
+    if (api === "create_bill_from_ocr") {
+      const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.tenant) return j({ ok:false, error:"tenant required" });
+      const allowed = await allowedTenants(b.token);
+      if (allowed.indexOf(b.tenant) < 0) return await denyTenant(me, "create_bill_from_ocr", b.tenant);
+      const x = b.bill || {};
+      const lines = Array.isArray(x.line_items) ? x.line_items : [];
+      if (!lines.length || !x.vendor_name) return j({ ok:false, error:"vendor_name and at least one line_item required" });
+      // Edge functions run in UTC; convert to MYT (UTC+8) for accurate "today"
+      const now = new Date(Date.now() + 8*3600*1000);
+      const today = now.toISOString().slice(0,10);
+      const due = x.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
+      // Resolve or auto-create contact
+      let contact;
+      const cid = await resolveContact(b.tenant, x.vendor_name);
+      contact = cid ? { ContactID: cid } : { Name: String(x.vendor_name).slice(0,500) };
+      const inv = { Type:"ACCPAY", Contact: contact, Date: x.invoice_date || today, DueDate: due, Status: "DRAFT", LineAmountTypes: x.line_amount_types || "Exclusive", LineItems: lines.map((l)=>({ Description: String(l.description||"Item").slice(0,4000), Quantity: Number(l.quantity)||1, UnitAmount: Number(l.unit_amount)||0, AccountCode: l.account_code_guess || l.account_code || "610-1000" })) };
+      if (x.invoice_no) inv.InvoiceNumber = String(x.invoice_no).slice(0,255);
+      if (x.currency) inv.CurrencyCode = String(x.currency);
+      const access = await xeroAccessToken();
+      const idem = await sha256Hex(JSON.stringify(inv));
+      const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": b.tenant, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
+      const out = await r.json(); const iv = (out.Invoices||[])[0] || {};
+      if (!r.ok && !iv.InvoiceID) return j({ ok:false, error: out.Detail || out.Message || JSON.stringify(out).slice(0,400) });
+      if (iv.HasErrors) return j({ ok:false, error: (iv.ValidationErrors||[]).map((e)=>e.Message).join("; ") });
+      await logAudit(me, "ocr_create_bill", iv.InvoiceNumber||iv.InvoiceID||"", { vendor: x.vendor_name, total: iv.Total, tenant: b.tenant });
+      return j({ ok:true, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber, total: iv.Total, status: iv.Status, contact: cid ? "existing" : "new" });
+    }
     if (api === "sync_audit") {
       // Live AR audit: pull current open AR total from Xero (server-side) per tenant, compare to cache.
       // Surfaces any RM-level mismatch immediately. Admin only.
