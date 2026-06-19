@@ -506,6 +506,34 @@ input:focus, select:focus, textarea:focus{
   font-weight: 720;
 }
 
+/* ── Category bar (top-level nav grouping 14 sub-tabs into 4 categories) ── */
+.tab-cats{
+  display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px;
+  padding:6px; border-radius:12px;
+  background:linear-gradient(180deg, rgba(22,32,52,.6), rgba(11,18,30,.45));
+  border:1px solid rgba(255,255,255,.06);
+  box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px -16px rgba(0,0,0,.5);
+}
+.tab-cat{
+  padding:9px 16px; border:none; border-radius:8px; cursor:pointer;
+  font:600 13px/1 "Inter",-apple-system,sans-serif;
+  letter-spacing:-.003em;
+  color:#92a0bb; background:transparent;
+  transition:color .15s, background .15s, transform .12s;
+}
+.tab-cat:hover{ color:#e4eaf4; background:rgba(255,255,255,.04); }
+.tab-cat:active{ transform:scale(.985); }
+.tab-cat.active{
+  color:#ffffff;
+  background:linear-gradient(180deg, rgba(232,93,60,.22), rgba(232,93,60,.10));
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 1px rgba(232,93,60,.32), 0 4px 12px -4px rgba(232,93,60,.4);
+}
+.tab-cat.hide{ display:none; }
+@media(max-width:560px){ .tab-cat{ padding:8px 11px; font-size:12px; } }
+
+/* When a sub-tab doesn't belong to the active category, hide it. */
+.tabs .tab.cat-hide{ display:none !important; }
+
 /* Tabs — refined "sliding" underline + cleaner inactive state. */
 .tabs{ position: relative; padding-bottom: 0; gap: 2px; }
 .tab{
@@ -752,21 +780,32 @@ table[data-list] tbody tr:hover input[type=text]{
     <div id="last-refresh" class="status-bar" style="margin:0"></div>
   </div>
 
-  <div class="tabs">
-    <div class="tab active" data-t="overview"    onclick="tab('overview')">📊 Overview</div>
-    <div class="tab"        data-t="approvals"   onclick="tab('approvals')"   id="tab-appr">✅ Approvals</div>
-    <div class="tab"        data-t="collections" onclick="tab('collections')" id="tab-coll">📨 Collections</div>
-    <div class="tab"        data-t="upload"      onclick="tab('upload')">⬆ Upload</div>
-    <div class="tab"        data-t="o2o"         onclick="tab('o2o')"         id="tab-o2o">💊 O2O Billing</div>
-    <div class="tab"        data-t="qinv"        onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
-    <div class="tab"        data-t="recv"        onclick="tab('recv')"        id="tab-recv">💰 Receivables</div>
-    <div class="tab"        data-t="today"       onclick="tab('today')">☀️ Today</div>
-    <div class="tab"        data-t="smart"       onclick="tab('smart')"       id="tab-smart">🧠 Smart</div>
-    <div class="tab"        data-t="close"       onclick="tab('close')"       id="tab-close">📋 Close</div>
-    <div class="tab"        data-t="recon"       onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
-    <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
-    <div class="tab"        data-t="info"        onclick="tab('info')"        id="tab-info">🏢 Company Info</div>
-    <div class="tab"        data-t="pharm"       onclick="tab('pharm')"       id="tab-pharm">🏪 Pharmacies</div>
+  <!-- Two-level nav: category row → sub-tabs row. Grouping keeps 14 destinations from looking scattered. -->
+  <div class="tab-cats">
+    <button class="tab-cat active" data-cat="dashboard"  onclick="tabCat('dashboard')"  id="cat-dashboard">📊 Dashboard</button>
+    <button class="tab-cat"        data-cat="operations" onclick="tabCat('operations')" id="cat-operations">💼 Operations</button>
+    <button class="tab-cat"        data-cat="data"       onclick="tabCat('data')"       id="cat-data">🏢 Master Data</button>
+    <button class="tab-cat"        data-cat="admin"      onclick="tabCat('admin')"      id="cat-admin">⚙ Admin</button>
+  </div>
+  <div class="tabs" id="sub-tabs">
+    <!-- Dashboard -->
+    <div class="tab active" data-t="overview" data-cat="dashboard"  onclick="tab('overview')">📊 Overview</div>
+    <div class="tab"        data-t="today"    data-cat="dashboard"  onclick="tab('today')">☀️ Today</div>
+    <div class="tab"        data-t="smart"    data-cat="dashboard"  onclick="tab('smart')"      id="tab-smart">🧠 Smart</div>
+    <div class="tab"        data-t="recv"     data-cat="dashboard"  onclick="tab('recv')"       id="tab-recv">💰 Receivables</div>
+    <!-- Operations -->
+    <div class="tab"        data-t="approvals"   data-cat="operations" onclick="tab('approvals')"   id="tab-appr">✅ Approvals</div>
+    <div class="tab"        data-t="collections" data-cat="operations" onclick="tab('collections')" id="tab-coll">📨 Collections</div>
+    <div class="tab"        data-t="upload"      data-cat="operations" onclick="tab('upload')">⬆ Upload</div>
+    <div class="tab"        data-t="o2o"         data-cat="operations" onclick="tab('o2o')"         id="tab-o2o">💊 O2O Billing</div>
+    <div class="tab"        data-t="qinv"        data-cat="operations" onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
+    <div class="tab"        data-t="recon"       data-cat="operations" onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
+    <div class="tab"        data-t="close"       data-cat="operations" onclick="tab('close')"       id="tab-close">📋 Close</div>
+    <!-- Master Data -->
+    <div class="tab"        data-t="info"     data-cat="data"       onclick="tab('info')"       id="tab-info">🏢 Company Info</div>
+    <div class="tab"        data-t="pharm"    data-cat="data"       onclick="tab('pharm')"      id="tab-pharm">🏪 Pharmacies</div>
+    <!-- Admin -->
+    <div class="tab"        data-t="users"    data-cat="admin"      onclick="tab('users')"      id="tab-users">👥 Users</div>
   </div>
 
   <div id="overview"></div>
@@ -1093,6 +1132,12 @@ async function showApp(){
     else if(t==='pharm') el.classList.remove('hide');  // Pharmacies: gated server-side by SKINDAE access
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
+  // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
+  document.querySelectorAll('.tab-cat').forEach(function(catEl){
+    const cat = catEl.dataset.cat;
+    const anyVisible = Array.from(document.querySelectorAll('.tabs .tab[data-cat="'+cat+'"]')).some(function(t){ return !t.classList.contains('hide'); });
+    catEl.classList.toggle('hide', !anyVisible);
+  });
   const sel=document.getElementById('company');
   sel.innerHTML='<option value="">— All Companies —</option>'+
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
@@ -1103,12 +1148,34 @@ async function showApp(){
   loadNotifs();
 }
 
-/* ── Navigation ── */
+/* ── Navigation (two-level: category → sub-tab) ── */
+// Switch the active category. Hides sub-tabs that don't belong to it; if the currently active
+// sub-tab is now hidden, jump to the first visible one in the new category.
+function tabCat(cat){
+  document.querySelectorAll('.tab-cat').forEach(e=>e.classList.toggle('active', e.dataset.cat===cat));
+  let firstVisible=null, activeStillVisible=false;
+  document.querySelectorAll('.tabs .tab').forEach(el=>{
+    const matches = el.dataset.cat===cat;
+    el.classList.toggle('cat-hide', !matches);
+    if(matches && !el.classList.contains('hide')){
+      if(!firstVisible) firstVisible=el;
+      if(el.classList.contains('active')) activeStillVisible=true;
+    }
+  });
+  // If the currently-active sub-tab isn't in this category, switch to the first visible one.
+  if(!activeStillVisible && firstVisible){ tab(firstVisible.dataset.t); }
+}
 function tab(t){
-  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
+  // Find the target's category and switch to it if we're not already on it (without recursion).
+  const targetEl = document.querySelector('.tabs .tab[data-t="'+t+'"]');
+  if(targetEl){
+    const targetCat = targetEl.dataset.cat;
+    document.querySelectorAll('.tab-cat').forEach(e=>e.classList.toggle('active', e.dataset.cat===targetCat));
+    document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
+  }
+  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
   ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info','pharm'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    // Show a skeleton immediately for tabs that fetch on load; renderXxx replaces it on success.
     const asyncTabs = ['overview','approvals','collections','recv','today','smart','close','users','info','pharm'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
