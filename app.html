@@ -2487,9 +2487,14 @@ const INFO_SECTIONS = [
       {k:'tax_return_due',l:'Tax Return (Form C) due',type:'date'},
       {k:'sst_return_period',l:'SST return period',ph:'Bi-monthly / Quarterly'}
     ]},
-  { id:'notes', icon:'📝', title:'Notes', fields:[{k:'notes',l:'Free text',textarea:true,rows:4}] }
+  { id:'notes', icon:'📝', title:'Notes', fields:[{k:'notes',l:'Free text',textarea:true,rows:4}] },
+  { id:'docs',  icon:'📎', title:'Documents', custom:'docs' }
 ];
 
+// Document categories for the attached-files section.
+const INFO_DOC_CATEGORIES = ['SSM / Registration','Tax','Contract','Licence / Permit','Insurance','Bank','Lease','Audit','Other'];
+// Documents per tenant — populated lazily on company switch.
+let INFO_DOCS = {};   // { tenant_id: [doc, doc, ...] }
 // Summary card — 8 most-looked-up fields shown at the top of every view.
 const INFO_SUMMARY_KEYS = [
   {k:'ssm_new',l:'SSM No.',copy:true},
@@ -2504,6 +2509,7 @@ const INFO_SUMMARY_KEYS = [
 
 function infoFilled(v){ if(v==null) return false; if(typeof v==='string') return v.trim()!==''; if(Array.isArray(v)) return v.length>0; return v!==0; }
 function infoSectionFilled(c, sec){
+  if(sec.custom==='docs') return (INFO_DOCS[c.tenant_id]||[]).length>0;
   if(sec.list) return infoFilled(c[sec.list]);
   return (sec.fields||[]).some(f=>infoFilled(c[f.k]));
 }
@@ -2521,9 +2527,154 @@ async function renderInfo(){
     if(!INFO_EDITABLE) INFO_MODE='view';
     if(!INFO_DATA.length){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🏢</div><div>No companies you can access yet.</div></div>'; return; }
     if(!INFO_ACTIVE||!INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE)) INFO_ACTIVE=INFO_DATA[0].tenant_id;
+    // Fetch documents for ALL accessible tenants in one shot so the sidebar fill-indicator + search work.
+    try { const dr=await call({api:'company_doc_list'}); if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); } } catch(_e){}
     infoRender();
     loaded.info=true;
   }catch(e){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
+}
+
+// ── Document helpers ──
+function infoDocBytes(n){ if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(2)+' MB'; }
+function infoDocIcon(mime){
+  const m=String(mime||'').toLowerCase();
+  if(m.indexOf('pdf')>=0) return '📕';
+  if(m.indexOf('image')>=0) return '🖼';
+  if(m.indexOf('word')>=0||m.indexOf('document')>=0) return '📘';
+  if(m.indexOf('spreadsheet')>=0||m.indexOf('excel')>=0) return '📗';
+  return '📄';
+}
+function infoDocsForCompany(tid){ return INFO_DOCS[tid]||[]; }
+
+// Render the Documents section body — list grouped by category + upload area (admin only).
+function infoSecDocsBody(c){
+  const docs = infoDocsForCompany(c.tenant_id);
+  const editing = INFO_MODE==='edit' && INFO_EDITABLE;
+  // Upload form (admin edit-mode only) — single file at a time.
+  const uploadForm = editing
+    ? '<div style="background:var(--panel-2);border:1px dashed var(--panel-border);border-radius:10px;padding:14px;margin-bottom:14px">'+
+        '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;font-weight:660">Attach a document</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">'+
+          '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Category</label><select id="info-doc-category" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px">'+INFO_DOC_CATEGORIES.map(cat=>'<option value="'+esc(cat)+'">'+esc(cat)+'</option>').join('')+'</select></div>'+
+          '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Title (optional)</label><input id="info-doc-title" placeholder="e.g. SST Cert 2026" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px"/></div>'+
+          '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Expiry (optional)</label><input id="info-doc-expiry" type="date" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px"/></div>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+          '<input type="file" id="info-doc-file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.xlsx,.xls,.txt" style="flex:1;min-width:200px;font-size:12px;color:var(--text-soft)"/>'+
+          '<button class="btn p" id="info-doc-upload-btn" onclick="infoDocUpload()">⬆ Upload</button>'+
+        '</div>'+
+        '<div id="info-doc-status" style="font-size:11.5px;margin-top:8px;min-height:14px"></div>'+
+        '<div class="muted" style="font-size:11px;margin-top:6px">Max 20 MB · PDF / image / Word / Excel / TXT</div>'+
+      '</div>'
+    : '';
+  // Empty state
+  if(!docs.length){
+    return uploadForm + '<div class="muted" style="font-size:13px;text-align:center;padding:24px 0">No documents uploaded yet.'+(editing?'':'')+(INFO_EDITABLE&&!editing?' Switch to <b>✎ Edit mode</b> to upload.':'')+'</div>';
+  }
+  // Group by category
+  const byCat={};
+  docs.forEach(d=>{ const c=d.category||'Other'; if(!byCat[c]) byCat[c]=[]; byCat[c].push(d); });
+  const cats=Object.keys(byCat).sort();
+  const todayISO=new Date().toISOString().slice(0,10);
+  const inDaysISO=days=>{ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); };
+  const ninetyDaysOut=inDaysISO(90);
+  const grouped = cats.map(cat=>{
+    const rows = byCat[cat].map(doc=>{
+      let expiryBadge='';
+      if(doc.expiry_date){
+        if(doc.expiry_date < todayISO) expiryBadge='<span class="pill pill-coral" style="font-size:10px;margin-left:6px" title="Expired">⚠ expired '+esc(doc.expiry_date)+'</span>';
+        else if(doc.expiry_date < ninetyDaysOut) expiryBadge='<span class="pill" style="background:rgba(255,187,86,.16);color:var(--amber);font-size:10px;margin-left:6px" title="Expiring within 90 days">⏳ expires '+esc(doc.expiry_date)+'</span>';
+        else expiryBadge='<span class="muted" style="font-size:10px;margin-left:6px">expires '+esc(doc.expiry_date)+'</span>';
+      }
+      const delBtn = editing
+        ? '<button class="btn" style="padding:4px 8px;font-size:11px" onclick="infoDocDelete('+doc.id+')" title="Delete document">🗑</button>'
+        : '';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--panel-border)">'+
+        '<div style="font-size:20px">'+infoDocIcon(doc.mime_type)+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-size:13px;color:var(--text);word-break:break-word">'+esc(doc.title||doc.file_name)+expiryBadge+'</div>'+
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(doc.file_name)+' · '+esc(infoDocBytes(doc.file_size||0))+' · uploaded '+esc(String(doc.uploaded_at||'').slice(0,16).replace('T',' '))+(doc.uploaded_by_email?' by '+esc(doc.uploaded_by_email):'')+'</div>'+
+        '</div>'+
+        '<button class="btn" style="padding:4px 10px;font-size:11.5px" onclick="infoDocDownload('+doc.id+')">⬇ Download</button>'+
+        delBtn+
+      '</div>';
+    }).join('');
+    return '<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--coral-soft);text-transform:uppercase;letter-spacing:.06em;padding:0 4px 6px;font-weight:660">'+esc(cat)+' · '+byCat[cat].length+'</div>'+
+      '<div style="border:1px solid var(--panel-border);border-radius:8px;overflow:hidden;background:var(--panel-2)">'+rows+'</div></div>';
+  }).join('');
+  return uploadForm + grouped;
+}
+
+// Read file as base64 (chunked-safe for big files).
+function infoFileToB64(file){
+  return new Promise((res, rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(String(r.result||'').split(',').pop());
+    r.onerror=()=>rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function infoDocUpload(){
+  const fileEl=document.getElementById('info-doc-file');
+  const file=fileEl&&fileEl.files&&fileEl.files[0];
+  const st=document.getElementById('info-doc-status');
+  if(!file){ if(st){st.textContent='Pick a file first'; st.style.color='var(--red-soft)';} return; }
+  if(file.size > 20*1024*1024){ if(st){st.textContent='File too large (max 20 MB)'; st.style.color='var(--red-soft)';} return; }
+  const category=document.getElementById('info-doc-category').value;
+  const title=document.getElementById('info-doc-title').value.trim();
+  const expiry=document.getElementById('info-doc-expiry').value;
+  if(st){st.textContent='Uploading…'; st.style.color='var(--text-soft)';}
+  await runOnce('info-doc-upload-btn','Uploading…', async()=>{
+    try {
+      const b64 = await infoFileToB64(file);
+      const r = await call({
+        api:'company_doc_upload', tenant:INFO_ACTIVE,
+        file_name:file.name, content_type:file.type||'application/octet-stream',
+        content_base64:b64, category, title, expiry_date:expiry||undefined
+      });
+      if(r && r.ok){
+        if(st){st.textContent='✓ Uploaded'; st.style.color='var(--green-soft)';}
+        toast('✓ Document uploaded');
+        // Refresh docs from server
+        const dr=await call({api:'company_doc_list'});
+        if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+        infoRender();
+        setTimeout(()=>{ const el=document.getElementById('info-sec-docs'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }, 50);
+      } else {
+        if(st){st.textContent='✗ '+(r&&r.error||'Upload failed'); st.style.color='var(--red-soft)';}
+      }
+    } catch(e){
+      if(st){st.textContent='✗ '+e.message; st.style.color='var(--red-soft)';}
+    }
+  });
+}
+
+async function infoDocDownload(docId){
+  try{
+    const r=await call({api:'company_doc_download', doc_id:docId});
+    if(r&&r.ok&&r.url){
+      // Open the signed URL in a new tab — browser handles inline PDFs / downloads other types.
+      window.open(r.url,'_blank');
+    } else {
+      toast(r&&r.error||'Could not download', true);
+    }
+  }catch(e){ toast(e.message, true); }
+}
+
+async function infoDocDelete(docId){
+  if(!confirm('Delete this document? This cannot be undone.')) return;
+  try{
+    const r=await call({api:'company_doc_delete', doc_id:docId});
+    if(r&&r.ok){
+      toast('✓ Document deleted');
+      const dr=await call({api:'company_doc_list'});
+      if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+      infoRender();
+    } else {
+      toast(r&&r.error||'Delete failed', true);
+    }
+  }catch(e){ toast(e.message, true); }
 }
 
 // Search across ALL companies — match field/section title + value text. Returns flat array of hits.
@@ -2532,7 +2683,14 @@ function infoSearchAll(query){
   const hits=[];
   INFO_DATA.forEach(c=>{
     INFO_SECTIONS.forEach(sec=>{
-      if(sec.fields){
+      if(sec.custom==='docs'){
+        (INFO_DOCS[c.tenant_id]||[]).forEach(doc=>{
+          const flat=((doc.title||'')+' '+(doc.file_name||'')+' '+(doc.category||'')+' '+(doc.description||'')).toLowerCase();
+          if(flat.indexOf(q)>=0){
+            hits.push({company:c.tenant_name, tenant_id:c.tenant_id, section:sec, label:doc.category+' · '+(doc.title||doc.file_name), value:doc.file_name+' ('+(doc.expiry_date?'expires '+doc.expiry_date:infoDocBytes(doc.file_size||0))+')'});
+          }
+        });
+      } else if(sec.fields){
         sec.fields.forEach(f=>{
           const v=c[f.k]; if(v==null||v==='') return;
           const sv=String(v).toLowerCase();
@@ -2605,7 +2763,11 @@ function infoPrint(){
   INFO_SECTIONS.forEach(sec=>{
     if(!infoSectionFilled(c, sec)) return;
     body+='<h2>'+sec.icon+' '+esc(sec.title)+'</h2>';
-    if(sec.fields){ body+='<div>'+sec.fields.map(f=>fldRow(f, val(c[f.k]))).join('')+'</div>'; }
+    if(sec.custom==='docs'){
+      const docs=INFO_DOCS[c.tenant_id]||[];
+      body+='<table><thead><tr><th>Category</th><th>Title</th><th>File</th><th>Size</th><th>Expiry</th></tr></thead>';
+      body+='<tbody>'+docs.map(d=>'<tr><td>'+esc(d.category||'')+'</td><td>'+esc(d.title||d.file_name)+'</td><td>'+esc(d.file_name)+'</td><td>'+esc(infoDocBytes(d.file_size||0))+'</td><td>'+esc(d.expiry_date||'—')+'</td></tr>').join('')+'</tbody></table>';
+    } else if(sec.fields){ body+='<div>'+sec.fields.map(f=>fldRow(f, val(c[f.k]))).join('')+'</div>'; }
     else if(sec.list){
       const arr=c[sec.list]||[];
       body+='<table><thead><tr>'+sec.cols.map(col=>'<th>'+esc(col.l)+'</th>').join('')+'</tr></thead>';
@@ -2710,6 +2872,7 @@ function infoRender(){
 
 // View-mode body: read-only key/value pairs (or table for lists). Always includes copy buttons where useful.
 function infoSecViewBody(sec, c){
+  if(sec.custom==='docs') return infoSecDocsBody(c);
   if(sec.fields){
     return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">'+
       sec.fields.map(f=>{
@@ -2742,6 +2905,7 @@ function infoSecViewBody(sec, c){
 
 // Edit-mode body: form inputs (per-field or list editor).
 function infoSecEditBody(sec, c){
+  if(sec.custom==='docs') return infoSecDocsBody(c);  // docs body knows to show upload UI in edit mode
   function input(f, val){
     if(f.textarea) return '<textarea data-k="'+esc(f.k)+'" rows="'+(f.rows||3)+'" placeholder="'+esc(f.ph||'')+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(val||'')+'</textarea>';
     if(f.state){
