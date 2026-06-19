@@ -2455,6 +2455,19 @@ async function auditLoad(){
 async function xeroSyncLoad(){
   document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xdelta_btn" onclick="xeroDeltaNow()">⚡ Delta sync (changes only)</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Drift check vs Xero</button></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    // v37: force-resync tool — paste an invoice number or ID, fetches latest from Xero and overwrites cache. Use when one specific invoice looks wrong.
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔧 Force resync one invoice <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· when a single invoice on screen doesn\'t match Xero</span></h3></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
+        '<div style="flex:1;min-width:180px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Company</label>'+
+          '<select id="rsync_tenant" style="width:100%">'+(COMPANIES||[]).map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('')+'</select>'+
+        '</div>'+
+        '<div style="flex:2;min-width:200px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Invoice number OR Xero invoice ID</label>'+
+          '<input id="rsync_key" placeholder="INV-1183  or  abc-def-123…" style="width:100%"/>'+
+        '</div>'+
+        '<button class="btn p" id="rsync_btn" onclick="invoiceResync()">⟲ Resync from Xero</button>'+
+      '</div>'+
+      '<div id="rsync_out" style="margin-top:12px;font-size:13px"></div>'+
+    '</div>'+
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>💰 AR aging snapshot <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· instant, from local cache (real-time synced)</span></h3></div><div id="ar_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
   arAgingLoad();
   syncHealthLoad();
@@ -2518,6 +2531,36 @@ async function xeroDriftCheck(){
   syncHealthLoad();
   if(btn){ btn.disabled=false; btn.textContent='🔍 Drift check vs Xero'; }
 }
+async function invoiceResync(){
+  var tenant = document.getElementById('rsync_tenant').value;
+  var key = (document.getElementById('rsync_key').value||'').trim();
+  var out = document.getElementById('rsync_out');
+  if(!tenant){ toast('Pick a company',true); return; }
+  if(!key){ toast('Enter an invoice number or ID',true); return; }
+  out.innerHTML = '<span class="muted">Fetching from Xero…</span>';
+  await runOnce('rsync_btn', 'Working…', async()=>{
+    try {
+      var lookup_key = (typeof key === 'string') ? key : '';
+      var r = await call({api:'invoice_resync', tenant:tenant, invoice_id:lookup_key, number:lookup_key});
+      if(r&&r.ok){
+        var iv = r.invoice||{};
+        out.innerHTML =
+          '<div style="background:var(--panel-2);border:1px solid var(--green-soft);border-radius:8px;padding:12px;display:flex;flex-wrap:wrap;gap:14px">'+
+            '<span><b>✓ '+esc(r.action)+':</b> '+esc(iv.number||iv.id||'')+'</span>'+
+            '<span><b>Contact:</b> '+esc(iv.contact||'—')+'</span>'+
+            '<span><b>Status:</b> '+esc(iv.status||'—')+'</span>'+
+            '<span><b>Total:</b> '+M(iv.total||0)+'</span>'+
+            '<span><b>Amount due:</b> '+M(iv.amount_due||0)+'</span>'+
+          '</div>'+
+          '<div class="muted" style="font-size:11px;margin-top:8px">Cache updated. Refresh the relevant tab to see new values.</div>';
+        toast('✓ Invoice resynced');
+        syncHealthLoad();
+      } else {
+        out.innerHTML = '<div style="color:var(--red-soft)">'+esc(r&&r.error||'Failed')+'</div>';
+      }
+    } catch(e){ out.innerHTML = '<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  });
+}
 async function syncHealthLoad(){
   var el=document.getElementById('syncH_out'); if(!el) return;
   try{
@@ -2536,17 +2579,24 @@ async function syncHealthLoad(){
         ? '<span class="muted" style="font-size:11px">not checked</span>'
         : (Math.abs(t.cache_drift_count)===0 ? '<span class="pill pill-green" style="font-size:9px">in sync</span>' : '<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">drift '+(t.cache_drift_count>0?'+':'')+t.cache_drift_count+'</span>');
       var errCell = t.last_error ? '<span style="color:var(--red-soft);font-size:11px" title="'+esc(t.last_error)+'">⚠ '+esc((t.last_error||'').slice(0,60))+'…</span>' : '<span class="muted" style="font-size:11px">—</span>';
+      // v37: per-tenant freshness column — oldest open invoice's last_synced_at + stale count.
+      var stale = Number(t.records_stale_24h||0);
+      var oldest = t.oldest_record_synced_at ? rel(t.oldest_record_synced_at) : '—';
+      var staleCell = stale > 0
+        ? '<span class="pill" style="background:rgba(245,158,11,.14);color:var(--amber);font-size:9.5px">'+stale+' stale</span><div class="muted" style="font-size:10.5px;margin-top:2px">oldest: '+oldest+'</div>'
+        : '<span class="pill pill-green" style="font-size:9.5px">all fresh</span><div class="muted" style="font-size:10.5px;margin-top:2px">oldest: '+oldest+'</div>';
       return '<tr><td><b style="font-size:12.5px">'+esc(t.tenant_name||'')+'</b></td>'+
         '<td class="amt muted" style="font-size:11.5px">'+(t.cached_invoices||0).toLocaleString()+'</td>'+
         '<td class="amt" style="font-size:11.5px">'+(t.cached_open_ar||0).toLocaleString()+'</td>'+
         '<td style="font-size:11.5px;color:'+freshColor+'">'+rel(t.cache_last_updated)+'</td>'+
+        '<td style="font-size:11.5px">'+staleCell+'</td>'+
         '<td style="font-size:11.5px"><span class="muted">F:</span> '+rel(t.last_full_sync_at)+' · <span class="muted">Δ:</span> '+rel(t.last_delta_sync_at)+'</td>'+
         '<td>'+driftPill+'</td>'+
         '<td>'+errCell+'</td></tr>';
-    }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px">No companies</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">No companies</td></tr>';
     el.innerHTML = alertBanner +
-      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cached</th><th class="amt">Open AR</th><th>Cache age</th><th>Last sync (F=full, Δ=delta)</th><th>Drift</th><th>Last error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Hourly delta sync runs at :07 past every hour. Daily full sync at 02:00 MYT. Webhook retry every 5 min. <b>If you see drift &gt; 50</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b> again.</div>';
+      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cached</th><th class="amt">Open AR</th><th>Cache age</th><th>Open AR freshness</th><th>Last sync (F=full, Δ=delta)</th><th>Drift</th><th>Last error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Hourly delta sync at :07. Daily full sync 02:00 MYT. Auto drift-repair 02:30 MYT. Webhook retry every 5 min. Real-time push: INVOICE / CONTACT / PAYMENT / CREDITNOTE. <b>If you see drift &gt; 50 or stale records &gt; 100</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b>.</div>';
   }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 async function arAgingLoad(){
