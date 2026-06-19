@@ -146,6 +146,276 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .quote .nm{font-weight:700;font-size:13px}
 .quote .rl{color:var(--muted);font-size:12px}
 .stars2{color:#f5b301;letter-spacing:2px;margin-bottom:12px;font-size:14px}
+
+/* ════════════════════════════════════════════
+   v8 — LANDING PAGE PREMIUM REFINEMENT
+   Stripe/Linear-grade typography, microinteractions,
+   and depth for the marketing surface.
+   ════════════════════════════════════════════ */
+
+/* Typography — Inter Variable, contextual ligatures, tightened tracking. */
+body{
+  font-feature-settings: "cv11", "ss01", "ss03";
+  font-variant-ligatures: contextual;
+  letter-spacing: -.005em;
+}
+.amt, .v, .trust-stat b, .shot-row .v, .price .amt,
+input[type=number], code { font-variant-numeric: tabular-nums lining-nums; }
+
+/* Brand wordmark gradient — subtle white→coral, the kind of detail Stripe leans on. */
+.brand{
+  background: linear-gradient(95deg, #fff 60%, var(--coral-soft) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.brand img{ filter: drop-shadow(0 4px 14px rgba(232,93,60,.55)); }
+
+/* H1 — tighter, more confident, slightly bigger on desktop. */
+h1{
+  letter-spacing: -.035em;
+  font-weight: 720;
+  line-height: 1.04;
+}
+@media(min-width:1100px){ h1{ font-size: 58px; } }
+h1 .grad{
+  background: linear-gradient(120deg, var(--coral-soft) 0%, #fbb27a 50%, var(--sky-soft) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  letter-spacing: -.035em;
+}
+
+/* Lead — slightly heavier than 400 reads softer in dark mode. */
+.lead{ font-weight: 440; letter-spacing: -.004em; line-height: 1.62; }
+.lead b{ font-weight: 620; }
+
+/* Rating chip — refined edge + glow. */
+.rating{
+  font-weight: 580;
+  border: 1px solid rgba(91,155,213,.34);
+  background: linear-gradient(180deg, rgba(91,155,213,.16), rgba(91,155,213,.06));
+  box-shadow: 0 4px 14px -6px rgba(91,155,213,.4);
+}
+
+/* Section headings — same refined treatment as h1. */
+h2{
+  letter-spacing: -.025em;
+  font-weight: 720;
+  background: linear-gradient(180deg, #fff 0%, #cdd6e4 110%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.eyebrow{ font-weight: 720; letter-spacing: .14em; color: var(--coral-soft); }
+.sub{ letter-spacing: -.004em; line-height: 1.62; }
+
+/* Buttons — refined press + diagonal highlight overlay + double-ring focus. */
+.btn{
+  position: relative;
+  letter-spacing: -.005em;
+  font-weight: 620;
+  border-radius: 11px;
+}
+.btn::after{
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,.08), transparent 32%);
+  opacity: 0; transition: opacity .15s;
+}
+.btn:hover::after{ opacity: 1; }
+.btn.p{
+  background: linear-gradient(180deg, #ee6d4d, #C04A2E);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.2) inset,
+    0 10px 28px -8px rgba(232,93,60,.55);
+}
+.btn.p:hover{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.24) inset,
+    0 14px 34px -8px rgba(232,93,60,.65);
+}
+.btn:focus-visible{
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px rgba(232,93,60,.6);
+}
+
+/* Sticky nav — refined glass with subtle bottom highlight. */
+nav{
+  background: linear-gradient(180deg, rgba(7,13,23,.7), rgba(7,13,23,.55));
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  box-shadow: 0 1px 0 rgba(255,255,255,.02) inset;
+}
+.nav-links{ font-weight: 560; }
+.nav-links a{ letter-spacing: -.003em; transition: color .18s; }
+
+/* Hero shot mockup — premium glass surface, refined chrome dots, depth. */
+.shot{
+  background:
+    linear-gradient(180deg, rgba(22,32,52,.92), rgba(11,18,30,.84)),
+    radial-gradient(120% 60% at 50% 0%, rgba(91,155,213,.06), transparent 70%);
+  border: 1px solid rgba(255,255,255,.07);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 60px 120px -30px rgba(0,0,0,.7),
+    0 0 0 1px rgba(255,255,255,.025);
+}
+.shot-bar{ border-bottom: 1px solid rgba(255,255,255,.05); padding: 13px 16px; }
+.shot-bar i{ width: 11px; height: 11px; box-shadow: 0 1px 0 rgba(255,255,255,.08) inset; }
+.shot-row{
+  background: linear-gradient(180deg, rgba(7,13,23,.65), rgba(7,13,23,.45));
+  border: 1px solid rgba(255,255,255,.05);
+  box-shadow: 0 1px 0 rgba(255,255,255,.025) inset;
+  transition: border-color .25s, background .25s;
+}
+.shot-row:hover{ border-color: rgba(232,93,60,.2); }
+.shot-row .v{ font-weight: 660; letter-spacing: -.012em; }
+
+/* Feature / step / price cards — unified premium treatment. */
+.feat, .step, .price, .quote{
+  background:
+    linear-gradient(180deg, rgba(22,32,52,.86), rgba(11,18,30,.76)),
+    radial-gradient(120% 60% at 50% 0%, rgba(91,155,213,.04), transparent 70%);
+  border: 1px solid rgba(255,255,255,.06);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.04) inset,
+    0 24px 50px -28px rgba(0,0,0,.55);
+  border-radius: 18px;
+  transition: transform .25s cubic-bezier(.2,.7,.2,1), border-color .25s, box-shadow .25s;
+}
+.feat:hover, .step:hover, .price:hover{
+  transform: translateY(-4px);
+  border-color: rgba(232,93,60,.22);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 36px 70px -28px rgba(0,0,0,.7),
+    0 0 0 1px rgba(232,93,60,.10);
+}
+.feat h3, .step h3, .price h3{
+  font-weight: 680; letter-spacing: -.012em;
+}
+.feat p, .step p, .price li{ letter-spacing: -.003em; line-height: 1.6; }
+
+/* Step number badge — heavier glow, refined chip. */
+.step .num{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.22) inset,
+    0 6px 18px -4px rgba(232,93,60,.5);
+  font-weight: 720; font-size: 15px;
+}
+
+/* Pricing — heavier popular card glow. */
+.price.pop-card{
+  border: 1px solid rgba(232,93,60,.45);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 30px 70px -20px rgba(232,93,60,.28),
+    0 0 0 1px rgba(232,93,60,.2);
+}
+.price .amt{ letter-spacing: -.04em; font-weight: 760; }
+.price li{ border-bottom-color: rgba(255,255,255,.045); }
+
+/* CTA band — premium gradient + glow. */
+.band{
+  background:
+    linear-gradient(135deg, rgba(232,93,60,.22), rgba(91,155,213,.14)),
+    radial-gradient(100% 60% at 50% 0%, rgba(255,255,255,.04), transparent 70%);
+  border: 1px solid rgba(232,93,60,.18);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 40px 80px -30px rgba(232,93,60,.3);
+}
+.band h2{
+  background: linear-gradient(180deg, #fff 0%, #ffd9c9 110%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Trust band — refined surface + subtle stat numerals. */
+.trust-in{
+  border: 1px solid rgba(255,255,255,.06);
+  background:
+    linear-gradient(180deg, rgba(22,32,52,.6), rgba(11,18,30,.45)),
+    radial-gradient(80% 60% at 50% 0%, rgba(91,155,213,.05), transparent 70%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.04) inset,
+    0 18px 40px -24px rgba(0,0,0,.5);
+  padding: 20px 28px;
+  border-radius: 16px;
+}
+.trust-stat b{
+  font-size: 19px; font-weight: 760; letter-spacing: -.025em;
+  background: linear-gradient(180deg, #fff 0%, #cdd6e4 110%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.trust-item{ font-weight: 580; }
+
+/* Xero badge — refined chip. */
+.xero-badge{
+  background: linear-gradient(180deg, rgba(19,181,234,.10), rgba(19,181,234,.04));
+  border: 1px solid rgba(19,181,234,.25);
+  color: var(--text);
+  font-weight: 580;
+}
+.xero-dot{
+  box-shadow:
+    0 0 0 2px rgba(19,181,234,.18),
+    0 0 12px rgba(19,181,234,.6);
+}
+
+/* Quotes — refined typography, refined avatar. */
+.quote p{ letter-spacing: -.005em; line-height: 1.65; font-weight: 460; }
+.quote .av{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.18) inset,
+    0 4px 12px -2px rgba(232,93,60,.4);
+  font-weight: 720;
+}
+.quote .nm{ font-weight: 680; letter-spacing: -.01em; }
+
+/* Scroll-triggered reveal — refined entrance curve. */
+.reveal{ transition: opacity .65s cubic-bezier(.2,.7,.2,1), transform .65s cubic-bezier(.2,.7,.2,1); }
+
+/* Hero shot floating — slower, smoother. */
+@keyframes floaty{ 0%, 100%{ transform: translateY(0); } 50%{ transform: translateY(-12px); } }
+@media(min-width:921px){ .shot{ animation: floaty 7s ease-in-out infinite; } }
+
+/* Nav underline animation — refined. */
+.nav-links a:after{ transition: width .28s cubic-bezier(.2,.7,.2,1); }
+
+/* Page-load fade for hero — page feels alive on first paint. */
+@keyframes ctgHeroIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.hero > * { animation: ctgHeroIn .55s cubic-bezier(.2,.7,.2,1) both; }
+.hero > *:nth-child(1){ animation-delay: 60ms; }
+.hero > *:nth-child(2){ animation-delay: 180ms; }
+@media (prefers-reduced-motion: reduce){ .hero > * { animation: none; } }
+
+/* Refined scrollbar (premium detail). */
+*::-webkit-scrollbar{ width: 10px; height: 10px; }
+*::-webkit-scrollbar-track{ background: transparent; }
+*::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,.06);
+  border-radius: 8px; border: 2px solid transparent; background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover{ background: rgba(232,93,60,.3); background-clip: content-box; }
+
+/* Selection accent — coral. */
+::selection{ background: rgba(232,93,60,.32); color: #fff; }
+::-moz-selection{ background: rgba(232,93,60,.32); color: #fff; }
+
+/* Footer — refined. */
+footer{ border-top: 1px solid rgba(255,255,255,.05); padding: 36px 0 40px; }
+footer b{ font-weight: 720; }
+
+/* Mobile refinements. */
+@media(max-width:560px){
+  h1{ font-size: 36px; letter-spacing: -.02em; }
+  h2{ font-size: 28px; letter-spacing: -.02em; }
+  .nav-in{ height: 56px; }
+  .brand{ font-size: 15px; }
+  .brand img{ width: 28px; height: 28px; }
+  .btn{ padding: 10px 18px; font-size: 13.5px; }
+}
 </style>
 </head>
 <body>
