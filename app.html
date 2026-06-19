@@ -3270,6 +3270,60 @@ function pharmCloseDetail(){
   if(INFO_DIRTY){ if(!confirm('Discard unsaved changes?')) return; }
   PHARM_ACTIVE=null; PHARM_NEW=false; INFO_DIRTY=false; setDirty(false); pharmRender();
 }
+let PHARM_XERO_CONTACTS = null;        // cached list of SKINDAE's Xero contacts
+let PHARM_XERO_PICK_SEARCH = '';
+async function pharmOpenLinkModal(){
+  if(!PHARM_EDITABLE){toast('Admins only',true);return;}
+  if(!PHARM_ACTIVE){toast('Save the pharmacy first',true);return;}
+  // Pre-fetch SKINDAE contacts if we haven't yet this session.
+  if(!PHARM_XERO_CONTACTS){
+    try{ const r=await call({api:'pharmacy_xero_contacts'}); if(r&&r.ok) PHARM_XERO_CONTACTS=r.contacts||[]; else { toast(r&&r.error||'Failed to load Xero contacts',true); return; } }
+    catch(e){ toast(e.message,true); return; }
+  }
+  PHARM_XERO_PICK_SEARCH = '';
+  pharmRenderLinkModal();
+}
+function pharmRenderLinkModal(){
+  const p = PHARM_DATA.find(x=>x.id===PHARM_ACTIVE) || {};
+  const q = String(PHARM_XERO_PICK_SEARCH||'').toLowerCase().trim();
+  const contacts = PHARM_XERO_CONTACTS || [];
+  const filtered = q ? contacts.filter(c => (c.name||'').toLowerCase().indexOf(q)>=0 || (c.email||'').toLowerCase().indexOf(q)>=0) : contacts;
+  // Suggest the best match by normalized name first.
+  const suggested = contacts.find(c => pharmNormalize(c.name)===pharmNormalize(p.name));
+  const list = filtered.slice(0, 100);
+  const rows = list.map(c => {
+    const isCurrent = p.xero_contact_id === c.contact_id;
+    const isSuggested = suggested && suggested.contact_id === c.contact_id;
+    return '<div onclick="pharmDoLink(\''+esc(c.contact_id)+'\')" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--panel-border);cursor:pointer;background:'+(isCurrent?'rgba(126,224,160,.08)':'transparent')+'" onmouseover="this.style.background=\''+(isCurrent?'rgba(126,224,160,.12)':'rgba(255,255,255,.04)')+'\'" onmouseout="this.style.background=\''+(isCurrent?'rgba(126,224,160,.08)':'transparent')+'\'">'+
+      '<div style="flex:1;min-width:0"><div style="font-size:13px;color:var(--text)">'+esc(c.name||'')+(isSuggested?'<span class="pill pill-green" style="font-size:10px;margin-left:6px">suggested</span>':'')+(isCurrent?'<span class="pill" style="background:rgba(126,224,160,.16);color:var(--green-soft);font-size:10px;margin-left:6px">current link</span>':'')+'</div>'+(c.email?'<div class="muted" style="font-size:11px;margin-top:2px">'+esc(c.email)+'</div>':'')+'</div>'+
+      '<div class="muted" style="font-family:monospace;font-size:10.5px">'+esc(String(c.contact_id||'').slice(0,8))+'…</div>'+
+    '</div>';
+  }).join('');
+  const ex=document.getElementById('pharm-link-overlay'); if(ex) ex.remove();
+  const html='<div class="overlay" id="pharm-link-overlay"><div class="modal" style="width:560px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column">'+
+    '<div class="modal-hd"><h3>🔗 Link "'+esc(p.name||'')+'" to a Xero contact</h3><button class="modal-close" aria-label="Close" onclick="document.getElementById(\'pharm-link-overlay\').remove()">×</button></div>'+
+    '<p class="muted" style="font-size:12.5px;margin:0 0 10px;line-height:1.6">Pick the matching SKINDAE Xero contact. Once linked, O2O Billing posts invoices to this contact directly (no name-fuzzy matching).</p>'+
+    '<input id="pharm-link-search" value="'+esc(PHARM_XERO_PICK_SEARCH)+'" oninput="PHARM_XERO_PICK_SEARCH=this.value;pharmRenderLinkModal()" placeholder="🔍 Search Xero contacts by name or email" autofocus style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:10px"/>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:6px">'+filtered.length+' contact'+(filtered.length===1?'':'s')+' · showing first '+Math.min(100,filtered.length)+'</div>'+
+    '<div style="flex:1;overflow-y:auto;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px">'+(rows||'<div class="muted" style="padding:24px;text-align:center;font-size:13px">No contacts match.</div>')+'</div>'+
+    '<div class="modal-ft" style="justify-content:space-between"><button class="btn" '+(p.xero_contact_id?'':'disabled')+' onclick="pharmDoLink(null)">Unlink</button><button class="btn" onclick="document.getElementById(\'pharm-link-overlay\').remove()">Cancel</button></div>'+
+  '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+async function pharmDoLink(contactId){
+  if(!PHARM_ACTIVE){return;}
+  try{
+    const r=await call({api:'pharmacy_link_xero', id:PHARM_ACTIVE, contact_id:contactId||''});
+    if(r&&r.ok){
+      toast(contactId?'✓ Linked':'✓ Unlinked');
+      // Refresh the master list to reflect the new link
+      const list=await call({api:'pharmacy_list'});
+      if(list&&list.ok){ PHARM_DATA=list.pharmacies||[]; PHARM_EDITABLE=!!list.editable; }
+      const ov=document.getElementById('pharm-link-overlay'); if(ov) ov.remove();
+      pharmRender();
+    } else { toast(r&&r.error||'Failed', true); }
+  }catch(e){ toast(e.message,true); }
+}
 
 function pharmRenderDetail(){
   const isEdit = (PHARM_NEW || INFO_MODE==='edit') && PHARM_EDITABLE;
@@ -3310,7 +3364,7 @@ function pharmRenderDetail(){
     (PHARM_EDITABLE && !PHARM_NEW
       ? (INFO_MODE==='edit'
           ? '<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Save</button><button class="btn" onclick="infoSetMode(\'view\')">Cancel</button>'
-          : '<button class="btn" onclick="infoSetMode(\'edit\')">✎ Edit</button><button class="btn d" onclick="pharmDelete()">🗑 Delete</button>')
+          : '<button class="btn" onclick="pharmOpenLinkModal()">🔗 Link to Xero</button><button class="btn" onclick="infoSetMode(\'edit\')">✎ Edit</button><button class="btn d" onclick="pharmDelete()">🗑 Delete</button>')
       : '')+
     (PHARM_NEW?'<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Create</button>':'')+
   '</div>';
