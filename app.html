@@ -2455,6 +2455,8 @@ async function auditLoad(){
 async function xeroSyncLoad(){
   document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xdelta_btn" onclick="xeroDeltaNow()">⚡ Delta sync (changes only)</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Drift check vs Xero</button></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    // v40+: Live AR audit — directly compare live Xero open-AR total vs cache. Click to run.
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔬 Live AR audit <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· compares cache total vs live Xero query (proves zero drift)</span></h3><button class="btn p sm" id="xaudit_btn" onclick="syncAudit()">⚖ Run audit now</button></div><div id="audit_out"><div class="muted" style="font-size:12.5px;padding:8px 0">Click Run audit. The backend queries Xero live for each company\'s open AR and shows the RM-level delta. Anything > RM 1.00 is flagged.</div></div></div>'+
     // v37: force-resync tool — paste an invoice number or ID, fetches latest from Xero and overwrites cache. Use when one specific invoice looks wrong.
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔧 Force resync one invoice <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· when a single invoice on screen doesn\'t match Xero</span></h3></div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
@@ -2467,6 +2469,17 @@ async function xeroSyncLoad(){
         '<button class="btn p" id="rsync_btn" onclick="invoiceResync()">⟲ Resync from Xero</button>'+
       '</div>'+
       '<div id="rsync_out" style="margin-top:12px;font-size:13px"></div>'+
+    '</div>'+
+    // v40+: Nuclear rebuild — wipes one tenant's cache and triggers an unrestricted backfill from 2015.
+    '<div class="panel" style="margin-top:16px;border-color:rgba(239,68,68,.18)"><div class="panel-hd"><h3>🧨 Emergency rebuild <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· when the cache is catastrophically out of sync</span></h3></div>'+
+      '<div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18);border-radius:8px;padding:11px 14px;font-size:12.5px;color:var(--red-soft);margin-bottom:12px;line-height:1.6">⚠ This wipes one company\'s entire cached invoice history then re-pulls from Xero starting from 2015. Use ONLY when incremental drift repair can\'t catch up. The rebuild runs in the background (2–5 minutes). All operations are audited.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
+        '<div style="flex:1;min-width:200px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Company to rebuild</label>'+
+          '<select id="rebuild_tenant" style="width:100%">'+(COMPANIES||[]).map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('')+'</select>'+
+        '</div>'+
+        '<button class="btn d" id="rebuild_btn" onclick="tenantRebuild()">🧨 Wipe + rebuild from Xero</button>'+
+      '</div>'+
+      '<div id="rebuild_out" style="margin-top:10px;font-size:12.5px"></div>'+
     '</div>'+
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>💰 AR aging snapshot <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· instant, from local cache (real-time synced)</span></h3></div><div id="ar_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>';
   arAgingLoad();
@@ -2531,6 +2544,62 @@ async function xeroDriftCheck(){
   syncHealthLoad();
   if(btn){ btn.disabled=false; btn.textContent='🔍 Drift check vs Xero'; }
 }
+async function syncAudit(){
+  var out = document.getElementById('audit_out');
+  out.innerHTML = '<div class="muted" style="padding:8px 0"><span class="spin"></span>Querying Xero live for each company\'s open AR (10-60s)…</div>';
+  await runOnce('xaudit_btn', 'Auditing…', async()=>{
+    try{
+      var r = await call({api:'sync_audit'});
+      if(!r || !r.ok){ out.innerHTML='<div style="color:var(--red-soft)">'+esc(r&&r.error||'Failed')+'</div>'; return; }
+      var rows = (r.results||[]).map(function(x){
+        if(x.error) return '<tr><td><b>'+esc(x.tenant)+'</b></td><td colspan="5" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td></tr>';
+        var verdictPill = x.ok
+          ? '<span class="pill pill-green" style="font-size:9.5px">✓ in sync</span>'
+          : '<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ drift</span>';
+        var deltaColor = Math.abs(x.delta_amount) < 1 ? 'var(--green-soft)' : 'var(--red-soft)';
+        var countColor = x.count_diff === 0 ? 'var(--green-soft)' : 'var(--red-soft)';
+        return '<tr><td><b>'+esc(x.tenant)+'</b></td>'+
+          '<td class="amt">'+x.cache_count+' / RM '+x.cache_sum.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
+          '<td class="amt">'+x.xero_count+' / RM '+x.xero_sum.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
+          '<td class="amt" style="color:'+countColor+'">'+(x.count_diff>0?'+':'')+x.count_diff+'</td>'+
+          '<td class="amt" style="color:'+deltaColor+'"><b>RM '+x.delta_amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'+
+          '<td>'+verdictPill+'</td></tr>';
+      }).join('');
+      var allOk = (r.results||[]).every(function(x){return x.ok;});
+      var banner = allOk
+        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ All companies in sync</div><div class="nd">Audited at '+esc(String(r.audited_at).replace('T',' ').slice(0,19))+' MYT</div></div>'
+        : '<div class="notif-item" style="border-left-color:var(--red-soft);cursor:default;margin-bottom:10px"><div class="nt">⚠ Drift detected</div><div class="nd">Run Delta sync, then Drift check. If still off, use Force resync on the specific invoices in the count_diff.</div></div>';
+      out.innerHTML = banner +
+        '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cache (count / sum)</th><th class="amt">Xero LIVE (count / sum)</th><th class="amt">Count Δ</th><th class="amt">RM Δ</th><th>Verdict</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }catch(e){ out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  });
+}
+
+async function tenantRebuild(){
+  var tenant = document.getElementById('rebuild_tenant').value;
+  var out = document.getElementById('rebuild_out');
+  if(!tenant){ toast('Pick a company',true); return; }
+  var tenantName = (COMPANIES||[]).find(function(c){return c.tenant_id===tenant;})?.tenant_name || tenant;
+  var confirm1 = prompt('⚠ This will WIPE the entire cached invoice history for "'+tenantName+'" and re-pull from Xero starting 2015.\n\nThis cannot be undone. To proceed, type the company name exactly:');
+  if(confirm1 !== tenantName){
+    if(confirm1!==null) toast('Name did not match — rebuild cancelled', true);
+    return;
+  }
+  out.innerHTML = '<div class="muted"><span class="spin"></span>Wiping cache + starting backfill…</div>';
+  await runOnce('rebuild_btn', 'Rebuilding…', async()=>{
+    try{
+      var r = await call({api:'tenant_rebuild', tenant:tenant, confirm:'REBUILD'});
+      if(r&&r.ok){
+        out.innerHTML = '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:10px 14px;color:var(--green-soft)">✓ Wiped '+r.rows_deleted+' rows. Backfill running in background. Check the sync health table above in 2-5 minutes.</div>';
+        toast('✓ Rebuild started for '+tenantName);
+        setTimeout(syncHealthLoad, 3000);
+      } else {
+        out.innerHTML = '<div style="color:var(--red-soft)">'+esc(r&&r.error||'Failed')+'</div>';
+      }
+    }catch(e){ out.innerHTML = '<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  });
+}
+
 async function invoiceResync(){
   var tenant = document.getElementById('rsync_tenant').value;
   var key = (document.getElementById('rsync_key').value||'').trim();
@@ -2571,6 +2640,21 @@ async function syncHealthLoad(){
     var alertBanner='';
     if((r.pending_events_total||0) > 0){
       alertBanner += '<div class="notif-item" style="border-left-color:'+((r.pending_events_failing||0)>0?'var(--red-soft)':'var(--amber)')+';cursor:default;margin-bottom:12px"><div class="nt">⚠ '+r.pending_events_total+' webhook event(s) pending</div><div class="nd">'+(r.pending_events_old||0)+' older than 15 min · '+(r.pending_events_failing||0)+' have failed ≥3× (rate-limit or Xero error). Auto-retry runs every 5 min.</div></div>';
+    }
+    // v40+: cron health — flag any cron that hasn't run in 2× its expected interval.
+    var crons = r.crons || [];
+    var overdue = crons.filter(function(c){return c.overdue;});
+    if(overdue.length){
+      alertBanner += '<div class="notif-item" style="border-left-color:var(--red-soft);cursor:default;margin-bottom:12px"><div class="nt">⚠ '+overdue.length+' cron(s) appear overdue</div><div class="nd">'+overdue.map(function(c){return esc(c.cron_name)+' (last ran '+rel(c.last_run_at)+')';}).join(' · ')+'. Check pg_cron logs.</div></div>';
+    }
+    // v40+: per-tenant webhook silence — tenant with no events in 24h while others have activity is suspicious.
+    var silentTenants = (r.tenants||[]).filter(function(t){
+      return !t.webhook_last_event_at || (Date.now()-new Date(t.webhook_last_event_at).getTime()) > 24*3600*1000;
+    });
+    if(silentTenants.length === (r.tenants||[]).length && (r.tenants||[]).length > 0){
+      // All tenants silent — probably no Xero activity overall, normal.
+    } else if(silentTenants.length){
+      alertBanner += '<div class="notif-item" style="border-left-color:var(--amber);cursor:default;margin-bottom:12px"><div class="nt">⚠ '+silentTenants.length+' company/companies received no webhook events in 24h</div><div class="nd">'+silentTenants.map(function(t){return esc(t.tenant_name);}).join(' · ')+'. Either no activity in Xero, OR the webhook subscription is broken. Check Xero developer portal → Webhooks → delivery history.</div></div>';
     }
     var rows=(r.tenants||[]).map(function(t){
       var color={green:'var(--green-soft)',amber:'var(--amber)',red:'var(--red-soft)'};
