@@ -553,6 +553,7 @@ input:focus, select:focus, textarea:focus{
     <div class="tab"        data-t="recon"       onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="users"       onclick="tab('users')"       id="tab-users">👥 Users</div>
     <div class="tab"        data-t="info"        onclick="tab('info')"        id="tab-info">🏢 Company Info</div>
+    <div class="tab"        data-t="pharm"       onclick="tab('pharm')"       id="tab-pharm">🏪 Pharmacies</div>
   </div>
 
   <div id="overview"></div>
@@ -568,6 +569,7 @@ input:focus, select:focus, textarea:focus{
   <div id="recon"       class="hide"></div>
   <div id="users"       class="hide"></div>
   <div id="info"        class="hide"></div>
+  <div id="pharm"       class="hide"></div>
 
 </div></div>
 
@@ -819,6 +821,7 @@ async function showApp(){
     const t=el.dataset.t;
     if(t==='users') el.classList.toggle('hide', !canManage);
     else if(t==='info') el.classList.remove('hide');   // Company Info: always visible (admin edits, others read-only — gated server-side)
+    else if(t==='pharm') el.classList.remove('hide');  // Pharmacies: gated server-side by SKINDAE access
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   const sel=document.getElementById('company');
@@ -834,10 +837,10 @@ async function showApp(){
 /* ── Navigation ── */
 function tab(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info','pharm'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
     // Show a skeleton immediately for tabs that fetch on load; renderXxx replaces it on success.
-    const asyncTabs = ['overview','approvals','collections','recv','today','smart','close','users','info'];
+    const asyncTabs = ['overview','approvals','collections','recv','today','smart','close','users','info','pharm'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -863,6 +866,7 @@ async function render(t){
     if(t==='recon')      return renderRecon();
     if(t==='users')      return renderUsers();
     if(t==='info')       return renderInfo();
+    if(t==='pharm')      return renderPharm();
   }catch(x){
     loaded[t]=false;
     const msg = String(x.message||x);
@@ -1494,9 +1498,31 @@ function o2oParse(buf){
 function o2oPick(input){
   var f=input.files[0]; if(!f)return;
   var rd=new FileReader();
-  rd.onload=function(e){ try{ O2O_DATA=o2oParse(e.target.result); o2oRenderPreview(); }
+  rd.onload=function(e){ try{ O2O_DATA=o2oParse(e.target.result); o2oEnrichWithPharmacyMaster().then(o2oRenderPreview); }
     catch(err){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>'; } };
   rd.readAsArrayBuffer(f);
+}
+// Look up each parsed pharmacy in the master and attach the matched record so the preview can show contact info.
+async function o2oEnrichWithPharmacyMaster(){
+  if(!O2O_DATA) return;
+  try {
+    if(!PHARM_DATA||!PHARM_DATA.length){
+      const r=await call({api:'pharmacy_list'});
+      if(r&&r.ok){ PHARM_DATA=r.pharmacies||[]; PHARM_EDITABLE=!!r.editable; }
+    }
+  } catch(_e){}
+  O2O_DATA.pharmacies.forEach(function(p){
+    var match = pharmFindByName(p.pharmacy);
+    p.__master = match || null;
+    // Override per-line commission rate if the master sets a different one.
+    if(match && Number(match.commission_rate)!=O2O_DISCOUNT_RATE){
+      p.lines.forEach(function(l){ l.discount_rate = Number(match.commission_rate); });
+      p.commission = Math.round((p.total_sales*Number(match.commission_rate)/100)*100)/100;
+      p.total = Math.round((p.total_sales-p.commission)*100)/100;
+    }
+  });
+  // Recompute grand total in case rates changed
+  O2O_DATA.grand_total = Math.round(O2O_DATA.pharmacies.reduce(function(s,p){return s+p.total;},0)*100)/100;
 }
 function o2oRenderPreview(){
   var d=O2O_DATA;
@@ -1505,6 +1531,20 @@ function o2oRenderPreview(){
   // Per-pharmacy collapsible blocks showing each SKU line item.
   var blocks=d.pharmacies.map(function(p){
     var pid='o2ode_'+Math.random().toString(36).slice(2,8);
+    // Master-data badge — green pill if linked, coral warning if missing.
+    var masterBadge = p.__master
+      ? '<span class="pill pill-green" style="font-size:10px;margin-left:8px" title="Linked to pharmacy master record">✓ master</span>'
+      : '<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px;margin-left:8px" title="No master record — add in Pharmacies tab">⚠ no master</span>';
+    var masterInfo = p.__master
+      ? '<div style="background:var(--panel-2);padding:8px 12px;border-radius:6px;font-size:12px;margin:6px 0 4px;display:flex;gap:14px;flex-wrap:wrap;color:var(--text-soft)">' +
+        (p.__master.pic_name ? '<span><b>PIC:</b> '+esc(p.__master.pic_name)+(p.__master.pic_role?' ('+esc(p.__master.pic_role)+')':'')+'</span>' : '') +
+        (p.__master.pic_phone ? '<span><b>📞</b> '+esc(p.__master.pic_phone)+'</span>' : '') +
+        (p.__master.pic_email ? '<span><b>✉</b> '+esc(p.__master.pic_email)+'</span>' : '') +
+        (p.__master.city ? '<span><b>📍</b> '+esc([p.__master.city,p.__master.state].filter(Boolean).join(', '))+'</span>' : '') +
+        (Number(p.__master.commission_rate||19.2)!==19.2 ? '<span style="color:var(--amber)"><b>⚙ Custom commission:</b> '+Number(p.__master.commission_rate).toFixed(1)+'%</span>' : '') +
+        (p.__master.default_voucher_code ? '<span><b>🎟</b> '+esc(p.__master.default_voucher_code)+'</span>' : '') +
+        '</div>'
+      : '<div style="background:rgba(255,165,89,.06);border:1px dashed rgba(255,165,89,.3);padding:8px 12px;border-radius:6px;font-size:12px;margin:6px 0 4px;color:var(--coral-soft)">⚠ This pharmacy is not in your master list. The invoice will still be created (Xero contact lookup by name still works), but you should add it to <a href="#" onclick="event.preventDefault();tab(\'pharm\');setTimeout(()=>{PHARM_NEW=true;PHARM_ACTIVE=null;document.getElementById(\'pharm\').scrollIntoView();pharmRender();setTimeout(()=>{var n=document.querySelector(\'[data-k=name]\');if(n){n.value='+JSON.stringify(p.pharmacy).replace(/"/g,'&quot;')+';n.focus();}},100);},80)" style="color:var(--coral-soft);text-decoration:underline;font-weight:600">Pharmacies</a> for richer billing info.</div>';
     var lineRows=(p.lines||[]).map(function(l){
       var sku=l.item_code?('<span class="pill pill-blue" style="margin-right:6px;font-family:monospace">'+esc(l.item_code)+'</span>'):'';
       var disc=l.discount_rate?('<span class="muted">Disc '+l.discount_rate+'%</span>'):'<span class="muted">—</span>';
@@ -1514,13 +1554,13 @@ function o2oRenderPreview(){
     var fbNote=p.fallback?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">⚠ Fallback mode: no per-row data found, using single Total-Sales line.</div>':'';
     return '<div style="border:1px solid var(--panel-border);border-radius:10px;margin-bottom:10px;background:var(--panel)">'+
       '<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="document.getElementById(\''+pid+'\').style.display=document.getElementById(\''+pid+'\').style.display===\'none\'?\'block\':\'none\'">'+
-      '<b style="flex:1">'+esc(p.pharmacy)+'</b>'+
+      '<b style="flex:1">'+esc(p.pharmacy)+masterBadge+'</b>'+
       '<span class="muted">'+p.line_count+' line'+(p.line_count===1?'':'s')+'</span>'+
       '<span class="amt">Full '+M(p.total_sales)+'</span>'+
       '<span class="amt" style="color:var(--coral-soft)">'+(p.commission>0?'-'+M(p.commission):'—')+'</span>'+
       '<span class="amt"><b>'+M(p.total)+'</b></span>'+
       '</div>'+
-      '<div id="'+pid+'" style="display:none;padding:0 14px 12px"><table class="bigtable"><thead><tr><th>Item / Description</th><th class="amt">Qty</th><th class="amt">Unit Price</th><th class="amt">Disc.</th><th class="amt">Amount</th></tr></thead><tbody>'+lineRows+'</tbody></table>'+unmatchedNote+fbNote+'</div>'+
+      '<div id="'+pid+'" style="display:none;padding:0 14px 12px">'+masterInfo+'<table class="bigtable"><thead><tr><th>Item / Description</th><th class="amt">Qty</th><th class="amt">Unit Price</th><th class="amt">Disc.</th><th class="amt">Amount</th></tr></thead><tbody>'+lineRows+'</tbody></table>'+unmatchedNote+fbNote+'</div>'+
       '</div>';
   }).join('');
   document.getElementById('o2o-out').innerHTML=
@@ -3139,6 +3179,237 @@ async function infoSave(){
   } finally {
     btn.disabled=false; btn.textContent='💾 Save changes';
   }
+}
+
+/* ── Pharmacies (O2O master data) ── */
+let PHARM_DATA=[], PHARM_EDITABLE=false, PHARM_SEARCH='', PHARM_ACTIVE=null, PHARM_NEW=false;
+const PHARM_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
+
+function pharmNormalize(s){ return String(s||'').toLowerCase().replace(/\s+/g,' ').trim(); }
+function pharmFindByName(name){ const n=pharmNormalize(name); return PHARM_DATA.find(p => pharmNormalize(p.name)===n) || null; }
+
+async function renderPharm(){
+  spin('pharm');
+  try{
+    const r=await call({api:'pharmacy_list'});
+    if(!r||!r.ok){
+      document.getElementById('pharm').innerHTML='<div class="empty"><div class="empty-ico">🔒</div><div>'+esc(r&&r.error||'Failed to load')+'</div><div class="muted" style="font-size:12px;margin-top:6px">Pharmacies require SKINDAE access.</div></div>';
+      return;
+    }
+    PHARM_DATA = r.pharmacies||[]; PHARM_EDITABLE=!!r.editable;
+    pharmRender();
+    loaded.pharm=true;
+  }catch(e){ document.getElementById('pharm').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
+}
+
+function pharmRender(){
+  const q = pharmNormalize(PHARM_SEARCH);
+  const visible = q ? PHARM_DATA.filter(p =>
+    pharmNormalize(p.name).indexOf(q)>=0 ||
+    pharmNormalize(p.city||'').indexOf(q)>=0 ||
+    pharmNormalize(p.state||'').indexOf(q)>=0 ||
+    pharmNormalize(p.pic_name||'').indexOf(q)>=0 ||
+    pharmNormalize(p.pic_phone||'').indexOf(q)>=0 ||
+    pharmNormalize(p.phone||'').indexOf(q)>=0
+  ) : PHARM_DATA.slice();
+  const activeCount = PHARM_DATA.filter(p=>p.active).length;
+  // If a pharmacy is selected, render detail page on top
+  if(PHARM_ACTIVE!==null || PHARM_NEW){
+    pharmRenderDetail();
+    return;
+  }
+  const newBtn = PHARM_EDITABLE
+    ? '<button class="btn p" onclick="pharmNewStart()">+ New pharmacy</button>'
+    : '';
+  document.getElementById('pharm').innerHTML=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'+
+      '<div style="flex:1;min-width:240px;max-width:520px"><input id="pharm-search" value="'+esc(PHARM_SEARCH)+'" oninput="PHARM_SEARCH=this.value;pharmRender()" placeholder="🔍 Search pharmacy / city / PIC / phone…" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/></div>'+
+      newBtn+
+    '</div>'+
+    '<div class="cards" style="margin-bottom:14px">'+
+      '<div class="card"><div class="n" style="color:var(--coral-soft)">'+PHARM_DATA.length+'</div><div class="l">Total pharmacies</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--green-soft)">'+activeCount+'</div><div class="l">Active</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--muted)">'+(PHARM_DATA.length-activeCount)+'</div><div class="l">Inactive</div></div>'+
+      (q?'<div class="card"><div class="n" style="color:var(--sky-soft)">'+visible.length+'</div><div class="l">Matches</div></div>':'')+
+    '</div>'+
+    (visible.length===0 ?
+      '<div class="empty" style="padding:40px 24px"><div class="empty-ico">🏪</div><div style="font-size:15px;margin-top:8px">'+(q?'No pharmacies match "'+esc(PHARM_SEARCH)+'"':'No pharmacies yet')+'</div>'+(PHARM_EDITABLE&&!q?'<div style="margin-top:14px"><button class="btn p" onclick="pharmNewStart()">+ Add your first pharmacy</button></div>':'')+'</div>'
+    :
+      '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;overflow:hidden">'+
+        '<table class="bigtable" style="width:100%;border-collapse:collapse"><thead><tr>'+
+          '<th style="text-align:left;padding:10px 14px">Pharmacy</th>'+
+          '<th style="text-align:left;padding:10px 14px">Location</th>'+
+          '<th style="text-align:left;padding:10px 14px">PIC</th>'+
+          '<th style="text-align:left;padding:10px 14px">Phone</th>'+
+          '<th style="text-align:right;padding:10px 14px">Commission</th>'+
+          '<th style="text-align:center;padding:10px 14px">Status</th>'+
+          '<th style="width:80px"></th>'+
+        '</tr></thead><tbody>'+
+        visible.map(p=>{
+          const loc=[p.city,p.state].filter(Boolean).join(', ')||'—';
+          const pic = p.pic_name ? esc(p.pic_name)+(p.pic_role?'<div class="muted" style="font-size:11px">'+esc(p.pic_role)+'</div>':'') : '<span class="muted">—</span>';
+          const phone = p.pic_phone || p.phone;
+          return '<tr onclick="pharmOpen('+p.id+')" style="cursor:pointer;border-top:1px solid var(--panel-border)" onmouseover="this.style.background=\'rgba(255,255,255,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+            '<td style="padding:10px 14px"><b>'+esc(p.name)+'</b>'+(p.outlet_count&&p.outlet_count>1?' <span class="muted" style="font-size:11px">×'+p.outlet_count+'</span>':'')+'</td>'+
+            '<td style="padding:10px 14px">'+esc(loc)+'</td>'+
+            '<td style="padding:10px 14px">'+pic+'</td>'+
+            '<td style="padding:10px 14px">'+(phone?esc(phone):'<span class="muted">—</span>')+'</td>'+
+            '<td style="padding:10px 14px;text-align:right">'+(Number(p.commission_rate||19.2)).toFixed(1)+'%</td>'+
+            '<td style="padding:10px 14px;text-align:center">'+(p.active?'<span class="pill pill-green" style="font-size:10px">Active</span>':'<span class="pill" style="background:rgba(255,255,255,.06);color:var(--muted);font-size:10px">Inactive</span>')+'</td>'+
+            '<td style="padding:10px 14px;text-align:right"><span class="muted">›</span></td>'+
+          '</tr>';
+        }).join('')+
+        '</tbody></table>'+
+      '</div>'
+    );
+}
+
+function pharmOpen(id){ PHARM_ACTIVE=id; PHARM_NEW=false; pharmRender(); }
+function pharmNewStart(){ if(!PHARM_EDITABLE){toast('Admins only',true);return;} PHARM_NEW=true; PHARM_ACTIVE=null; pharmRender(); }
+function pharmCloseDetail(){
+  if(INFO_DIRTY){ if(!confirm('Discard unsaved changes?')) return; }
+  PHARM_ACTIVE=null; PHARM_NEW=false; INFO_DIRTY=false; setDirty(false); pharmRender();
+}
+
+function pharmRenderDetail(){
+  const isEdit = (PHARM_NEW || INFO_MODE==='edit') && PHARM_EDITABLE;
+  const p = PHARM_NEW
+    ? { name:'', commission_rate:19.2, active:true, outlet_count:1 }
+    : PHARM_DATA.find(x=>x.id===PHARM_ACTIVE) || {};
+  const readonly = isEdit ? '' : ' disabled';
+  function fld(label, key, type, ph){
+    const val = p[key];
+    return '<div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px">'+esc(label)+'</label>'+
+      '<input type="'+(type||'text')+'" data-k="'+esc(key)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px"/></div>';
+  }
+  function selectState(){
+    const opts=['<option value="">—</option>'].concat(PHARM_STATES.map(s=>'<option'+(p.state===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
+    return '<div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px">State</label>'+
+      '<select data-k="state"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select></div>';
+  }
+  function textarea(label, key, rows){
+    return '<div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px">'+esc(label)+'</label>'+
+      '<textarea data-k="'+esc(key)+'" rows="'+(rows||3)+'"'+readonly+' style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(p[key]||'')+'</textarea></div>';
+  }
+  function activeToggle(){
+    return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:7px;cursor:'+(isEdit?'pointer':'default')+'"><input type="checkbox" data-k="active" '+(p.active!==false?'checked':'')+''+readonly+' style="width:auto"/><span style="font-size:13px">Active (eligible for O2O billing)</span></label>';
+  }
+  function section(title, body){
+    return '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px"><h3 style="margin:0 0 12px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660">'+esc(title)+'</h3>'+body+'</div>';
+  }
+  function row(){ return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">'+Array.from(arguments).join('')+'</div>'; }
+
+  // Recent O2O invoice rollup for this pharmacy — counted from xero_invoice_cache via the existing cached_receivables data if we had it; for now, just show contact ID linking status
+  const linkBadge = p.xero_contact_id
+    ? '<span class="pill pill-green" style="font-size:10px;margin-left:8px">✓ linked to Xero contact</span>'
+    : (p.id ? '<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px;margin-left:8px">⚠ not linked — invoices use name lookup</span>' : '');
+
+  const titleBar = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
+    '<button class="btn" onclick="pharmCloseDetail()">← Back</button>'+
+    '<h2 style="margin:0;flex:1;font-size:20px;letter-spacing:-.02em">'+(PHARM_NEW?'New pharmacy':esc(p.name||'')+linkBadge)+'</h2>'+
+    (PHARM_EDITABLE && !PHARM_NEW
+      ? (INFO_MODE==='edit'
+          ? '<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Save</button><button class="btn" onclick="infoSetMode(\'view\')">Cancel</button>'
+          : '<button class="btn" onclick="infoSetMode(\'edit\')">✎ Edit</button><button class="btn d" onclick="pharmDelete()">🗑 Delete</button>')
+      : '')+
+    (PHARM_NEW?'<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Create</button>':'')+
+  '</div>';
+
+  document.getElementById('pharm').innerHTML=
+    titleBar+
+    '<div id="pharm-form">'+
+      section('Pharmacy identity', row(
+        fld('Pharmacy name','name','text','Brightway Pharmacy Sdn Bhd'),
+        fld('Registration No. (SSM)','registration_no','text','123456-X'),
+        fld('Pharmacy license no.','pharmacy_license_no','text','KKM/...'),
+        fld('Outlet count','outlet_count','number','1'),
+        fld('Onboarded date','onboarded_at','date','')
+      ))+
+      section('Address', row(
+        fld('Street','address','text','Lot 12, Jalan ...'),
+        fld('Postcode','postcode','text','47301'),
+        fld('City','city','text','Petaling Jaya'),
+        selectState()
+      ))+
+      section('Contact', row(
+        fld('Main phone','phone','tel','+603-...'),
+        fld('Email','email','email','contact@pharmacy.com'),
+        fld('WhatsApp','whatsapp','tel','+6012-...'),
+        fld('Business hours','business_hours','text','Mon-Sun 9am-10pm')
+      ))+
+      section('Person in charge (PIC)', row(
+        fld('Name','pic_name','text','Lim Mei Ling'),
+        fld('Role','pic_role','text','Outlet Manager'),
+        fld('Phone','pic_phone','tel','+6012-...'),
+        fld('Email','pic_email','email','pic@pharmacy.com')
+      ))+
+      section('Pharmacist on record', row(
+        fld('Name','pharmacist_name','text','Ms. Tan Pharm.D'),
+        fld('License no.','pharmacist_license','text','MPS-12345')
+      ))+
+      section('O2O billing configuration', row(
+        fld('Commission rate (%)','commission_rate','number','19.2'),
+        fld('Default voucher code','default_voucher_code','text','BRIGHTWAY10'),
+        fld('Xero Contact ID (auto)','xero_contact_id','text','will be set on first invoice')
+      )+'<div style="margin-top:10px">'+activeToggle()+'</div>'+
+      '<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.6">Commission rate is applied per line in O2O Billing (invoice DiscountRate field). Default 19.2%; set differently if this pharmacy has negotiated terms. Voucher code is shown as a reminder during preview.</div>')+
+      section('Notes', textarea('Free text','notes',4))+
+    '</div>'+
+    '<style>@media(max-width:680px){#pharm .cards{grid-template-columns:1fr 1fr}}</style>';
+  // Wire dirty tracking
+  if(isEdit){
+    const f=document.getElementById('pharm-form');
+    f.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty(true); }});
+  } else {
+    setDirty(false);
+  }
+}
+
+function pharmCollect(){
+  const out={};
+  document.querySelectorAll('#pharm-form [data-k]').forEach(el=>{
+    if(el.type==='checkbox') out[el.dataset.k] = el.checked ? 'true' : 'false';
+    else out[el.dataset.k] = el.value;
+  });
+  return out;
+}
+
+async function pharmSave(){
+  if(!PHARM_EDITABLE){ toast('Admins only',true); return; }
+  const patch = pharmCollect();
+  if(!patch.name || !patch.name.trim()){ toast('Pharmacy name is required',true); return; }
+  await runOnce('pharm-save-btn', 'Saving…', async()=>{
+    try{
+      const id = PHARM_NEW ? null : PHARM_ACTIVE;
+      const r = await call({ api:'pharmacy_save', id, patch });
+      if(r&&r.ok){
+        toast('✓ Saved');
+        INFO_DIRTY=false; setDirty(false);
+        // Refresh list
+        const list = await call({api:'pharmacy_list'});
+        if(list && list.ok){ PHARM_DATA = list.pharmacies||[]; PHARM_EDITABLE=!!list.editable; }
+        PHARM_NEW=false;
+        PHARM_ACTIVE = r.id || PHARM_ACTIVE;
+        INFO_MODE='view';
+        pharmRender();
+      } else { toast(r&&r.error||'Save failed', true); }
+    }catch(e){ toast(e.message, true); }
+  });
+}
+
+async function pharmDelete(){
+  if(!PHARM_EDITABLE || !PHARM_ACTIVE) return;
+  const p = PHARM_DATA.find(x=>x.id===PHARM_ACTIVE); if(!p) return;
+  if(!confirm('Delete pharmacy "'+p.name+'"? Any past O2O invoices in Xero are unaffected, but this pharmacy will no longer appear in the master list.')) return;
+  try{
+    const r=await call({api:'pharmacy_delete', id:PHARM_ACTIVE});
+    if(r&&r.ok){
+      toast('✓ Deleted');
+      PHARM_DATA = PHARM_DATA.filter(x=>x.id!==PHARM_ACTIVE);
+      PHARM_ACTIVE=null;
+      pharmRender();
+    } else { toast(r&&r.error||'Delete failed', true); }
+  }catch(e){ toast(e.message, true); }
 }
 
 if(TOKEN){
