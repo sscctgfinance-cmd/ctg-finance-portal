@@ -633,6 +633,11 @@ const loaded={};
 
 const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const M=n=>'RM '+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+// MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
+// rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
+function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }
 
 // Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
 // + "5 contacts"), play them sequentially instead of overwriting each other.
@@ -692,10 +697,16 @@ async function call(body){
   }
 }
 // ── Unsaved-changes guard ──
-// Modules call setDirty(true/false). On window close/reload, the browser asks
-// for confirmation. Avoids "I closed the tab and lost my Company Info edits".
+// Each module sets its own dirty flag via setDirty(name, v). The global
+// UNSAVED_CHANGES is the OR across all modules — fixes a data-loss bug where
+// closing a Pharmacy detail would clear Company Info's unsaved warning.
 let UNSAVED_CHANGES=false;
-function setDirty(v){ UNSAVED_CHANGES=!!v; }
+const _DIRTY_FLAGS={};
+function setDirty(name, v){
+  if(arguments.length===1){ v=name; name='_default'; }  // backward-compat
+  _DIRTY_FLAGS[name] = !!v;
+  UNSAVED_CHANGES = Object.values(_DIRTY_FLAGS).some(Boolean);
+}
 window.addEventListener('beforeunload', function(e){
   if(UNSAVED_CHANGES){ e.preventDefault(); e.returnValue=''; return ''; }
 });
@@ -768,12 +779,17 @@ window.addEventListener('offline', updateConnIndicator);
 // ── Double-submit lock ──
 // Wrap an async action so the trigger button can't be clicked while a request
 // is in flight. Used by Create-invoice / Save / Issue paths.
-async function runOnce(btnId, busyText, fn){
-  const btn = document.getElementById(btnId);
-  const orig = btn ? btn.textContent : null;
-  if(btn){ btn.disabled=true; btn.textContent=busyText||'Working…'; }
+// Accepts an id OR a class selector (.foo) — class form locks ALL matches so a
+// duplicated button (e.g. Quick Invoice form-button + preview-button) both freeze.
+async function runOnce(idOrSelector, busyText, fn){
+  const sel = String(idOrSelector||'');
+  const nodes = sel.charAt(0)==='.' || sel.charAt(0)==='#'
+    ? Array.from(document.querySelectorAll(sel))
+    : Array.from(document.querySelectorAll('#'+sel+', .'+sel));
+  const originals = nodes.map(b=>({el:b, text:b.textContent, disabled:b.disabled}));
+  nodes.forEach(b=>{ b.disabled=true; b.textContent=busyText||'Working…'; });
   try { return await fn(); }
-  finally { if(btn){ btn.disabled=false; btn.textContent=orig; } }
+  finally { originals.forEach(o=>{ o.el.disabled=o.disabled; o.el.textContent=o.text; }); }
 }
 // Show a modal explaining the session ended, with one button to sign back in.
 function handleSessionExpired(){
@@ -983,7 +999,7 @@ function ovHeader(){
     for(var k in d){ if(d[k].from===OV_RANGE.from && d[k].to===OV_RANGE.to){ active=k; break; } }
   }
   var btns = presets.map(function(p){ return '<button class="btn sm '+(active===p[0]?'p':'')+'" onclick="ovSetPreset(\''+p[0]+'\')">'+p[1]+'</button>'; }).join(' ');
-  var today=new Date().toISOString().slice(0,10);
+  var today=todayLocalISO();
   var fromV = (OV_RANGE&&active==='')?OV_RANGE.from:'';
   var toV   = (OV_RANGE&&active==='')?OV_RANGE.to:'';
   return '<div class="panel" style="padding:14px 16px;margin-bottom:14px"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">Period</span>'+
@@ -1590,7 +1606,8 @@ function o2oRenderPreview(){
         (Number(p.__master.commission_rate||19.2)!==19.2 ? '<span style="color:var(--amber)"><b>⚙ Custom commission:</b> '+Number(p.__master.commission_rate).toFixed(1)+'%</span>' : '') +
         (p.__master.default_voucher_code ? '<span><b>🎟</b> '+esc(p.__master.default_voucher_code)+'</span>' : '') +
         '</div>'
-      : '<div style="background:rgba(255,165,89,.06);border:1px dashed rgba(255,165,89,.3);padding:8px 12px;border-radius:6px;font-size:12px;margin:6px 0 4px;color:var(--coral-soft)">⚠ This pharmacy is not in your master list. The invoice will still be created (Xero contact lookup by name still works), but you should add it to <a href="#" onclick="event.preventDefault();tab(\'pharm\');setTimeout(()=>{PHARM_NEW=true;PHARM_ACTIVE=null;document.getElementById(\'pharm\').scrollIntoView();pharmRender();setTimeout(()=>{var n=document.querySelector(\'[data-k=name]\');if(n){n.value='+JSON.stringify(p.pharmacy).replace(/"/g,'&quot;')+';n.focus();}},100);},80)" style="color:var(--coral-soft);text-decoration:underline;font-weight:600">Pharmacies</a> for richer billing info.</div>';
+      // data-add-pharm attribute carries the pharmacy name safely — event delegation reads it and prefills.
+      : '<div style="background:rgba(255,165,89,.06);border:1px dashed rgba(255,165,89,.3);padding:8px 12px;border-radius:6px;font-size:12px;margin:6px 0 4px;color:var(--coral-soft)">⚠ This pharmacy is not in your master list. The invoice will still be created (Xero contact lookup by name still works), but you should add it to <a href="#" data-add-pharm="'+esc(p.pharmacy)+'" style="color:var(--coral-soft);text-decoration:underline;font-weight:600">Pharmacies</a> for richer billing info.</div>';
     var lineRows=(p.lines||[]).map(function(l){
       var sku=l.item_code?('<span class="pill pill-blue" style="margin-right:6px;font-family:monospace">'+esc(l.item_code)+'</span>'):'';
       var disc=l.discount_rate?('<span class="muted">Disc '+l.discount_rate+'%</span>'):'<span class="muted">—</span>';
@@ -1619,27 +1636,48 @@ function o2oRenderPreview(){
     blocks;
   document.getElementById('o2o-issue').disabled=false;
 }
+// Event delegation for "add pharmacy to master" links — attached ONCE at app init
+// (not on every preview render) so we don't leak listeners and {once:true} doesn't kill
+// later clicks. Safe because pharmacy names go through data-attributes, not inline JS.
+document.addEventListener('click', function(ev){
+  var a = ev.target.closest && ev.target.closest('[data-add-pharm]');
+  if(!a || !document.getElementById('o2o-out')?.contains(a)) return;
+  ev.preventDefault();
+  var name = a.getAttribute('data-add-pharm') || '';
+  tab('pharm');
+  setTimeout(function(){
+    PHARM_NEW=true; PHARM_ACTIVE=null; PHARM_MODE='edit';
+    pharmRender();
+    setTimeout(function(){
+      var n=document.querySelector('#pharm-form [data-k=name]');
+      if(n){ n.value=name; n.focus(); }
+    }, 100);
+  }, 80);
+});
 async function o2oIssue(){
-  if(!O2O_DATA){showToast&&showToast('Preview first','error');return;}
+  if(!O2O_DATA){toast('Preview first',true);return;}
   var test=document.getElementById('o2o-test'); var dry=test?test.checked:true;
   if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in SKINDAE SDN BHD?'))return;
-  var btn=document.getElementById('o2o-issue'); btn.disabled=true; btn.textContent='Issuing…';
-  try{
-    var r=await call({api:'o2o_issue', period:O2O_DATA.period, reference:O2O_DATA.reference, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
-    if(r&&r.ok){
-      var rows=(r.results||[]).map(function(x){
-        var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
-        return '<tr><td>'+esc(x.pharmacy)+'</td><td class="amt">'+M(x.total)+'</td><td>'+esc(x.number||'')+' <span class="pill '+pill+'">'+esc(x.status)+'</span></td><td class="muted">'+(x.contact==='new'?'⚠ new':'✓ existing')+'</td></tr>';
-      }).join('');
-      document.getElementById('o2o-out').innerHTML=
-        '<div class="cards"><div class="card"><div class="n" style="color:var(--green-soft)">'+(r.issued||0)+'</div><div class="l">Issued</div></div>'+
-        '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.emailed||0)+'</div><div class="l">Emailed</div></div>'+
-        '<div class="card"><div class="n" style="color:'+((r.failed||0)?'var(--red-soft)':'var(--muted)')+'">'+(r.failed||0)+'</div><div class="l">Failed</div></div></div>'+
-        (r.dry_run?'<div class="status-bar" style="margin:0 0 10px"><div class="dot-green"></div>DRY-RUN — nothing posted (set live in backend)</div>':'')+
-        '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Total</th><th>Invoice</th><th>Contact</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-    } else { document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'unknown')+'</div>'; }
-  }catch(e){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Failed: '+esc(e.message)+'</div>'; }
-  btn.disabled=false; btn.textContent='Issue invoices in Xero →';
+  // runOnce handles the disable + re-enable in `finally`, so even if rendering output throws
+  // (e.g. user navigates away), the button is always restored.
+  await runOnce('o2o-issue', 'Issuing…', async()=>{
+    try{
+      var r=await call({api:'o2o_issue', period:O2O_DATA.period, reference:O2O_DATA.reference, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
+      if(r&&r.ok){
+        var rows=(r.results||[]).map(function(x){
+          var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
+          return '<tr><td>'+esc(x.pharmacy)+'</td><td class="amt">'+M(x.total)+'</td><td>'+esc(x.number||'')+' <span class="pill '+pill+'">'+esc(x.status)+'</span></td><td class="muted">'+(x.contact==='new'?'⚠ new':'✓ existing')+'</td></tr>';
+        }).join('');
+        var out=document.getElementById('o2o-out');
+        if(out) out.innerHTML=
+          '<div class="cards"><div class="card"><div class="n" style="color:var(--green-soft)">'+(r.issued||0)+'</div><div class="l">Issued</div></div>'+
+          '<div class="card"><div class="n" style="color:var(--sky-soft)">'+(r.emailed||0)+'</div><div class="l">Emailed</div></div>'+
+          '<div class="card"><div class="n" style="color:'+((r.failed||0)?'var(--red-soft)':'var(--muted)')+'">'+(r.failed||0)+'</div><div class="l">Failed</div></div></div>'+
+          (r.dry_run?'<div class="status-bar" style="margin:0 0 10px"><div class="dot-green"></div>DRY-RUN — nothing posted (set live in backend)</div>':'')+
+          '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Pharmacy</th><th class="amt">Total</th><th>Invoice</th><th>Contact</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      } else { var o=document.getElementById('o2o-out'); if(o) o.innerHTML='<div style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'unknown')+'</div>'; }
+    }catch(e){ var o=document.getElementById('o2o-out'); if(o) o.innerHTML='<div style="color:var(--red-soft)">Failed: '+esc(e.message)+'</div>'; }
+  });
 }
 
 
@@ -1655,9 +1693,9 @@ function renderQinv(){
     '<div class="fld"><label>Line items</label><div id="qi_lines"></div><button class="btn sm" onclick="qiAddLine()">+ Add line</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="fld"><label>Date</label><input type="date" id="qi_date"/></div><div class="fld"><label>Due date</label><input type="date" id="qi_due"/></div></div>'+
     '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft);margin-bottom:10px"><input type="checkbox" id="qi_test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="qiPreview()">👁 Preview invoice</button><button class="btn p" id="qi-create-btn" onclick="qiCreate()">Create invoice in Xero →</button></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="qiPreview()">👁 Preview invoice</button><button class="btn p qi-create-btn" id="qi-create-btn" onclick="qiCreate()">Create invoice in Xero →</button></div>'+
     '<div id="qi_out" style="margin-top:12px"></div></div>';
-  document.getElementById('qi_date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('qi_date').value=todayLocalISO();
   qiAddLine(); loaded.qinv=true;
 }
 function qiProductOptions(){
@@ -1724,15 +1762,26 @@ function qiCollect(){
   var t=document.getElementById('qi_co').value; if(!t) errors.push('Pick a company');
   var cust=document.getElementById('qi_cust').value.trim(); if(!cust) errors.push('Enter a customer');
   var rows=[].slice.call(document.querySelectorAll('#qi_lines > div'));
-  var lines=rows.map(function(row){
-    return {
-      description: row.querySelector('.qi-desc').value || 'Item',
-      quantity:    Number(row.querySelector('.qi-qty').value)||1,
-      unit_amount: Number(row.querySelector('.qi-amt').value)||0,
-      account_code:row.querySelector('.qi-acct').value
-    };
-  }).filter(function(l){return l.unit_amount>0;});
-  if(!lines.length) errors.push('Add a line with an amount');
+  var lines=[]; var ix=0; var partials=0;
+  rows.forEach(function(row){
+    ix++;
+    var qRaw=row.querySelector('.qi-qty').value;
+    var aRaw=row.querySelector('.qi-amt').value;
+    var dRaw=row.querySelector('.qi-desc').value;
+    var allEmpty = !qRaw && !aRaw && !dRaw;
+    if(allEmpty) return; // truly blank line, ignore silently
+    var qty=Number(qRaw), amt=Number(aRaw);
+    // Reject lines that LOOK populated but have missing/invalid numbers.
+    if(!Number.isFinite(qty) || qty<=0 || !Number.isFinite(amt) || amt<=0){ partials++; return; }
+    lines.push({
+      description: dRaw || 'Item',
+      quantity: qty,
+      unit_amount: amt,
+      account_code: row.querySelector('.qi-acct').value
+    });
+  });
+  if(partials) errors.push(partials+' line(s) have invalid quantity or amount — fix or clear them');
+  if(!lines.length) errors.push('Add a line with quantity & amount');
   var missingAcct=lines.filter(function(l){return !l.account_code;});
   if(missingAcct.length) errors.push(missingAcct.length+' line(s) have no account selected');
   var match=(QINV_META.contacts||[]).filter(function(c){return (c.name||'').toLowerCase()===cust.toLowerCase();})[0];
@@ -1756,7 +1805,7 @@ function qiPreview(){
   var d=qiCollect();
   if(d.errors.length){ document.getElementById('qi_out').innerHTML='<div style="color:var(--red-soft);font-size:13px">⚠ '+d.errors.map(esc).join(' · ')+'</div>'; return; }
   var co=COMPANIES.filter(function(c){return c.tenant_id===d.tenant;})[0];
-  var date=document.getElementById('qi_date').value || new Date().toISOString().slice(0,10);
+  var date=document.getElementById('qi_date').value || todayLocalISO();
   var due =document.getElementById('qi_due').value;
   var ref =document.getElementById('qi_ref').value;
   var test=document.getElementById('qi_test').checked;
@@ -1854,7 +1903,8 @@ function qiPreview(){
     '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">'+
       '<button class="btn" onclick="document.getElementById(\'qi_out\').innerHTML=\'\'">← Back to edit</button>'+
       '<button class="btn" onclick="qiPrintPdf()">🖨 Print preview</button>'+
-      '<button class="btn p" onclick="qiCreate()">'+(test?'Run test (no posting)':'✓ Confirm & create in Xero')+'</button>'+
+      // class qi-create-btn matches the form button's class so runOnce locks BOTH.
+      '<button class="btn p qi-create-btn" onclick="qiCreate()">'+(test?'Run test (no posting)':'✓ Confirm & create in Xero')+'</button>'+
     '</div>';
 }
 // Print the PDF-styled preview block on its own — opens a new tab with just the white invoice.
@@ -1876,7 +1926,7 @@ async function qiCreate(){
   if(d.contactMatch){ body.contact_id=d.contactMatch.contact_id; } else { body.contact_name=d.customer; }
   document.getElementById('qi_out').innerHTML='<span class="muted">Working…</span>';
   // runOnce locks the button so a frantic double-click can't double-post.
-  await runOnce('qi-create-btn', test?'Testing…':'Posting to Xero…', async()=>{
+  await runOnce('.qi-create-btn', test?'Testing…':'Posting to Xero…', async()=>{
     try{ var r=await call(body);
       if(r&&r.ok){
         if(r.dry_run){ document.getElementById('qi_out').innerHTML='<div class="card" style="max-width:420px"><div class="n" style="color:var(--amber);font-size:16px">TEST · total '+M(r.total)+'</div><div class="l">Customer: '+(r.contact==='existing'?'✓ existing Xero contact':'⚠ new contact will be created')+' · uncheck Test mode to create</div></div>'; }
@@ -2742,9 +2792,8 @@ function infoSecDocsBody(c){
         '<div class="muted" style="font-size:11px;margin-top:6px">Max 20 MB · PDF / image / Word / Excel / TXT</div>'+
       '</div>'
     : '';
-  const todayISO=new Date().toISOString().slice(0,10);
-  const inDays=days=>{ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); };
-  const ninetyDaysOut=inDays(90);
+  const todayISO=todayLocalISO();
+  const ninetyDaysOut=inDaysLocalISO(90);
   function fileRow(doc){
     let expiryBadge='';
     if(doc.expiry_date){
@@ -2952,6 +3001,7 @@ function infoSearchAll(query){
       } else if(sec.list){
         const arr=c[sec.list]||[]; if(!arr.length) return;
         arr.forEach((item,i)=>{
+          if(!item || typeof item!=='object') return;  // guard: legacy data could be a string/null
           const flat=Object.values(item).map(x=>String(x||'')).join(' ').toLowerCase();
           if(flat.indexOf(q)>=0 || sec.title.toLowerCase().indexOf(q)>=0){
             const summary=(sec.cols||[]).slice(0,3).map(col=>item[col.k]).filter(Boolean).join(' · ');
@@ -3116,9 +3166,9 @@ function infoRender(){
   // Wire up dirty-tracking
   if(isEdit){
     const form=document.getElementById('info-form');
-    form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty(true); const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
+    form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty('info', true); const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
   } else {
-    setDirty(false);
+    setDirty('info', false);
   }
   infoRenderSearch();
 }
@@ -3231,7 +3281,7 @@ async function infoSave(){
       const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
       if(r&&r.ok){
         if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
-        INFO_DIRTY=false; setDirty(false);
+        INFO_DIRTY=false; setDirty('info', false);
         const fresh=await call({api:'company_info_get'});
         if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
         infoRender();
@@ -3246,6 +3296,11 @@ async function infoSave(){
 
 /* ── Pharmacies (O2O master data) ── */
 let PHARM_DATA=[], PHARM_EDITABLE=false, PHARM_SEARCH='', PHARM_ACTIVE=null, PHARM_NEW=false;
+// Bug fix: PHARM_MODE separate from INFO_MODE so Company Info edit state doesn't bleed into
+// Pharmacy detail (and vice versa). PHARM_DIRTY namespaced so closing a Pharmacy detail can't
+// clear Company Info's unsaved-changes warning.
+let PHARM_MODE='view';
+let PHARM_DIRTY=false;
 // Debounced search to avoid re-rendering on every keystroke when typing in the search box.
 const _pharmSearchDebounced = debounce(function(v){ PHARM_SEARCH=v; pharmRender(); }, 180);
 const PHARM_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
@@ -3330,10 +3385,18 @@ function pharmRender(){
 }
 
 function pharmOpen(id){ PHARM_ACTIVE=id; PHARM_NEW=false; pharmRender(); }
-function pharmNewStart(){ if(!PHARM_EDITABLE){toast('Admins only',true);return;} PHARM_NEW=true; PHARM_ACTIVE=null; pharmRender(); }
+function pharmNewStart(){ if(!PHARM_EDITABLE){toast('Admins only',true);return;} PHARM_NEW=true; PHARM_ACTIVE=null; PHARM_MODE='edit'; pharmRender(); }
 function pharmCloseDetail(){
-  if(INFO_DIRTY){ if(!confirm('Discard unsaved changes?')) return; }
-  PHARM_ACTIVE=null; PHARM_NEW=false; INFO_DIRTY=false; setDirty(false); pharmRender();
+  if(PHARM_DIRTY){ if(!confirm('Discard unsaved changes?')) return; }
+  PHARM_ACTIVE=null; PHARM_NEW=false; PHARM_DIRTY=false; PHARM_MODE='view'; setDirty('pharm', false); pharmRender();
+}
+function pharmSetMode(mode){
+  if(!PHARM_EDITABLE && mode==='edit') return;
+  if(PHARM_MODE==='edit' && PHARM_DIRTY && mode==='view'){
+    if(!confirm('You have unsaved changes. Discard?')) return;
+    PHARM_DIRTY=false; setDirty('pharm', false);
+  }
+  PHARM_MODE=mode; pharmRender();
 }
 let PHARM_XERO_CONTACTS = null;        // cached list of SKINDAE's Xero contacts
 let PHARM_XERO_PICK_SEARCH = '';
@@ -3391,7 +3454,7 @@ async function pharmDoLink(contactId){
 }
 
 function pharmRenderDetail(){
-  const isEdit = (PHARM_NEW || INFO_MODE==='edit') && PHARM_EDITABLE;
+  const isEdit = (PHARM_NEW || PHARM_MODE==='edit') && PHARM_EDITABLE;
   const p = PHARM_NEW
     ? { name:'', commission_rate:19.2, active:true, outlet_count:1 }
     : PHARM_DATA.find(x=>x.id===PHARM_ACTIVE) || {};
@@ -3427,9 +3490,9 @@ function pharmRenderDetail(){
     '<button class="btn" onclick="pharmCloseDetail()">← Back</button>'+
     '<h2 style="margin:0;flex:1;font-size:20px;letter-spacing:-.02em">'+(PHARM_NEW?'New pharmacy':esc(p.name||'')+linkBadge)+'</h2>'+
     (PHARM_EDITABLE && !PHARM_NEW
-      ? (INFO_MODE==='edit'
-          ? '<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Save</button><button class="btn" onclick="infoSetMode(\'view\')">Cancel</button>'
-          : '<button class="btn" onclick="pharmOpenLinkModal()">🔗 Link to Xero</button><button class="btn" onclick="infoSetMode(\'edit\')">✎ Edit</button><button class="btn d" onclick="pharmDelete()">🗑 Delete</button>')
+      ? (PHARM_MODE==='edit'
+          ? '<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Save</button><button class="btn" onclick="pharmSetMode(\'view\')">Cancel</button>'
+          : '<button class="btn" onclick="pharmOpenLinkModal()">🔗 Link to Xero</button><button class="btn" onclick="pharmSetMode(\'edit\')">✎ Edit</button><button class="btn d" onclick="pharmDelete()">🗑 Delete</button>')
       : '')+
     (PHARM_NEW?'<button class="btn p" id="pharm-save-btn" onclick="pharmSave()">💾 Create</button>':'')+
   '</div>';
@@ -3478,9 +3541,9 @@ function pharmRenderDetail(){
   // Wire dirty tracking
   if(isEdit){
     const f=document.getElementById('pharm-form');
-    f.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty(true); }});
+    f.addEventListener('input', ()=>{ if(!PHARM_DIRTY){ PHARM_DIRTY=true; setDirty('pharm', true); }});
   } else {
-    setDirty(false);
+    setDirty('pharm', false);
   }
 }
 
@@ -3503,13 +3566,13 @@ async function pharmSave(){
       const r = await call({ api:'pharmacy_save', id, patch });
       if(r&&r.ok){
         toast('✓ Saved');
-        INFO_DIRTY=false; setDirty(false);
+        PHARM_DIRTY=false; setDirty('pharm', false);
         // Refresh list
         const list = await call({api:'pharmacy_list'});
         if(list && list.ok){ PHARM_DATA = list.pharmacies||[]; PHARM_EDITABLE=!!list.editable; }
         PHARM_NEW=false;
         PHARM_ACTIVE = r.id || PHARM_ACTIVE;
-        INFO_MODE='view';
+        PHARM_MODE='view';
         pharmRender();
       } else { toast(r&&r.error||'Save failed', true); }
     }catch(e){ toast(e.message, true); }
