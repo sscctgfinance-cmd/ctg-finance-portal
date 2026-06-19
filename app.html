@@ -4,6 +4,12 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <meta name="theme-color" content="#070D17"/>
+<meta name="referrer" content="strict-origin-when-cross-origin"/>
+<!-- Content-Security-Policy: lock down what this page can load/execute.
+     Allowed: Supabase edge fn (POST), Supabase storage signed-URLs (downloads),
+     XLSX from jsdelivr, Inter font from rsms.me, QR code from api.qrserver.com.
+     Everything else is denied. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://rsms.me https://fonts.googleapis.com; font-src 'self' https://rsms.me https://fonts.gstatic.com data:; img-src 'self' data: blob: https://api.qrserver.com https://*.supabase.co; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"/>
 <title>CTG Finance Portal</title>
 <style>
 /* ════════════════════════════════════════════
@@ -609,7 +615,18 @@ input:focus, select:focus, textarea:focus{
 
 <script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
-let TOKEN=localStorage.getItem("ctg_portal_token")||"";
+// Detect localStorage availability — Safari Private Browsing throws on setItem; some strict-privacy
+// browsers fully disable Storage. Without it, login can't persist. Warn the user instead of
+// silently failing each refresh.
+const STORAGE_OK = (function(){
+  try { const k='__ctg_test__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }
+  catch(_e){ return false; }
+})();
+let TOKEN = STORAGE_OK ? (localStorage.getItem("ctg_portal_token")||"") : "";
+// Safe wrappers so the rest of the code can blindly call storage.
+function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
+function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }
+function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
@@ -708,6 +725,30 @@ window.addEventListener('keydown', function(e){
     }
   }
 });
+// ── Page Visibility — pause idle countdown when the tab is hidden so a backgrounded
+// browser doesn't drift the idle timer; refresh stale loaded data when the user comes back. ──
+let TAB_HIDDEN_SINCE = null;
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden){
+    TAB_HIDDEN_SINCE = Date.now();
+  } else {
+    const awayMs = TAB_HIDDEN_SINCE ? (Date.now() - TAB_HIDDEN_SINCE) : 0;
+    TAB_HIDDEN_SINCE = null;
+    // Restart the idle clock from now — being away with the tab hidden does NOT consume idle budget.
+    resetIdle();
+    // If user was away >10 min, mark the loaded tabs stale so they refetch on next switch.
+    if(awayMs > 10*60*1000){ for(const k in loaded) delete loaded[k]; }
+  }
+});
+// ── Debounce helper for high-rate UI events (typing in search boxes). ──
+function debounce(fn, ms){
+  let t=null;
+  return function(){
+    const args=arguments, self=this;
+    clearTimeout(t);
+    t=setTimeout(function(){ fn.apply(self,args); }, ms||250);
+  };
+}
 // ── Online / offline awareness ──
 // Visual indicator in the top bar + auto-toast on transitions. Optimistic — the
 // browser reports network changes, but a working network ≠ working backend.
@@ -738,7 +779,7 @@ async function runOnce(btnId, busyText, fn){
 function handleSessionExpired(){
   if(SESSION_EXPIRED_SHOWN) return;
   SESSION_EXPIRED_SHOWN=true;
-  localStorage.removeItem('ctg_portal_token'); TOKEN='';
+  storageRemove('ctg_portal_token'); TOKEN='';
   const html='<div class="overlay" id="sess-expired"><div class="modal" style="width:380px">'+
     '<div class="modal-hd"><h3>🔒 Session expired</h3></div>'+
     '<p style="color:var(--text-soft);font-size:13.5px;margin:0 0 18px;line-height:1.6">For your security, you have been signed out. Please sign in again to continue.</p>'+
@@ -755,7 +796,7 @@ async function doLogin(e){
   er.classList.add('hide');b.disabled=true;b.textContent='Signing in…';
   try{
     const r=await call({api:'login',email,pass,token:''});
-    if(r&&r.ok){TOKEN=r.token;localStorage.setItem('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];enterApp();return;}
+    if(r&&r.ok){TOKEN=r.token;storageSet('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];enterApp();return;}
     if(r&&r.need_2fa){ show2faPrompt(r.login_token); b.disabled=false; b.textContent='Sign In'; return; }
     if(r&&r.locked){er.textContent='🔒 Account locked after too many failed attempts. Try again in '+(r.retry_minutes||15)+' min.';}
     else er.textContent='Incorrect email or password';
@@ -787,7 +828,7 @@ async function submit2fa(){
   try{
     var r=await call({api:'login_2fa', login_token:TFA_TOKEN, code:code, token:''});
     if(r&&r.ok){
-      TOKEN=r.token; localStorage.setItem('ctg_portal_token',TOKEN); ME=r.user; COMPANIES=r.companies||[];
+      TOKEN=r.token; storageSet('ctg_portal_token',TOKEN); ME=r.user; COMPANIES=r.companies||[];
       var o=document.getElementById('tfa_overlay'); if(o) o.remove();
       enterApp(); return;
     }
@@ -796,7 +837,7 @@ async function submit2fa(){
   btn.disabled=false; btn.textContent='Verify';
 }
 
-function logout(){localStorage.removeItem('ctg_portal_token');location.href='index.html';}
+function logout(){storageRemove('ctg_portal_token');location.href='index.html';}
 
 function roleLabel(r){return r==='admin'?'Admin':r==='approver'?'Approver':'Viewer';}
 
@@ -812,6 +853,11 @@ async function showApp(){
   document.getElementById('login').classList.add('hide');
   document.getElementById('app').classList.remove('hide');
   document.getElementById('who-name').innerHTML='<b>'+esc(ME.name||ME.email)+'</b>';
+  // Warn once if browser storage is unavailable — without it, login won't survive a refresh.
+  if(!STORAGE_OK && !document.getElementById('storage-warn')){
+    const html='<div id="storage-warn" style="background:rgba(255,187,86,.12);border:1px solid rgba(255,187,86,.4);color:var(--amber);padding:10px 16px;font-size:12.5px;text-align:center">⚠ Browser storage is disabled (private mode?). You will be signed out on refresh. <a href="#" onclick="document.getElementById(\'storage-warn\').remove();return false;" style="color:var(--amber);text-decoration:underline;margin-left:8px">dismiss</a></div>';
+    document.getElementById('app').insertAdjacentHTML('afterbegin', html);
+  }
   // Resolve this user's permission set (role → features + manage_users).
   try{ const p=await call({api:'my_perms'}); PERMS=(p&&p.ok)?p:fallbackPerms(); }
   catch(_e){ PERMS=fallbackPerms(); }
@@ -1298,7 +1344,7 @@ function showIdleWarning(){
   }, 1000);
   idleFinalTimer=setTimeout(idleLogout, IDLE_FINAL_MS+500);
 }
-function idleLogout(){ if(!TOKEN) return; localStorage.removeItem('ctg_portal_token'); TOKEN=''; location.href='index.html?idle=1'; }
+function idleLogout(){ if(!TOKEN) return; storageRemove('ctg_portal_token'); TOKEN=''; location.href='index.html?idle=1'; }
 ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev){ document.addEventListener(ev,resetIdle,{passive:true}); });
 
 /* ── In-app alert centre (bell) ── */
@@ -1644,11 +1690,26 @@ function qiAddLine(){
     '<button class="btn sm" onclick="this.parentNode.remove()">×</button>';
   d.appendChild(row);
 }
+// Per-tenant cache of inv_meta — Xero Items endpoint is the SLOWEST call (often 2–8s)
+// because it goes live to Xero. Keep the result in memory for the session so re-loading
+// the Quick Invoice tab or switching tenants and back is instant.
+var QINV_META_CACHE = {};       // { tenant_id: {data, ts} }
+var QINV_META_TTL = 5*60*1000;  // 5 min — fresh enough for prices, slow enough to feel snappy
 async function qiMeta(){
   var t=document.getElementById('qi_co').value; if(!t)return;
+  var cached = QINV_META_CACHE[t];
+  if(cached && (Date.now()-cached.ts) < QINV_META_TTL){
+    QINV_META = cached.data;
+    document.getElementById('qi_contacts').innerHTML=(QINV_META.contacts||[]).map(function(c){return '<option value="'+esc(c.name)+'">';}).join('');
+    [].slice.call(document.querySelectorAll('.qi-prod')).forEach(function(sl){sl.innerHTML=qiProductOptions();});
+    [].slice.call(document.querySelectorAll('.qi-acct')).forEach(function(sl){var cur=sl.value; sl.innerHTML=qiAccountOptions(cur);});
+    document.getElementById('qi_out').innerHTML='<span class="muted">✓ '+(QINV_META.contacts||[]).length+' contacts · '+(QINV_META.items||[]).length+' products · '+(QINV_META.accounts||[]).length+' revenue accounts <span style="opacity:.6">(cached)</span></span>';
+    return;
+  }
   document.getElementById('qi_out').innerHTML='<span class="muted">Loading Xero contacts, products & accounts…</span>';
   try{ var r=await call({api:'inv_meta',tenant:t});
     if(r&&r.ok){ QINV_META=r;
+      QINV_META_CACHE[t] = { data: r, ts: Date.now() };  // remember for the next 5 min
       document.getElementById('qi_contacts').innerHTML=(r.contacts||[]).map(function(c){return '<option value="'+esc(c.name)+'">';}).join('');
       // Refresh BOTH the product dropdown AND the per-line account dropdown on every existing row.
       [].slice.call(document.querySelectorAll('.qi-prod')).forEach(function(sl){sl.innerHTML=qiProductOptions();});
@@ -2903,7 +2964,9 @@ function infoSearchAll(query){
   return hits;
 }
 
-function infoSearchInput(){ INFO_SEARCH=document.getElementById('info-search').value; infoRenderSearch(); }
+// Debounce the search rendering so typing doesn't re-scan all companies on every keystroke.
+const _infoSearchRender = debounce(()=>infoRenderSearch(), 180);
+function infoSearchInput(){ INFO_SEARCH=document.getElementById('info-search').value; _infoSearchRender(); }
 function infoRenderSearch(){
   const box=document.getElementById('info-search-results'); if(!box) return;
   if(!INFO_SEARCH.trim()){ box.innerHTML=''; box.style.display='none'; return; }
@@ -3160,29 +3223,31 @@ function infoRowDel(key, idx){
 async function infoSave(){
   if(!INFO_EDITABLE) return;
   const patch=infoCollect();
-  const btn=document.getElementById('info-save-btn'); const st=document.getElementById('info-save-status');
-  btn.disabled=true; btn.textContent='Saving…'; if(st) st.textContent='';
-  try{
-    const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
-    if(r&&r.ok){
-      if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
-      INFO_DIRTY=false; setDirty(false);
-      // Refresh from server to pick up updated_at/updated_by
-      const fresh=await call({api:'company_info_get'});
-      if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
-      infoRender();
-    } else {
-      if(st){ st.textContent='✗ '+(r&&r.error||'failed'); st.style.color='var(--red-soft)'; }
+  const st=document.getElementById('info-save-status');
+  if(st) st.textContent='';
+  // runOnce locks the Save button while in flight — a panicked double-click can't fire two saves.
+  await runOnce('info-save-btn', 'Saving…', async()=>{
+    try{
+      const r=await call({api:'company_info_save', tenant:INFO_ACTIVE, patch});
+      if(r&&r.ok){
+        if(st){ st.textContent='✓ Saved'; st.style.color='var(--green-soft)'; }
+        INFO_DIRTY=false; setDirty(false);
+        const fresh=await call({api:'company_info_get'});
+        if(fresh&&fresh.ok){ INFO_DATA=fresh.companies||[]; INFO_EDITABLE=!!fresh.editable; }
+        infoRender();
+      } else {
+        if(st){ st.textContent='✗ '+(r&&r.error||'failed'); st.style.color='var(--red-soft)'; }
+      }
+    }catch(e){
+      if(st){ st.textContent='✗ '+(e.message||e); st.style.color='var(--red-soft)'; }
     }
-  }catch(e){
-    if(st){ st.textContent='✗ '+(e.message||e); st.style.color='var(--red-soft)'; }
-  } finally {
-    btn.disabled=false; btn.textContent='💾 Save changes';
-  }
+  });
 }
 
 /* ── Pharmacies (O2O master data) ── */
 let PHARM_DATA=[], PHARM_EDITABLE=false, PHARM_SEARCH='', PHARM_ACTIVE=null, PHARM_NEW=false;
+// Debounced search to avoid re-rendering on every keystroke when typing in the search box.
+const _pharmSearchDebounced = debounce(function(v){ PHARM_SEARCH=v; pharmRender(); }, 180);
 const PHARM_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
 
 function pharmNormalize(s){ return String(s||'').toLowerCase().replace(/\s+/g,' ').trim(); }
@@ -3223,7 +3288,7 @@ function pharmRender(){
     : '';
   document.getElementById('pharm').innerHTML=
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'+
-      '<div style="flex:1;min-width:240px;max-width:520px"><input id="pharm-search" value="'+esc(PHARM_SEARCH)+'" oninput="PHARM_SEARCH=this.value;pharmRender()" placeholder="🔍 Search pharmacy / city / PIC / phone…" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/></div>'+
+      '<div style="flex:1;min-width:240px;max-width:520px"><input id="pharm-search" value="'+esc(PHARM_SEARCH)+'" oninput="_pharmSearchDebounced(this.value)" placeholder="🔍 Search pharmacy / city / PIC / phone…" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/></div>'+
       newBtn+
     '</div>'+
     '<div class="cards" style="margin-bottom:14px">'+
@@ -3469,8 +3534,8 @@ async function pharmDelete(){
 if(TOKEN){
   call({api:'me'}).then(r=>{
     if(r&&r.ok){ME=r.user;COMPANIES=r.companies||[];enterApp();}
-    else{localStorage.removeItem('ctg_portal_token');TOKEN='';}
-  }).catch(()=>{localStorage.removeItem('ctg_portal_token');TOKEN='';});
+    else{storageRemove('ctg_portal_token');TOKEN='';}
+  }).catch(()=>{storageRemove('ctg_portal_token');TOKEN='';});
 }
 </script>
 </body>
