@@ -59,8 +59,16 @@ h1 .grad{background:linear-gradient(120deg,var(--coral-soft),var(--sky-soft));-w
 .lead b{color:#fff}
 .hero-cta{display:flex;gap:14px;flex-wrap:wrap}
 .badges{display:flex;align-items:center;gap:14px;margin-top:30px;color:var(--muted);font-size:12px;flex-wrap:wrap}
-.xero-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid var(--border-strong);font-weight:600;color:var(--text-soft)}
-.xero-dot{width:18px;height:18px;border-radius:50%;background:#13b5ea;display:inline-block}
+.xero-badge{display:inline-flex;align-items:center;gap:9px;padding:7px 13px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid var(--border-strong);font-weight:600;color:var(--text-soft)}
+/* Stylized Xero-integration mark — blue circle with white X. Inline SVG so we don't depend on any external asset. */
+.xero-mark{width:22px;height:22px;flex-shrink:0;display:inline-block;vertical-align:middle;border-radius:50%;background:#13b5ea;position:relative;box-shadow:0 0 0 2px rgba(19,181,234,.18),0 0 14px rgba(19,181,234,.45)}
+.xero-mark::before,.xero-mark::after{content:'';position:absolute;top:50%;left:50%;width:11px;height:2.2px;background:#fff;border-radius:2px;transform:translate(-50%,-50%) rotate(45deg)}
+.xero-mark::after{transform:translate(-50%,-50%) rotate(-45deg)}
+.xero-mark.sm{width:18px;height:18px}.xero-mark.sm::before,.xero-mark.sm::after{width:9px;height:2px}
+/* Back-compat: any leftover .xero-dot becomes the same mark. */
+.xero-dot{width:18px;height:18px;flex-shrink:0;display:inline-block;vertical-align:middle;border-radius:50%;background:#13b5ea;position:relative;box-shadow:0 0 0 2px rgba(19,181,234,.18),0 0 12px rgba(19,181,234,.4)}
+.xero-dot::before,.xero-dot::after{content:'';position:absolute;top:50%;left:50%;width:9px;height:2px;background:#fff;border-radius:2px;transform:translate(-50%,-50%) rotate(45deg)}
+.xero-dot::after{transform:translate(-50%,-50%) rotate(-45deg)}
 
 .shot{background:linear-gradient(180deg,rgba(19,28,45,.9),rgba(12,20,33,.85));border:1px solid var(--border-strong);border-radius:18px;box-shadow:0 40px 90px rgba(0,0,0,.6);overflow:hidden}
 .shot-bar{display:flex;align-items:center;gap:7px;padding:12px 15px;border-bottom:1px solid var(--border)}
