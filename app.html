@@ -2493,8 +2493,10 @@ const INFO_SECTIONS = [
 
 // Document categories for the attached-files section.
 const INFO_DOC_CATEGORIES = ['SSM / Registration','Tax','Contract','Licence / Permit','Insurance','Bank','Lease','Audit','Other'];
-// Documents per tenant — populated lazily on company switch.
-let INFO_DOCS = {};   // { tenant_id: [doc, doc, ...] }
+// Documents per tenant.
+let INFO_DOCS = {};         // { tenant_id: [doc, ...] }
+let INFO_FOLDERS = {};      // { tenant_id: [{id, parent_id, name}, ...] }
+let INFO_FOLDER_ACTIVE = {};// { tenant_id: folder_id or null (= root) }
 // Summary card — 8 most-looked-up fields shown at the top of every view.
 const INFO_SUMMARY_KEYS = [
   {k:'ssm_new',l:'SSM No.',copy:true},
@@ -2527,8 +2529,12 @@ async function renderInfo(){
     if(!INFO_EDITABLE) INFO_MODE='view';
     if(!INFO_DATA.length){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">🏢</div><div>No companies you can access yet.</div></div>'; return; }
     if(!INFO_ACTIVE||!INFO_DATA.find(c=>c.tenant_id===INFO_ACTIVE)) INFO_ACTIVE=INFO_DATA[0].tenant_id;
-    // Fetch documents for ALL accessible tenants in one shot so the sidebar fill-indicator + search work.
-    try { const dr=await call({api:'company_doc_list'}); if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); } } catch(_e){}
+    // Fetch documents + folders for ALL accessible tenants so the sidebar fill-indicator + search work.
+    try {
+      const [dr, fr] = await Promise.all([ call({api:'company_doc_list'}), call({api:'company_folder_list'}) ]);
+      if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+      if(fr&&fr.ok){ INFO_FOLDERS={}; (fr.folders||[]).forEach(f=>{ if(!INFO_FOLDERS[f.tenant_id]) INFO_FOLDERS[f.tenant_id]=[]; INFO_FOLDERS[f.tenant_id].push(f); }); }
+    } catch(_e){}
     infoRender();
     loaded.info=true;
   }catch(e){ document.getElementById('info').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
@@ -2545,16 +2551,84 @@ function infoDocIcon(mime){
   return '📄';
 }
 function infoDocsForCompany(tid){ return INFO_DOCS[tid]||[]; }
-
-// Render the Documents section body — list grouped by category + upload area (admin only).
+function infoFoldersForCompany(tid){ return INFO_FOLDERS[tid]||[]; }
+function infoFolderById(tid, fid){ return infoFoldersForCompany(tid).find(f=>f.id===fid); }
+// Build full folder path "Parent / Child / Grandchild" — useful for the Move-to dropdown.
+function infoFolderPath(tid, fid){
+  if(!fid) return '/ (root)';
+  const all=infoFoldersForCompany(tid); const parts=[];
+  let cur=all.find(f=>f.id===fid); let guard=0;
+  while(cur && guard++<20){ parts.unshift(cur.name); cur = cur.parent_id ? all.find(f=>f.id===cur.parent_id) : null; }
+  return '/ '+parts.join(' / ');
+}
+// Render the Documents section body — folder tree + files in selected folder + upload area (admin only).
 function infoSecDocsBody(c){
-  const docs = infoDocsForCompany(c.tenant_id);
+  const tid = c.tenant_id;
+  const allDocs = infoDocsForCompany(tid);
+  const allFolders = infoFoldersForCompany(tid);
   const editing = INFO_MODE==='edit' && INFO_EDITABLE;
-  // Upload form (admin edit-mode only) — single file at a time.
+  const activeFolderId = INFO_FOLDER_ACTIVE[tid] || null;
+  // Files in the active folder (null = root, only docs without folder_id)
+  const visible = allDocs.filter(d => (d.folder_id||null) === activeFolderId);
+  // Subfolders of the active folder
+  const subfolders = allFolders.filter(f => (f.parent_id||null) === activeFolderId);
+  const breadcrumb = (()=>{
+    if(!activeFolderId) return '<span style="color:var(--text)">📂 / </span><span class="muted">all documents</span>';
+    const chain=[]; let cur=infoFolderById(tid, activeFolderId); let guard=0;
+    while(cur && guard++<20){ chain.unshift(cur); cur = cur.parent_id ? infoFolderById(tid, cur.parent_id) : null; }
+    return '<a href="#" onclick="event.preventDefault();infoFolderOpen(null)" style="color:var(--text-soft);text-decoration:none">📂 /</a> ' +
+      chain.map((f,i)=> i===chain.length-1
+        ? '<span style="color:var(--text)">'+esc(f.name)+'</span>'
+        : '<a href="#" onclick="event.preventDefault();infoFolderOpen('+f.id+')" style="color:var(--text-soft);text-decoration:none">'+esc(f.name)+'</a>'
+      ).join(' <span class="muted">/</span> ');
+  })();
+  // Tree (recursive). Files highlighted under each folder via emptyHint dot.
+  function fileCountUnder(fid){
+    return allDocs.filter(d=>(d.folder_id||null)===fid).length;
+  }
+  function renderTreeNode(parentId, depth){
+    const kids = allFolders.filter(f => (f.parent_id||null) === parentId);
+    if(!kids.length) return '';
+    return '<ul style="list-style:none;padding-left:'+(depth?16:0)+'px;margin:0">' + kids.map(f=>{
+      const isActive = f.id===activeFolderId;
+      const subCount = allFolders.filter(x=>(x.parent_id||null)===f.id).length;
+      const fileN = fileCountUnder(f.id);
+      const countTag = (subCount+fileN>0)
+        ? '<span class="muted" style="font-size:10px">'+(fileN?fileN+'📄':'')+(subCount?(fileN?' · ':'')+subCount+'📁':'')+'</span>'
+        : '<span class="muted" style="font-size:10px;opacity:.4">empty</span>';
+      const delBtn = editing
+        ? '<button class="btn" style="padding:1px 6px;font-size:10px" onclick="event.stopPropagation();infoFolderDelete('+f.id+')" title="Delete folder">🗑</button>'
+        : '';
+      return '<li><div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:'+(isActive?'rgba(232,93,60,.10)':'transparent')+'" onclick="infoFolderOpen('+f.id+')" onmouseover="this.style.background=\''+(isActive?'rgba(232,93,60,.14)':'rgba(255,255,255,.04)')+'\'" onmouseout="this.style.background=\''+(isActive?'rgba(232,93,60,.10)':'transparent')+'\'">'+
+        '<span style="font-size:14px">'+(isActive?'📂':'📁')+'</span>'+
+        '<span style="font-size:13px;color:var(--text);flex:1">'+esc(f.name)+'</span>'+
+        countTag + delBtn +
+      '</div>' + renderTreeNode(f.id, depth+1) + '</li>';
+    }).join('') + '</ul>';
+  }
+  const rootIsActive = !activeFolderId;
+  const rootCount = allDocs.filter(d=>!d.folder_id).length;
+  const tree =
+    '<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:10px;padding:10px;min-height:120px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:660;flex:1">Folders</div>'+
+        (editing?'<button class="btn" style="padding:3px 8px;font-size:11px" onclick="infoFolderCreate('+JSON.stringify(activeFolderId).replace(/"/g,'&quot;')+')">+ New folder</button>':'')+
+      '</div>'+
+      '<div onclick="infoFolderOpen(null)" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:'+(rootIsActive?'rgba(232,93,60,.10)':'transparent')+';margin-bottom:4px">'+
+        '<span style="font-size:14px">'+(rootIsActive?'📂':'📁')+'</span>'+
+        '<span style="font-size:13px;color:var(--text);flex:1">All documents</span>'+
+        '<span class="muted" style="font-size:10px">'+allDocs.length+' total · '+rootCount+' in root</span>'+
+      '</div>'+
+      renderTreeNode(null, 1) +
+      (allFolders.length===0 && !editing ? '<div class="muted" style="font-size:11.5px;text-align:center;padding:8px 0">No folders yet.</div>' : '') +
+    '</div>';
+  // Upload form
+  const folderOptions = '<option value="">/ (root)</option>' + allFolders.map(f=>'<option value="'+f.id+'"'+(activeFolderId===f.id?' selected':'')+'>'+esc(infoFolderPath(tid, f.id))+'</option>').join('');
   const uploadForm = editing
     ? '<div style="background:var(--panel-2);border:1px dashed var(--panel-border);border-radius:10px;padding:14px;margin-bottom:14px">'+
         '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;font-weight:660">Attach a document</div>'+
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">'+
+          '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Folder</label><select id="info-doc-folder" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px">'+folderOptions+'</select></div>'+
           '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Category</label><select id="info-doc-category" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px">'+INFO_DOC_CATEGORIES.map(cat=>'<option value="'+esc(cat)+'">'+esc(cat)+'</option>').join('')+'</select></div>'+
           '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Title (optional)</label><input id="info-doc-title" placeholder="e.g. SST Cert 2026" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px"/></div>'+
           '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:4px">Expiry (optional)</label><input id="info-doc-expiry" type="date" style="width:100%;background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12.5px"/></div>'+
@@ -2567,42 +2641,114 @@ function infoSecDocsBody(c){
         '<div class="muted" style="font-size:11px;margin-top:6px">Max 20 MB · PDF / image / Word / Excel / TXT</div>'+
       '</div>'
     : '';
-  // Empty state
-  if(!docs.length){
-    return uploadForm + '<div class="muted" style="font-size:13px;text-align:center;padding:24px 0">No documents uploaded yet.'+(editing?'':'')+(INFO_EDITABLE&&!editing?' Switch to <b>✎ Edit mode</b> to upload.':'')+'</div>';
-  }
-  // Group by category
-  const byCat={};
-  docs.forEach(d=>{ const c=d.category||'Other'; if(!byCat[c]) byCat[c]=[]; byCat[c].push(d); });
-  const cats=Object.keys(byCat).sort();
   const todayISO=new Date().toISOString().slice(0,10);
-  const inDaysISO=days=>{ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); };
-  const ninetyDaysOut=inDaysISO(90);
-  const grouped = cats.map(cat=>{
-    const rows = byCat[cat].map(doc=>{
-      let expiryBadge='';
-      if(doc.expiry_date){
-        if(doc.expiry_date < todayISO) expiryBadge='<span class="pill pill-coral" style="font-size:10px;margin-left:6px" title="Expired">⚠ expired '+esc(doc.expiry_date)+'</span>';
-        else if(doc.expiry_date < ninetyDaysOut) expiryBadge='<span class="pill" style="background:rgba(255,187,86,.16);color:var(--amber);font-size:10px;margin-left:6px" title="Expiring within 90 days">⏳ expires '+esc(doc.expiry_date)+'</span>';
-        else expiryBadge='<span class="muted" style="font-size:10px;margin-left:6px">expires '+esc(doc.expiry_date)+'</span>';
-      }
-      const delBtn = editing
-        ? '<button class="btn" style="padding:4px 8px;font-size:11px" onclick="infoDocDelete('+doc.id+')" title="Delete document">🗑</button>'
-        : '';
-      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--panel-border)">'+
-        '<div style="font-size:20px">'+infoDocIcon(doc.mime_type)+'</div>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-size:13px;color:var(--text);word-break:break-word">'+esc(doc.title||doc.file_name)+expiryBadge+'</div>'+
-          '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(doc.file_name)+' · '+esc(infoDocBytes(doc.file_size||0))+' · uploaded '+esc(String(doc.uploaded_at||'').slice(0,16).replace('T',' '))+(doc.uploaded_by_email?' by '+esc(doc.uploaded_by_email):'')+'</div>'+
-        '</div>'+
-        '<button class="btn" style="padding:4px 10px;font-size:11.5px" onclick="infoDocDownload('+doc.id+')">⬇ Download</button>'+
-        delBtn+
-      '</div>';
-    }).join('');
-    return '<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--coral-soft);text-transform:uppercase;letter-spacing:.06em;padding:0 4px 6px;font-weight:660">'+esc(cat)+' · '+byCat[cat].length+'</div>'+
-      '<div style="border:1px solid var(--panel-border);border-radius:8px;overflow:hidden;background:var(--panel-2)">'+rows+'</div></div>';
-  }).join('');
-  return uploadForm + grouped;
+  const inDays=days=>{ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); };
+  const ninetyDaysOut=inDays(90);
+  function fileRow(doc){
+    let expiryBadge='';
+    if(doc.expiry_date){
+      if(doc.expiry_date < todayISO) expiryBadge='<span class="pill pill-coral" style="font-size:10px;margin-left:6px">⚠ expired '+esc(doc.expiry_date)+'</span>';
+      else if(doc.expiry_date < ninetyDaysOut) expiryBadge='<span class="pill" style="background:rgba(255,187,86,.16);color:var(--amber);font-size:10px;margin-left:6px">⏳ expires '+esc(doc.expiry_date)+'</span>';
+      else expiryBadge='<span class="muted" style="font-size:10px;margin-left:6px">expires '+esc(doc.expiry_date)+'</span>';
+    }
+    const moveOptions = editing
+      ? '<select onchange="infoDocMove('+doc.id+', this.value)" title="Move to folder" style="background:var(--panel);border:1px solid var(--panel-border);color:var(--text);padding:3px 6px;border-radius:5px;font-size:11px;max-width:140px">'+
+          '<option value="">' + (doc.folder_id ? 'Move…' : '/ (root)') + '</option>' +
+          (doc.folder_id ? '<option value="">/ (root)</option>' : '') +
+          allFolders.filter(f=>f.id!==doc.folder_id).map(f=>'<option value="'+f.id+'">→ '+esc(infoFolderPath(tid, f.id))+'</option>').join('')+
+        '</select>'
+      : '';
+    const delBtn = editing
+      ? '<button class="btn" style="padding:3px 7px;font-size:11px" onclick="infoDocDelete('+doc.id+')" title="Delete document">🗑</button>'
+      : '';
+    const catTag = doc.category ? '<span class="pill" style="background:rgba(255,255,255,.06);color:var(--text-soft);font-size:10px;margin-right:6px">'+esc(doc.category)+'</span>' : '';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--panel-border)">'+
+      '<div style="font-size:20px">'+infoDocIcon(doc.mime_type)+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:13px;color:var(--text);word-break:break-word">'+catTag+esc(doc.title||doc.file_name)+expiryBadge+'</div>'+
+        '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(doc.file_name)+' · '+esc(infoDocBytes(doc.file_size||0))+' · uploaded '+esc(String(doc.uploaded_at||'').slice(0,16).replace('T',' '))+(doc.uploaded_by_email?' by '+esc(doc.uploaded_by_email):'')+'</div>'+
+      '</div>'+
+      moveOptions+
+      '<button class="btn" style="padding:4px 10px;font-size:11.5px" onclick="infoDocDownload('+doc.id+')">⬇</button>'+
+      delBtn+
+    '</div>';
+  }
+  // Files panel
+  const subfolderTiles = subfolders.length ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'+
+    subfolders.map(f=>{
+      const fileN = fileCountUnder(f.id);
+      return '<div onclick="infoFolderOpen('+f.id+')" style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px;padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:140px"><span style="font-size:18px">📁</span><div><div style="font-size:12.5px;color:var(--text)">'+esc(f.name)+'</div><div class="muted" style="font-size:10px">'+fileN+' file'+(fileN===1?'':'s')+'</div></div></div>';
+    }).join('')+'</div>' : '';
+  const filesList = visible.length
+    ? '<div style="border:1px solid var(--panel-border);border-radius:8px;overflow:hidden;background:var(--panel-2)">'+visible.map(fileRow).join('')+'</div>'
+    : '<div class="muted" style="font-size:13px;text-align:center;padding:18px 0">No files'+(activeFolderId?' in this folder':'')+(allDocs.length>0&&activeFolderId?'. The files are in subfolders.':'.')+'</div>';
+  const filesPanel =
+    '<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:10px;padding:12px">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+        '<div style="font-size:13px;flex:1">'+breadcrumb+'</div>'+
+        '<span class="muted" style="font-size:11px">'+visible.length+' file'+(visible.length===1?'':'s')+'</span>'+
+      '</div>'+
+      subfolderTiles +
+      filesList +
+    '</div>';
+  return uploadForm + '<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;align-items:start">'+tree+filesPanel+'</div>'+
+    '<style>@media(max-width:680px){#info-sec-docs > div:last-child{grid-template-columns:1fr!important}}</style>';
+}
+function infoFolderOpen(fid){ INFO_FOLDER_ACTIVE[INFO_ACTIVE]=fid||null; infoRender(); }
+async function infoFolderCreate(parentId){
+  if(!INFO_EDITABLE){toast('Admins only',true);return;}
+  const name = prompt(parentId ? 'New folder name (inside "'+infoFolderPath(INFO_ACTIVE,parentId).replace(/^\/ /,'')+'"):' : 'New top-level folder name:');
+  if(name===null) return;
+  const trimmed = String(name||'').trim();
+  if(!trimmed){toast('Name required',true);return;}
+  try{
+    const r=await call({api:'company_folder_create', tenant:INFO_ACTIVE, parent_id:parentId||undefined, name:trimmed});
+    if(r&&r.ok){
+      toast('✓ Folder created');
+      const fr=await call({api:'company_folder_list'});
+      if(fr&&fr.ok){ INFO_FOLDERS={}; (fr.folders||[]).forEach(f=>{ if(!INFO_FOLDERS[f.tenant_id]) INFO_FOLDERS[f.tenant_id]=[]; INFO_FOLDERS[f.tenant_id].push(f); }); }
+      INFO_FOLDER_ACTIVE[INFO_ACTIVE] = r.id;
+      infoRender();
+    } else { toast(r&&r.error||'Failed', true); }
+  }catch(e){ toast(e.message,true); }
+}
+async function infoFolderDelete(folderId){
+  if(!INFO_EDITABLE) return;
+  const folder = infoFolderById(INFO_ACTIVE, folderId); if(!folder) return;
+  const subfolders = infoFoldersForCompany(INFO_ACTIVE).filter(f=>f.parent_id===folderId).length;
+  const filesInside = infoDocsForCompany(INFO_ACTIVE).filter(d=>d.folder_id===folderId).length;
+  let cascade=false;
+  if(subfolders>0 || filesInside>0){
+    if(!confirm('Folder "'+folder.name+'" contains '+filesInside+' file(s) and '+subfolders+' subfolder(s). Delete it AND everything inside? This cannot be undone.')) return;
+    cascade=true;
+  } else {
+    if(!confirm('Delete folder "'+folder.name+'"?')) return;
+  }
+  try{
+    const r=await call({api:'company_folder_delete', folder_id:folderId, cascade});
+    if(r&&r.ok){
+      toast('✓ Folder deleted');
+      // If we deleted the active folder, jump to parent (or root).
+      if(INFO_FOLDER_ACTIVE[INFO_ACTIVE]===folderId) INFO_FOLDER_ACTIVE[INFO_ACTIVE] = folder.parent_id || null;
+      const [fr, dr] = await Promise.all([ call({api:'company_folder_list'}), call({api:'company_doc_list'}) ]);
+      if(fr&&fr.ok){ INFO_FOLDERS={}; (fr.folders||[]).forEach(f=>{ if(!INFO_FOLDERS[f.tenant_id]) INFO_FOLDERS[f.tenant_id]=[]; INFO_FOLDERS[f.tenant_id].push(f); }); }
+      if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+      infoRender();
+    } else { toast(r&&r.error||'Failed', true); }
+  }catch(e){ toast(e.message,true); }
+}
+async function infoDocMove(docId, folderIdStr){
+  if(!INFO_EDITABLE) return;
+  const folderId = folderIdStr ? Number(folderIdStr) : null;
+  try{
+    const r=await call({api:'company_doc_move', doc_id:docId, folder_id:folderId});
+    if(r&&r.ok){
+      toast('✓ Moved');
+      const dr=await call({api:'company_doc_list'});
+      if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+      infoRender();
+    } else { toast(r&&r.error||'Failed', true); }
+  }catch(e){ toast(e.message,true); }
 }
 
 // Read file as base64 (chunked-safe for big files).
@@ -2624,6 +2770,8 @@ async function infoDocUpload(){
   const category=document.getElementById('info-doc-category').value;
   const title=document.getElementById('info-doc-title').value.trim();
   const expiry=document.getElementById('info-doc-expiry').value;
+  const folderEl=document.getElementById('info-doc-folder');
+  const folder_id=folderEl && folderEl.value ? Number(folderEl.value) : undefined;
   if(st){st.textContent='Uploading…'; st.style.color='var(--text-soft)';}
   await runOnce('info-doc-upload-btn','Uploading…', async()=>{
     try {
@@ -2631,14 +2779,16 @@ async function infoDocUpload(){
       const r = await call({
         api:'company_doc_upload', tenant:INFO_ACTIVE,
         file_name:file.name, content_type:file.type||'application/octet-stream',
-        content_base64:b64, category, title, expiry_date:expiry||undefined
+        content_base64:b64, category, title, expiry_date:expiry||undefined, folder_id
       });
       if(r && r.ok){
         if(st){st.textContent='✓ Uploaded'; st.style.color='var(--green-soft)';}
         toast('✓ Document uploaded');
-        // Refresh docs from server
+        // Refresh from server (folders unchanged but cheap; docs changed).
         const dr=await call({api:'company_doc_list'});
         if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+        // If user uploaded to a folder, keep them in that folder view.
+        if(folder_id) INFO_FOLDER_ACTIVE[INFO_ACTIVE]=folder_id;
         infoRender();
         setTimeout(()=>{ const el=document.getElementById('info-sec-docs'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }, 50);
       } else {
