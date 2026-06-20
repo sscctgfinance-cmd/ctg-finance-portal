@@ -2646,7 +2646,7 @@ async function syncAudit(){
       }).join('');
       var allOk = (r.results||[]).every(function(x){return x.ok;});
       var banner = allOk
-        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ All companies in sync</div><div class="nd">Audited at '+esc(String(r.audited_at).replace('T',' ').slice(0,19))+' MYT</div></div>'
+        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ All companies in sync</div><div class="nd">Audited at '+esc(new Date(r.audited_at).toLocaleString('en-MY',{timeZone:'Asia/Kuala_Lumpur',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}))+' MYT</div></div>'
         : '<div class="notif-item" style="border-left-color:var(--red-soft);cursor:default;margin-bottom:10px"><div class="nt">⚠ Drift detected</div><div class="nd">Run Delta sync, then Drift check. If still off, use Force resync on the specific invoices in the count_diff.</div></div>';
       out.innerHTML = banner +
         '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cache (count / sum)</th><th class="amt">Xero LIVE (count / sum)</th><th class="amt">Count Δ</th><th class="amt">RM Δ</th><th>Verdict</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -2689,7 +2689,11 @@ async function invoiceResync(){
   await runOnce('rsync_btn', 'Working…', async()=>{
     try {
       var lookup_key = (typeof key === 'string') ? key : '';
-      var r = await call({api:'invoice_resync', tenant:tenant, invoice_id:lookup_key, number:lookup_key});
+      // Detect UUID vs InvoiceNumber so the backend looks it up correctly (was sending the SAME value as both fields → could match the wrong record).
+      var isUUID = /^[0-9a-f-]{36}$/i.test(lookup_key);
+      var payload = { api:'invoice_resync', tenant:tenant };
+      if(isUUID) payload.invoice_id = lookup_key; else payload.number = lookup_key;
+      var r = await call(payload);
       if(r&&r.ok){
         var iv = r.invoice||{};
         out.innerHTML =
@@ -3285,6 +3289,12 @@ async function infoFolderCreate(parentId){
 async function infoFolderDelete(folderId){
   if(!INFO_EDITABLE) return;
   const folder = infoFolderById(INFO_ACTIVE, folderId); if(!folder) return;
+  // Refresh from server BEFORE counting — another admin might have uploaded files since we last fetched.
+  try {
+    const [fr, dr] = await Promise.all([ call({api:'company_folder_list'}), call({api:'company_doc_list'}) ]);
+    if(fr&&fr.ok){ INFO_FOLDERS={}; (fr.folders||[]).forEach(f=>{ if(!INFO_FOLDERS[f.tenant_id]) INFO_FOLDERS[f.tenant_id]=[]; INFO_FOLDERS[f.tenant_id].push(f); }); }
+    if(dr&&dr.ok){ INFO_DOCS={}; (dr.documents||[]).forEach(d=>{ if(!INFO_DOCS[d.tenant_id]) INFO_DOCS[d.tenant_id]=[]; INFO_DOCS[d.tenant_id].push(d); }); }
+  } catch(_e){}
   const subfolders = infoFoldersForCompany(INFO_ACTIVE).filter(f=>f.parent_id===folderId).length;
   const filesInside = infoDocsForCompany(INFO_ACTIVE).filter(d=>d.folder_id===folderId).length;
   let cascade=false;
@@ -3847,17 +3857,28 @@ function pharmRenderLinkModal(){
       '<div class="muted" style="font-family:monospace;font-size:10.5px">'+esc(String(c.contact_id||'').slice(0,8))+'…</div>'+
     '</div>';
   }).join('');
-  const ex=document.getElementById('pharm-link-overlay'); if(ex) ex.remove();
+  // Only rebuild the inner list+count, NOT the whole overlay — preserves the search input's focus/caret.
+  const existing=document.getElementById('pharm-link-overlay');
+  if(existing){
+    const cnt=document.getElementById('pharm-link-count');
+    const lst=document.getElementById('pharm-link-list');
+    if(cnt) cnt.textContent=filtered.length+' contact'+(filtered.length===1?'':'s')+' · showing first '+Math.min(100,filtered.length);
+    if(lst) lst.innerHTML=(rows||'<div class="muted" style="padding:24px;text-align:center;font-size:13px">No contacts match.</div>');
+    return;
+  }
   const html='<div class="overlay" id="pharm-link-overlay"><div class="modal" style="width:560px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column">'+
     '<div class="modal-hd"><h3>🔗 Link "'+esc(p.name||'')+'" to a Xero contact</h3><button class="modal-close" aria-label="Close" onclick="document.getElementById(\'pharm-link-overlay\').remove()">×</button></div>'+
     '<p class="muted" style="font-size:12.5px;margin:0 0 10px;line-height:1.6">Pick the matching SKINDAE Xero contact. Once linked, O2O Billing posts invoices to this contact directly (no name-fuzzy matching).</p>'+
-    '<input id="pharm-link-search" value="'+esc(PHARM_XERO_PICK_SEARCH)+'" oninput="PHARM_XERO_PICK_SEARCH=this.value;pharmRenderLinkModal()" placeholder="🔍 Search Xero contacts by name or email" autofocus style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:10px"/>'+
-    '<div class="muted" style="font-size:11px;margin-bottom:6px">'+filtered.length+' contact'+(filtered.length===1?'':'s')+' · showing first '+Math.min(100,filtered.length)+'</div>'+
-    '<div style="flex:1;overflow-y:auto;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px">'+(rows||'<div class="muted" style="padding:24px;text-align:center;font-size:13px">No contacts match.</div>')+'</div>'+
+    '<input id="pharm-link-search" value="'+esc(PHARM_XERO_PICK_SEARCH)+'" oninput="_pharmLinkDebounced(this.value)" placeholder="🔍 Search Xero contacts by name or email" autofocus style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:10px"/>'+
+    '<div id="pharm-link-count" class="muted" style="font-size:11px;margin-bottom:6px">'+filtered.length+' contact'+(filtered.length===1?'':'s')+' · showing first '+Math.min(100,filtered.length)+'</div>'+
+    '<div id="pharm-link-list" style="flex:1;overflow-y:auto;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px">'+(rows||'<div class="muted" style="padding:24px;text-align:center;font-size:13px">No contacts match.</div>')+'</div>'+
     '<div class="modal-ft" style="justify-content:space-between"><button class="btn" '+(p.xero_contact_id?'':'disabled')+' onclick="pharmDoLink(null)">Unlink</button><button class="btn" onclick="document.getElementById(\'pharm-link-overlay\').remove()">Cancel</button></div>'+
   '</div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
 }
+// Debounced search inside the Xero contact picker. Must be on window so inline oninput= handlers can find it
+// (top-level const isn't attached to the global object).
+window._pharmLinkDebounced = debounce(function(v){ PHARM_XERO_PICK_SEARCH=v; pharmRenderLinkModal(); }, 180);
 async function pharmDoLink(contactId){
   if(!PHARM_ACTIVE){return;}
   try{
@@ -4046,7 +4067,12 @@ function calRender(){
   function rows(arr){
     if(!arr.length) return '';
     return arr.map(x=>{
-      const dueStr = new Date(x.due_date).toLocaleDateString('en-MY',{year:'numeric',month:'short',day:'numeric'});
+      // Parse the YYYY-MM-DD string directly (not via new Date which interprets as UTC →
+      // shifts a day backwards in non-MYT-or-east browsers).
+      const parts = String(x.due_date||'').split('-');
+      const dueStr = (parts.length===3)
+        ? (String(Number(parts[2]))+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(parts[1])-1]+' '+parts[0])
+        : String(x.due_date||'');
       return '<tr><td><span style="font-size:16px">'+icon(x.kind)+'</span></td>'+
         '<td><b>'+esc(x.tenant_name||'')+'</b></td>'+
         '<td>'+esc(x.label||'')+(x.detail?'<div class="muted" style="font-size:11px;margin-top:2px">'+esc(x.detail)+'</div>':'')+'</td>'+
@@ -4137,7 +4163,7 @@ function cfRender(){
     '</div>'+
     '<div class="cards" style="margin-bottom:18px">'+
       '<div class="card"><div class="n" style="color:var(--green-soft);font-size:20px">'+M(gIn)+'</div><div class="l">Total inflows ('+CF_DAYS+'d)</div></div>'+
-      '<div class="card"><div class="n" style="color:var(--coral-soft);font-size:20px">-'+M(gOut)+'</div><div class="l">Total outflows ('+CF_DAYS+'d)</div></div>'+
+      '<div class="card"><div class="n" style="color:var(--coral-soft);font-size:20px">'+(gOut>0?'-':'')+M(gOut)+'</div><div class="l">Total outflows ('+CF_DAYS+'d)</div></div>'+
       '<div class="card"><div class="n" style="color:'+(gNet<0?'var(--red-soft)':'var(--green-soft)')+';font-size:20px">'+M(gNet)+'</div><div class="l">Net group cashflow</div></div>'+
       '<div class="card"><div class="n" style="color:'+(gNegDays>0?'var(--red-soft)':'var(--green-soft)')+';font-size:20px">'+gNegDays+'</div><div class="l">Days projected negative</div></div>'+
     '</div>'+
@@ -4179,8 +4205,9 @@ async function ocrExtract(){
   const out=document.getElementById('ocr_out');
   if(!OCR_FILE_B64){ toast('Pick a file first',true); return; }
   if(OCR_MIME==='application/pdf'){ out.innerHTML='<div style="color:var(--red-soft);font-size:13px">⚠ PDF support coming soon — please screenshot the invoice as PNG/JPEG and upload that.</div>'; return; }
-  out.innerHTML='<div class="muted"><span class="spin"></span> AI reading the document (5-15s)…</div>';
+  // Move spinner-render INSIDE runOnce so a fast double-click can't fire two Claude calls before the lock engages.
   await runOnce('ocr_extract_btn', 'Reading…', async()=>{
+    out.innerHTML='<div class="muted"><span class="spin"></span> AI reading the document (5-15s)…</div>';
     try{
       const r=await call({api:'ocr_extract', content_base64:OCR_FILE_B64, content_type:OCR_MIME});
       if(!r||!r.ok){ out.innerHTML='<div style="color:var(--red-soft);font-size:13px">'+esc(r&&r.error||'Failed')+(r&&r.raw?'<details style="margin-top:8px"><summary class="muted">Raw response</summary><pre style="white-space:pre-wrap;font-size:11px;background:var(--panel-2);padding:8px;border-radius:6px">'+esc(r.raw)+'</pre></details>':'')+'</div>'; return; }
@@ -4229,7 +4256,7 @@ async function ocrPostBill(){
     if(!lineMap[i]) lineMap[i]={};
     lineMap[i][k] = (k==='quantity'||k==='unit_amount')?Number(el.value)||0:el.value;
   });
-  bill.line_items = Object.keys(lineMap).map(k=>lineMap[k]).filter(l=>l.description||l.unit_amount);
+  bill.line_items = Object.keys(lineMap).map(k=>lineMap[k]).filter(l=>l.description||l.unit_amount||Number(l.quantity)>0);
   if(!confirm('Create DRAFT bill for '+(bill.vendor_name||'?')+' · Total: RM '+(bill.total||0).toFixed(2)+'\\n\\nThe bill will be DRAFT in Xero — review and approve there before payment.')) return;
   await runOnce('ocr_post_btn', 'Posting…', async()=>{
     try{
