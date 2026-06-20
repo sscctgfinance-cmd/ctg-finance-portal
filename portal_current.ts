@@ -1036,16 +1036,35 @@ Deno.serve(async (req)=>{
       if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
       const item = getRes.item;
       const { data: settings } = await sb.from("portal_ap_settings").select("reply_from_email,reply_from_name").eq("tenant_id", item.tenant_id).single();
-      const fromEmail = (settings && settings.reply_from_email) || "ap@ctgfinance.com";
+      const gmailUser = Deno.env.get("GMAIL_USER");
+      const gmailPass = Deno.env.get("GMAIL_APP_PASSWORD");
+      const resendKey = Deno.env.get("RESEND_API_KEY");
+      const fromEmail = (settings && settings.reply_from_email) || gmailUser || "ap@ctgfinance.com";
       const fromName  = (settings && settings.reply_from_name)  || "CTG Finance AP";
       const subject = b.subject || item.reply_subject || ("Re: " + (item.subject || ""));
       const body    = b.body    || item.reply_body    || "";
-      const apiKey  = Deno.env.get("RESEND_API_KEY");
-      if (!apiKey) return j({ ok:false, error:"RESEND_API_KEY not configured — set as Supabase Edge secret to enable replies" });
-      const r = await fetch("https://api.resend.com/emails", { method:"POST", headers:{ "Authorization":"Bearer "+apiKey, "Content-Type":"application/json" }, body: JSON.stringify({ from: fromName + " <" + fromEmail + ">", to: [item.from_email], subject, text: body, headers: item.message_id ? { "In-Reply-To": item.message_id, "References": item.message_id } : undefined }) });
-      if (!r.ok){ const t = await r.text(); return j({ ok:false, error: "Resend: " + r.status + " " + t.slice(0,300) }); }
+      const toEmail = item.from_email;
+      const inReplyTo = item.message_id || "";
+      // Prefer Gmail SMTP (works without owning a domain). Fall back to Resend if Gmail not configured.
+      if (gmailUser && gmailPass){
+        try {
+          const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
+          const client = new SMTPClient({ connection: { hostname: "smtp.gmail.com", port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } } });
+          const headers: Record<string,string> = {};
+          if (inReplyTo) { headers["In-Reply-To"] = inReplyTo; headers["References"] = inReplyTo; }
+          await client.send({ from: fromName + " <" + gmailUser + ">", to: toEmail, subject, content: body, headers });
+          await client.close();
+        } catch (e) {
+          return j({ ok:false, error: "Gmail SMTP: " + String(e).slice(0,300) });
+        }
+      } else if (resendKey){
+        const r = await fetch("https://api.resend.com/emails", { method:"POST", headers:{ "Authorization":"Bearer "+resendKey, "Content-Type":"application/json" }, body: JSON.stringify({ from: fromName + " <" + fromEmail + ">", to: [toEmail], subject, text: body, headers: inReplyTo ? { "In-Reply-To": inReplyTo, "References": inReplyTo } : undefined }) });
+        if (!r.ok){ const t = await r.text(); return j({ ok:false, error: "Resend: " + r.status + " " + t.slice(0,300) }); }
+      } else {
+        return j({ ok:false, error:"Configure Gmail SMTP (GMAIL_USER + GMAIL_APP_PASSWORD) OR Resend (RESEND_API_KEY) as Supabase Edge secrets to enable replies" });
+      }
       await sb.rpc("portal_ap_inbox_update", { p_token: b.token||"", p_id: Number(b.id), p_patch: { status:"reply_sent", reply_subject: subject, reply_body: body, reply_sent_at: new Date().toISOString() } });
-      await logAudit(me, "ap_reply_sent", String(b.id), { to: item.from_email });
+      await logAudit(me, "ap_reply_sent", String(b.id), { to: toEmail, via: gmailUser && gmailPass ? "gmail-smtp" : "resend" });
       return j({ ok:true });
     }
     if (api === "compliance_calendar") {
