@@ -536,6 +536,13 @@ Deno.serve(async (req)=>{
   if (xsig !== null) { try { return await handleWebhook(req, xsig); } catch (_e) { return new Response("err", { status: 200 }); } }
   const ip = clientIp(req);
   let b; try { b = await req.json(); } catch { return j({ error:"bad json" }, 400); }
+  // Inbound email webhook detection: Postmark / Resend / SendGrid POST the raw email payload
+  // without our {api,payload} wrapper. If we see the secret header AND no `api` field, auto-wrap.
+  const apInboundSecret = req.headers.get("x-ap-inbound-secret");
+  if (apInboundSecret && !b.api) {
+    // Pass the secret through `b.secret` as well so the handler's existing check works.
+    b = { api: "ap_inbound", payload: b, secret: apInboundSecret };
+  }
   const api = b.api;
   try {
     if (api === "cron_sync") {
