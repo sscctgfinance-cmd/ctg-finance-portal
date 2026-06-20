@@ -153,7 +153,20 @@ async function hmacSha256B64(key, msg){
 }
 function timingSafeEqual(a, b){ if (typeof a!=="string" || typeof b!=="string" || a.length!==b.length) return false; let r=0; for (let i=0;i<a.length;i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r===0; }
 async function sha256Hex(s){ const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
-function invToCacheRow(tenant, iv){ const now = new Date().toISOString(); return { tenant_id: tenant, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber || null, type: iv.Type || null, status: iv.Status || null, contact_name: (iv.Contact||{}).Name || null, contact_id: (iv.Contact||{}).ContactID || null, total: Number(iv.Total||0), amount_due: Number(iv.AmountDue||0), currency: iv.CurrencyCode || null, inv_date: (String(iv.DateString||iv.Date||"").slice(0,10)) || null, due_date: (String(iv.DueDateString||iv.DueDate||"").slice(0,10)) || null, updated_at: now, last_synced_at: now }; }
+// Xero may return dates in two formats: ISO "2026-06-15T00:00:00" (DateString)
+// or legacy Microsoft "/Date(1718409600000+0000)/" (Date). slicing the latter to 10 chars
+// yields "/Date(1718" which Postgres rejects → the WHOLE batch upsert fails silently.
+// xDate handles both and returns null on anything unparseable.
+function xDate(s){
+  if (!s) return null;
+  const str = String(s);
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0,10);
+  const m = str.match(/\/Date\((-?\d+)/);
+  if (m){ const d = new Date(parseInt(m[1],10)); if (!isNaN(d.getTime())) return d.toISOString().slice(0,10); }
+  const d = new Date(str); if (!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+  return null;
+}
+function invToCacheRow(tenant, iv){ const now = new Date().toISOString(); return { tenant_id: tenant, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber || null, type: iv.Type || null, status: iv.Status || null, contact_name: (iv.Contact||{}).Name || null, contact_id: (iv.Contact||{}).ContactID || null, total: Number(iv.Total||0), amount_due: Number(iv.AmountDue||0), currency: iv.CurrencyCode || null, inv_date: xDate(iv.DateString||iv.Date), due_date: xDate(iv.DueDateString||iv.DueDate), updated_at: now, last_synced_at: now }; }
 // v37+: also handle PAYMENT and CREDITNOTE events — both change Invoice.AmountDue.
 // Without this, Xero payments don't reflect in the cache until next delta cron (up to 1h lag).
 async function processOneEvent(ev){
@@ -322,23 +335,41 @@ async function processApEmail(inboxId, route){
 }
 
 async function applyInvoiceBatch(tenant_id, arr){
-  if (!arr || !arr.length) return { upserted: 0, deleted: 0 };
+  if (!arr || !arr.length) return { upserted: 0, deleted: 0, error: null };
   const live = []; const dead = [];
   for (const iv of arr){
     const s = String(iv.Status || "").toUpperCase();
     if (s === "VOIDED" || s === "DELETED") dead.push(iv.InvoiceID); else live.push(iv);
   }
-  let upserted = 0, deleted = 0;
+  let upserted = 0, deleted = 0, batchErr = null;
   if (live.length){
     const rows = live.map((iv)=>invToCacheRow(tenant_id, iv));
     const { error } = await sb.from("xero_invoice_cache").upsert(rows, { onConflict:"tenant_id,invoice_id" });
-    if (!error) upserted = rows.length;
+    if (error){
+      // Try per-row fallback so ONE bad invoice doesn't blackhole the whole batch.
+      let ok = 0; const bad = [];
+      for (const r of rows){
+        const { error: e2 } = await sb.from("xero_invoice_cache").upsert(r, { onConflict:"tenant_id,invoice_id" });
+        if (e2) bad.push({ invoice_id: r.invoice_id, number: r.number, err: String(e2.message||e2).slice(0,200) }); else ok++;
+      }
+      upserted = ok;
+      batchErr = "upsert: " + String(error.message||error).slice(0,200) + (bad.length ? " | " + bad.length + " rows failed individually (first: " + bad[0].invoice_id + " " + bad[0].err + ")" : "");
+      console.error("applyInvoiceBatch upsert error", tenant_id, batchErr);
+    } else {
+      upserted = rows.length;
+    }
   }
   if (dead.length){
     const { error } = await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant_id).in("invoice_id", dead);
-    if (!error) deleted = dead.length;
+    if (error){
+      const msg = "delete: " + String(error.message||error).slice(0,200);
+      batchErr = batchErr ? batchErr + " | " + msg : msg;
+      console.error("applyInvoiceBatch delete error", tenant_id, msg);
+    } else {
+      deleted = dead.length;
+    }
   }
-  return { upserted, deleted };
+  return { upserted, deleted, error: batchErr };
 }
 // ── v28: backfill using ModifiedAfter — one endpoint catches every status transition.
 // Strategy: pull every invoice modified since `sinceISO` (no Statuses filter).
@@ -373,6 +404,8 @@ async function runBackfill(access, list, opts){
         fetched += arr.length;
         const r = await applyInvoiceBatch(t.tenant_id, arr);
         upserted += r.upserted; deleted += r.deleted; tCount += r.upserted; tDel += r.deleted;
+        // Per-batch upsert/delete failures used to be swallowed silently — surface them now.
+        if (r.error){ tErr = (tErr ? tErr + " | " : "") + "batch p" + page + ": " + r.error; }
         if (arr.length < 100) break;
       }
       if (tErr){
@@ -409,6 +442,7 @@ async function runDelta(access, list, sinceISO){
         fetched += arr.length;
         const r = await applyInvoiceBatch(t.tenant_id, arr);
         upserted += r.upserted; deleted += r.deleted; tCount += r.upserted; tDel += r.deleted;
+        if (r.error){ tErr = (tErr ? tErr + " | " : "") + "delta-batch p" + page + ": " + r.error; }
         if (arr.length < 100) break;
       }
       if (tErr){
@@ -1175,6 +1209,59 @@ Deno.serve(async (req)=>{
       }
       await logAudit(me, "sync_audit", String(list.length), { results });
       return j({ ok:true, results, audited_at: new Date().toISOString() });
+    }
+    if (api === "xero_diagnose") {
+      // Deep gap check: pull EVERY invoice id+status modified in last N days from Xero (no Statuses filter),
+      // compare against cache, return what's missing + what's stale. Catches silent batch-upsert failures
+      // that sync_audit can miss (it only checks open AR totals).
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.tenant) return j({ ok:false, error:"tenant required" });
+      const days = Math.min(Math.max(parseInt(b.days||"30",10)||30, 1), 730);
+      const sinceISO = new Date(Date.now() - days*24*3600*1000).toISOString();
+      const sinceHeader = new Date(sinceISO).toUTCString();
+      try {
+        const access = await xeroAccessToken();
+        const xeroByStatus = {}; const xeroIds = new Set(); let xeroTotal = 0;
+        for (let page=1; page<=100; page++){
+          const d = await xeroGet(access, b.tenant, "Invoices?page=" + page + "&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader });
+          if (d.__notModified) break;
+          const arr = d.Invoices || []; if (!arr.length) break;
+          for (const iv of arr){
+            xeroTotal++; xeroIds.add(iv.InvoiceID);
+            const k = (iv.Type||"?") + "/" + (iv.Status||"?");
+            xeroByStatus[k] = (xeroByStatus[k]||0) + 1;
+          }
+          if (arr.length < 100) break;
+        }
+        // Cache side — every invoice for this tenant updated since the same window
+        const { data: cacheRows } = await sb.from("xero_invoice_cache").select("invoice_id,type,status").eq("tenant_id", b.tenant).gte("updated_at", sinceISO);
+        const cacheIds = new Set((cacheRows||[]).map((r)=>r.invoice_id));
+        const cacheByStatus = {};
+        for (const r of (cacheRows||[])){ const k = (r.type||"?") + "/" + (r.status||"?"); cacheByStatus[k] = (cacheByStatus[k]||0) + 1; }
+        // Missing = in Xero but not in cache (THE BUG WE'RE HUNTING)
+        const missing = [];
+        for (const id of xeroIds){ if (!cacheIds.has(id)) missing.push(id); }
+        // Extras = in cache but not returned by Xero (VOIDED/DELETED that we didn't get notified about)
+        const extras = [];
+        for (const id of cacheIds){ if (!xeroIds.has(id)) extras.push(id); }
+        await logAudit(me, "xero_diagnose", b.tenant, { days, xero_total: xeroTotal, cache_total: cacheIds.size, missing: missing.length, extras: extras.length });
+        return j({
+          ok: true,
+          tenant_id: b.tenant,
+          days,
+          xero_total: xeroTotal,
+          cache_total: cacheIds.size,
+          missing_count: missing.length,
+          extras_count: extras.length,
+          xero_by_status: xeroByStatus,
+          cache_by_status: cacheByStatus,
+          missing_ids_sample: missing.slice(0, 25),
+          extra_ids_sample: extras.slice(0, 25),
+          note: missing.length > 0 ? "GAPS FOUND — run invoice_resync per id, or tenant_rebuild for full repair." : "Cache is consistent with Xero for this window.",
+        });
+      } catch (e) {
+        return j({ ok:false, error: String(e).slice(0,500) });
+      }
     }
     if (api === "tenant_rebuild") {
       // Nuclear option: wipe cache + trigger an unrestricted backfill from 2015. Admin only, confirm-gated.
