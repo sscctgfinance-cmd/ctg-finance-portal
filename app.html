@@ -4461,10 +4461,10 @@ async function apPostBill(){
   });
 }
 async function apReject(){
-  if(!AP_ACTIVE_ID || !confirm('Mark this email as rejected? (Will not post anything to Xero.)')) return;
-  // We use ap_process? actually we just need to update status. Easier: hit the inbox_update RPC via a stub action.
-  // For now, repurpose the existing flow — admin can add a note later.
-  try{ const r=await call({api:'ap_process', id:AP_ACTIVE_ID}); /* placeholder — Reject button hides for posted items */ toast('Marked'); renderAp(); }
+  if(!AP_ACTIVE_ID) return;
+  const reason = prompt('Reason for rejecting? (optional)','manually rejected');
+  if(reason===null) return;
+  try{ const r=await call({api:'ap_reject', id:AP_ACTIVE_ID, reason: reason||'manually rejected'}); if(!r||!r.ok){ toast((r&&r.error)||'Failed',true); return; } toast('Rejected'); AP_ACTIVE_ID=null; AP_DETAIL=null; renderAp(); }
   catch(e){ toast(e.message,true); }
 }
 

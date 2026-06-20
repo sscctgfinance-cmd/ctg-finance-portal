@@ -1029,6 +1029,15 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber });
     }
+    if (api === "ap_reject") {
+      // Mark an inbox item as rejected — no Xero post, no reply. Audit logged.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const reason = String(b.reason||"manually rejected").slice(0,300);
+      await sb.rpc("portal_ap_inbox_update", { p_token: b.token||"", p_id: Number(b.id), p_patch: { status:"rejected", status_detail: reason } });
+      await logAudit(me, "ap_reject", String(b.id), { reason });
+      return j({ ok:true });
+    }
     if (api === "ap_reply_send") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.id) return j({ ok:false, error:"id required" });
@@ -1047,16 +1056,19 @@ Deno.serve(async (req)=>{
       const inReplyTo = item.message_id || "";
       // Prefer Gmail SMTP (works without owning a domain). Fall back to Resend if Gmail not configured.
       if (gmailUser && gmailPass){
+        let smtpClient: any = null;
         try {
           const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
-          const client = new SMTPClient({ connection: { hostname: "smtp.gmail.com", port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } } });
-          const headers: Record<string,string> = {};
+          smtpClient = new SMTPClient({ connection: { hostname: "smtp.gmail.com", port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } } });
+          const headers: any = {};
           if (inReplyTo) { headers["In-Reply-To"] = inReplyTo; headers["References"] = inReplyTo; }
-          await client.send({ from: fromName + " <" + gmailUser + ">", to: toEmail, subject, content: body, headers });
-          await client.close();
+          await smtpClient.send({ from: fromName + " <" + gmailUser + ">", to: toEmail, subject, content: body, headers });
         } catch (e) {
+          // Always try to close even on error (resource leak fix).
+          if (smtpClient){ try { await smtpClient.close(); } catch(_e){} }
           return j({ ok:false, error: "Gmail SMTP: " + String(e).slice(0,300) });
         }
+        try { await smtpClient.close(); } catch(_e){}
       } else if (resendKey){
         const r = await fetch("https://api.resend.com/emails", { method:"POST", headers:{ "Authorization":"Bearer "+resendKey, "Content-Type":"application/json" }, body: JSON.stringify({ from: fromName + " <" + fromEmail + ">", to: [toEmail], subject, text: body, headers: inReplyTo ? { "In-Reply-To": inReplyTo, "References": inReplyTo } : undefined }) });
         if (!r.ok){ const t = await r.text(); return j({ ok:false, error: "Resend: " + r.status + " " + t.slice(0,300) }); }
