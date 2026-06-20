@@ -272,6 +272,55 @@ async function recordRateLimit(tenant_id, errMsg){
   return null;
 }
 // ── v28: write rows + delete VOIDED/DELETED so cache mirrors Xero status exactly.
+// AI Agent: read an inbox item, look at the email + attached invoices/receipts via Claude vision,
+// decide whether to (a) post as-is, (b) flag for human review, or (c) reply asking for missing info.
+async function processApEmail(inboxId, route){
+  const { data: item } = await sb.from("portal_ap_inbox").select("*").eq("id", inboxId).single();
+  if (!item) throw new Error("inbox item not found");
+  await sb.from("portal_ap_inbox").update({ status:"processing" }).eq("id", inboxId);
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey){ await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"ANTHROPIC_API_KEY not set — manual review only" }).eq("id", inboxId); return; }
+  // Build the multimodal content block: text body first, then each image attachment.
+  const contentBlocks = [];
+  contentBlocks.push({ type:"text", text: "EMAIL FROM: " + (item.from_name||"") + " <" + (item.from_email||"") + ">\nSUBJECT: " + (item.subject||"") + "\n\nBODY:\n" + (item.text_body || item.html_body || "(empty)") });
+  for (const a of (item.attachments||[])){
+    const mime = String(a.mime||"");
+    if (mime.startsWith("image/")){
+      try {
+        const { data: f } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
+        if (f){
+          const buf = new Uint8Array(await f.arrayBuffer());
+          // Base64 encode (chunked to avoid call-stack issues on large files)
+          let bin = ""; const chunk = 8192;
+          for (let i=0; i<buf.length; i+=chunk) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+chunk, buf.length)));
+          const b64 = btoa(bin);
+          contentBlocks.push({ type:"image", source:{ type:"base64", media_type: mime, data: b64 } });
+        }
+      } catch(_e){}
+    } else if (mime === "application/pdf"){
+      // PDF: tell Claude there's a PDF attachment we can't read directly
+      contentBlocks.push({ type:"text", text:"[attachment: PDF '" + (a.name||"file") + "' attached but not parsed in this prompt; flag for manual review if it contains the primary invoice]" });
+    }
+  }
+  const sys = "You are an AP (Accounts Payable) clerk reviewing an inbound email from a vendor or staff member. Your job: extract the bill / claim into a Xero ACCPAY DRAFT, AND verify the supporting documentation is sufficient before suggesting an auto-post. Reply ONLY with a single JSON object — no prose. Schema: {\n  vendor_name: string,\n  invoice_no: string|null,\n  invoice_date: 'YYYY-MM-DD'|null,\n  due_date: 'YYYY-MM-DD'|null,\n  currency: 'MYR'|'USD'|'SGD',\n  subtotal: number,\n  tax_amount: number,\n  total: number,\n  line_items: [{ description: string, quantity: number, unit_amount: number, account_code: string }],\n  suggested_gl_account: string,\n  attachments_verified: boolean,    // true if the attached docs adequately support the claim\n  has_required_fields: boolean,     // vendor name, date, amount all present\n  amount_consistent: boolean,       // text body amount matches attachment amount\n  confidence: 'high'|'medium'|'low',\n  action: 'auto_post'|'needs_review'|'reply_to_sender',\n  issues: [string],                  // human-readable list of any concerns\n  suggested_reply_subject: string|null,  // only if action='reply_to_sender'\n  suggested_reply_body: string|null      // only if action='reply_to_sender' — polite, specific, in English\n}.\nCommon GL accounts: 610-1000 Office Supplies, 620-1000 Rent, 630-1000 Utilities, 640-1000 Professional Fees, 650-1000 Marketing, 660-1000 Software/Subscriptions, 670-1000 Bank Charges, 800-1000 Travel & Entertainment.\nUse MYR currency by default. If a PDF was mentioned but not extracted, set action='needs_review'. If amount > " + Number(route.max_auto_post_amount||1000) + " MYR, set action='needs_review' regardless. Be honest about issues — it's better to flag a doubt than to wrongly auto-post.";
+  const body = { model: route.ai_model || "claude-haiku-4-5-20251001", max_tokens: 2000, system: sys, messages: [{ role:"user", content: contentBlocks }] };
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key": apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
+    if (!r.ok){ const t = await r.text(); await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Claude API error " + r.status + ": " + t.slice(0,200) }).eq("id", inboxId); return; }
+    const out = await r.json();
+    const txt = (out.content && out.content[0] && out.content[0].text) || "";
+    let parsed = null; const m = txt.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
+    if (!parsed){ await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse Claude response", ai_verdict:{ raw: txt.slice(0,500) } }).eq("id", inboxId); return; }
+    const action = String(parsed.action||"needs_review");
+    let nextStatus = action === "auto_post" ? "auto_posted" : action === "reply_to_sender" ? "reply_drafted" : "needs_review";
+    // Force-downgrade auto_post above the threshold.
+    if (action === "auto_post" && Number(parsed.total||0) > Number(route.max_auto_post_amount||1000)) nextStatus = "needs_review";
+    await sb.from("portal_ap_inbox").update({ status: nextStatus, ai_verdict: parsed, status_detail: (parsed.issues||[]).join("; ").slice(0,400), reply_subject: parsed.suggested_reply_subject||null, reply_body: parsed.suggested_reply_body||null }).eq("id", inboxId);
+  } catch(e){
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Processing error: " + String(e).slice(0,200) }).eq("id", inboxId);
+  }
+}
+
 async function applyInvoiceBatch(tenant_id, arr){
   if (!arr || !arr.length) return { upserted: 0, deleted: 0 };
   const live = []; const dead = [];
@@ -849,6 +898,148 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.rpc("portal_sync_health");
       return j({ ok:true, ...(data||{}) });
+    }
+    /* ── AP Email Agent ── */
+    if (api === "ap_settings_get") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_ap_settings_get", { p_token: b.token||"" });
+      return j(data || { ok:true, settings:[] });
+    }
+    if (api === "ap_settings_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.tenant) return j({ ok:false, error:"tenant required" });
+      const { data, error } = await sb.rpc("portal_ap_settings_save", { p_token: b.token||"", p_tenant: b.tenant, p_patch: b.patch || {} });
+      if (error) return j({ ok:false, error: error.message });
+      return j(data || { ok:true });
+    }
+    if (api === "ap_inbox_list") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: b.tenant||null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+      return j(data || { ok:true, items:[] });
+    }
+    if (api === "ap_inbox_get") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+      // Generate signed download URLs for each attachment so the frontend can fetch them.
+      if (data && data.ok && data.item && data.item.attachments) {
+        const atts = data.item.attachments;
+        for (const a of atts) {
+          if (a.storage_path) {
+            try { const { data: signed } = await sb.storage.from("portal-ap-uploads").createSignedUrl(a.storage_path, 300); if (signed) a.download_url = signed.signedUrl; } catch(_e){}
+          }
+        }
+      }
+      return j(data || { ok:false });
+    }
+    // Inbound webhook from Postmark / Resend / SendGrid Inbound. Verifies a shared-secret header.
+    if (api === "ap_inbound") {
+      const sec = req.headers.get("x-ap-inbound-secret") || b.secret || "";
+      const { data: secRow } = await sb.from("portal_secrets").select("value").eq("key","ap_inbound").single();
+      if (!secRow || !secRow.value || sec !== secRow.value) return j({ ok:false, error:"forbidden" }, 403);
+      // Normalize payload across providers — accept any of: Postmark, Resend Inbound, SendGrid.
+      const p = b.payload || b;
+      const fromEmail = p.From || p.from || (p.envelope && p.envelope.from) || "";
+      const fromName  = p.FromName || (p.from_name) || "";
+      const toEmail   = p.OriginalRecipient || p.To || p.to || (p.envelope && p.envelope.to && p.envelope.to[0]) || "";
+      const subject   = p.Subject || p.subject || "";
+      const textBody  = p.TextBody || p.text || "";
+      const htmlBody  = p.HtmlBody || p.html || "";
+      const messageId = p.MessageID || p.MessageId || p["message-id"] || "";
+      const attachments = p.Attachments || p.attachments || [];
+      const { data: route } = await sb.rpc("portal_ap_resolve_routing", { p_to: toEmail });
+      if (!route || !route.ok) {
+        // Still record it (with no tenant) so admin can see rejected mails — actually just log & drop for now.
+        return j({ ok:false, error: (route&&route.error)||"routing failed" });
+      }
+      // Store attachments
+      const storedAtts = [];
+      for (const a of attachments) {
+        try {
+          const name = String(a.Name || a.filename || "file").replace(/[^a-zA-Z0-9._-]/g,"_").slice(0,180);
+          const mime = a.ContentType || a.contentType || a.type || "application/octet-stream";
+          const b64 = String(a.Content || a.content || "").replace(/^data:[^,]+,/,"");
+          if (!b64) continue;
+          const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+          const path = route.tenant_id + "/" + Date.now() + "_" + Math.random().toString(36).slice(2,8) + "_" + name;
+          const up = await sb.storage.from("portal-ap-uploads").upload(path, bytes, { contentType: mime });
+          if (!up.error) storedAtts.push({ name, mime, size: bytes.length, storage_path: path });
+        } catch(_e){}
+      }
+      // Dedup by message_id
+      if (messageId) {
+        const { data: existing } = await sb.from("portal_ap_inbox").select("id").eq("message_id", messageId).maybeSingle();
+        if (existing) return j({ ok:true, deduped:true, id: existing.id });
+      }
+      const { data: inserted } = await sb.from("portal_ap_inbox").insert({ tenant_id: route.tenant_id, message_id: messageId, from_email: fromEmail, from_name: fromName, to_email: toEmail, subject, text_body: textBody, html_body: htmlBody, attachments: storedAtts, raw_payload: p, status: "received" }).select("id").single();
+      const inboxId = inserted && inserted.id;
+      // Trigger AI processing in background.
+      if (inboxId) {
+        const work = (async ()=>{ try { await processApEmail(inboxId, route); } catch(_e){} })();
+        if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
+      }
+      return j({ ok:true, id: inboxId });
+    }
+    if (api === "ap_process") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+      if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
+      const { data: settings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", getRes.item.tenant_id).single();
+      const route = { tenant_id: getRes.item.tenant_id, default_gl_account: settings?.default_gl_account || "610-1000", max_auto_post_amount: settings?.max_auto_post_amount || 1000, ai_model: settings?.ai_model || "claude-haiku-4-5-20251001" };
+      try { await processApEmail(Number(b.id), route); return j({ ok:true }); }
+      catch(e){ return j({ ok:false, error: String(e).slice(0,400) }); }
+    }
+    if (api === "ap_post") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+      if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
+      const item = getRes.item;
+      const overrides = b.bill || {};
+      const verdict = item.ai_verdict || {};
+      // Build the bill: prefer admin overrides, then AI verdict, then sensible defaults.
+      const vendor = overrides.vendor_name || verdict.vendor_name || item.from_name || item.from_email;
+      const lines = overrides.line_items || verdict.line_items || [];
+      if (!vendor || !lines.length) return j({ ok:false, error:"vendor + at least one line item required" });
+      const now = new Date(Date.now() + 8*3600*1000);
+      const today = now.toISOString().slice(0,10);
+      const due = overrides.due_date || verdict.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
+      let cid = await resolveContact(item.tenant_id, vendor);
+      const inv = { Type:"ACCPAY", Contact: cid?{ContactID:cid}:{Name:String(vendor).slice(0,500)}, Date: overrides.invoice_date || verdict.invoice_date || today, DueDate: due, Status:"DRAFT", LineAmountTypes: "Exclusive", LineItems: lines.map((l)=>({ Description:String(l.description||"Item").slice(0,4000), Quantity:Number(l.quantity)||1, UnitAmount:Number(l.unit_amount)||0, AccountCode: l.account_code || verdict.suggested_gl_account || "610-1000" })) };
+      if (verdict.invoice_no || overrides.invoice_no) inv.InvoiceNumber = String(overrides.invoice_no || verdict.invoice_no).slice(0,255);
+      if (verdict.currency || overrides.currency) inv.CurrencyCode = String(overrides.currency || verdict.currency);
+      const access = await xeroAccessToken();
+      const idem = await sha256Hex(JSON.stringify(inv) + "|inbox:" + b.id);
+      const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
+      const out = await r.json(); const iv = (out.Invoices||[])[0] || {};
+      if (!r.ok && !iv.InvoiceID) return j({ ok:false, error: out.Detail || out.Message || JSON.stringify(out).slice(0,400) });
+      if (iv.HasErrors) return j({ ok:false, error:(iv.ValidationErrors||[]).map((e)=>e.Message).join("; ") });
+      await sb.rpc("portal_ap_inbox_update", { p_token: b.token||"", p_id: Number(b.id), p_patch: { status:"posted", xero_invoice_id: iv.InvoiceID, xero_invoice_number: iv.InvoiceNumber, posted_at: new Date().toISOString() } });
+      await logAudit(me, "ap_post", iv.InvoiceNumber||iv.InvoiceID||"", { inbox_id:b.id, vendor, total: iv.Total });
+      // Attach the source files to the Xero invoice (best-effort).
+      if (item.attachments && Array.isArray(item.attachments)) {
+        for (const a of item.attachments){ try { const { data: fileData } = await sb.storage.from("portal-ap-uploads").download(a.storage_path); if (fileData){ const buf = await fileData.arrayBuffer(); await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + iv.InvoiceID + "/Attachments/" + encodeURIComponent(a.name), { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type": a.mime||"application/octet-stream" }, body: buf }); } } catch(_e){} }
+      }
+      return j({ ok:true, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber });
+    }
+    if (api === "ap_reply_send") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+      if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
+      const item = getRes.item;
+      const { data: settings } = await sb.from("portal_ap_settings").select("reply_from_email,reply_from_name").eq("tenant_id", item.tenant_id).single();
+      const fromEmail = (settings && settings.reply_from_email) || "ap@ctgfinance.com";
+      const fromName  = (settings && settings.reply_from_name)  || "CTG Finance AP";
+      const subject = b.subject || item.reply_subject || ("Re: " + (item.subject || ""));
+      const body    = b.body    || item.reply_body    || "";
+      const apiKey  = Deno.env.get("RESEND_API_KEY");
+      if (!apiKey) return j({ ok:false, error:"RESEND_API_KEY not configured — set as Supabase Edge secret to enable replies" });
+      const r = await fetch("https://api.resend.com/emails", { method:"POST", headers:{ "Authorization":"Bearer "+apiKey, "Content-Type":"application/json" }, body: JSON.stringify({ from: fromName + " <" + fromEmail + ">", to: [item.from_email], subject, text: body, headers: item.message_id ? { "In-Reply-To": item.message_id, "References": item.message_id } : undefined }) });
+      if (!r.ok){ const t = await r.text(); return j({ ok:false, error: "Resend: " + r.status + " " + t.slice(0,300) }); }
+      await sb.rpc("portal_ap_inbox_update", { p_token: b.token||"", p_id: Number(b.id), p_patch: { status:"reply_sent", reply_subject: subject, reply_body: body, reply_sent_at: new Date().toISOString() } });
+      await logAudit(me, "ap_reply_sent", String(b.id), { to: item.from_email });
+      return j({ ok:true });
     }
     if (api === "compliance_calendar") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
