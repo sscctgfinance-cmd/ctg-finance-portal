@@ -287,13 +287,29 @@ async function recordRateLimit(tenant_id, errMsg){
 // ── v28: write rows + delete VOIDED/DELETED so cache mirrors Xero status exactly.
 // AI Agent: read an inbox item, look at the email + attached invoices/receipts via Claude vision,
 // decide whether to (a) post as-is, (b) flag for human review, or (c) reply asking for missing info.
+// ─────────────────────────────────────────────────────────────────────
+// AP Email Agent — full automation pipeline.
+// ─────────────────────────────────────────────────────────────────────
+// Flow:
+//   1. Build multimodal content from email body + attached images/PDFs.
+//   2. Claude vision extracts structured data + classifies (invoice|reimbursement)
+//      and performs the compliance audit (signatures, supporting docs, ...).
+//   3. Server-side DUPLICATE CHECK against xero_invoice_cache.
+//   4. Server-side GL MAPPING via portal_gl_rules (learned patterns).
+//   5. Decision tree → status + (auto-post | auto-reply) without human intervention.
+// Every decision is logged to portal_ap_decisions for audit.
 async function processApEmail(inboxId, route){
   const { data: item } = await sb.from("portal_ap_inbox").select("*").eq("id", inboxId).single();
   if (!item) throw new Error("inbox item not found");
   await sb.from("portal_ap_inbox").update({ status:"processing" }).eq("id", inboxId);
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey){ await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"ANTHROPIC_API_KEY not set — manual review only" }).eq("id", inboxId); return; }
-  // Build the multimodal content block: text body first, then each image attachment.
+  if (!apiKey){
+    await logDecision(inboxId, "needs_review", "ANTHROPIC_API_KEY not set");
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"ANTHROPIC_API_KEY not set — manual review only" }).eq("id", inboxId);
+    return;
+  }
+
+  // ── Step 1: build multimodal content ───────────────────────────────
   const contentBlocks = [];
   contentBlocks.push({ type:"text", text: "EMAIL FROM: " + (item.from_name||"") + " <" + (item.from_email||"") + ">\nSUBJECT: " + (item.subject||"") + "\n\nBODY:\n" + (item.text_body || item.html_body || "(empty)") });
   for (const a of (item.attachments||[])){
@@ -303,35 +319,303 @@ async function processApEmail(inboxId, route){
         const { data: f } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
         if (f){
           const buf = new Uint8Array(await f.arrayBuffer());
-          // Base64 encode (chunked to avoid call-stack issues on large files)
           let bin = ""; const chunk = 8192;
           for (let i=0; i<buf.length; i+=chunk) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+chunk, buf.length)));
-          const b64 = btoa(bin);
-          contentBlocks.push({ type:"image", source:{ type:"base64", media_type: mime, data: b64 } });
+          contentBlocks.push({ type:"image", source:{ type:"base64", media_type: mime, data: btoa(bin) } });
         }
       } catch(_e){}
     } else if (mime === "application/pdf"){
-      // PDF: tell Claude there's a PDF attachment we can't read directly
-      contentBlocks.push({ type:"text", text:"[attachment: PDF '" + (a.name||"file") + "' attached but not parsed in this prompt; flag for manual review if it contains the primary invoice]" });
+      try {
+        // Claude DOES accept PDFs natively as document blocks — use that instead of just naming the file.
+        const { data: f } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
+        if (f){
+          const buf = new Uint8Array(await f.arrayBuffer());
+          let bin = ""; const chunk = 8192;
+          for (let i=0; i<buf.length; i+=chunk) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+chunk, buf.length)));
+          contentBlocks.push({ type:"document", source:{ type:"base64", media_type:"application/pdf", data: btoa(bin) } });
+        }
+      } catch(_e){}
     }
   }
-  const sys = "You are an AP (Accounts Payable) clerk reviewing an inbound email from a vendor or staff member. Your job: extract the bill / claim into a Xero ACCPAY DRAFT, AND verify the supporting documentation is sufficient before suggesting an auto-post. Reply ONLY with a single JSON object — no prose. Schema: {\n  vendor_name: string,\n  invoice_no: string|null,\n  invoice_date: 'YYYY-MM-DD'|null,\n  due_date: 'YYYY-MM-DD'|null,\n  currency: 'MYR'|'USD'|'SGD',\n  subtotal: number,\n  tax_amount: number,\n  total: number,\n  line_items: [{ description: string, quantity: number, unit_amount: number, account_code: string }],\n  suggested_gl_account: string,\n  attachments_verified: boolean,    // true if the attached docs adequately support the claim\n  has_required_fields: boolean,     // vendor name, date, amount all present\n  amount_consistent: boolean,       // text body amount matches attachment amount\n  confidence: 'high'|'medium'|'low',\n  action: 'auto_post'|'needs_review'|'reply_to_sender',\n  issues: [string],                  // human-readable list of any concerns\n  suggested_reply_subject: string|null,  // only if action='reply_to_sender'\n  suggested_reply_body: string|null      // only if action='reply_to_sender' — polite, specific, in English\n}.\nCommon GL accounts: 610-1000 Office Supplies, 620-1000 Rent, 630-1000 Utilities, 640-1000 Professional Fees, 650-1000 Marketing, 660-1000 Software/Subscriptions, 670-1000 Bank Charges, 800-1000 Travel & Entertainment.\nUse MYR currency by default. If a PDF was mentioned but not extracted, set action='needs_review'. If amount > " + Number(route.max_auto_post_amount||1000) + " MYR, set action='needs_review' regardless. Be honest about issues — it's better to flag a doubt than to wrongly auto-post.";
-  const body = { model: route.ai_model || "claude-haiku-4-5-20251001", max_tokens: 2000, system: sys, messages: [{ role:"user", content: contentBlocks }] };
+
+  // ── Step 2: Claude — extract + classify + audit ────────────────────
+  const cap = Number(route.max_auto_post_amount||1000);
+  const sys = "You are a senior AP (Accounts Payable) clerk for a Malaysian Sdn Bhd. You will receive an email + its attachments (images and PDFs). Output ONE JSON object only, no prose.\n\nSchema: {\n  doc_type: 'invoice'|'reimbursement'|'unknown',\n  vendor_name: string,            // for invoice: supplier; for reimbursement: claimant name\n  invoice_no: string|null,\n  invoice_date: 'YYYY-MM-DD'|null,\n  due_date: 'YYYY-MM-DD'|null,\n  currency: 'MYR'|'USD'|'SGD'|string,\n  subtotal: number,\n  tax_amount: number,\n  total: number,\n  line_items: [{ description: string, quantity: number, unit_amount: number }],\n  bill_to_company: string|null,   // the Sdn Bhd named as buyer\n  // Reimbursement-specific compliance flags (set all 4 honestly; only fill if doc_type='reimbursement'):\n  reimb_has_claim_form: boolean,        // is there a structured claim form (header, name, date, total)?\n  reimb_claimant_signed: boolean,       // claimant signature present?\n  reimb_approver_signed: boolean,       // SECOND signature from manager/director?\n  reimb_all_invoices_attached: boolean, // every line item has a corresponding formal invoice/receipt attached?\n  reimb_payment_proof_attached: boolean,// card statement or bank receipt proving claimant ALREADY paid out-of-pocket?\n  // Invoice-specific compliance flags (only fill if doc_type='invoice'):\n  inv_is_formal: boolean,               // proper invoice (tax invoice or has supplier business reg)?\n  inv_has_supplier_id: boolean,         // SST registration no. OR business registration no. visible?\n  inv_bill_to_correct: boolean,         // bill-to is one of our 5 Sdn Bhd?\n  // Universal:\n  amount_consistent: boolean,           // email body amount = attachment amount?\n  date_consistent: boolean,             // subject/filename/form/dates all line up to ONE period?\n  confidence: 'high'|'medium'|'low',\n  issues: [string]                      // every problem you found, one per array entry, specific\n}\n\nRules:\n- doc_type='reimbursement' if there is a claim form OR sender is claiming back personal spending. doc_type='invoice' if a supplier is billing us directly.\n- bill_to_company must be one of: 'DRSMILE', 'ZEERO', 'IPROCARE', 'SCALE', 'SKINDAE' (CTG group of Sdn Bhd). Use what the document says even if abbreviated.\n- Be STRICT: any signature missing → reimb_*_signed=false. Any line item without an attached formal invoice → reimb_all_invoices_attached=false. App screenshots are NOT invoices.\n- amount_consistent should be true ONLY if all dollar figures match across email body, claim form, and the supporting attachments.\n- date_consistent should be true ONLY if subject + filename + form 'month/year' + line item dates + bank transfer date all refer to ONE coherent period.\n- It's MUCH better to flag a doubt than to silently pass it.";
+  const body = { model: route.ai_model || "claude-haiku-4-5-20251001", max_tokens: 2500, system: sys, messages: [{ role:"user", content: contentBlocks }] };
+  let parsed = null;
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key": apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
-    if (!r.ok){ const t = await r.text(); await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Claude API error " + r.status + ": " + t.slice(0,200) }).eq("id", inboxId); return; }
+    if (!r.ok){
+      const t = await r.text();
+      await logDecision(inboxId, "needs_review", "Claude API " + r.status + ": " + t.slice(0,300));
+      await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Claude API error " + r.status + ": " + t.slice(0,200) }).eq("id", inboxId);
+      return;
+    }
     const out = await r.json();
     const txt = (out.content && out.content[0] && out.content[0].text) || "";
-    let parsed = null; const m = txt.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
-    if (!parsed){ await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse Claude response", ai_verdict:{ raw: txt.slice(0,500) } }).eq("id", inboxId); return; }
-    const action = String(parsed.action||"needs_review");
-    let nextStatus = action === "auto_post" ? "auto_posted" : action === "reply_to_sender" ? "reply_drafted" : "needs_review";
-    // Force-downgrade auto_post above the threshold.
-    if (action === "auto_post" && Number(parsed.total||0) > Number(route.max_auto_post_amount||1000)) nextStatus = "needs_review";
-    await sb.from("portal_ap_inbox").update({ status: nextStatus, ai_verdict: parsed, status_detail: (parsed.issues||[]).join("; ").slice(0,400), reply_subject: parsed.suggested_reply_subject||null, reply_body: parsed.suggested_reply_body||null }).eq("id", inboxId);
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
   } catch(e){
+    await logDecision(inboxId, "needs_review", "Claude exception: " + String(e).slice(0,300));
     await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Processing error: " + String(e).slice(0,200) }).eq("id", inboxId);
+    return;
   }
+  if (!parsed){
+    await logDecision(inboxId, "needs_review", "Could not parse Claude JSON");
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse Claude response" }).eq("id", inboxId);
+    return;
+  }
+
+  // ── Step 3: server-side DUPLICATE check ────────────────────────────
+  let dupHit = null;
+  try {
+    const { data: dupRows } = await sb.rpc("portal_ap_find_duplicate", {
+      p_tenant: item.tenant_id,
+      p_vendor: parsed.vendor_name || (item.from_name || item.from_email || ""),
+      p_total: Number(parsed.total||0),
+      p_days: Number(route.duplicate_check_days || 90),
+    });
+    if (Array.isArray(dupRows) && dupRows.length > 0) dupHit = dupRows[0];
+  } catch (_e) {}
+
+  // ── Step 4: server-side GL mapping for each line item ──────────────
+  const enrichedLines = [];
+  let unmappedLines = 0;
+  for (const li of (parsed.line_items||[])){
+    let acc = null, kw = null;
+    try {
+      const { data: mapRows } = await sb.rpc("portal_ap_map_gl", { p_tenant: item.tenant_id, p_description: li.description || "" });
+      if (Array.isArray(mapRows) && mapRows.length > 0){ acc = mapRows[0].account_code; kw = mapRows[0].matched_keyword; }
+    } catch (_e) {}
+    if (!acc) unmappedLines++;
+    enrichedLines.push({ ...li, account_code: acc, gl_matched_keyword: kw });
+  }
+  // Fallback to settings default_gl_account for unmapped lines
+  for (const li of enrichedLines){
+    if (!li.account_code) li.account_code = route.default_gl_account || "904-2200"; // 904-2200 G&A - Others is the safe catch-all
+  }
+
+  // ── Step 5: COMPLIANCE GATING ──────────────────────────────────────
+  const issues = Array.isArray(parsed.issues) ? [...parsed.issues] : [];
+  const total = Number(parsed.total||0);
+  let decision = null; // 'duplicate_rejected' | 'compliance_rejected' | 'auto_authorised' | 'needs_review'
+  let reasoning = "";
+
+  if (dupHit){
+    decision = "duplicate_rejected";
+    reasoning = "Duplicate of existing bill " + (dupHit.number||dupHit.invoice_id) + " (" + dupHit.status + ", " + dupHit.inv_date + ", total " + dupHit.total + ")";
+  } else if (parsed.doc_type === "reimbursement" && route.require_4item_reimbursement !== false){
+    const miss = [];
+    if (!parsed.reimb_has_claim_form) miss.push("a formal claim form");
+    if (!parsed.reimb_claimant_signed) miss.push("claimant signature");
+    if (!parsed.reimb_approver_signed) miss.push("approver/manager signature (second signature)");
+    if (!parsed.reimb_all_invoices_attached) miss.push("formal invoices for every line item (app screenshots are not acceptable)");
+    if (!parsed.reimb_payment_proof_attached) miss.push("payment proof (card statement or bank receipt showing you already paid)");
+    if (miss.length){
+      decision = "compliance_rejected";
+      reasoning = "Reimbursement is missing: " + miss.join("; ");
+      for (const m of miss) issues.push("Missing: " + m);
+    }
+  } else if (parsed.doc_type === "invoice"){
+    const miss = [];
+    if (!parsed.inv_is_formal) miss.push("a formal invoice (not a receipt/quotation/statement)");
+    if (!parsed.inv_has_supplier_id) miss.push("supplier SST registration no. OR business registration no.");
+    if (!parsed.inv_bill_to_correct) miss.push("correct bill-to (must be one of our 5 Sdn Bhd)");
+    if (miss.length){
+      decision = "compliance_rejected";
+      reasoning = "Invoice is missing: " + miss.join("; ");
+      for (const m of miss) issues.push("Missing: " + m);
+    }
+  }
+  if (!parsed.amount_consistent) issues.push("Amounts don't match across the email body / form / supporting documents");
+  if (!parsed.date_consistent) issues.push("Period dates are inconsistent (subject vs filename vs form vs receipts)");
+
+  // If still no decision (i.e. passed compliance) → route on amount + confidence
+  if (!decision){
+    const compliant = (parsed.amount_consistent !== false) && (parsed.date_consistent !== false);
+    if (!compliant || parsed.confidence === "low" || unmappedLines > 0){
+      decision = "needs_review";
+      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : "low confidence / consistency issues") + " — DRAFT for human review";
+    } else if (total > cap){
+      decision = "needs_review";
+      reasoning = "Amount " + total + " > auto-post cap " + cap + " — DRAFT for approver";
+    } else if (route.auto_post_when_compliant === false){
+      decision = "needs_review";
+      reasoning = "Compliant but auto-post is disabled for this tenant — DRAFT for human review";
+    } else {
+      decision = "auto_authorised";
+      reasoning = "All compliance checks passed, total " + total + " <= cap " + cap + " — auto-posting AUTHORISED";
+    }
+  }
+
+  // ── Step 6: write enriched verdict + status to DB ─────────────────
+  const aiVerdict = {
+    ...parsed,
+    line_items: enrichedLines,
+    server_duplicate: dupHit,
+    server_decision: decision,
+    server_reasoning: reasoning,
+  };
+  let nextStatus;
+  switch (decision){
+    case "duplicate_rejected": nextStatus = "duplicate_rejected"; break;
+    case "compliance_rejected": nextStatus = "reply_drafted"; break;
+    case "auto_authorised": nextStatus = "auto_posting"; break; // updated again post-post
+    default: nextStatus = "needs_review";
+  }
+
+  // Draft reply for compliance_rejected and duplicate_rejected
+  let replySubject = null, replyBody = null;
+  if (decision === "duplicate_rejected"){
+    replySubject = "Re: " + (item.subject || "") + " — DUPLICATE CLAIM, not processed";
+    replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for the submission. After review, this claim appears to be a duplicate of an already-paid bill:\n\n  • Existing bill: " + (dupHit.number || dupHit.invoice_id) + "\n  • Date: " + dupHit.inv_date + "\n  • Total: MYR " + dupHit.total + "\n  • Status: " + dupHit.status + " (amount due: MYR " + dupHit.amount_due + ")\n\nThe new submission for MYR " + total + " matches the same vendor and amount, and that earlier bill has already been settled.\n\nIf you believe this is a different claim and not a duplicate, please reply with:\n  1. The reason this is a separate transaction\n  2. Distinct supporting invoices and a fresh payment receipt that has NOT been claimed before\n\nNo bill has been created in Xero for this submission.\n\nBest regards,\nCTG Finance AP";
+  } else if (decision === "compliance_rejected"){
+    replySubject = "Re: " + (item.subject || "") + " — supporting documents needed";
+    replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for your submission. To process this " + (parsed.doc_type||"claim") + " for MYR " + total + ", we need the following items added/corrected:\n\n" + issues.map(i => "  • " + i).join("\n") + "\n\nOnce you reply with the corrected/additional documents, we'll process it. Until then, no bill has been created in Xero.\n\nBest regards,\nCTG Finance AP";
+  }
+  if (replySubject) aiVerdict.suggested_reply_subject = replySubject;
+  if (replyBody) aiVerdict.suggested_reply_body = replyBody;
+
+  await sb.from("portal_ap_inbox").update({
+    status: nextStatus,
+    ai_verdict: aiVerdict,
+    status_detail: (decision + " — " + reasoning).slice(0, 400),
+    reply_subject: replySubject,
+    reply_body: replyBody,
+  }).eq("id", inboxId);
+
+  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"v1", cap, gl_unmapped: unmappedLines });
+
+  // ── Step 7: take action automatically per decision ────────────────
+  if (decision === "auto_authorised"){
+    try {
+      await apAutoPostBill(inboxId, item, parsed, enrichedLines);
+    } catch(e){
+      await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:("auto-post failed: " + String(e).slice(0,200)) }).eq("id", inboxId);
+      await logDecision(inboxId, "auto_post_failed", String(e).slice(0,500));
+    }
+  } else if ((decision === "duplicate_rejected" || decision === "compliance_rejected") && route.auto_reply_when_rejected !== false){
+    try {
+      await apAutoReply(inboxId, item, replySubject, replyBody, route);
+    } catch(e){
+      await sb.from("portal_ap_inbox").update({ status_detail:("auto-reply failed: " + String(e).slice(0,200)) }).eq("id", inboxId);
+      await logDecision(inboxId, "auto_reply_failed", String(e).slice(0,500));
+    }
+  }
+}
+
+async function logDecision(inboxId, decision, reasoning, dupOf, ruleVersions){
+  try {
+    await sb.from("portal_ap_decisions").insert({
+      inbox_id: inboxId, decision, reasoning: String(reasoning||"").slice(0,2000),
+      duplicate_of: dupOf || null, rule_versions: ruleVersions || null,
+    });
+  } catch(_e){}
+}
+
+// Auto-post the bill to Xero as AUTHORISED, attach source files, update status.
+async function apAutoPostBill(inboxId, item, verdict, lines){
+  const vendor = verdict.vendor_name || item.from_name || item.from_email || "Unknown";
+  const access = await xeroAccessToken();
+  const cid = await resolveContact(item.tenant_id, vendor);
+  const now = new Date(Date.now() + 8*3600*1000);
+  const today = now.toISOString().slice(0,10);
+  const inv = {
+    Type:"ACCPAY",
+    Contact: cid ? { ContactID: cid } : { Name: String(vendor).slice(0,500) },
+    Date: verdict.invoice_date || today,
+    DueDate: verdict.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10),
+    Status: "AUTHORISED",
+    LineAmountTypes: "Exclusive",
+    LineItems: lines.map((l)=>({
+      Description: String(l.description||"Item").slice(0,4000),
+      Quantity: Number(l.quantity)||1,
+      UnitAmount: Number(l.unit_amount)||0,
+      AccountCode: l.account_code,
+    })),
+  };
+  if (verdict.invoice_no) inv.InvoiceNumber = String(verdict.invoice_no).slice(0,255);
+  if (verdict.currency) inv.CurrencyCode = String(verdict.currency);
+  const idem = await sha256Hex(JSON.stringify(inv) + "|inbox:" + inboxId + "|auto");
+  const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", {
+    method:"POST",
+    headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem },
+    body: JSON.stringify({ Invoices:[inv] }),
+  });
+  const out = await r.json();
+  const iv = (out.Invoices||[])[0] || {};
+  if (!r.ok && !iv.InvoiceID) throw new Error(out.Detail || out.Message || JSON.stringify(out).slice(0,400));
+  if (iv.HasErrors) throw new Error((iv.ValidationErrors||[]).map((e)=>e.Message).join("; "));
+
+  await sb.from("portal_ap_inbox").update({
+    status:"posted",
+    xero_invoice_id: iv.InvoiceID,
+    xero_invoice_number: iv.InvoiceNumber,
+    posted_at: new Date().toISOString(),
+  }).eq("id", inboxId);
+
+  // Attach source files to the Xero invoice (best-effort)
+  if (item.attachments && Array.isArray(item.attachments)){
+    for (const a of item.attachments){
+      try {
+        const { data: fileData } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
+        if (fileData){
+          const buf = await fileData.arrayBuffer();
+          await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + iv.InvoiceID + "/Attachments/" + encodeURIComponent(a.name), {
+            method:"POST",
+            headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type": a.mime||"application/octet-stream" },
+            body: buf,
+          });
+        }
+      } catch(_e){}
+    }
+  }
+  await logDecision(inboxId, "auto_posted", "Posted to Xero as " + iv.InvoiceNumber + " (" + iv.InvoiceID + ")");
+}
+
+// Auto-reply via Gmail SMTP (preferred) or Resend.
+async function apAutoReply(inboxId, item, subject, body, route){
+  if (!subject || !body) return;
+  const gmailUser = Deno.env.get("GMAIL_USER");
+  const gmailPass = Deno.env.get("GMAIL_APP_PASSWORD");
+  const resendKey = Deno.env.get("RESEND_API_KEY");
+  const fromEmail = (route && route.reply_from_email) || gmailUser || "ap@ctgfinance.local";
+  const fromName  = (route && route.reply_from_name)  || "CTG Finance AP";
+  const toEmail   = item.from_email;
+  const inReplyTo = item.message_id || "";
+
+  if (gmailUser && gmailPass){
+    let smtpClient: any = null;
+    try {
+      const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
+      smtpClient = new SMTPClient({ connection:{ hostname:"smtp.gmail.com", port:465, tls:true, auth:{ username: gmailUser, password: gmailPass } } });
+      const headers: any = {};
+      if (inReplyTo) { headers["In-Reply-To"] = inReplyTo; headers["References"] = inReplyTo; }
+      await smtpClient.send({ from: fromName + " <" + gmailUser + ">", to: toEmail, subject, content: body, headers });
+    } finally {
+      if (smtpClient){ try { await smtpClient.close(); } catch(_e){} }
+    }
+  } else if (resendKey){
+    const r = await fetch("https://api.resend.com/emails", {
+      method:"POST",
+      headers:{ "Authorization":"Bearer "+resendKey, "Content-Type":"application/json" },
+      body: JSON.stringify({ from: fromName + " <" + fromEmail + ">", to:[toEmail], subject, text: body, headers: inReplyTo ? { "In-Reply-To": inReplyTo, "References": inReplyTo } : undefined }),
+    });
+    if (!r.ok){ throw new Error("Resend " + r.status + " " + (await r.text()).slice(0,300)); }
+  } else {
+    throw new Error("No mail transport configured (need GMAIL_USER+GMAIL_APP_PASSWORD or RESEND_API_KEY)");
+  }
+
+  await sb.from("portal_ap_inbox").update({
+    status: (await getStatus(inboxId)) === "duplicate_rejected" ? "duplicate_rejected_replied" : "reply_sent",
+    reply_sent_at: new Date().toISOString(),
+  }).eq("id", inboxId);
+  await logDecision(inboxId, "auto_replied", "Replied to " + toEmail);
+}
+
+async function getStatus(inboxId){
+  const { data } = await sb.from("portal_ap_inbox").select("status").eq("id", inboxId).single();
+  return data ? data.status : null;
 }
 
 async function applyInvoiceBatch(tenant_id, arr){
@@ -1013,9 +1297,20 @@ Deno.serve(async (req)=>{
       }
       const { data: inserted } = await sb.from("portal_ap_inbox").insert({ tenant_id: route.tenant_id, message_id: messageId, from_email: fromEmail, from_name: fromName, to_email: toEmail, subject, text_body: textBody, html_body: htmlBody, attachments: storedAtts, raw_payload: p, status: "received" }).select("id").single();
       const inboxId = inserted && inserted.id;
+      // Hydrate full settings for the AP automation pipeline (duplicate-check window, 4-item gate, auto-post toggle, reply identity).
+      const { data: fullSettings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", route.tenant_id).maybeSingle();
+      const fullRoute = {
+        ...route,
+        duplicate_check_days: fullSettings?.duplicate_check_days ?? 90,
+        require_4item_reimbursement: fullSettings?.require_4item_reimbursement ?? true,
+        auto_post_when_compliant: fullSettings?.auto_post_when_compliant ?? true,
+        auto_reply_when_rejected: fullSettings?.auto_reply_when_rejected ?? true,
+        reply_from_email: fullSettings?.reply_from_email || null,
+        reply_from_name: fullSettings?.reply_from_name || null,
+      };
       // Trigger AI processing in background.
       if (inboxId) {
-        const work = (async ()=>{ try { await processApEmail(inboxId, route); } catch(_e){} })();
+        const work = (async ()=>{ try { await processApEmail(inboxId, fullRoute); } catch(_e){} })();
         if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       }
       return j({ ok:true, id: inboxId });
@@ -1026,7 +1321,18 @@ Deno.serve(async (req)=>{
       const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
       if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
       const { data: settings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", getRes.item.tenant_id).single();
-      const route = { tenant_id: getRes.item.tenant_id, default_gl_account: settings?.default_gl_account || "610-1000", max_auto_post_amount: settings?.max_auto_post_amount || 1000, ai_model: settings?.ai_model || "claude-haiku-4-5-20251001" };
+      const route = {
+        tenant_id: getRes.item.tenant_id,
+        default_gl_account: settings?.default_gl_account || "904-2200",
+        max_auto_post_amount: settings?.max_auto_post_amount || 1000,
+        ai_model: settings?.ai_model || "claude-haiku-4-5-20251001",
+        duplicate_check_days: settings?.duplicate_check_days ?? 90,
+        require_4item_reimbursement: settings?.require_4item_reimbursement ?? true,
+        auto_post_when_compliant: settings?.auto_post_when_compliant ?? true,
+        auto_reply_when_rejected: settings?.auto_reply_when_rejected ?? true,
+        reply_from_email: settings?.reply_from_email || null,
+        reply_from_name: settings?.reply_from_name || null,
+      };
       try { await processApEmail(Number(b.id), route); return j({ ok:true }); }
       catch(e){ return j({ ok:false, error: String(e).slice(0,400) }); }
     }
@@ -1062,6 +1368,44 @@ Deno.serve(async (req)=>{
         for (const a of item.attachments){ try { const { data: fileData } = await sb.storage.from("portal-ap-uploads").download(a.storage_path); if (fileData){ const buf = await fileData.arrayBuffer(); await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + iv.InvoiceID + "/Attachments/" + encodeURIComponent(a.name), { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type": a.mime||"application/octet-stream" }, body: buf }); } } catch(_e){} }
       }
       return j({ ok:true, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber });
+    }
+    if (api === "ap_decision_log") {
+      // Show what the rule engine decided about an inbox item (audit trail).
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { data } = await sb.from("portal_ap_decisions").select("*").eq("inbox_id", Number(b.id)).order("created_at", { ascending:false }).limit(20);
+      return j({ ok:true, decisions: data || [] });
+    }
+    if (api === "ap_rules_list") {
+      // GL coding pattern rules — admin can review + add patterns to teach the engine.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_gl_rules").select("*").eq("enabled", true).order("priority", { ascending:false }).order("id");
+      const filtered = b.tenant ? (data||[]).filter((r)=>r.tenant_id === b.tenant) : (data||[]);
+      return j({ ok:true, rules: filtered });
+    }
+    if (api === "ap_rule_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.tenant || !Array.isArray(b.keywords) || !b.keywords.length || !b.account_code) return j({ ok:false, error:"tenant, keywords[], account_code required" });
+      const row = { tenant_id: String(b.tenant), pattern_keywords: b.keywords.map((k)=>String(k).toLowerCase().trim()).filter(Boolean), account_code: String(b.account_code), priority: Number(b.priority)||100, notes: b.notes||null, updated_at: new Date().toISOString() };
+      if (b.id){
+        const { error } = await sb.from("portal_gl_rules").update(row).eq("id", Number(b.id));
+        if (error) return j({ ok:false, error: error.message });
+        await logAudit(me, "ap_rule_update", String(b.id), { account_code: b.account_code });
+        return j({ ok:true, id: b.id });
+      } else {
+        const { data, error } = await sb.from("portal_gl_rules").insert(row).select("id").single();
+        if (error) return j({ ok:false, error: error.message });
+        await logAudit(me, "ap_rule_create", String(data.id), { account_code: b.account_code, keywords: b.keywords });
+        return j({ ok:true, id: data.id });
+      }
+    }
+    if (api === "ap_rule_delete") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { error } = await sb.from("portal_gl_rules").update({ enabled: false }).eq("id", Number(b.id));
+      if (error) return j({ ok:false, error: error.message });
+      await logAudit(me, "ap_rule_delete", String(b.id), {});
+      return j({ ok:true });
     }
     if (api === "ap_reject") {
       // Mark an inbox item as rejected — no Xero post, no reply. Audit logged.
