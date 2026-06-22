@@ -4274,152 +4274,275 @@ async function ocrPostBill(){
 }
 
 /* ── 📧 AP Email Agent ── */
-let AP_SETTINGS=null, AP_INBOX=[], AP_ACTIVE_ID=null, AP_DETAIL=null, AP_FILTER_STATUS='', AP_FILTER_TENANT='';
-const AP_INBOUND_BASE_DOMAIN = 'parse.ctgfinance.com';  // Postmark/Resend inbound domain — change in DNS setup
+let AP_SETTINGS=null, AP_INBOX=[], AP_ACTIVE_ID=null, AP_DETAIL=null, AP_DECISIONS=[], AP_RULES=[], AP_FILTER_STATUS='', AP_FILTER_TENANT='', AP_RULES_TENANT='', AP_SHOW_RULES=false, AP_SHOW_SETTINGS=false;
+const AP_INBOUND_MAILBOX = 'ssc.ctgfinance';  // central Gmail; routes per-company via +slug plus-addressing
+// status -> [label, colour]. Colours map to rgba+css var in apStatusPill().
 const AP_STATUS_LABELS = {
-  received: ['Received','muted'], processing: ['Processing','sky-soft'],
-  needs_review: ['Needs review','amber'], reply_drafted: ['Reply drafted','sky-soft'],
-  reply_sent: ['Reply sent','green-soft'], auto_posted: ['Auto-posted','green-soft'],
-  posted: ['Posted','green-soft'], rejected: ['Rejected','muted']
+  received:['Received','muted'], processing:['Processing…','sky'],
+  needs_review:['⚠ Needs review','amber'],
+  reply_drafted:['Reply ready','sky'],
+  reply_sent:['✉ Auto-replied','green'],
+  duplicate_rejected:['🚫 Duplicate','red'],
+  duplicate_rejected_replied:['🚫 Dup — replied','red'],
+  compliance_rejected:['❌ Missing docs','red'],
+  auto_posting:['Posting…','sky'],
+  auto_posted:['✅ Auto-posted','green'],
+  posted:['✅ Posted','green'],
+  rejected:['Rejected','muted']
 };
+const AP_COLOR_RGB = { green:'126,224,160', amber:'245,158,11', red:'239,68,68', sky:'91,155,213', muted:'107,122,147' };
+const AP_COLOR_VAR = { green:'--green-soft', amber:'--amber', red:'--red-soft', sky:'--sky-soft', muted:'--muted' };
 async function renderAp(){
   spin('ap');
   try {
-    const [sR, iR] = await Promise.all([ call({api:'ap_settings_get'}), call({api:'ap_inbox_list', tenant: AP_FILTER_TENANT||undefined, status: AP_FILTER_STATUS||undefined, limit:100}) ]);
+    const calls = [ call({api:'ap_settings_get'}), call({api:'ap_inbox_list', tenant: AP_FILTER_TENANT||undefined, status: AP_FILTER_STATUS||undefined, limit:100}) ];
+    if(AP_SHOW_RULES) calls.push(call({api:'ap_rules_list', tenant: AP_RULES_TENANT||undefined}));
+    const res = await Promise.all(calls);
+    const sR=res[0], iR=res[1], rR=res[2];
     if(!sR || !sR.ok){ document.getElementById('ap').innerHTML='<div class="empty"><div class="empty-ico">🔒</div><div>'+esc(sR&&sR.error||'Failed')+'</div></div>'; return; }
     AP_SETTINGS = sR.settings||[];
     AP_INBOX = (iR&&iR.ok) ? (iR.items||[]) : [];
+    if(rR) AP_RULES = (rR&&rR.ok) ? (rR.rules||[]) : [];
     apRender();
     loaded.ap = true;
   } catch(e){ document.getElementById('ap').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
 }
 function apStatusPill(s){
   const m = AP_STATUS_LABELS[s] || [s, 'muted'];
-  return '<span class="pill" style="font-size:10px;background:rgba('+(m[1]==='green-soft'?'126,224,160':m[1]==='amber'?'245,158,11':m[1]==='sky-soft'?'91,155,213':'107,122,147')+',.16);color:var(--'+m[1]+')">'+esc(m[0])+'</span>';
+  const rgb = AP_COLOR_RGB[m[1]]||AP_COLOR_RGB.muted, v = AP_COLOR_VAR[m[1]]||'--muted';
+  return '<span class="pill" style="font-size:10px;background:rgba('+rgb+',.16);color:var('+v+')">'+esc(m[0])+'</span>';
+}
+// Automation stat card
+function apStat(n, label, color, ico){
+  const rgb = AP_COLOR_RGB[color]||AP_COLOR_RGB.muted, v = AP_COLOR_VAR[color]||'--muted';
+  return '<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">'+
+    '<div style="font-size:22px;font-weight:700;color:var('+v+');line-height:1">'+ico+' '+n+'</div>'+
+    '<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">'+esc(label)+'</div></div>';
 }
 function apRender(){
-  // Settings panel (per-tenant routing)
-  const settingsRows = AP_SETTINGS.map(s=>{
-    const enabled = s.enabled;
-    const slug = s.routing_slug || '';
-    const inboundEmail = slug ? ('ap-'+slug+'@'+AP_INBOUND_BASE_DOMAIN) : '— set a slug to get an inbound email —';
-    return '<tr><td><b>'+esc(s.tenant_name||'')+'</b></td>'+
-      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="routing_slug" value="'+esc(slug)+'" placeholder="e.g. ctgdrsmile" style="width:140px;font-size:12px;padding:5px 8px"/></td>'+
-      '<td><code style="font-size:11px;color:var(--coral-soft);background:var(--panel-2);padding:3px 7px;border-radius:5px">'+esc(inboundEmail)+'</code>'+(slug?'<button class="btn" style="padding:2px 7px;font-size:10px;margin-left:6px" onclick="navigator.clipboard.writeText(\''+esc(inboundEmail)+'\');toast(\'copied\')">📋</button>':'')+'</td>'+
-      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="default_gl_account" value="'+esc(s.default_gl_account||'610-1000')+'" style="width:100px;font-size:12px;padding:5px 8px"/></td>'+
-      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="max_auto_post_amount" type="number" value="'+esc(s.max_auto_post_amount||1000)+'" style="width:100px;font-size:12px;padding:5px 8px"/></td>'+
-      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="reply_from_email" value="'+esc(s.reply_from_email||'')+'" placeholder="ap@example.com" style="width:160px;font-size:12px;padding:5px 8px"/></td>'+
-      '<td><label style="display:flex;align-items:center;gap:6px;font-size:11px"><input data-ten="'+esc(s.tenant_id)+'" data-k="enabled" type="checkbox"'+(enabled?' checked':'')+' style="width:auto"/>Enabled</label></td>'+
-      '<td><button class="btn p" style="padding:4px 10px;font-size:11px" onclick="apSaveSettings(\''+esc(s.tenant_id)+'\')">Save</button></td></tr>';
-  }).join('');
-  // Filters
+  // ── Automation stats (computed from loaded inbox) ──
+  const cnt = {posted:0, replied:0, rejected:0, review:0, total:AP_INBOX.length};
+  AP_INBOX.forEach(m=>{
+    const s=m.status||'';
+    if(s==='posted'||s==='auto_posted') cnt.posted++;
+    else if(s==='reply_sent'||s==='duplicate_rejected_replied') cnt.replied++;
+    else if(s==='duplicate_rejected'||s==='compliance_rejected'||s==='rejected') cnt.rejected++;
+    else if(s==='needs_review') cnt.review++;
+  });
+  const handled = cnt.posted + cnt.replied + cnt.rejected;
+  const minsSaved = handled * 6;  // ~6 min of manual work saved per fully-auto item
+  const statBanner = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'+
+    apStat(cnt.posted,'Auto-posted to Xero','green','✅')+
+    apStat(cnt.replied,'Auto-replied','sky','✉')+
+    apStat(cnt.rejected,'Auto-rejected','red','🚫')+
+    apStat(cnt.review,'Needs your review','amber','⚠')+
+    apStat((minsSaved>=60?(minsSaved/60).toFixed(1)+'h':minsSaved+'m'),'Manual work saved','muted','⏱')+
+  '</div>';
+  // ── Filters ──
   const tenantOpts='<option value="">All companies</option>'+(COMPANIES||[]).map(c=>'<option value="'+esc(c.tenant_id)+'"'+(AP_FILTER_TENANT===c.tenant_id?' selected':'')+'>'+esc(c.tenant_name)+'</option>').join('');
   const statusOpts='<option value="">All statuses</option>'+Object.keys(AP_STATUS_LABELS).map(s=>'<option value="'+esc(s)+'"'+(AP_FILTER_STATUS===s?' selected':'')+'>'+esc(AP_STATUS_LABELS[s][0])+'</option>').join('');
-  // Inbox list
+  // ── Inbox list ──
   const inboxRows = AP_INBOX.map(m=>{
     const when = new Date(m.received_at).toLocaleString('en-MY',{timeZone:'Asia/Kuala_Lumpur',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
     const attCount = (m.attachments||[]).length;
     const aiTotal = m.ai_verdict && m.ai_verdict.total;
+    const dt = m.ai_verdict && m.ai_verdict.doc_type;
+    const dtBadge = dt==='reimbursement'?'<span class="muted" style="font-size:10px">🧾 claim</span>':dt==='invoice'?'<span class="muted" style="font-size:10px">📄 invoice</span>':'';
     return '<tr onclick="apOpen('+m.id+')" style="cursor:pointer'+(AP_ACTIVE_ID===m.id?';background:rgba(232,93,60,.06)':'')+'">'+
       '<td>'+apStatusPill(m.status||'received')+'</td>'+
       '<td class="muted" style="font-size:11.5px;white-space:nowrap">'+esc(when)+'</td>'+
       '<td><b style="font-size:12.5px">'+esc(m.from_name||m.from_email||'')+'</b><div class="muted" style="font-size:10.5px">'+esc(m.from_email||'')+'</div></td>'+
-      '<td>'+esc(m.subject||'(no subject)')+(attCount?'<span class="muted" style="font-size:10.5px;margin-left:6px">📎 '+attCount+'</span>':'')+'</td>'+
+      '<td>'+esc(m.subject||'(no subject)')+(attCount?'<span class="muted" style="font-size:10.5px;margin-left:6px">📎 '+attCount+'</span>':'')+' '+dtBadge+'</td>'+
       '<td class="muted" style="font-size:11.5px">'+esc(m.tenant_name||'')+'</td>'+
       '<td class="amt">'+(aiTotal?M(aiTotal):'<span class="muted">—</span>')+'</td>'+
     '</tr>';
-  }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No emails in this queue.</td></tr>';
-  // Detail pane (if a row is selected, render AP_DETAIL)
-  const detail = AP_DETAIL ? apRenderDetail() : '<div class="empty" style="padding:36px"><div class="empty-ico">📨</div><div style="font-size:13px;margin-top:8px">Click an email above to review the AI verdict, edit the draft bill, or send a reply.</div></div>';
+  }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No emails in this queue yet. The hourly Auto-Bookkeeping agent will fill this as it processes inbound mail.</td></tr>';
+  const detail = AP_DETAIL ? apRenderDetail() : '<div class="empty" style="padding:36px"><div class="empty-ico">📨</div><div style="font-size:13px;margin-top:8px">Click an email above to review the AI decision, compliance checklist, and (if it needs your review) post or reply.</div></div>';
   document.getElementById('ap').innerHTML=
-    '<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>⚙ Per-company AP inbox settings</h3></div>'+
-      '<div class="muted" style="font-size:12px;line-height:1.6;margin-bottom:12px">Each company gets a unique inbound email. Set up a forwarding rule from your real AP inbox (e.g. <i>ap@yourcompany.com</i>) to the generated address — every email becomes an AP-Inbox item, AI verifies + drafts a Xero DRAFT bill, you approve.</div>'+
-      '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead><tr><th>Company</th><th>Routing slug</th><th>Inbound email</th><th>Default GL</th><th class="amt">Auto-post max (RM)</th><th>Reply from</th><th>Status</th><th></th></tr></thead><tbody>'+settingsRows+'</tbody></table></div>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6"><b>One-time external setup:</b> point MX records for <code style="color:var(--coral-soft)">'+esc(AP_INBOUND_BASE_DOMAIN)+'</code> to Postmark or Resend Inbound. Set the webhook URL to <code style="word-break:break-all;color:var(--coral-soft)">'+esc(API)+'</code> with body <code style="color:var(--coral-soft)">{"api":"ap_inbound","payload":...}</code> and header <code style="color:var(--coral-soft)">x-ap-inbound-secret: &lt;shared secret stored in portal_secrets.ap_inbound&gt;</code>. Also set Supabase Edge secrets <code style="color:var(--coral-soft)">ANTHROPIC_API_KEY</code> (Claude) and <code style="color:var(--coral-soft)">RESEND_API_KEY</code> (replies).</div>'+
-    '</div>'+
-    '<div class="panel"><div class="panel-hd" style="flex-wrap:wrap"><h3>📧 Inbox</h3>'+
+    statBanner+
+    '<div class="panel"><div class="panel-hd" style="flex-wrap:wrap"><h3>📧 AP Inbox <span class="muted" style="font-size:11px;font-weight:400">— fully automated, you only touch ⚠ items</span></h3>'+
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
         '<select id="ap_filter_tenant" onchange="AP_FILTER_TENANT=this.value;renderAp()" style="padding:5px 9px;font-size:12px">'+tenantOpts+'</select>'+
         '<select id="ap_filter_status" onchange="AP_FILTER_STATUS=this.value;renderAp()" style="padding:5px 9px;font-size:12px">'+statusOpts+'</select>'+
-        '<button class="btn sm" onclick="renderAp()">↻</button>'+
+        '<button class="btn sm" onclick="renderAp()">↻ Refresh</button>'+
       '</div></div>'+
       '<div class="tbl-wrap" style="margin-bottom:14px"><table class="bigtable"><thead><tr><th>Status</th><th>Received</th><th>From</th><th>Subject</th><th>Company</th><th class="amt">AI total</th></tr></thead><tbody>'+inboxRows+'</tbody></table></div>'+
       detail+
+    '</div>'+
+    // ── Collapsible: GL coding rules ──
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd" style="cursor:pointer" onclick="AP_SHOW_RULES=!AP_SHOW_RULES;renderAp()"><h3>🗺 GL coding rules <span class="muted" style="font-size:11px;font-weight:400">— teach the AI which Chart-of-Account to use</span></h3><button class="btn sm">'+(AP_SHOW_RULES?'Hide ▲':'Show ▼')+'</button></div>'+
+      (AP_SHOW_RULES?apRenderRules():'')+
+    '</div>'+
+    // ── Collapsible: per-company settings ──
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd" style="cursor:pointer" onclick="AP_SHOW_SETTINGS=!AP_SHOW_SETTINGS;renderAp()"><h3>⚙ Automation settings <span class="muted" style="font-size:11px;font-weight:400">— routing, auto-post, auto-reply, caps</span></h3><button class="btn sm">'+(AP_SHOW_SETTINGS?'Hide ▲':'Show ▼')+'</button></div>'+
+      (AP_SHOW_SETTINGS?apRenderSettings():'')+
     '</div>';
+}
+function apRenderSettings(){
+  const rows = AP_SETTINGS.map(s=>{
+    const slug = s.routing_slug || '';
+    const inboundEmail = slug ? (AP_INBOUND_MAILBOX+'+'+slug+'@gmail.com') : '— set a slug —';
+    const noCap = Number(s.max_auto_post_amount)>=99999999;
+    return '<tr><td><b>'+esc(s.tenant_name||'')+'</b></td>'+
+      '<td><code style="font-size:11px;color:var(--coral-soft);background:var(--panel-2);padding:3px 7px;border-radius:5px">'+esc(inboundEmail)+'</code>'+(slug?'<button class="btn" style="padding:2px 7px;font-size:10px;margin-left:6px" onclick="navigator.clipboard.writeText(\''+esc(inboundEmail)+'\');toast(\'copied\')">📋</button>':'')+'</td>'+
+      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="max_auto_post_amount" type="number" value="'+esc(s.max_auto_post_amount||1000)+'" style="width:110px;font-size:12px;padding:5px 8px"/>'+(noCap?'<div class="muted" style="font-size:9.5px">no cap</div>':'')+'</td>'+
+      '<td style="text-align:center"><input data-ten="'+esc(s.tenant_id)+'" data-k="auto_post_when_compliant" type="checkbox"'+(s.auto_post_when_compliant!==false?' checked':'')+' style="width:auto"/></td>'+
+      '<td style="text-align:center"><input data-ten="'+esc(s.tenant_id)+'" data-k="auto_reply_when_rejected" type="checkbox"'+(s.auto_reply_when_rejected!==false?' checked':'')+' style="width:auto"/></td>'+
+      '<td style="text-align:center"><input data-ten="'+esc(s.tenant_id)+'" data-k="require_4item_reimbursement" type="checkbox"'+(s.require_4item_reimbursement!==false?' checked':'')+' style="width:auto"/></td>'+
+      '<td><input data-ten="'+esc(s.tenant_id)+'" data-k="duplicate_check_days" type="number" value="'+esc(s.duplicate_check_days||90)+'" style="width:60px;font-size:12px;padding:5px 8px"/></td>'+
+      '<td style="text-align:center"><input data-ten="'+esc(s.tenant_id)+'" data-k="enabled" type="checkbox"'+(s.enabled?' checked':'')+' style="width:auto"/></td>'+
+      '<td><button class="btn p" style="padding:4px 10px;font-size:11px" onclick="apSaveSettings(\''+esc(s.tenant_id)+'\')">Save</button></td></tr>';
+  }).join('');
+  return '<div style="padding:4px 0 0">'+
+    '<div class="muted" style="font-size:12px;line-height:1.6;margin-bottom:12px">Inbound mail is routed per company using Gmail plus-addressing on <code style="color:var(--coral-soft)">'+esc(AP_INBOUND_MAILBOX)+'@gmail.com</code>. The hourly Auto-Bookkeeping agent forwards each email to <code style="color:var(--coral-soft)">'+esc(AP_INBOUND_MAILBOX)+'+&lt;slug&gt;@gmail.com</code>. <b>Auto-post</b> = posts to Xero when compliant. <b>Auto-reply</b> = emails the sender on duplicate/missing-docs. <b>4-item gate</b> = reimbursements need form + 2 signatures + invoices + payment proof. Set <b>Auto-post max</b> to a huge number (e.g. 99999999) for no cap.</div>'+
+    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead><tr><th>Company</th><th>Inbound email</th><th class="amt">Auto-post max</th><th title="Post to Xero automatically when compliant">Auto-post</th><th title="Auto-email sender on rejection">Auto-reply</th><th title="Require claim form + 2 signatures + invoices + payment proof">4-item gate</th><th>Dup days</th><th>On</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6"><b>One-time external setup:</b> set Supabase Edge secret <code style="color:var(--coral-soft)">ANTHROPIC_API_KEY</code> (so Claude can read invoices) and either <code style="color:var(--coral-soft)">GMAIL_USER</code>+<code style="color:var(--coral-soft)">GMAIL_APP_PASSWORD</code> or <code style="color:var(--coral-soft)">RESEND_API_KEY</code> (so it can send replies).</div>'+
+  '</div>';
+}
+function apRenderRules(){
+  const tenantOpts='<option value="">All companies</option>'+(COMPANIES||[]).map(c=>'<option value="'+esc(c.tenant_id)+'"'+(AP_RULES_TENANT===c.tenant_id?' selected':'')+'>'+esc(c.tenant_name)+'</option>').join('');
+  const nameByTenant={}; (COMPANIES||[]).forEach(c=>nameByTenant[c.tenant_id]=c.tenant_name);
+  const rows = (AP_RULES||[]).map(r=>'<tr>'+
+    '<td class="muted" style="font-size:11px">'+esc((nameByTenant[r.tenant_id]||r.tenant_id||'').slice(0,18))+'</td>'+
+    '<td>'+(r.pattern_keywords||[]).map(k=>'<span class="pill" style="font-size:10px;background:var(--panel-2);margin:1px">'+esc(k)+'</span>').join(' ')+'</td>'+
+    '<td><code style="font-size:12px;color:var(--coral-soft)">'+esc(r.account_code)+'</code></td>'+
+    '<td class="muted" style="font-size:11px">'+esc(r.notes||'')+'</td>'+
+    '<td class="muted" style="font-size:11px;text-align:center">'+esc(r.priority||100)+'</td>'+
+    '<td><button class="btn d" style="padding:3px 8px;font-size:10px" onclick="apDeleteRule('+r.id+')">✕</button></td>'+
+  '</tr>').join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No rules loaded. Pick a company filter or add one below.</td></tr>';
+  return '<div style="padding:4px 0 0">'+
+    '<div class="muted" style="font-size:12px;line-height:1.6;margin-bottom:10px">When a bill line matches any keyword, the AI auto-assigns that Chart-of-Account code. Highest priority wins. This is how the agent codes the right GL without you — and you teach it new patterns here or directly from a reviewed bill.</div>'+
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><select id="ap_rules_tenant_filter" onchange="AP_RULES_TENANT=this.value;renderAp()" style="padding:5px 9px;font-size:12px">'+tenantOpts+'</select><button class="btn sm" onclick="renderAp()">↻</button></div>'+
+    '<div class="tbl-wrap" style="margin-bottom:14px"><table class="bigtable" style="font-size:12px"><thead><tr><th>Company</th><th>Keywords (any match)</th><th>GL code</th><th>Notes</th><th>Prio</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    // Add-rule form
+    '<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:10px;padding:14px">'+
+      '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">➕ Add a coding rule</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end">'+
+        '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px">Company</label><select id="ap_rule_tenant" style="width:100%;font-size:12px">'+(COMPANIES||[]).map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('')+'</select></div>'+
+        '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px">Keywords (comma-separated)</label><input id="ap_rule_keywords" placeholder="e.g. grab, taxi, e-hailing" style="width:100%;font-size:12px"/></div>'+
+        '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px">GL code</label><input id="ap_rule_code" placeholder="e.g. 903-0100" style="width:100%;font-size:12px"/></div>'+
+        '<div><label style="font-size:10px;color:var(--muted);display:block;margin-bottom:3px">Priority</label><input id="ap_rule_prio" type="number" value="200" style="width:100%;font-size:12px"/></div>'+
+        '<div><button class="btn p" id="ap_rule_add_btn" onclick="apAddRule()" style="width:100%">Add rule</button></div>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
 }
 function apRenderDetail(){
   const d = AP_DETAIL || {};
   const ai = d.ai_verdict || {};
   const issues = (ai.issues||[]);
+  const status = d.status || 'received';
+  const dup = ai.server_duplicate;
+  const decision = ai.server_decision;
+  const reasoning = ai.server_reasoning;
+  const docType = ai.doc_type;
   function fld(label, key, val, type){
     return '<div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px">'+esc(label)+'</label><input type="'+(type||'text')+'" data-bk="'+esc(key)+'" value="'+esc(val==null?'':val)+'" style="width:100%"/></div>';
   }
-  const billLines = (ai.line_items||[]).map((l,i)=>'<tr><td><input data-li-i="'+i+'" data-li-k="description" value="'+esc(l.description||'')+'" style="width:100%;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="quantity" type="number" value="'+esc(l.quantity||1)+'" style="width:60px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="unit_amount" type="number" step="0.01" value="'+esc(l.unit_amount||0)+'" style="width:100px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="account_code" value="'+esc(l.account_code||ai.suggested_gl_account||'610-1000')+'" style="width:110px;font-size:12px"/></td></tr>').join('');
+  function chk(ok,label){ return '<div style="display:flex;align-items:center;gap:7px;font-size:12px;padding:2px 0"><span style="color:var('+(ok?'--green-soft':'--red-soft')+');font-weight:700;width:14px">'+(ok?'✓':'✗')+'</span><span style="color:var('+(ok?'--text':'--red-soft')+')">'+esc(label)+'</span></div>'; }
+  const billLines = (ai.line_items||[]).map((l,i)=>'<tr><td><input data-li-i="'+i+'" data-li-k="description" value="'+esc(l.description||'')+'" style="width:100%;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="quantity" type="number" value="'+esc(l.quantity||1)+'" style="width:55px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="unit_amount" type="number" step="0.01" value="'+esc(l.unit_amount||0)+'" style="width:90px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="account_code" value="'+esc(l.account_code||ai.suggested_gl_account||'904-2200')+'" style="width:95px;font-size:12px"/>'+(l.gl_matched_keyword?'<div class="muted" style="font-size:9px">via "'+esc(l.gl_matched_keyword)+'"</div>':'<div style="font-size:9px;color:var(--amber)">no rule — set manually</div>')+'</td></tr>').join('');
   const atts = (d.attachments||[]).map(a=>'<a href="'+esc(a.download_url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 11px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px;font-size:12px;color:var(--text);text-decoration:none;margin:4px 6px 4px 0">📎 '+esc(a.name||'file')+' <span class="muted" style="font-size:10.5px">'+((a.size||0)/1024).toFixed(0)+' KB</span></a>').join('');
   const confidence = ai.confidence || 'medium';
   const confPill = confidence==='high'?'<span class="pill pill-green" style="font-size:10px">high confidence</span>':confidence==='low'?'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px">low confidence</span>':'<span class="pill" style="background:rgba(245,158,11,.16);color:var(--amber);font-size:10px">medium confidence</span>';
-  // Buttons depend on status
-  const status = d.status || 'received';
+  // Compliance checklist
+  let checklist='';
+  if(docType==='reimbursement'){
+    checklist='<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;margin-bottom:10px">'+
+      '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Reimbursement compliance (MFRS)</div>'+
+      chk(ai.reimb_has_claim_form,'Claim form present')+
+      chk(ai.reimb_claimant_signed,'Claimant signature')+
+      chk(ai.reimb_approver_signed,'Approver / manager signature')+
+      chk(ai.reimb_all_invoices_attached,'Formal invoice for every line item')+
+      chk(ai.reimb_payment_proof_attached,'Payment proof (card/bank receipt)')+
+      chk(ai.amount_consistent!==false,'Amounts match across documents')+
+      chk(ai.date_consistent!==false,'Dates consistent (one period)')+
+    '</div>';
+  } else if(docType==='invoice'){
+    checklist='<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;margin-bottom:10px">'+
+      '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Supplier invoice compliance (MFRS/SST)</div>'+
+      chk(ai.inv_is_formal,'Formal tax invoice (not receipt/quote)')+
+      chk(ai.inv_has_supplier_id,'Supplier SST / business reg no.')+
+      chk(ai.inv_bill_to_correct,'Bill-to is the correct Sdn Bhd')+
+      chk(ai.amount_consistent!==false,'Amounts match across documents')+
+    '</div>';
+  }
+  // Duplicate warning
+  const dupBox = dup ? '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:12px;margin-bottom:10px;color:var(--red-soft)"><b>🚫 Duplicate detected</b><div style="font-size:12px;margin-top:5px;color:var(--text)">Matches an existing bill <b>'+esc(dup.number||dup.invoice_id||'')+'</b> · '+esc(dup.inv_date||'')+' · RM '+esc(dup.total||'')+' · status <b>'+esc(dup.status||'')+'</b> (amount due RM '+esc(dup.amount_due||'0')+'). No new bill was created.</div></div>' : '';
+  // Decision summary
+  const decBox = decision ? '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px"><b>🤖 System decision:</b> '+apStatusPill(status)+'<div class="muted" style="margin-top:4px;line-height:1.5">'+esc(reasoning||'')+'</div></div>' : '';
+  // Decision log timeline
+  const logBox = (AP_DECISIONS&&AP_DECISIONS.length) ? '<details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--muted);cursor:pointer;text-transform:uppercase;letter-spacing:.05em">Decision audit log ('+AP_DECISIONS.length+')</summary><div style="margin-top:8px">'+AP_DECISIONS.map(x=>'<div style="font-size:11.5px;padding:5px 0;border-bottom:1px solid var(--panel-border)"><span class="muted">'+esc(new Date(x.created_at).toLocaleString('en-MY',{timeZone:'Asia/Kuala_Lumpur',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}))+'</span> · <b>'+esc(x.decision)+'</b>'+(x.reasoning?'<div class="muted" style="font-size:10.5px;margin-top:2px">'+esc(x.reasoning)+'</div>':'')+'</div>').join('')+'</div></details>' : '';
+  // Action availability
   const canPost = (status==='needs_review' || status==='auto_posted') && (ai.line_items||[]).length;
-  const canReply = (status==='reply_drafted' || status==='needs_review');
-  const canRerun = status!=='posted';
+  const canReply = (status==='reply_drafted' || status==='needs_review' || status==='compliance_rejected' || status==='duplicate_rejected');
+  const canRerun = status!=='posted' && status!=='auto_posted';
+  const isDone = (status==='posted'||status==='auto_posted'||status==='reply_sent'||status==='duplicate_rejected_replied'||status==='rejected');
   return '<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:18px;margin-top:14px">'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">'+
-    /* LEFT — original email */
+    /* LEFT — original email + attachments + compliance */
     '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Original email</div>'+
       '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;margin-bottom:10px">'+
         '<div style="font-size:12.5px"><b>From:</b> '+esc(d.from_name||'')+' &lt;'+esc(d.from_email||'')+'&gt;</div>'+
         '<div style="font-size:12.5px;margin:4px 0"><b>Subject:</b> '+esc(d.subject||'')+'</div>'+
-        '<div style="font-size:11.5px;color:var(--muted)">Received '+esc(new Date(d.received_at).toLocaleString('en-MY',{timeZone:'Asia/Kuala_Lumpur'}))+' MYT · Company: '+esc(d.tenant_name||d.tenant_id||'')+'</div>'+
+        '<div style="font-size:11.5px;color:var(--muted)">Received '+esc(new Date(d.received_at).toLocaleString('en-MY',{timeZone:'Asia/Kuala_Lumpur'}))+' MYT · '+esc(d.tenant_name||d.tenant_id||'')+(docType?' · '+esc(docType):'')+'</div>'+
       '</div>'+
-      '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;max-height:280px;overflow-y:auto;font-size:12.5px;white-space:pre-wrap;line-height:1.5">'+esc((d.text_body||d.html_body||'').slice(0,3000))+'</div>'+
-      (atts?'<div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Attachments</div>'+atts+'</div>':'')+
+      '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;max-height:200px;overflow-y:auto;font-size:12.5px;white-space:pre-wrap;line-height:1.5;margin-bottom:10px">'+esc((d.text_body||d.html_body||'').slice(0,3000))+'</div>'+
+      (atts?'<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Attachments</div>'+atts+'</div>':'')+
+      checklist+
     '</div>'+
-    /* RIGHT — AI verdict + bill draft / reply draft */
-    '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">AI verdict</div>'+confPill+apStatusPill(status)+'</div>'+
+    /* RIGHT — AI verdict + decision + bill / reply */
+    '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">AI verdict</div>'+confPill+apStatusPill(status)+'</div>'+
+      decBox+ dupBox+ logBox+
       (issues.length?'<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px"><b>⚠ Issues:</b> '+esc(issues.join(' · '))+'</div>':'')+
-      (canReply ? (
-        '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;margin-bottom:10px">'+
-          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Draft reply</div>'+
-          '<input id="ap_reply_subject" value="'+esc(d.reply_subject||'')+'" placeholder="Subject" style="width:100%;font-size:13px;margin-bottom:6px"/>'+
-          '<textarea id="ap_reply_body" rows="6" placeholder="Body" style="width:100%;font-size:13px">'+esc(d.reply_body||'')+'</textarea>'+
-          '<div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">'+
-            (canPost?'<button class="btn" onclick="apShowBillForm()">Show bill instead</button>':'')+
-            '<button class="btn p" onclick="apSendReply()">✉ Send reply</button>'+
-          '</div>'+
-        '</div>'
-      ) : '')+
-      (canPost ? (
-        '<div id="ap_bill_form" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px">'+
-          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Draft Bill (DRAFT, ACCPAY)</div>'+
-          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">'+
-            fld('Vendor','vendor_name',ai.vendor_name)+
-            fld('Invoice no.','invoice_no',ai.invoice_no)+
-            fld('Invoice date','invoice_date',ai.invoice_date,'date')+
-            fld('Due date','due_date',ai.due_date,'date')+
-            fld('Total','total',ai.total,'number')+
-          '</div>'+
-          '<div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Line items</div>'+
-            '<table id="ap_lines" style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">Description</th><th style="text-align:left">Qty</th><th style="text-align:left">Unit</th><th style="text-align:left">GL</th></tr></thead><tbody>'+billLines+'</tbody></table>'+
-          '</div>'+
-          '<div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">'+
-            (canRerun?'<button class="btn" id="ap_rerun_btn" onclick="apRerun()">🔁 Re-run AI</button>':'')+
-            '<button class="btn d" onclick="apReject()">Reject</button>'+
-            '<button class="btn p" id="ap_post_btn" onclick="apPostBill()">✓ Post DRAFT to Xero</button>'+
-          '</div>'+
-        '</div>'
-      ) : '')+
-      (status==='posted' ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✓ Posted to Xero</b> as '+esc(d.xero_invoice_number||d.xero_invoice_id||'')+'<div class="muted" style="font-size:11.5px;margin-top:4px">Source files attached. Now do your double-entry in Xero.</div></div>' : '')+
-      (status==='reply_sent' ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✉ Reply sent</b> to '+esc(d.from_email)+'</div>' : '')+
+      (isDone ? (
+        (status==='posted'||status==='auto_posted') ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✅ Posted to Xero</b> as '+esc(d.xero_invoice_number||d.xero_invoice_id||'')+'<div class="muted" style="font-size:11.5px;margin-top:4px">Source files attached automatically. Nothing more to do.</div></div>'
+        : (status==='reply_sent'||status==='duplicate_rejected_replied') ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✉ Auto-replied</b> to '+esc(d.from_email)+'<div class="muted" style="font-size:11.5px;margin-top:4px;color:var(--text);white-space:pre-wrap">'+esc((d.reply_body||'').slice(0,500))+'</div></div>'
+        : '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:14px;color:var(--muted)">Rejected. No further action.</div>'
+      ) : (
+        (canReply ? (
+          '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px;margin-bottom:10px">'+
+            '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Draft reply (edit + send)</div>'+
+            '<input id="ap_reply_subject" value="'+esc(d.reply_subject||'')+'" placeholder="Subject" style="width:100%;font-size:13px;margin-bottom:6px"/>'+
+            '<textarea id="ap_reply_body" rows="6" placeholder="Body" style="width:100%;font-size:13px">'+esc(d.reply_body||'')+'</textarea>'+
+            '<div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">'+
+              '<button class="btn p" onclick="apSendReply()">✉ Send reply</button>'+
+            '</div>'+
+          '</div>'
+        ) : '')+
+        (canPost ? (
+          '<div id="ap_bill_form" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:12px">'+
+            '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Bill to post (ACCPAY)</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">'+
+              fld('Vendor','vendor_name',ai.vendor_name)+
+              fld('Invoice no.','invoice_no',ai.invoice_no)+
+              fld('Invoice date','invoice_date',ai.invoice_date,'date')+
+              fld('Due date','due_date',ai.due_date,'date')+
+              fld('Total','total',ai.total,'number')+
+            '</div>'+
+            '<div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Line items + GL codes</div>'+
+              '<table id="ap_lines" style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">Description</th><th style="text-align:left">Qty</th><th style="text-align:left">Unit</th><th style="text-align:left">GL</th></tr></thead><tbody>'+billLines+'</tbody></table>'+
+            '</div>'+
+            '<label style="display:flex;align-items:center;gap:7px;font-size:11.5px;margin-top:10px;cursor:pointer"><input type="checkbox" id="ap_teach" style="width:auto"/>🎓 Remember these GL codes — auto-code similar bills next time (teaches the rule engine)</label>'+
+            '<div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">'+
+              (canRerun?'<button class="btn" id="ap_rerun_btn" onclick="apRerun()">🔁 Re-run AI</button>':'')+
+              '<button class="btn d" onclick="apReject()">Reject</button>'+
+              '<button class="btn p" id="ap_post_btn" onclick="apPostBill()">✓ Post to Xero</button>'+
+            '</div>'+
+          '</div>'
+        ) : '')
+      ))+
     '</div></div></div>';
 }
 async function apOpen(id){
-  AP_ACTIVE_ID=id;
+  AP_ACTIVE_ID=id; AP_DECISIONS=[];
   apRender();
-  try { const r=await call({api:'ap_inbox_get', id}); if(r&&r.ok){ AP_DETAIL=r.item; apRender(); } }
-  catch(e){ toast(e.message,true); }
+  try {
+    const [r, dR] = await Promise.all([ call({api:'ap_inbox_get', id}), call({api:'ap_decision_log', id}) ]);
+    if(r&&r.ok){ AP_DETAIL=r.item; }
+    if(dR&&dR.ok){ AP_DECISIONS = dR.decisions||[]; }
+    apRender();
+  } catch(e){ toast(e.message,true); }
 }
-function apShowBillForm(){ /* no-op — both panels are visible; this scrolls to bill form */ document.getElementById('ap_bill_form')?.scrollIntoView({behavior:'smooth',block:'start'}); }
 async function apSaveSettings(tid){
   const patch={}; document.querySelectorAll('[data-ten="'+tid+'"]').forEach(el=>{
     if(el.type==='checkbox') patch[el.dataset.k]=el.checked?'true':'false';
@@ -4446,7 +4569,6 @@ async function apSendReply(){
 }
 async function apPostBill(){
   if(!AP_ACTIVE_ID) return;
-  // Collect overrides
   const bill={}; document.querySelectorAll('[data-bk]').forEach(el=>{ bill[el.dataset.bk] = (el.type==='number')?Number(el.value)||0:el.value; });
   const lineMap={}; document.querySelectorAll('#ap_lines [data-li-i]').forEach(el=>{
     const i=el.dataset.liI, k=el.dataset.liK;
@@ -4454,17 +4576,61 @@ async function apPostBill(){
     lineMap[i][k] = (k==='quantity'||k==='unit_amount')?Number(el.value)||0:el.value;
   });
   bill.line_items = Object.keys(lineMap).map(k=>lineMap[k]).filter(l=>l.description||l.unit_amount||Number(l.quantity)>0);
-  if(!confirm('Create DRAFT Bill in Xero for '+(bill.vendor_name||'?')+' · Total: RM '+(Number(bill.total||0)).toFixed(2)+'?')) return;
+  const teach = document.getElementById('ap_teach') && document.getElementById('ap_teach').checked;
+  if(!confirm('Create Bill in Xero for '+(bill.vendor_name||'?')+' · Total: RM '+(Number(bill.total||0)).toFixed(2)+'?')) return;
   await runOnce('ap_post_btn','Posting…', async()=>{
-    try{ const r=await call({api:'ap_post', id:AP_ACTIVE_ID, bill}); if(r&&r.ok){ toast('✓ Posted as '+(r.number||'')); renderAp(); apOpen(AP_ACTIVE_ID); } else toast(r&&r.error||'Failed',true); }
-    catch(e){ toast(e.message,true); }
+    try{
+      const r=await call({api:'ap_post', id:AP_ACTIVE_ID, bill});
+      if(r&&r.ok){
+        toast('✓ Posted as '+(r.number||''));
+        // 🎓 Teach: save a GL rule per line so future similar bills auto-code
+        if(teach && AP_DETAIL && AP_DETAIL.tenant_id){
+          for(const l of bill.line_items){
+            const kw = apDeriveKeyword(l.description);
+            if(kw && l.account_code){
+              try{ await call({api:'ap_rule_save', tenant:AP_DETAIL.tenant_id, keywords:[kw], account_code:l.account_code, priority:200, notes:'taught from bill review'}); }catch(_e){}
+            }
+          }
+          toast('🎓 Learned '+bill.line_items.length+' coding rule(s)');
+        }
+        renderAp(); apOpen(AP_ACTIVE_ID);
+      } else toast(r&&r.error||'Failed',true);
+    } catch(e){ toast(e.message,true); }
   });
+}
+// Derive a reusable keyword from a line-item description (longest significant word).
+// Skips digit-containing tokens, dates, months and filler — returns '' if nothing clean,
+// so the teach feature never saves a junk rule (operator can add one manually instead).
+function apDeriveKeyword(desc){
+  if(!desc) return '';
+  const STOP = new Set(['the','and','for','with','fee','cost','from','this','that','bill','month','year','jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec','january','february','march','april','june','july','august','september','october','november','december','statement','service','payment','charge','invoice','total','subtotal','amount']);
+  const words = String(desc).toLowerCase()
+    .replace(/[^a-z0-9 ]/g,' ').split(/\s+/)
+    .filter(w => w.length>=4 && !/\d/.test(w) && !/^\d*(st|nd|rd|th)$/.test(w) && !STOP.has(w));
+  words.sort((a,b)=>b.length-a.length);
+  return words[0]||'';
 }
 async function apReject(){
   if(!AP_ACTIVE_ID) return;
   const reason = prompt('Reason for rejecting? (optional)','manually rejected');
   if(reason===null) return;
   try{ const r=await call({api:'ap_reject', id:AP_ACTIVE_ID, reason: reason||'manually rejected'}); if(!r||!r.ok){ toast((r&&r.error)||'Failed',true); return; } toast('Rejected'); AP_ACTIVE_ID=null; AP_DETAIL=null; renderAp(); }
+  catch(e){ toast(e.message,true); }
+}
+async function apAddRule(){
+  const tid = document.getElementById('ap_rule_tenant').value;
+  const kws = (document.getElementById('ap_rule_keywords').value||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+  const code = (document.getElementById('ap_rule_code').value||'').trim();
+  const prio = Number(document.getElementById('ap_rule_prio').value)||200;
+  if(!tid||!kws.length||!code){ toast('Company, keywords and GL code required',true); return; }
+  await runOnce('ap_rule_add_btn','Adding…', async()=>{
+    try{ const r=await call({api:'ap_rule_save', tenant:tid, keywords:kws, account_code:code, priority:prio}); if(r&&r.ok){ toast('✓ Rule added'); renderAp(); } else toast(r&&r.error||'Failed',true); }
+    catch(e){ toast(e.message,true); }
+  });
+}
+async function apDeleteRule(id){
+  if(!confirm('Delete this coding rule?')) return;
+  try{ const r=await call({api:'ap_rule_delete', id}); if(r&&r.ok){ toast('Rule removed'); renderAp(); } else toast(r&&r.error||'Failed',true); }
   catch(e){ toast(e.message,true); }
 }
 
