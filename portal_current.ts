@@ -302,6 +302,15 @@ async function processApEmail(inboxId, route){
   const { data: item } = await sb.from("portal_ap_inbox").select("*").eq("id", inboxId).single();
   if (!item) throw new Error("inbox item not found");
   await sb.from("portal_ap_inbox").update({ status:"processing" }).eq("id", inboxId);
+  let routedTenantName = "";
+  let knownCompanyText = "";
+  try {
+    const { data: tenantRows } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
+    const rows = Array.isArray(tenantRows) ? tenantRows : [];
+    const cur = rows.find((t)=>t.tenant_id === item.tenant_id);
+    routedTenantName = (cur && cur.tenant_name) || "";
+    knownCompanyText = rows.map((t)=>"- " + (t.tenant_name || t.tenant_id) + " [" + t.tenant_id + "]").join("\n");
+  } catch(_e){}
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey){
     await logDecision(inboxId, "needs_review", "ANTHROPIC_API_KEY not set");
@@ -311,7 +320,15 @@ async function processApEmail(inboxId, route){
 
   // ── Step 1: build multimodal content ───────────────────────────────
   const contentBlocks = [];
-  contentBlocks.push({ type:"text", text: "EMAIL FROM: " + (item.from_name||"") + " <" + (item.from_email||"") + ">\nSUBJECT: " + (item.subject||"") + "\n\nBODY:\n" + (item.text_body || item.html_body || "(empty)") });
+  contentBlocks.push({ type:"text", text:
+    "ROUTED XERO TENANT ID: " + (item.tenant_id||"") + "\n" +
+    "ROUTED COMPANY NAME: " + (routedTenantName || "(unknown)") + "\n\n" +
+    "KNOWN GROUP COMPANIES:\n" + (knownCompanyText || "(not loaded)") + "\n\n" +
+    "EMAIL FROM: " + (item.from_name||"") + " <" + (item.from_email||"") + ">\n" +
+    "SUBJECT: " + (item.subject||"") + "\n\n" +
+    "RAW PAYLOAD / SOURCE METADATA:\n" + JSON.stringify(item.raw_payload || {}).slice(0, 4000) + "\n\n" +
+    "BODY:\n" + (item.text_body || item.html_body || "(empty)")
+  });
   for (const a of (item.attachments||[])){
     const mime = String(a.mime||"");
     if (mime.startsWith("image/")){
@@ -340,7 +357,152 @@ async function processApEmail(inboxId, route){
 
   // ── Step 2: Claude — extract + classify + audit ────────────────────
   const cap = Number(route.max_auto_post_amount||1000);
-  const sys = "You are a senior AP (Accounts Payable) clerk for a Malaysian Sdn Bhd. You will receive an email + its attachments (images and PDFs). Output ONE JSON object only, no prose.\n\nSchema: {\n  doc_type: 'invoice'|'reimbursement'|'unknown',\n  vendor_name: string,            // for invoice: supplier; for reimbursement: claimant name\n  invoice_no: string|null,\n  invoice_date: 'YYYY-MM-DD'|null,\n  due_date: 'YYYY-MM-DD'|null,\n  currency: 'MYR'|'USD'|'SGD'|string,\n  subtotal: number,\n  tax_amount: number,\n  total: number,\n  line_items: [{ description: string, quantity: number, unit_amount: number }],\n  bill_to_company: string|null,   // the Sdn Bhd named as buyer\n  // Reimbursement-specific compliance flags (set all 4 honestly; only fill if doc_type='reimbursement'):\n  reimb_has_claim_form: boolean,        // is there a structured claim form (header, name, date, total)?\n  reimb_claimant_signed: boolean,       // claimant signature present?\n  reimb_approver_signed: boolean,       // SECOND signature from manager/director?\n  reimb_all_invoices_attached: boolean, // every line item has a corresponding formal invoice/receipt attached?\n  reimb_payment_proof_attached: boolean,// card statement or bank receipt proving claimant ALREADY paid out-of-pocket?\n  // Invoice-specific compliance flags (only fill if doc_type='invoice'):\n  inv_is_formal: boolean,               // proper invoice (tax invoice or has supplier business reg)?\n  inv_has_supplier_id: boolean,         // SST registration no. OR business registration no. visible?\n  inv_bill_to_correct: boolean,         // bill-to is one of our 5 Sdn Bhd?\n  // Universal:\n  amount_consistent: boolean,           // email body amount = attachment amount?\n  date_consistent: boolean,             // subject/filename/form/dates all line up to ONE period?\n  confidence: 'high'|'medium'|'low',\n  issues: [string]                      // every problem you found, one per array entry, specific\n}\n\nRules:\n- doc_type='reimbursement' if there is a claim form OR sender is claiming back personal spending. doc_type='invoice' if a supplier is billing us directly.\n- bill_to_company must be one of: 'DRSMILE', 'ZEERO', 'IPROCARE', 'SCALE', 'SKINDAE' (CTG group of Sdn Bhd). Use what the document says even if abbreviated.\n- Be STRICT: any signature missing → reimb_*_signed=false. Any line item without an attached formal invoice → reimb_all_invoices_attached=false. App screenshots are NOT invoices.\n- amount_consistent should be true ONLY if all dollar figures match across email body, claim form, and the supporting attachments.\n- date_consistent should be true ONLY if subject + filename + form 'month/year' + line item dates + bank transfer date all refer to ONE coherent period.\n- It's MUCH better to flag a doubt than to silently pass it.";
+  const sys = `You are CTG Finance Operation Automation Controller, acting as a senior AP accountant, finance operations reviewer, and Xero bookkeeping automation engine for a Malaysia multi-company group.
+
+You review finance documents before Xero posting. Behave like a careful AP accountant: identify the correct company, validate the document, detect issues, decide whether correction is needed, classify Chart of Account, prepare a Xero bill/spend-money draft, generate sender reply if required, and produce audit-ready notes.
+
+Return ONE valid JSON object only. No prose. No markdown fences.
+
+Processing order:
+1. Identify target company.
+2. Identify document type.
+3. Extract fields from email body, attachments, OCR text, and Google Drive metadata/links.
+4. Validate document completeness.
+5. Validate company name/address.
+6. Validate supplier/vendor information.
+7. Validate invoice date, invoice number, currency, subtotal, tax, and total.
+8. Check approval/signature requirements.
+9. Check duplicate risk signals.
+10. Assess Malaysia tax/SST/WHT/imported service tax risk.
+11. Classify Xero transaction type.
+12. Select company-specific COA if enough evidence exists.
+13. Decide final action.
+14. Draft correction reply if needed.
+
+Company routing rules:
+- This portal may receive AP files for multiple companies.
+- Use these signals in priority order: email subject company code/name, Google Drive folder/path/link metadata, file name, sender/vendor mapping, and buyer company name/address extracted from the invoice.
+- The backend already routed this email to a Xero tenant. You must verify that the document buyer/company matches that routed company.
+- If subject or Drive folder indicates one company but invoice buyer name indicates another, set company_routing_status="company_conflict".
+- If the company is unknown or conflicted, do not approve posting.
+- Do not use a global default COA when company is unknown or conflicted.
+
+Google Drive rules:
+- If the email contains a Google Drive link but the invoice file is not accessible/attached/readable, set server_decision="google_drive_access_issue".
+- Ask the sender to grant access to the finance/AP account or resend the invoice/claim as PDF.
+- Preserve any Drive link/folder hints in audit_notes.
+
+Valid supplier invoice requirements:
+- Formal invoice/tax invoice, not quotation, proforma, statement, or payment reminder only.
+- Supplier name is present.
+- Supplier registration/SST/business number is present when expected.
+- Buyer company name matches the routed company.
+- Invoice number exists.
+- Invoice date exists.
+- Currency exists or can be clearly inferred.
+- Subtotal, tax, discount, and total reconcile.
+- Line items are understandable.
+- Required approval/supporting document exists if indicated by policy/email.
+
+Valid reimbursement/staff claim requirements:
+- Claimant name exists.
+- Business purpose exists.
+- Claim form or approval evidence exists.
+- Receipts/invoices are attached for each claim item.
+- Payment proof is attached where required.
+- Claimant and approver signature/approval evidence exist where required.
+- Amounts match across claim form, receipts, and payment proof.
+
+Malaysia accounting and tax review:
+- Flag for review if SST treatment is unclear.
+- Flag for review if foreign vendor/service may trigger withholding tax.
+- Flag for review if imported service tax risk exists.
+- Flag capitalisation risk for assets/equipment or useful life > 1 year.
+- Flag prepayment risk for annual/advance services, rent, insurance, or subscriptions.
+- If uncertain, lower confidence and set needs_review or reply_drafted.
+
+Decision values:
+- approved_for_posting
+- needs_review
+- reply_drafted
+- compliance_rejected
+- duplicate_rejected
+- company_conflict
+- company_unknown
+- google_drive_access_issue
+
+Auto-post eligible only when all are true:
+- company_routing_status is company_matched_high_confidence
+- known vendor or complete vendor details
+- known/high-confidence GL rule
+- amount is normal and below policy cap
+- no duplicate risk
+- approval/signature requirements are met
+- tax treatment is clear
+- OCR confidence is high
+- buyer company name/address match
+- no WHT/SST/imported service uncertainty
+
+Required JSON schema:
+{
+  "doc_type": "invoice|reimbursement|receipt|credit_note|po|do|statement|unknown",
+  "confidence": "high|medium|low",
+  "company_routing_status": "company_matched_high_confidence|company_matched_medium_confidence|company_conflict|company_unknown",
+  "company_code": string,
+  "company_name": string,
+  "company_conflict_reason": string,
+  "vendor_name": string,
+  "supplier_registration_no": string|null,
+  "supplier_sst_no": string|null,
+  "buyer_name_on_document": string|null,
+  "buyer_address_on_document": string|null,
+  "invoice_no": string|null,
+  "invoice_date": "YYYY-MM-DD"|null,
+  "due_date": "YYYY-MM-DD"|null,
+  "currency": string,
+  "subtotal": number,
+  "tax_amount": number,
+  "total": number,
+  "line_items": [{"description": string, "quantity": number, "unit_amount": number, "account_code": string|null, "tax_type": string|null, "gl_confidence": "high|medium|low", "gl_reason": string, "gl_matched_keyword": string|null}],
+  "bill_to_company": string|null,
+  "inv_is_formal": boolean,
+  "inv_has_supplier_id": boolean,
+  "inv_bill_to_correct": boolean,
+  "reimb_has_claim_form": boolean,
+  "reimb_claimant_signed": boolean,
+  "reimb_approver_signed": boolean,
+  "reimb_all_invoices_attached": boolean,
+  "reimb_payment_proof_attached": boolean,
+  "amount_consistent": boolean,
+  "date_consistent": boolean,
+  "duplicate_risk": "none|possible|confirmed",
+  "tax_review": {
+    "sst_risk": "none|unclear|applicable",
+    "wht_risk": "none|unclear|applicable",
+    "imported_service_tax_risk": "none|unclear|applicable",
+    "capitalisation_risk": "none|possible",
+    "prepayment_risk": "none|possible"
+  },
+  "suggested_xero_type": "ACCPAY|SPEND|EXPENSE_CLAIM|APCREDIT|NONE",
+  "suggested_gl_account": string,
+  "suggested_tax_type": string,
+  "tracking_category": string,
+  "issues": [string],
+  "server_decision": "approved_for_posting|needs_review|reply_drafted|compliance_rejected|duplicate_rejected|company_conflict|company_unknown|google_drive_access_issue",
+  "server_reasoning": string,
+  "reply_subject": string,
+  "reply_body": string,
+  "audit_notes": [string]
+}
+
+Important:
+- Do not guess missing invoice number, date, amount, or company.
+- Do not approve if buyer company name is wrong.
+- Do not approve if approval/signature is required but missing.
+- Do not approve if Google Drive file is inaccessible.
+- Put every problem in issues.
+- Keep reply_body empty if no reply is needed.
+- Use Malaysia context and MYR unless another currency is clearly shown.`;
   const body = { model: route.ai_model || "claude-haiku-4-5-20251001", max_tokens: 2500, system: sys, messages: [{ role:"user", content: contentBlocks }] };
   let parsed = null;
   try {
@@ -365,6 +527,11 @@ async function processApEmail(inboxId, route){
     await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse Claude response" }).eq("id", inboxId);
     return;
   }
+  parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
+  parsed.audit_notes = Array.isArray(parsed.audit_notes) ? parsed.audit_notes : [];
+  parsed.line_items = Array.isArray(parsed.line_items) ? parsed.line_items : [];
+  parsed.tax_review = parsed.tax_review || {};
+  if (!parsed.currency) parsed.currency = "MYR";
 
   // ── Step 3: server-side DUPLICATE check ────────────────────────────
   let dupHit = null;
@@ -398,10 +565,36 @@ async function processApEmail(inboxId, route){
   // ── Step 5: COMPLIANCE GATING ──────────────────────────────────────
   const issues = Array.isArray(parsed.issues) ? [...parsed.issues] : [];
   const total = Number(parsed.total||0);
-  let decision = null; // 'duplicate_rejected' | 'compliance_rejected' | 'auto_authorised' | 'needs_review'
+  let decision = null; // duplicate_rejected | compliance_rejected | company_conflict | company_unknown | google_drive_access_issue | auto_authorised | needs_review
   let reasoning = "";
 
-  if (dupHit){
+  const aiDecision = String(parsed.server_decision || "");
+  const routingStatus = String(parsed.company_routing_status || "");
+  const taxReview = parsed.tax_review || {};
+  const hasTaxRisk =
+    taxReview.sst_risk === "unclear" || taxReview.sst_risk === "applicable" ||
+    taxReview.wht_risk === "unclear" || taxReview.wht_risk === "applicable" ||
+    taxReview.imported_service_tax_risk === "unclear" || taxReview.imported_service_tax_risk === "applicable" ||
+    taxReview.capitalisation_risk === "possible" ||
+    taxReview.prepayment_risk === "possible";
+
+  if (aiDecision === "google_drive_access_issue"){
+    decision = "google_drive_access_issue";
+    reasoning = parsed.server_reasoning || "Google Drive invoice/claim link is not accessible or readable";
+    issues.push("Google Drive access issue: ask sender to grant AP/finance access or resend as PDF");
+  } else if (routingStatus === "company_conflict" || aiDecision === "company_conflict"){
+    decision = "company_conflict";
+    reasoning = parsed.company_conflict_reason || parsed.server_reasoning || "Company in subject/Drive route does not match buyer company on document";
+    issues.push("Company conflict: " + reasoning);
+  } else if (routingStatus === "company_unknown" || aiDecision === "company_unknown"){
+    decision = "company_unknown";
+    reasoning = parsed.server_reasoning || "Could not identify the correct company from subject, Drive path, sender mapping, or invoice buyer name";
+    issues.push("Company unknown: cannot post to Xero until company is confirmed");
+  } else if (routingStatus && routingStatus !== "company_matched_high_confidence" && routingStatus !== "company_matched_medium_confidence"){
+    decision = "company_unknown";
+    reasoning = "Company routing status is not postable: " + routingStatus;
+    issues.push(reasoning);
+  } else if (dupHit){
     decision = "duplicate_rejected";
     reasoning = "Duplicate of existing bill " + (dupHit.number||dupHit.invoice_id) + " (" + dupHit.status + ", " + dupHit.inv_date + ", total " + dupHit.total + ")";
   } else if (parsed.doc_type === "reimbursement" && route.require_4item_reimbursement !== false){
@@ -429,13 +622,14 @@ async function processApEmail(inboxId, route){
   }
   if (!parsed.amount_consistent) issues.push("Amounts don't match across the email body / form / supporting documents");
   if (!parsed.date_consistent) issues.push("Period dates are inconsistent (subject vs filename vs form vs receipts)");
+  if (hasTaxRisk) issues.push("Tax/accounting review needed: SST/WHT/imported service tax/capitalisation/prepayment risk detected");
 
   // If still no decision (i.e. passed compliance) → route on amount + confidence
   if (!decision){
     const compliant = (parsed.amount_consistent !== false) && (parsed.date_consistent !== false);
-    if (!compliant || parsed.confidence === "low" || unmappedLines > 0){
+    if (!compliant || parsed.confidence === "low" || unmappedLines > 0 || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
       decision = "needs_review";
-      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : "low confidence / consistency issues") + " — DRAFT for human review";
+      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
     } else if (total > cap){
       decision = "needs_review";
       reasoning = "Amount " + total + " > auto-post cap " + cap + " — DRAFT for approver";
@@ -460,18 +654,28 @@ async function processApEmail(inboxId, route){
   switch (decision){
     case "duplicate_rejected": nextStatus = "duplicate_rejected"; break;
     case "compliance_rejected": nextStatus = "reply_drafted"; break;
+    case "company_conflict": nextStatus = "reply_drafted"; break;
+    case "company_unknown": nextStatus = "reply_drafted"; break;
+    case "google_drive_access_issue": nextStatus = "reply_drafted"; break;
     case "auto_authorised": nextStatus = "auto_posting"; break; // updated again post-post
     default: nextStatus = "needs_review";
   }
 
-  // Draft reply for compliance_rejected and duplicate_rejected
+  // Draft reply for correction cases and duplicate_rejected.
   let replySubject = null, replyBody = null;
+  if (parsed.reply_subject || parsed.reply_body){
+    replySubject = parsed.reply_subject || ("Re: " + (item.subject || ""));
+    replyBody = parsed.reply_body || "";
+  }
   if (decision === "duplicate_rejected"){
     replySubject = "Re: " + (item.subject || "") + " — DUPLICATE CLAIM, not processed";
     replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for the submission. After review, this claim appears to be a duplicate of an already-paid bill:\n\n  • Existing bill: " + (dupHit.number || dupHit.invoice_id) + "\n  • Date: " + dupHit.inv_date + "\n  • Total: MYR " + dupHit.total + "\n  • Status: " + dupHit.status + " (amount due: MYR " + dupHit.amount_due + ")\n\nThe new submission for MYR " + total + " matches the same vendor and amount, and that earlier bill has already been settled.\n\nIf you believe this is a different claim and not a duplicate, please reply with:\n  1. The reason this is a separate transaction\n  2. Distinct supporting invoices and a fresh payment receipt that has NOT been claimed before\n\nNo bill has been created in Xero for this submission.\n\nBest regards,\nCTG Finance AP";
   } else if (decision === "compliance_rejected"){
     replySubject = "Re: " + (item.subject || "") + " — supporting documents needed";
     replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for your submission. To process this " + (parsed.doc_type||"claim") + " for MYR " + total + ", we need the following items added/corrected:\n\n" + issues.map(i => "  • " + i).join("\n") + "\n\nOnce you reply with the corrected/additional documents, we'll process it. Until then, no bill has been created in Xero.\n\nBest regards,\nCTG Finance AP";
+  } else if ((decision === "company_conflict" || decision === "company_unknown" || decision === "google_drive_access_issue") && !replyBody){
+    replySubject = "Re: " + (item.subject || "") + " — correction needed before processing";
+    replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for your submission. We cannot process it yet for Xero because:\n\n" + issues.map(i => "  • " + i).join("\n") + "\n\nPlease reply with the corrected invoice/claim, confirm the correct company, or grant access to the shared Google Drive file if applicable.\n\nNo bill has been created in Xero for this submission.\n\nBest regards,\nCTG Finance AP";
   }
   if (replySubject) aiVerdict.suggested_reply_subject = replySubject;
   if (replyBody) aiVerdict.suggested_reply_body = replyBody;
@@ -484,7 +688,7 @@ async function processApEmail(inboxId, route){
     reply_body: replyBody,
   }).eq("id", inboxId);
 
-  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"v1", cap, gl_unmapped: unmappedLines });
+  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v2", cap, gl_unmapped: unmappedLines, company_routing_status: routingStatus, tax_review: taxReview });
 
   // ── Step 7: take action automatically per decision ────────────────
   if (decision === "auto_authorised"){
@@ -494,7 +698,7 @@ async function processApEmail(inboxId, route){
       await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:("auto-post failed: " + String(e).slice(0,200)) }).eq("id", inboxId);
       await logDecision(inboxId, "auto_post_failed", String(e).slice(0,500));
     }
-  } else if ((decision === "duplicate_rejected" || decision === "compliance_rejected") && route.auto_reply_when_rejected !== false){
+  } else if ((decision === "duplicate_rejected" || decision === "compliance_rejected" || decision === "company_conflict" || decision === "company_unknown" || decision === "google_drive_access_issue") && route.auto_reply_when_rejected !== false){
     try {
       await apAutoReply(inboxId, item, replySubject, replyBody, route);
     } catch(e){
