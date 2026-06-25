@@ -1,0 +1,32 @@
+name: Deploy Supabase Portal Function
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - portal_current.ts
+      - supabase/functions/portal/index.ts
+      - supabase/config.toml
+      - .github/workflows/deploy-supabase-portal.yml
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Sync portal source
+        run: cp portal_current.ts supabase/functions/portal/index.ts
+
+      - name: Deploy portal Edge Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy portal --project-ref cmostxcjtbuhbzfojuid --no-verify-jwt
