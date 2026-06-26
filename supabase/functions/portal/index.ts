@@ -153,42 +153,6 @@ async function hmacSha256B64(key, msg){
 }
 function timingSafeEqual(a, b){ if (typeof a!=="string" || typeof b!=="string" || a.length!==b.length) return false; let r=0; for (let i=0;i<a.length;i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r===0; }
 async function sha256Hex(s){ const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
-// Parse a Xero ProfitAndLoss report into income[] / expenses[] account breakdowns + totals.
-// Xero report shape: Reports[0].Rows = [Header, Section{Title, Rows:[Row|SummaryRow]}, ...].
-// Each data Row's Cells = [accountName, ..., amount]; SummaryRow holds section totals.
-function parsePnl(rep){
-  const income = [], expenses = [];
-  let revTotal = 0, expTotal = 0, net = 0;
-  const num = (s)=>{ const n = parseFloat(String(s==null?"":s).replace(/[(,\s]/g,"").replace(/\)/g,"")); return isNaN(n) ? 0 : (String(s).indexOf("(")>=0 ? -n : n); };
-  if (rep && Array.isArray(rep.Rows)){
-    for (const section of rep.Rows){
-      if (section.RowType !== "Section") continue;
-      const title = String(section.Title||"").toLowerCase();
-      const isIncome  = /income|revenue|turnover|trading/.test(title);
-      const isExpense = /expense|cost of sales|overhead|operating|less /.test(title);
-      for (const row of (section.Rows||[])){
-        const cells = row.Cells || [];
-        const name = cells[0] ? cells[0].Value : "";
-        const amt = num(cells.length ? cells[cells.length-1].Value : 0);
-        if (/net profit|net income|profit for the/i.test(String(name))) { net = amt; continue; }
-        if (row.RowType === "SummaryRow"){
-          if (isIncome) revTotal += amt; else if (isExpense) expTotal += Math.abs(amt);
-          continue;
-        }
-        if (row.RowType === "Row" && name && amt !== 0){
-          if (isIncome) income.push({ name, amount: amt });
-          else if (isExpense) expenses.push({ name, amount: Math.abs(amt) });
-        }
-      }
-    }
-  }
-  if (!revTotal) revTotal = income.reduce((s,x)=>s+x.amount,0);
-  if (!expTotal) expTotal = expenses.reduce((s,x)=>s+x.amount,0);
-  if (!net) net = revTotal - expTotal;
-  income.sort((a,b)=>b.amount-a.amount);
-  expenses.sort((a,b)=>b.amount-a.amount);
-  return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses };
-}
 // Xero may return dates in two formats: ISO "2026-06-15T00:00:00" (DateString)
 // or legacy Microsoft "/Date(1718409600000+0000)/" (Date). slicing the latter to 10 chars
 // yields "/Date(1718" which Postgres rejects → the WHOLE batch upsert fails silently.
@@ -1706,31 +1670,6 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.rpc("portal_cashflow_forecast", { p_token: b.token||"", p_days: Number(b.days)||90, p_tenant: b.tenant||null });
       return j(data || { ok:true });
-    }
-    if (api === "pnl_report") {
-      // Live Profit & Loss from Xero per tenant → revenue/expense account breakdown for the dashboard charts.
-      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const allowed = await allowedTenants(b.token);
-      if (!allowed.length) return j({ ok:true, companies:[] });
-      let tenantIds = allowed;
-      if (b.tenant) { if (allowed.indexOf(b.tenant) < 0) return await denyTenant(me, "pnl_report", b.tenant); tenantIds = [b.tenant]; }
-      // MYT today; default period = first day of current month-11 (≈ this FY-to-date) or explicit range.
-      const myNow = new Date(Date.now() + 8*3600*1000);
-      const to = b.to || myNow.toISOString().slice(0,10);
-      const from = b.from || new Date(myNow.getFullYear(), myNow.getMonth()-11, 1).toISOString().slice(0,10);
-      const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name").in("tenant_id", tenantIds);
-      const access = await xeroAccessToken();
-      const companies = [];
-      for (const t of (tn||[])){
-        try {
-          const d = await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?fromDate=" + from + "&toDate=" + to);
-          const rep = (d.Reports||[])[0];
-          companies.push({ tenant_id: t.tenant_id, tenant_name: t.tenant_name, ...parsePnl(rep) });
-        } catch (e) {
-          companies.push({ tenant_id: t.tenant_id, tenant_name: t.tenant_name, error: String(e).slice(0,200), revenue_total:0, expense_total:0, net_profit:0, income:[], expenses:[] });
-        }
-      }
-      return j({ ok:true, from, to, companies });
     }
     if (api === "ocr_extract") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
