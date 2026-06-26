@@ -11,6 +11,11 @@ on:
       - supabase/config.toml
       - .github/workflows/deploy-supabase-portal.yml
 
+# Never let two deploys race each other onto the same function.
+concurrency:
+  group: deploy-portal
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -26,7 +31,61 @@ jobs:
       - name: Sync portal source
         run: cp portal_current.ts supabase/functions/portal/index.ts
 
+      - name: Guard against stub / truncated source
+        # The real portal is ~149 KB. A truncated or stub file is the #1 way
+        # production has gone down. Refuse to deploy anything suspiciously small
+        # or missing the core feature markers.
+        run: |
+          set -e
+          f="supabase/functions/portal/index.ts"
+          bytes=$(wc -c < "$f")
+          echo "index.ts is $bytes bytes"
+          if [ "$bytes" -lt 120000 ]; then
+            echo "::error::Refusing to deploy — index.ts is only $bytes bytes (expected ~149 KB). Looks like a stub/truncated file."
+            exit 1
+          fi
+          for marker in "processApEmail" "pnl_report" "portal up"; do
+            if ! grep -q "$marker" "$f"; then
+              echo "::error::Refusing to deploy — required marker '$marker' missing from source."
+              exit 1
+            fi
+          done
+          if grep -q "raw.githubusercontent" "$f"; then
+            echo "::error::Refusing to deploy — source still contains a GitHub-raw bootstrap import (fragile). Deploy the real inline source instead."
+            exit 1
+          fi
+          echo "Source guard passed."
+
       - name: Deploy portal Edge Function
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy portal --project-ref cmostxcjtbuhbzfojuid --no-verify-jwt
+
+      - name: Verify deployment health
+        # Fail LOUD if the freshly-deployed function is not the real, booting
+        # portal. This is the backstop against the silent stub/WORKER_ERROR
+        # outages we have hit before.
+        run: |
+          URL="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal"
+          echo "Waiting for the new version to propagate..."
+          ok=0
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 5
+            code=$(curl -s -o /tmp/body.txt -w "%{http_code}" --max-time 20 "$URL" || echo "000")
+            body=$(head -c 120 /tmp/body.txt)
+            echo "Attempt $i: HTTP $code | ${body}"
+            if [ "$code" = "200" ] && grep -q "portal up" /tmp/body.txt; then
+              ok=1; break
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::HEALTH CHECK FAILED — GET / did not return 'portal up'. The deployed function may be a stub or crashed on boot. Investigate immediately."
+            exit 1
+          fi
+          hint=$(curl -s --max-time 20 -X POST "$URL" -H "Content-Type: application/json" -d '{}' || true)
+          echo "POST {} -> ${hint:0:140}"
+          if ! echo "$hint" | grep -q '"ok":true'; then
+            echo "::error::HEALTH CHECK FAILED — POST {} did not return the expected portal response."
+            exit 1
+          fi
+          echo "✅ Health check PASSED — the real portal is live and serving."
