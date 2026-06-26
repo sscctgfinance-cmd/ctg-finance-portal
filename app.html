@@ -1349,8 +1349,116 @@ async function renderOverview(){
     h+='<div class="status-bar"><div class="dot-green"></div>'+esc(OV_RANGE.from)+' → '+esc(OV_RANGE.to)+' · From cached invoices (AR + AP). Bank balance excluded for period view.</div>';
     document.getElementById('overview').innerHTML=h;
   }
+  // Financial charts (live Xero Profit & Loss) — appended below, lazy-loaded.
+  const ovEl=document.getElementById('overview');
+  if(ovEl){ ovEl.insertAdjacentHTML('beforeend','<div id="ov-charts" style="margin-top:14px"></div>'); ovChartsLoad(); }
   const lr=document.getElementById('last-refresh');
   if(lr)lr.innerHTML='<div class="dot-green"></div>Refreshed '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+}
+
+/* ── Financial dashboard charts (Xero P&L → revenue/expense/profit + 开销占比) ── */
+var OV_PNL=null, OV_PNL_KEY='';
+const OV_PALETTE=['#e85d3c','#f5a623','#3ddc97','#5b9bd5','#a479e2','#f291b3','#16a766','#ff7537','#4a86e8','#cf8933','#9aa7b8'];
+async function ovChartsLoad(){
+  const el=document.getElementById('ov-charts'); if(!el) return;
+  const tenant=curCo()||'';
+  const from=OV_RANGE?OV_RANGE.from:''; const to=OV_RANGE?OV_RANGE.to:'';
+  const key=tenant+'|'+from+'|'+to;
+  if(OV_PNL && OV_PNL_KEY===key){ ovChartsRender(); return; }
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>💹 Profit & Expense Analysis</h3></div><div class="muted" style="padding:24px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Pulling live Profit &amp; Loss from Xero… (a few seconds)</div></div>';
+  try{
+    const r=await call(Object.assign({api:'pnl_report'}, tenant?{tenant}:{}, from?{from,to}:{}));
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load P&L')+'</div></div></div>'; return; }
+    OV_PNL=r; OV_PNL_KEY=key; ovChartsRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+// Donut from segments [{label,value,color}] → SVG string (size px, inner hole ratio 0.58)
+function ovDonut(segs,total,size){
+  const r=size/2,cx=r,cy=r,inner=r*0.58; let a0=-Math.PI/2;
+  if(total<=0) return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'"><circle cx="'+cx+'" cy="'+cy+'" r="'+((r+inner)/2)+'" fill="none" stroke="var(--panel-2)" stroke-width="'+(r-inner)+'"/></svg>';
+  const arcs=segs.map(s=>{
+    const frac=Math.max(0,s.value)/total, a1=a0+frac*2*Math.PI, large=(a1-a0)>Math.PI?1:0;
+    const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0), x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+    const xi1=cx+inner*Math.cos(a1),yi1=cy+inner*Math.sin(a1), xi0=cx+inner*Math.cos(a0),yi0=cy+inner*Math.sin(a0);
+    const p='M'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+r+' '+r+' 0 '+large+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' L'+xi1.toFixed(1)+' '+yi1.toFixed(1)+' A'+inner+' '+inner+' 0 '+large+' 0 '+xi0.toFixed(1)+' '+yi0.toFixed(1)+' Z';
+    a0=a1; return '<path d="'+p+'" fill="'+s.color+'"><title>'+esc(s.label+': '+M(s.value))+'</title></path>';
+  }).join('');
+  return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'">'+arcs+'</svg>';
+}
+// Vertical comparison bars from items [{label,value,color}] → SVG
+function ovBars(items,w,h){
+  const pad=34, max=Math.max(1,...items.map(i=>Math.abs(i.value))); const bw=(w-2*pad)/items.length;
+  const bars=items.map((it,i)=>{
+    const bh=Math.max(2,(Math.abs(it.value)/max)*(h-2*pad));
+    const x=pad+i*bw+bw*0.18, bwid=bw*0.64, y=h-pad-bh;
+    return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bwid.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="5" fill="'+it.color+'"><title>'+esc(it.label+': '+M(it.value))+'</title></rect>'+
+      '<text x="'+(x+bwid/2).toFixed(1)+'" y="'+(y-6).toFixed(1)+'" text-anchor="middle" font-size="12" fill="var(--text)" font-weight="600">'+esc(M(it.value))+'</text>'+
+      '<text x="'+(x+bwid/2).toFixed(1)+'" y="'+(h-pad+16)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+esc(it.label)+'</text>';
+  }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+bars+'</svg>';
+}
+function ovChartsRender(){
+  const el=document.getElementById('ov-charts'); if(!el||!OV_PNL) return;
+  const filter=curCo();
+  let cos=(OV_PNL.companies||[]).filter(c=>!filter||c.tenant_id===filter);
+  const errs=cos.filter(c=>c.error);
+  cos=cos.filter(c=>!c.error);
+  // Consolidate totals + merge expense accounts by name
+  const rev=cos.reduce((s,c)=>s+Number(c.revenue_total||0),0);
+  const exp=cos.reduce((s,c)=>s+Number(c.expense_total||0),0);
+  const net=cos.reduce((s,c)=>s+Number(c.net_profit||0),0);
+  const expMap={};
+  cos.forEach(c=>(c.expenses||[]).forEach(e=>{ expMap[e.name]=(expMap[e.name]||0)+Number(e.amount||0); }));
+  let expList=Object.keys(expMap).map(k=>({name:k,amount:expMap[k]})).sort((a,b)=>b.amount-a.amount);
+  // Top 8 + Others
+  const TOP=8; let segs=[];
+  if(expList.length>TOP){ const top=expList.slice(0,TOP); const others=expList.slice(TOP).reduce((s,x)=>s+x.amount,0); top.push({name:'Other',amount:others}); expList=top; }
+  segs=expList.map((e,i)=>({label:e.name,value:e.amount,color:OV_PALETTE[i%OV_PALETTE.length]}));
+  const margin=rev>0?(net/rev*100):0;
+  const periodLbl = OV_PNL.from && OV_PNL.to ? (OV_PNL.from+' → '+OV_PNL.to) : 'last 12 months';
+  // Legend rows
+  const legend=segs.map(s=>'<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0">'+
+    '<span style="width:11px;height:11px;border-radius:3px;background:'+s.color+';flex:none"></span>'+
+    '<span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.label)+'</span>'+
+    '<span class="muted" style="font-size:11px">'+(exp>0?(s.value/exp*100).toFixed(1)+'%':'')+'</span>'+
+    '<span class="amt" style="min-width:78px">'+M(s.value)+'</span></div>').join('') || '<div class="muted" style="font-size:12px">No expense data in this period.</div>';
+  // Per-company net profit bars (only if >1 company)
+  let perCo='';
+  if(cos.length>1){
+    const maxAbs=Math.max(1,...cos.map(c=>Math.abs(Number(c.net_profit||0))));
+    perCo='<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📊 Net profit by company</h3></div>'+
+      cos.slice().sort((a,b)=>Number(b.net_profit||0)-Number(a.net_profit||0)).map(c=>{
+        const v=Number(c.net_profit||0), pct=Math.abs(v)/maxAbs*100, col=v>=0?'var(--green-soft)':'var(--red-soft)';
+        return '<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>'+esc(c.tenant_name)+'</span><span class="amt" style="color:'+col+'">'+M(v)+'</span></div>'+
+          '<div style="background:var(--panel-2);border-radius:6px;height:14px;overflow:hidden"><div style="height:100%;width:'+pct.toFixed(1)+'%;background:'+col+';border-radius:6px"></div></div></div>';
+      }).join('')+'</div>';
+  }
+  el.innerHTML=
+    '<div class="panel"><div class="panel-hd"><h3>💹 Profit &amp; Expense Analysis</h3><span class="pill pill-coral" style="font-size:11px">'+esc(periodLbl)+'</span></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start">'+
+        // LEFT: revenue/expense/net bars + margin
+        '<div>'+
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Revenue · Expenses · Net Profit</div>'+
+          ovBars([{label:'Revenue',value:rev,color:'#3ddc97'},{label:'Expenses',value:exp,color:'#e85d3c'},{label:'Net',value:net,color:net>=0?'#5b9bd5':'#ef4444'}],360,200)+
+          '<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">'+
+            '<div style="flex:1;min-width:120px;background:var(--panel-2);border-radius:10px;padding:12px"><div class="muted" style="font-size:10.5px;text-transform:uppercase">Net margin</div><div style="font-size:20px;font-weight:700;color:'+(margin>=0?'var(--green-soft)':'var(--red-soft)')+'">'+margin.toFixed(1)+'%</div></div>'+
+            '<div style="flex:1;min-width:120px;background:var(--panel-2);border-radius:10px;padding:12px"><div class="muted" style="font-size:10.5px;text-transform:uppercase">Expense ratio</div><div style="font-size:20px;font-weight:700;color:var(--amber)">'+(rev>0?(exp/rev*100).toFixed(1):'0')+'%</div></div>'+
+          '</div>'+
+        '</div>'+
+        // RIGHT: expense breakdown donut (开销占比) + legend
+        '<div>'+
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Expense breakdown (开销占比)</div>'+
+          '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">'+
+            '<div style="position:relative;flex:none">'+ovDonut(segs,exp,170)+
+              '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none"><div class="muted" style="font-size:10px;text-transform:uppercase">Total exp</div><div style="font-size:15px;font-weight:700">'+M(exp)+'</div></div>'+
+            '</div>'+
+            '<div style="flex:1;min-width:200px">'+legend+'</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      (errs.length?'<div class="muted" style="font-size:11px;margin-top:10px;color:var(--amber)">⚠ '+errs.length+' company P&L failed to load ('+esc(errs.map(e=>e.tenant_name).join(', '))+'). Showing the rest.</div>':'')+
+      '<div class="status-bar" style="margin-top:12px"><div class="dot-green"></div>Live from Xero Profit &amp; Loss · '+esc(periodLbl)+'</div>'+
+    '</div>'+ perCo;
 }
 
 /* ── Approvals ── */
