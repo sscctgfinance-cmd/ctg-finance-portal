@@ -725,11 +725,95 @@ table[data-list] tbody tr:hover input[type=text]{
   h1, h2, h3 { color:#202632 !important; page-break-after:avoid; }
   table { page-break-inside:avoid; }
 }
+
+/* ════════════════════════════════════════════
+   LIGHT MODE — additive. Active only when <html data-theme="light">.
+   Dark stays the default; nothing here touches the dark cascade.
+   ════════════════════════════════════════════ */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg-deep:#E9EEF6; --bg:#F3F6FB; --surface:#FFFFFF; --surface2:#F6F9FC;
+  --border:#E0E7F1; --border-strong:#CAD6E6;
+  --text:#15233F; --text-soft:#4C5B74; --muted:#7C8AA3;
+  --coral:#E04E2B; --coral-deep:#B23C1F; --coral-soft:#CF4A28;
+  --sky:#3A7CC0; --sky-soft:#3A7CC0; --green:#0E9D67; --green-soft:#0E9D67;
+  --red:#DC2626; --red-soft:#DC2626; --amber:#C2700A;
+  --shadow:0 18px 50px rgba(21,35,63,.16);
+}
+:root[data-theme="light"] body{
+  background:
+    radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(91,155,213,.16), transparent 55%),
+    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(232,93,60,.10), transparent 60%),
+    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(91,155,213,.09), transparent 60%),
+    linear-gradient(180deg,#F3F6FB 0%,#E7EDF5 100%);
+}
+:root[data-theme="light"] body::before{ opacity:.045; mix-blend-mode:multiply; }
+:root[data-theme="light"] .btn{ background:#fff; color:var(--text-soft); border-color:var(--border-strong); }
+:root[data-theme="light"] .btn:hover{ background:var(--surface2); color:var(--text); border-color:var(--muted); }
+:root[data-theme="light"] .btn.p{ color:#fff; }
+:root[data-theme="light"] .bar{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border); }
+:root[data-theme="light"] select,
+:root[data-theme="light"] input:not([type=file]),
+:root[data-theme="light"] textarea{ background:#fff; color:var(--text); border-color:var(--border-strong); }
+:root[data-theme="light"] .card{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
+:root[data-theme="light"] .card:hover{ border-color:rgba(21,35,63,.16); }
+:root[data-theme="light"] .card .n{ background:none; -webkit-text-fill-color:var(--text); color:var(--text); }
+:root[data-theme="light"] .card.green .n{ -webkit-text-fill-color:var(--green); color:var(--green); }
+:root[data-theme="light"] .card.red .n{ -webkit-text-fill-color:var(--red); color:var(--red); }
+:root[data-theme="light"] .card.blue .n{ -webkit-text-fill-color:var(--sky); color:var(--sky); }
+:root[data-theme="light"] .card.amber .n{ -webkit-text-fill-color:var(--amber); color:var(--amber); }
+:root[data-theme="light"] .panel{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
+:root[data-theme="light"] .panel h3{ color:var(--text); }
+:root[data-theme="light"] .bigtable{ background:linear-gradient(180deg,#ffffff,#FAFCFE); }
+:root[data-theme="light"] .bigtable th{ background:var(--surface2); color:var(--muted); }
+:root[data-theme="light"] .tbl-wrap{ border-color:var(--border); }
+:root[data-theme="light"] .tab:hover{ background:rgba(21,35,63,.05); }
+:root[data-theme="light"] .modal{ background:#fff; border-color:var(--border-strong); }
+:root[data-theme="light"] .toast{ background:#fff; color:var(--text); border-color:var(--border-strong); }
+:root[data-theme="light"] .notif-panel{ background:#fff; border-color:var(--border-strong); }
+:root[data-theme="light"] .notif-item{ background:var(--surface2); }
+:root[data-theme="light"] .lbox{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border-strong); }
+:root[data-theme="light"] input[type=file]::file-selector-button{ background:var(--surface2); color:var(--text-soft); border-color:var(--border-strong); }
+:root[data-theme="light"] .brand h1{ background:linear-gradient(90deg,#15233F 0%,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
+:root[data-theme="light"] .lbox h1{ background:linear-gradient(90deg,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(21,35,63,.20); background-clip:content-box; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(232,93,60,.42); background-clip:content-box; }
+.theme-btn{ font-size:15px; line-height:1; }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 <style>html{font-family:'Inter var',Inter,system-ui,-apple-system,sans-serif}</style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+/* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
+(function(){
+  try{
+    var t = localStorage.getItem('ctg-theme');
+    if(t!=='light' && t!=='dark'){
+      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  }catch(e){ document.documentElement.setAttribute('data-theme','dark'); }
+})();
+function syncThemeBtn(){
+  var light = document.documentElement.getAttribute('data-theme')==='light';
+  var mc = document.querySelector('meta[name="theme-color"]');
+  if(mc) mc.setAttribute('content', light ? '#F3F6FB' : '#070D17');
+  var b = document.getElementById('theme-btn');
+  if(!b) return;
+  b.textContent = light ? '🌙' : '☀️';            /* shows the mode you'll switch TO */
+  b.title = light ? 'Switch to dark mode' : 'Switch to light mode';
+  b.setAttribute('aria-label', b.title);
+}
+function toggleTheme(){
+  var light = document.documentElement.getAttribute('data-theme')==='light';
+  var next = light ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try{ localStorage.setItem('ctg-theme', next); }catch(e){}
+  syncThemeBtn();
+}
+document.addEventListener('DOMContentLoaded', syncThemeBtn);
+</script>
 </head>
 <body>
 
@@ -765,6 +849,7 @@ table[data-list] tbody tr:hover input[type=text]{
         <span class="who" id="who-name"></span>
         <span class="role-chip" id="who-role"></span>
       </div>
+      <button class="btn theme-btn" id="theme-btn" onclick="toggleTheme()" style="padding:8px 11px" aria-label="Switch theme" title="Switch theme">☀️</button>
       <button class="btn bell" id="notif-btn" onclick="toggleNotif(event)" aria-label="Notifications" title="Alerts">🔔<span class="bell-badge" id="notif-badge"></span></button>
       <button class="btn" onclick="openSecurityModal()" title="Two-factor authentication">🔐 Security</button>
       <button class="btn" onclick="openPwModal()">Change Password</button>
