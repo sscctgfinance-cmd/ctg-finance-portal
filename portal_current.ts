@@ -765,7 +765,10 @@ async function apAutoPostBill(inboxId, item, verdict, lines){
     Contact: cid ? { ContactID: cid } : { Name: String(vendor).slice(0,500) },
     Date: verdict.invoice_date || today,
     DueDate: verdict.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10),
-    Status: "AUTHORISED",
+    // v64: post as SUBMITTED (Awaiting Approval), NOT AUTHORISED. Operator explicitly chose
+    // this per CLAUDE.md safety red line "Xero永远停在SUBMITTED, 绝不 Authorise / 不付款".
+    // Auto-post still runs autonomously — this just keeps a human approval gate before payment.
+    Status: "SUBMITTED",
     LineAmountTypes: "Exclusive",
     LineItems: lines.map((l)=>({
       Description: String(l.description||"Item").slice(0,4000),
@@ -998,7 +1001,13 @@ async function handleWebhook(req, sig){
     let inserted = [];
     try { const { data } = await sb.from("xero_webhook_events").insert(rows).select("id"); inserted = data || []; } catch (_e) {}
     const withIds = events.map((e,i)=>({ ev:e, id: inserted[i] && inserted[i].id }));
-    try { const p = processWebhookEvents(withIds); if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(p); else p.catch(()=>{}); } catch (_e) {}
+    // v64: log webhook-processing errors instead of swallowing them silently — earlier
+    // regressions in this pipeline were masked because .catch(()=>{}) suppressed both
+    // the DB write failures and the Xero sync failures.
+    try {
+      const p = processWebhookEvents(withIds).catch((e)=>{ try { console.error("processWebhookEvents failed:", e && (e.stack || e.message || e)); } catch (_) {} });
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(p);
+    } catch (e) { try { console.error("processWebhookEvents dispatch threw:", e); } catch (_) {} }
   }
   return new Response(null, { status: 200 });
 }
@@ -1206,9 +1215,12 @@ Deno.serve(async (req)=>{
       // v28: prefer the frontend-formatted "O2O Sales DD/MM/YYYY - DD/MM/YYYY" reference; fall back to raw period.
       const reference = String(b.reference || period).slice(0, 255);
       // v61: operator-picked invoice + due dates. Falls back to today / +30d if unset or malformed.
+      // v64: defaults use MYT (UTC+8) so operators in Malaysia don't get yesterday's date
+      // after 4pm-midnight local time (when UTC is still on the previous day).
       const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-      const today = dateRe.test(String(b.invoice_date||"")) ? String(b.invoice_date) : new Date().toISOString().slice(0,10);
-      const due = dateRe.test(String(b.due_date||"")) ? String(b.due_date) : new Date(Date.now() + 30*86400000).toISOString().slice(0,10);
+      const nowMyt = Date.now() + 8*3600*1000;
+      const today = dateRe.test(String(b.invoice_date||"")) ? String(b.invoice_date) : new Date(nowMyt).toISOString().slice(0,10);
+      const due = dateRe.test(String(b.due_date||"")) ? String(b.due_date) : new Date(nowMyt + 30*86400000).toISOString().slice(0,10);
       const built = [];
       for (const p of invs) {
         // v36: try the pharmacy master first — fastest, most accurate. Falls back to the contacts-cache name lookup.
@@ -1353,7 +1365,8 @@ Deno.serve(async (req)=>{
       const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name").in("tenant_id", listTenantIds);
       const list = tn || [];
       const access = await xeroAccessToken();
-      const now = Date.now(); const items = [];
+      // v64: age receivables using MYT so days_overdue matches the operator's local calendar.
+      const now = Date.now() + 8*3600*1000; const items = [];
       for (const t of list) {
         try { const invs = await xeroInvoicesAll(access, t.tenant_id, "ACCREC");
           for (const iv of invs) { const due = Number(iv.AmountDue||0); if (due <= 0) continue; const dd = String(iv.DueDateString || iv.DueDate || "").slice(0,10); const days = dd ? Math.floor((now - new Date(dd).getTime())/86400000) : 0; items.push({ tenant_name:t.tenant_name, contact:(iv.Contact||{}).Name, email:(iv.Contact||{}).EmailAddress, number:iv.InvoiceNumber, amount_due:Math.round(due*100)/100, currency:iv.CurrencyCode||"MYR", due_date:dd, days_overdue:days }); }

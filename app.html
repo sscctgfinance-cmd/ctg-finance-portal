@@ -1605,14 +1605,14 @@ async function approve(tenant,invoice,action,i){
     if(!ok)return;
   }
   const row=document.getElementById('bill'+i);
-  row.style.opacity=.5;row.style.pointerEvents='none';
+  // Row may be gone if user tab-switched or the approvals list re-rendered mid-call.
+  if(row){ row.style.opacity=.5; row.style.pointerEvents='none'; }
   const r=await call({api:'approve',tenant,invoice,action});
   if(r&&r.ok){
     toast(action==='approve'?'✅ Approved — applied in Xero':'Rejected');
-    row.style.transition='opacity .3s';row.style.opacity=0;
-    setTimeout(()=>row.remove(),300);
+    if(row){ row.style.transition='opacity .3s'; row.style.opacity=0; setTimeout(()=>row.remove(),300); }
   }else{
-    row.style.opacity=1;row.style.pointerEvents='';
+    if(row){ row.style.opacity=1; row.style.pointerEvents=''; }
     toast('Failed: '+((r&&r.error)||'Xero rejected'),true);
   }
 }
@@ -1960,8 +1960,12 @@ function o2oOnTenantChange(sel){
   if(O2O_BUF){
     try{
       O2O_DATA = o2oParse(O2O_BUF);
-      o2oEnrichWithPharmacyMaster().then(o2oRenderPreview);
-    }catch(e){}
+      o2oEnrichWithPharmacyMaster().then(o2oRenderPreview).catch(function(err){
+        var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Re-parse failed: '+esc(err&&err.message||err)+'</div>';
+      });
+    }catch(e){
+      var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Re-parse failed: '+esc(e.message)+'</div>';
+    }
   }
 }
 function renderO2O(){
@@ -2134,8 +2138,17 @@ function o2oParse(buf){
 function o2oPick(input){
   var f=input.files[0]; if(!f)return;
   var rd=new FileReader();
-  rd.onload=function(e){ try{ O2O_BUF=e.target.result; O2O_DATA=o2oParse(O2O_BUF); o2oEnrichWithPharmacyMaster().then(o2oRenderPreview); }
-    catch(err){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>'; } };
+  rd.onload=function(e){
+    try{
+      O2O_BUF=e.target.result;
+      O2O_DATA=o2oParse(O2O_BUF);
+      o2oEnrichWithPharmacyMaster().then(o2oRenderPreview).catch(function(err){
+        var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Enrichment failed: '+esc(err&&err.message||err)+'</div>';
+      });
+    }catch(err){
+      var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>';
+    }
+  };
   rd.readAsArrayBuffer(f);
 }
 // Look up each parsed pharmacy in the master and attach the matched record so the preview can show contact info.
@@ -2641,8 +2654,8 @@ async function todayLoad(){
       '<div class="card"><div class="n" style="color:var(--amber)">'+bills.length+'</div><div class="l">Bills to approve</div></div>'+
       '<div class="card"><div class="n" style="color:var(--red-soft)">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
       '<div class="card"><div class="n" style="color:'+(np>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(np)+'</div><div class="l">Net profit (YTD)</div></div></div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" style="margin-top:6px"><div><h3 style="font-size:13px;margin:6px 0;color:#fff">Bills to approve</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(billrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div>'+
-      '<div><h3 style="font-size:13px;margin:6px 0;color:#fff">Overdue receivables</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(odrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div></div>';
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px"><div><h3 style="font-size:13px;margin:6px 0;color:var(--text)">Bills to approve</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(billrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div>'+
+      '<div><h3 style="font-size:13px;margin:6px 0;color:var(--text)">Overdue receivables</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(odrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div></div>';
   }catch(e){ document.getElementById('today_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
