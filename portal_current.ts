@@ -1256,7 +1256,10 @@ Deno.serve(async (req)=>{
     if (api === "o2o_pdfs") {
       // v61: bulk-fetch Xero invoice PDFs for the freshly issued O2O batch.
       // Frontend passes { tenant, invoices:[{invoice_id, pharmacy, number, total}] } and
-      // gets back { pdfs:[{filename, base64}] } which it zips locally.
+      // gets back { pdfs:[{invoice_id, pharmacy, filename, base64, error?}] } which it zips locally.
+      // v63: throttle to batches of 8 with a 500ms breather to stay well under Xero's
+      //      60 req/min rate limit; retry once on 429 / 5xx; include pharmacy + invoice_id
+      //      on every result row so the UI can list failures and offer a targeted retry.
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const allowed = await allowedTenants(b.token);
       const pdfTenant = String(b.tenant || SKINDAE_TENANT);
@@ -1266,26 +1269,44 @@ Deno.serve(async (req)=>{
       const pdfAccess = await xeroAccessToken();
       // Filenames: {Pharmacy}_{Number}_MYR{amount}.pdf; strip filesystem-hostile chars only.
       const safe = (s: string) => String(s||"").replace(/[\\/:*?"<>|\x00-\x1f]/g, "").trim();
-      const pdfs = await Promise.all(list.map(async (iv: any) => {
+      async function fetchOne(iv: any) {
         const invoice_id = safe(iv.invoice_id||"");
-        if (!invoice_id) return { filename: null, base64: null, error: "no invoice_id" };
+        const pharmName = String(iv.pharmacy||"");
+        if (!invoice_id) return { invoice_id: null, pharmacy: pharmName, filename: null, base64: null, error: "no invoice_id" };
+        const pharm = safe(iv.pharmacy) || "invoice";
+        const num = safe(iv.number) || invoice_id.slice(0, 8);
+        const amt = (Number(iv.total) || 0).toFixed(2);
+        const filename = pharm + "_" + num + "_MYR" + amt + ".pdf";
+        async function attempt(): Promise<Response> {
+          return await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + encodeURIComponent(invoice_id), { headers: { "Authorization":"Bearer " + pdfAccess, "Xero-Tenant-Id": pdfTenant, "Accept":"application/pdf" } });
+        }
         try {
-          const rr = await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + encodeURIComponent(invoice_id), { headers: { "Authorization":"Bearer " + pdfAccess, "Xero-Tenant-Id": pdfTenant, "Accept":"application/pdf" } });
-          if (!rr.ok) return { filename: null, base64: null, error: "HTTP " + rr.status };
+          let rr = await attempt();
+          if (!rr.ok && (rr.status === 429 || rr.status >= 500)) {
+            // retry once after a 3s wait — enough for Xero's rolling-minute window
+            await new Promise((r) => setTimeout(r, 3000));
+            rr = await attempt();
+          }
+          if (!rr.ok) return { invoice_id, pharmacy: pharmName, filename, base64: null, error: "HTTP " + rr.status };
           const buf = new Uint8Array(await rr.arrayBuffer());
           // base64 in chunks to avoid stack overflow on large PDFs
           let bin = "";
           for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + 8192)) as any);
           const b64 = btoa(bin);
-          const pharm = safe(iv.pharmacy) || "invoice";
-          const num = safe(iv.number) || invoice_id.slice(0, 8);
-          const amt = (Number(iv.total) || 0).toFixed(2);
-          return { filename: pharm + "_" + num + "_MYR" + amt + ".pdf", base64: b64 };
+          return { invoice_id, pharmacy: pharmName, filename, base64: b64 };
         } catch (e: any) {
-          return { filename: null, base64: null, error: String((e && e.message) || e).slice(0, 200) };
+          return { invoice_id, pharmacy: pharmName, filename, base64: null, error: String((e && e.message) || e).slice(0, 200) };
         }
-      }));
-      await logAudit(me, "o2o_pdfs", "download", { count: pdfs.filter(p=>p.base64).length, tenant: pdfTenant });
+      }
+      const CHUNK = 8;
+      const pdfs: any[] = [];
+      for (let i = 0; i < list.length; i += CHUNK) {
+        const batch = list.slice(i, i + CHUNK);
+        const chunkResults = await Promise.all(batch.map(fetchOne));
+        pdfs.push(...chunkResults);
+        if (i + CHUNK < list.length) await new Promise((r) => setTimeout(r, 500));
+      }
+      await logAudit(me, "o2o_pdfs", "download", { count: pdfs.filter((p)=>p.base64).length, failed: pdfs.filter((p)=>!p.base64).length, tenant: pdfTenant });
       return j({ ok:true, pdfs });
     }
     if (api === "inv_meta") {

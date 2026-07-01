@@ -2212,32 +2212,70 @@ function o2oRenderPreview(){
 }
 // v61: bulk-download all just-issued Xero PDFs, zipped, with the operator's requested filename
 // convention {Pharmacy}_{InvoiceNumber}_MYR{amount}.pdf.
-async function o2oDownloadPdfs(){
+// v63: batches with retry, shows a per-pharmacy failure list + one-click retry for just
+// the failures.
+async function o2oDownloadPdfs(retryOnly){
   if(!O2O_LAST_ISSUED || !O2O_LAST_ISSUED.invoices || !O2O_LAST_ISSUED.invoices.length){
     toast('No issued invoices to download',true); return;
   }
   if(typeof JSZip === 'undefined'){ toast('ZIP library not loaded — refresh the page',true); return; }
+  // If retrying, only re-fetch the ones we previously failed; otherwise fetch the whole batch.
+  var toFetch = retryOnly && O2O_LAST_ISSUED._failed && O2O_LAST_ISSUED._failed.length
+    ? O2O_LAST_ISSUED._failed
+    : O2O_LAST_ISSUED.invoices;
   await runOnce('o2o-dl', 'Fetching PDFs from Xero…', async()=>{
     try{
-      var r = await call({api:'o2o_pdfs', tenant:O2O_LAST_ISSUED.tenant, invoices:O2O_LAST_ISSUED.invoices});
+      var r = await call({api:'o2o_pdfs', tenant:O2O_LAST_ISSUED.tenant, invoices:toFetch});
       if(!r || !r.ok){ toast('Failed: '+((r&&r.error)||'unknown'),true); return; }
-      var pdfs = (r.pdfs||[]).filter(function(p){return p.base64;});
-      if(!pdfs.length){ toast('No PDFs came back',true); return; }
-      var zip = new JSZip();
-      pdfs.forEach(function(p){
-        // JSZip accepts base64 directly; keep it simple + memory-friendly
-        zip.file(p.filename, p.base64, { base64:true });
-      });
-      var blob = await zip.generateAsync({ type:'blob' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      var stamp = new Date().toISOString().slice(0,10);
-      a.download = 'o2o_invoices_'+stamp+'.zip';
-      document.body.appendChild(a); a.click();
-      setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
-      var failed = (r.pdfs||[]).length - pdfs.length;
-      toast('Downloaded '+pdfs.length+' PDFs'+(failed?(' · '+failed+' failed'):''));
+      var all = r.pdfs||[];
+      var ok = all.filter(function(p){return p.base64;});
+      var bad = all.filter(function(p){return !p.base64;});
+      if(!ok.length && !bad.length){ toast('No PDFs came back',true); return; }
+      if(ok.length){
+        var zip = new JSZip();
+        ok.forEach(function(p){ zip.file(p.filename, p.base64, { base64:true }); });
+        var blob = await zip.generateAsync({ type:'blob' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        var stamp = new Date().toISOString().slice(0,10);
+        a.download = 'o2o_invoices_'+stamp+(retryOnly?'_retry':'')+'.zip';
+        document.body.appendChild(a); a.click();
+        setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
+      }
+      // Remember which ones failed so the retry button re-fetches just those.
+      // Preserve the original stashed fields so retry reruns with the correct pharmacy name / number / total.
+      var origByIid={}; O2O_LAST_ISSUED.invoices.forEach(function(iv){ origByIid[iv.invoice_id]=iv; });
+      O2O_LAST_ISSUED._failed = bad.map(function(p){ return origByIid[p.invoice_id] || { invoice_id:p.invoice_id, pharmacy:p.pharmacy }; }).filter(function(x){return x && x.invoice_id;});
+      // Render results summary + failure panel + retry button
+      var panel = document.getElementById('o2o-dl-panel');
+      if(!panel){
+        panel = document.createElement('div');
+        panel.id = 'o2o-dl-panel';
+        panel.style.margin = '10px 0 14px';
+        var btn = document.getElementById('o2o-dl');
+        if(btn && btn.parentNode) btn.parentNode.parentNode.insertBefore(panel, btn.parentNode.nextSibling);
+      }
+      if(bad.length){
+        var rows = bad.slice(0,20).map(function(p){
+          return '<tr><td>'+esc(p.pharmacy||'—')+'</td><td class="muted" style="font-size:11.5px">'+esc(p.error||'unknown error')+'</td></tr>';
+        }).join('');
+        var more = bad.length>20 ? '<div class="muted" style="font-size:11.5px;margin:6px 0 0">…and '+(bad.length-20)+' more</div>' : '';
+        panel.innerHTML =
+          '<div style="padding:12px 14px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.06);border-radius:11px">'+
+            '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
+              '<span style="color:var(--red-soft);font-weight:600;font-size:13px">⚠ '+bad.length+' PDF'+(bad.length>1?'s':'')+' failed'+(ok.length?(' · '+ok.length+' downloaded'):'')+'</span>'+
+              '<button class="btn" onclick="o2oDownloadPdfs(true)" style="padding:5px 11px;font-size:12px">↻ Retry failed only</button>'+
+              '<button class="btn" onclick="document.getElementById(\'o2o-dl-panel\').remove()" style="padding:5px 11px;font-size:12px">Dismiss</button>'+
+            '</div>'+
+            '<div class="tbl-wrap" style="max-height:260px;overflow-y:auto"><table class="bigtable"><thead><tr><th>Pharmacy</th><th>Error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+            more+
+          '</div>';
+        toast((retryOnly?'Retry: ':'')+'Downloaded '+ok.length+' · '+bad.length+' failed');
+      } else {
+        panel.innerHTML = '';
+        toast((retryOnly?'Retry succeeded: ':'')+'Downloaded '+ok.length+' PDFs');
+      }
     }catch(e){ toast('Failed: '+(e&&e.message||e),true); }
   });
 }
