@@ -66,14 +66,20 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         # Supabase deploys occasionally 5xx transiently; retry twice before giving up.
+        # IMPORTANT: pipefail so `supabase deploy | tee` propagates the deploy exit code
+        # (previously tee always returned 0, so retry-loop thought failure was success).
         run: |
-          set -e
+          set -eo pipefail
+          echo "=== source about to deploy ==="
+          sha256sum supabase/functions/portal/index.ts || true
+          wc -c supabase/functions/portal/index.ts
           for attempt in 1 2 3; do
             echo "=== deploy attempt $attempt ==="
             if supabase functions deploy portal --project-ref cmostxcjtbuhbzfojuid --no-verify-jwt 2>&1 | tee /tmp/deploy.log; then
-              echo "Deploy succeeded on attempt $attempt."
+              echo "Deploy exit 0 on attempt $attempt."
               exit 0
             fi
+            echo "Deploy exited non-zero on attempt $attempt."
             if [ "$attempt" -lt 3 ]; then
               sleep 10
             fi
@@ -83,8 +89,14 @@ jobs:
 
       - name: Verify deployment health
         # Fail LOUD if the freshly-deployed function is not the real, booting
-        # portal. This is the backstop against the silent stub/WORKER_ERROR
-        # outages we have hit before.
+        # portal. Historically we've had two failure modes here:
+        #  (a) stub / WORKER_ERROR — GET / returns 5xx or wrong body
+        #  (b) CLI reports success but Supabase silently didn't accept the
+        #      new source (version stays pinned to the last accepted one).
+        # (b) is caught by verifying that endpoints defined in the source
+        # tree here (and not in older deployed versions) are reachable — if
+        # POST {api:tenants_refresh} returns the generic fallback hint, the
+        # new source didn't deploy.
         run: |
           URL="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal"
           echo "Waiting for the new version to propagate..."
@@ -99,7 +111,7 @@ jobs:
             fi
           done
           if [ "$ok" != "1" ]; then
-            echo "::error::HEALTH CHECK FAILED — GET / did not return 'portal up'. The deployed function may be a stub or crashed on boot. Investigate immediately."
+            echo "::error::HEALTH CHECK FAILED — GET / did not return 'portal up'."
             exit 1
           fi
           hint=$(curl -s --max-time 20 -X POST "$URL" -H "Content-Type: application/json" -d '{}' || true)
@@ -108,4 +120,22 @@ jobs:
             echo "::error::HEALTH CHECK FAILED — POST {} did not return the expected portal response."
             exit 1
           fi
-          echo "✅ Health check PASSED — the real portal is live and serving."
+          # Version-drift guard: for every action name declared in the source tree, check
+          # that hitting it returns 401 (unauth = wired) rather than the fallback hint
+          # (= action not present in deployed code).
+          for action in tenants_refresh; do
+            if ! grep -q "\"$action\"" supabase/functions/portal/index.ts; then
+              echo "action $action not in source, skipping"
+              continue
+            fi
+            resp=$(curl -s --max-time 20 -X POST "$URL" -H "Content-Type: application/json" -d "{\"api\":\"$action\"}" || true)
+            echo "POST {api:$action} -> ${resp:0:140}"
+            if echo "$resp" | grep -q "ModifiedAfter+ID-reconcile"; then
+              echo "::error::HEALTH CHECK FAILED — {api:$action} fell through to the fallback hint. The new source did not deploy (CLI likely reported success but Supabase didn't accept the update). Check SUPABASE_ACCESS_TOKEN validity."
+              exit 1
+            fi
+            if ! echo "$resp" | grep -qE 'unauthorized|forbidden'; then
+              echo "::warning::{api:$action} returned an unexpected shape but not the fallback hint; treating as OK."
+            fi
+          done
+          echo "✅ Health check PASSED — real portal live + new actions wired."
