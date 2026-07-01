@@ -1931,6 +1931,45 @@ function o2oResetDates(){
   var inv=document.getElementById('o2o-invdate'); if(inv) inv.value=o2oToday();
   var due=document.getElementById('o2o-duedate'); if(due) due.value=o2oPlusDays(30);
 }
+// v66: generate invoice numbers for the current preview.
+// Returns [] if the operator left the numbering fields empty (fall back to Xero auto-gen)
+// or if the start value is not a plain digit run. Zero-padding follows the literal width
+// of the entered start value, so typing "001" gives 001/002/003 and typing "1183" gives 1183/1184/1185.
+function o2oBuildInvoiceNumbers(count){
+  var prefix = ((document.getElementById('o2o-invprefix')||{}).value||'').trim();
+  var startRaw = ((document.getElementById('o2o-invstart')||{}).value||'').trim();
+  if(!prefix && !startRaw) return [];
+  if(!startRaw || !/^\d+$/.test(startRaw)) return null; // invalid
+  var pad = startRaw.length;
+  var start = parseInt(startRaw, 10);
+  var nums = [];
+  for(var i=0;i<count;i++){
+    var s = String(start + i);
+    while(s.length < pad) s = '0'+s;
+    nums.push(prefix + s);
+  }
+  return nums;
+}
+function o2oPreviewNums(){
+  var el = document.getElementById('o2o-invnum-preview'); if(!el) return;
+  var startRaw = ((document.getElementById('o2o-invstart')||{}).value||'').trim();
+  var prefix = ((document.getElementById('o2o-invprefix')||{}).value||'').trim();
+  if(!prefix && !startRaw){ el.textContent = 'Leave empty → Xero auto-generates'; el.style.color=''; return; }
+  if(!startRaw || !/^\d+$/.test(startRaw)){
+    el.textContent = 'Start # must be digits (e.g. 001, 1183)';
+    el.style.color = 'var(--red-soft)';
+    return;
+  }
+  var n = (O2O_DATA && O2O_DATA.pharmacy_count) ? O2O_DATA.pharmacy_count : 0;
+  var nums = o2oBuildInvoiceNumbers(n||1);
+  if(!nums){ el.textContent = 'Invalid'; el.style.color='var(--red-soft)'; return; }
+  el.style.color = '';
+  if(n){
+    el.innerHTML = 'Will generate <b>'+esc(nums[0])+'</b> → <b>'+esc(nums[nums.length-1])+'</b> ('+n+' invoices)';
+  } else {
+    el.innerHTML = 'Will start at <b>'+esc(nums[0])+'</b> (upload Excel to see the range)';
+  }
+}
 function o2oInitTenant(){
   if(!COMPANIES||!COMPANIES.length){ O2O_TENANT=null; return; }
   var sk=COMPANIES.find(function(c){ return /skindae/i.test(c.tenant_name||''); });
@@ -1986,6 +2025,14 @@ function renderO2O(){
       '<span style="font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;font-weight:700">Due date</span>'+
       '<input type="date" id="o2o-duedate" value="'+o2oPlusDays(30)+'" style="min-width:150px"/>'+
       '<button class="btn" type="button" onclick="o2oResetDates()" style="padding:6px 11px;font-size:11.5px">Reset</button>'+
+    '</div>'+
+    // v66: operator-controlled invoice numbering. Prefix + start → auto-increment for each
+    // pharmacy in preview order. Both fields empty → let Xero auto-generate (current behaviour).
+    '<div class="bar" style="margin:0 0 10px">'+
+      '<span style="font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;font-weight:700">Invoice #</span>'+
+      '<input type="text" id="o2o-invprefix" placeholder="Prefix (e.g. SK-2606-)" oninput="o2oPreviewNums()" style="min-width:160px"/>'+
+      '<input type="text" id="o2o-invstart" placeholder="Start # (e.g. 001)" oninput="o2oPreviewNums()" style="min-width:130px"/>'+
+      '<span id="o2o-invnum-preview" class="muted" style="font-size:12px;flex:1;min-width:200px">Leave empty → Xero auto-generates</span>'+
     '</div>'+
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
     '<input type="file" id="o2o_file" accept=".xlsx" onchange="o2oPick(this)"/>'+
@@ -2222,6 +2269,8 @@ function o2oRenderPreview(){
     (anyFallback?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ One or more sheets had no Date/Package/Price rows. Falling back to single Total-Sales line for those.</div>':'')+
     blocks;
   document.getElementById('o2o-issue').disabled=false;
+  // v66: refresh the invoice-number range hint now that we know the pharmacy count.
+  try{ o2oPreviewNums(); }catch(_e){}
 }
 // v61: bulk-download all just-issued Xero PDFs, zipped, with the operator's requested filename
 // convention {Pharmacy}_{InvoiceNumber}_MYR{amount}.pdf.
@@ -2319,14 +2368,21 @@ async function o2oIssue(){
   var invDate = (document.getElementById('o2o-invdate')||{}).value || o2oToday();
   var dueDate = (document.getElementById('o2o-duedate')||{}).value || o2oPlusDays(30);
   if(dueDate && invDate && dueDate < invDate){ toast('Due date is before invoice date',true); return; }
-  if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in '+coName+' (dated '+invDate+', due '+dueDate+')?'))return;
+  // v66: operator-picked invoice numbering (prefix + start → auto-increment).
+  // Empty fields → let Xero auto-generate. `null` → validation error.
+  var invNums = o2oBuildInvoiceNumbers(O2O_DATA.pharmacy_count);
+  if(invNums === null){ toast('Invoice Start # must be digits (e.g. 001, 1183)',true); return; }
+  var numsMsg = invNums.length ? (' · numbered '+invNums[0]+' → '+invNums[invNums.length-1]) : ' · Xero auto-numbering';
+  if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in '+coName+' (dated '+invDate+', due '+dueDate+numsMsg+')?'))return;
   // v60: strip ItemCode from lines when target is non-Skindae — those SKUs are Skindae-only in Xero.
   var skindae = o2oIsSkindae();
-  var invoices = O2O_DATA.pharmacies.map(function(p){
-    if(skindae) return p;
-    return Object.assign({}, p, { lines: (p.lines||[]).map(function(l){
+  var invoices = O2O_DATA.pharmacies.map(function(p, idx){
+    var base = skindae ? p : Object.assign({}, p, { lines: (p.lines||[]).map(function(l){
       var c=Object.assign({},l); delete c.item_code; return c;
     })});
+    // Attach operator-picked invoice number if the numbering array was generated.
+    if(invNums.length) base = Object.assign({}, base, { invoice_number: invNums[idx] });
+    return base;
   });
   // runOnce handles the disable + re-enable in `finally`, so even if rendering output throws
   // (e.g. user navigates away), the button is always restored.

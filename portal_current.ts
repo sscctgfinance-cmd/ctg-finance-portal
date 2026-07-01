@@ -1241,9 +1241,14 @@ Deno.serve(async (req)=>{
           if (typeof l.discount_rate === "number" && l.discount_rate > 0) li.DiscountRate = Number(l.discount_rate);
           return li;
         });
-        built.push({ matched: !!cid, masterSource, pharmacy: p.pharmacy, total: p.total, xero: { Type:"ACCREC", Contact: cid?{ ContactID:cid }:{ Name:String(p.pharmacy||"").slice(0,500) }, Date:today, DueDate:due, Reference:reference, Status:"AUTHORISED", LineAmountTypes:"Exclusive", LineItems: lineItems } });
+        // v66: operator-picked invoice number (optional). When present it's forwarded to Xero;
+        // Xero rejects duplicates → handled by the existing per-invoice HasErrors detection.
+        const invoiceNumber = String(p.invoice_number||"").trim().slice(0,255);
+        const xeroPayload: any = { Type:"ACCREC", Contact: cid?{ ContactID:cid }:{ Name:String(p.pharmacy||"").slice(0,500) }, Date:today, DueDate:due, Reference:reference, Status:"AUTHORISED", LineAmountTypes:"Exclusive", LineItems: lineItems };
+        if (invoiceNumber) xeroPayload.InvoiceNumber = invoiceNumber;
+        built.push({ matched: !!cid, masterSource, pharmacy: p.pharmacy, total: p.total, xero: xeroPayload });
       }
-      if (b.dry_run !== false) return j({ ok:true, dry_run:true, tenant: targetTenant, issued:0, emailed:0, failed:0, results: built.map(x=>({ pharmacy:x.pharmacy, total:x.total, number:"", status:"dry_run", contact: x.matched?"existing":"new" })) });
+      if (b.dry_run !== false) return j({ ok:true, dry_run:true, tenant: targetTenant, issued:0, emailed:0, failed:0, results: built.map((x:any,i:number)=>({ pharmacy:x.pharmacy, total:x.total, number: x.xero.InvoiceNumber || "(Xero auto)", status:"dry_run", contact: x.matched?"existing":"new" })) });
       const access = await xeroAccessToken();
       const idem = await sha256Hex(JSON.stringify(built.map(x=>x.xero)) + "|" + period + "|" + targetTenant);
       const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer " + access, "Xero-Tenant-Id":targetTenant, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices: built.map(x=>x.xero) }) });
