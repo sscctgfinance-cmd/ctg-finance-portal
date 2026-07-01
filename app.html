@@ -2924,6 +2924,12 @@ async function auditLoad(){
 /* ---- Xero sync (live webhook activity + cache) ---- */
 async function xeroSyncLoad(){
   document.getElementById('uv_body').innerHTML='<div class="panel"><div class="panel-hd"><h3>Xero sync · real-time webhook activity</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn p sm" id="xbackfill_btn" onclick="xeroBackfill()">⤓ Full sync from Xero</button><button class="btn sm" id="xdelta_btn" onclick="xeroDeltaNow()">⚡ Delta sync (changes only)</button><button class="btn sm" id="xsync_btn" onclick="xeroSyncNow()">⟳ Process queue</button><button class="btn sm" onclick="xeroSyncLoad()">↻ Refresh</button></div></div><div id="xero_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    // v65: pull latest org NAMES from Xero /connections. Nightly sync only pulls invoices —
+    // renaming a company in Xero previously required an OAuth reconnect to reflect here.
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🏢 Company names · pull latest from Xero</h3><button class="btn p sm" id="trefresh_btn" onclick="tenantsRefresh()">↻ Refresh from Xero /connections</button></div>'+
+      '<p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.55">Click to fetch the latest company names from Xero. Renamed a company in Xero, or a name has stray invisible characters? This pulls the current names and updates every dropdown / header in the portal.</p>'+
+      '<div id="trefresh_out" class="muted" style="font-size:12.5px">Currently loaded: '+((COMPANIES||[]).length)+' companies.</div>'+
+    '</div>'+
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Drift check vs Xero</button></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
     // v40+: Live AR audit — directly compare live Xero open-AR total vs cache. Click to run.
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔬 Live AR audit <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· compares cache total vs live Xero query (proves zero drift)</span></h3><button class="btn p sm" id="xaudit_btn" onclick="syncAudit()">⚖ Run audit now</button></div><div id="audit_out"><div class="muted" style="font-size:12.5px;padding:8px 0">Click Run audit. The backend queries Xero live for each company\'s open AR and shows the RM-level delta. Anything > RM 1.00 is flagged.</div></div></div>'+
@@ -2984,6 +2990,40 @@ async function xeroSyncNow(){
     else toast((r&&r.error)||'Sync failed',true);
   }catch(e){ toast(e.message,true); }
   xeroSyncLoad();
+}
+// v65: pull latest company names from Xero /connections and refresh the in-memory COMPANIES list
+// so every dropdown + header reflects the current Xero state without needing an OAuth reconnect.
+async function tenantsRefresh(){
+  var btn=document.getElementById('trefresh_btn'); var out=document.getElementById('trefresh_out');
+  if(btn){ btn.disabled=true; btn.textContent='Pulling from Xero…'; }
+  try{
+    var r=await call({api:'tenants_refresh'});
+    if(!r||!r.ok){ toast('Failed: '+((r&&r.error)||'unknown'),true); if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+    // Update the global list so every future render picks up the new names.
+    COMPANIES = r.companies||COMPANIES;
+    var lines = [];
+    lines.push('<div style="color:var(--green-soft);font-weight:600;margin-bottom:8px">✓ Pulled '+r.total+' companies from Xero.</div>');
+    if(r.renamed && r.renamed.length){
+      lines.push('<div style="margin-top:8px;font-weight:600">Renamed ('+r.renamed.length+'):</div>');
+      r.renamed.forEach(function(x){ lines.push('<div style="font-size:12.5px;padding:3px 0"><span class="muted">'+esc(x.from)+'</span> → <b>'+esc(x.to)+'</b></div>'); });
+    }
+    if(r.added && r.added.length){
+      lines.push('<div style="margin-top:8px;font-weight:600">Added ('+r.added.length+'):</div>');
+      r.added.forEach(function(x){ lines.push('<div style="font-size:12.5px;padding:3px 0">+ <b>'+esc(x.tenant_name)+'</b></div>'); });
+    }
+    if(r.removed && r.removed.length){
+      lines.push('<div style="margin-top:8px;font-weight:600;color:var(--amber)">No longer in Xero ('+r.removed.length+'):</div>');
+      r.removed.forEach(function(x){ lines.push('<div style="font-size:12.5px;padding:3px 0">− <b>'+esc(x.tenant_name)+'</b> <span class="muted">('+esc(x.tenant_id.slice(0,8))+'…)</span></div>'); });
+    }
+    if(!r.renamed.length && !r.added.length && !r.removed.length){
+      lines.push('<div class="muted" style="font-size:12.5px;margin-top:4px">No changes — your portal already had the latest names.</div>');
+    }
+    if(out) out.innerHTML = lines.join('');
+    toast('Refreshed '+r.total+' companies · '+r.renamed.length+' renamed');
+    // Re-render the header pill (if it shows a name) — cheapest: reload the app menu.
+    if(typeof buildTabs === 'function') try{ buildTabs(); }catch(_e){}
+  }catch(e){ toast(e.message,true); if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+  finally { if(btn){ btn.disabled=false; btn.textContent='↻ Refresh from Xero /connections'; } }
 }
 async function xeroBackfill(){
   var btn=document.getElementById('xbackfill_btn'); if(btn){ btn.disabled=true; btn.textContent='Syncing all invoices…'; }

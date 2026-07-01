@@ -1419,6 +1419,39 @@ Deno.serve(async (req)=>{
       const { data } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
       return j({ ok:true, companies: data||[] });
     }
+    if (api === "tenants_refresh") {
+      // v65: refresh org names from Xero's /connections. Nightly cron already syncs invoices,
+      // but org NAMES only ever changed on OAuth reconnect — so a rename in Xero (or an
+      // invisible unicode char accidentally slipping in earlier) never propagated. Now the
+      // operator can force a resync from the Users tab.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const access = await xeroAccessToken();
+      const cr = await fetch("https://api.xero.com/connections", { headers:{ "Authorization":"Bearer "+access, "Content-Type":"application/json" } });
+      if (!cr.ok) return j({ ok:false, error: "Xero /connections returned HTTP " + cr.status });
+      const conns = await cr.json();
+      if (!Array.isArray(conns)) return j({ ok:false, error: "Xero /connections returned unexpected shape" });
+      // Strip invisible chars (word joiner, zero-width space, BOM etc.) that sometimes creep in
+      // via copy-paste on the Xero side and would otherwise render as an off-by-one indent.
+      const clean = (s: string) => String(s||"").replace(/[​-‍⁠﻿]/g, "").trim();
+      const { data: existing } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+      const before = new Map((existing||[]).map((r: any)=>[r.tenant_id, r.tenant_name]));
+      const seen = new Set<string>();
+      const renamed: any[] = []; const added: any[] = [];
+      for (const c of conns) {
+        const id = String(c.tenantId||""); if (!id) continue;
+        const name = clean(String(c.tenantName||""));
+        if (!name) continue;
+        seen.add(id);
+        const prev = before.get(id);
+        if (prev === undefined) added.push({ tenant_id:id, tenant_name:name });
+        else if (prev !== name) renamed.push({ tenant_id:id, from:prev, to:name });
+        try { await sb.from("xero_tenants").upsert({ tenant_id:id, tenant_name:name }, { onConflict:"tenant_id" }); } catch(_e){}
+      }
+      const removed = (existing||[]).filter((r: any)=>!seen.has(r.tenant_id)).map((r: any)=>({ tenant_id:r.tenant_id, tenant_name:r.tenant_name }));
+      await logAudit(me, "tenants_refresh", "xero_connections", { total: conns.length, renamed: renamed.length, added: added.length, removed: removed.length });
+      const { data: after } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
+      return j({ ok:true, total: conns.length, renamed, added, removed, companies: after||[] });
+    }
     if (api === "users_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data: users } = await sb.from("portal_users").select("id,email,name,role,active,created_at,last_login_at,last_login_ip,login_count,totp_enabled").order("created_at");
