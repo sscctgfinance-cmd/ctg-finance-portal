@@ -1196,10 +1196,13 @@ Deno.serve(async (req)=>{
     if (api === "o2o_issue") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const allowed = await allowedTenants(b.token);
-      if (allowed.indexOf(SKINDAE_TENANT) < 0) return await denyTenant(me, "o2o_issue", SKINDAE_TENANT);
+      // v60: target tenant is now selectable. Falls back to SKINDAE for backward compatibility.
+      const targetTenant = String(b.tenant || SKINDAE_TENANT);
+      const isSkindaeTarget = targetTenant === SKINDAE_TENANT;
+      if (allowed.indexOf(targetTenant) < 0) return await denyTenant(me, "o2o_issue", targetTenant);
       const invs = Array.isArray(b.invoices) ? b.invoices : [];
       if (!invs.length) return j({ ok:false, error:"no invoices" });
-      const period = String(b.period || "Skindae billing");
+      const period = String(b.period || "O2O billing");
       // v28: prefer the frontend-formatted "O2O Sales DD/MM/YYYY - DD/MM/YYYY" reference; fall back to raw period.
       const reference = String(b.reference || period).slice(0, 255);
       const today = new Date().toISOString().slice(0,10);
@@ -1207,38 +1210,46 @@ Deno.serve(async (req)=>{
       const built = [];
       for (const p of invs) {
         // v36: try the pharmacy master first — fastest, most accurate. Falls back to the contacts-cache name lookup.
+        // v60: the master's xero_contact_id is SKINDAE-scoped; only use it when SKINDAE is the target.
         let cid = null; let masterSource = false;
-        try {
-          const { data: pm } = await sb.rpc("portal_pharmacy_resolve_by_name", { p_name: p.pharmacy });
-          if (pm && pm.ok && pm.pharmacy && pm.pharmacy.xero_contact_id) { cid = pm.pharmacy.xero_contact_id; masterSource = true; }
-        } catch (_e) {}
-        if (!cid) cid = await resolveContact(SKINDAE_TENANT, p.pharmacy);
+        if (isSkindaeTarget) {
+          try {
+            const { data: pm } = await sb.rpc("portal_pharmacy_resolve_by_name", { p_name: p.pharmacy });
+            if (pm && pm.ok && pm.pharmacy && pm.pharmacy.xero_contact_id) { cid = pm.pharmacy.xero_contact_id; masterSource = true; }
+          } catch (_e) {}
+        }
+        if (!cid) cid = await resolveContact(targetTenant, p.pharmacy);
         // v28: forward ItemCode + DiscountRate when the frontend supplies them (per-SKU mode).
+        // v60: ItemCode is SKU-scoped to each Xero org — only send it when SKINDAE is the target.
         const lineItems = (p.lines||[]).map((l)=>{
           const li = { Description:String(l.package||"Item").slice(0,4000), Quantity:Number(l.quantity)||1, UnitAmount:Number(l.unit_price)||0, AccountCode:O2O_REVENUE_CODE };
-          if (l.item_code) li.ItemCode = String(l.item_code).slice(0,30);
+          if (isSkindaeTarget && l.item_code) li.ItemCode = String(l.item_code).slice(0,30);
           if (typeof l.discount_rate === "number" && l.discount_rate > 0) li.DiscountRate = Number(l.discount_rate);
           return li;
         });
         built.push({ matched: !!cid, masterSource, pharmacy: p.pharmacy, total: p.total, xero: { Type:"ACCREC", Contact: cid?{ ContactID:cid }:{ Name:String(p.pharmacy||"").slice(0,500) }, Date:today, DueDate:due, Reference:reference, Status:"AUTHORISED", LineAmountTypes:"Exclusive", LineItems: lineItems } });
       }
-      if (b.dry_run !== false) return j({ ok:true, dry_run:true, issued:0, emailed:0, failed:0, results: built.map(x=>({ pharmacy:x.pharmacy, total:x.total, number:"", status:"dry_run", contact: x.matched?"existing":"new" })) });
+      if (b.dry_run !== false) return j({ ok:true, dry_run:true, tenant: targetTenant, issued:0, emailed:0, failed:0, results: built.map(x=>({ pharmacy:x.pharmacy, total:x.total, number:"", status:"dry_run", contact: x.matched?"existing":"new" })) });
       const access = await xeroAccessToken();
-      const idem = await sha256Hex(JSON.stringify(built.map(x=>x.xero)) + "|" + period);
-      const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer " + access, "Xero-Tenant-Id":SKINDAE_TENANT, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices: built.map(x=>x.xero) }) });
+      const idem = await sha256Hex(JSON.stringify(built.map(x=>x.xero)) + "|" + period + "|" + targetTenant);
+      const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer " + access, "Xero-Tenant-Id":targetTenant, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices: built.map(x=>x.xero) }) });
       const out = await r.json();
       if (!r.ok && !out.Invoices) return j({ ok:false, error: out.Detail || out.Message || JSON.stringify(out).slice(0,500) });
       const arr = out.Invoices || [];
       const results = built.map((p, i)=>{ const iv = arr[i]||{}; const hasErr = iv.HasErrors || (iv.ValidationErrors&&iv.ValidationErrors.length); return { pharmacy:p.pharmacy, total:p.total, number: iv.InvoiceNumber||"", contact: p.matched?"existing":"new", status: hasErr?"failed":(iv.InvoiceID?"issued":"failed"), error: hasErr?(iv.ValidationErrors||[]).map((e)=>e.Message).join("; "):undefined, contact_id: (iv.Contact && iv.Contact.ContactID) || undefined }; });
       // v36: write the resolved Xero ContactID back to the pharmacy master so future runs hit the fast path.
-      for (let i=0; i<results.length; i++){
-        const cid = results[i].contact_id;
-        if (cid && results[i].status==="issued"){
-          try { await sb.rpc("portal_pharmacy_remember_xero_contact", { p_name: results[i].pharmacy, p_contact_id: cid }); } catch(_e){}
+      // v60: pharmacy master's contact_id is SKINDAE-scoped — only remember when SKINDAE is the target
+      //      (otherwise we'd overwrite Skindae's cached ID with another tenant's ID for the same pharmacy name).
+      if (isSkindaeTarget) {
+        for (let i=0; i<results.length; i++){
+          const cid = results[i].contact_id;
+          if (cid && results[i].status==="issued"){
+            try { await sb.rpc("portal_pharmacy_remember_xero_contact", { p_name: results[i].pharmacy, p_contact_id: cid }); } catch(_e){}
+          }
         }
       }
-      await logAudit(me, "o2o_issue", period, { issued: results.filter(x=>x.status==="issued").length, idem });
-      return j({ ok:true, dry_run:false, issued: results.filter(x=>x.status==="issued").length, emailed:0, failed: results.filter(x=>x.status==="failed").length, results });
+      await logAudit(me, "o2o_issue", period, { tenant: targetTenant, issued: results.filter(x=>x.status==="issued").length, idem });
+      return j({ ok:true, dry_run:false, tenant: targetTenant, issued: results.filter(x=>x.status==="issued").length, emailed:0, failed: results.filter(x=>x.status==="failed").length, results });
     }
     if (api === "inv_meta") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);

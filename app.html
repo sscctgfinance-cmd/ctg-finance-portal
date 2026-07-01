@@ -1914,10 +1914,47 @@ document.addEventListener('keydown',e=>{
 
 /* ---- O2O Pharmacy Billing ---- */
 var O2O_DATA=null;
+// v60: which Xero company (tenant) receives the issued invoices. Defaults to Skindae if the
+// operator has access to it, else the first allowed company. Non-Skindae targets drop the
+// SKU ItemCode field (SKO2OB3 etc. are Skindae-only inventory items in Xero).
+var O2O_TENANT=null;
+function o2oInitTenant(){
+  if(!COMPANIES||!COMPANIES.length){ O2O_TENANT=null; return; }
+  var sk=COMPANIES.find(function(c){ return /skindae/i.test(c.tenant_name||''); });
+  if(!O2O_TENANT || !COMPANIES.some(function(c){return c.tenant_id===O2O_TENANT;})){
+    O2O_TENANT = (sk && sk.tenant_id) || COMPANIES[0].tenant_id;
+  }
+}
+function o2oIsSkindae(){
+  var c=(COMPANIES||[]).find(function(c){return c.tenant_id===O2O_TENANT;});
+  return !!(c && /skindae/i.test(c.tenant_name||''));
+}
+function o2oTenantName(){
+  var c=(COMPANIES||[]).find(function(c){return c.tenant_id===O2O_TENANT;});
+  return (c && c.tenant_name) || 'the selected company';
+}
+function o2oTenantNoteHTML(){
+  return o2oIsSkindae()
+    ? ''
+    : '<span style="color:var(--amber)">⚠</span> Non-Skindae target — SKU codes (SKO2OB3 etc.) will not be sent to Xero (only description + account 500-0100). Pharmacy contacts will be resolved by name in that company\'s Xero.';
+}
+function o2oOnTenantChange(sel){
+  O2O_TENANT = sel.value;
+  var note = document.getElementById('o2o-tenant-note');
+  if(note) note.innerHTML = o2oTenantNoteHTML();
+}
 function renderO2O(){
+  o2oInitTenant();
+  var opts=(COMPANIES||[]).map(function(c){
+    return '<option value="'+esc(c.tenant_id)+'"'+(c.tenant_id===O2O_TENANT?' selected':'')+'>'+esc(c.tenant_name)+'</option>';
+  }).join('');
   document.getElementById('o2o').innerHTML=
-    '<div class="panel"><div class="panel-hd"><h3>O2O Pharmacy Billing → Xero (SKINDAE SDN BHD)</h3></div>'+
-    '<p class="muted" style="font-size:13px;margin:0 0 14px">Upload the monthly Skindae billing Excel. It is parsed in your browser — preview each pharmacy invoice, then issue them in Xero and email each pharmacy.</p>'+
+    '<div class="panel"><div class="panel-hd"><h3>O2O Pharmacy Billing → Xero</h3></div>'+
+    '<div class="bar" style="margin:0 0 12px"><span style="font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;font-weight:700">Issue into</span>'+
+      '<select id="o2o-tenant" onchange="o2oOnTenantChange(this)" style="min-width:230px">'+opts+'</select>'+
+    '</div>'+
+    '<p class="muted" style="font-size:13px;margin:0 0 6px">Upload the monthly O2O billing Excel. It is parsed in your browser — preview each pharmacy invoice, then issue them into the selected company\'s Xero.</p>'+
+    '<p id="o2o-tenant-note" class="muted" style="font-size:12px;margin:0 0 14px;line-height:1.55">'+o2oTenantNoteHTML()+'</p>'+
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
     '<input type="file" id="o2o_file" accept=".xlsx" onchange="o2oPick(this)"/>'+
     '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--text-soft)"><input type="checkbox" id="o2o-test" checked style="width:auto"/> Test mode (don\'t post)</label>'+
@@ -2144,12 +2181,22 @@ document.addEventListener('click', function(ev){
 async function o2oIssue(){
   if(!O2O_DATA){toast('Preview first',true);return;}
   var test=document.getElementById('o2o-test'); var dry=test?test.checked:true;
-  if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in SKINDAE SDN BHD?'))return;
+  if(!O2O_TENANT){toast('Pick a company first',true);return;}
+  var coName = o2oTenantName();
+  if(!confirm((dry?'TEST MODE — preview what would be created for ':'Create REAL Xero invoices for ')+O2O_DATA.pharmacy_count+' pharmacies in '+coName+'?'))return;
+  // v60: strip ItemCode from lines when target is non-Skindae — those SKUs are Skindae-only in Xero.
+  var skindae = o2oIsSkindae();
+  var invoices = O2O_DATA.pharmacies.map(function(p){
+    if(skindae) return p;
+    return Object.assign({}, p, { lines: (p.lines||[]).map(function(l){
+      var c=Object.assign({},l); delete c.item_code; return c;
+    })});
+  });
   // runOnce handles the disable + re-enable in `finally`, so even if rendering output throws
   // (e.g. user navigates away), the button is always restored.
   await runOnce('o2o-issue', 'Issuing…', async()=>{
     try{
-      var r=await call({api:'o2o_issue', period:O2O_DATA.period, reference:O2O_DATA.reference, dry_run:dry, send_email:false, invoices:O2O_DATA.pharmacies});
+      var r=await call({api:'o2o_issue', tenant:O2O_TENANT, period:O2O_DATA.period, reference:O2O_DATA.reference, dry_run:dry, send_email:false, invoices:invoices});
       if(r&&r.ok){
         var rows=(r.results||[]).map(function(x){
           var pill=x.status==='issued'?'pill-green':x.status==='dry_run'?'pill-submit':'pill-draft';
