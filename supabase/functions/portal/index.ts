@@ -1205,8 +1205,10 @@ Deno.serve(async (req)=>{
       const period = String(b.period || "O2O billing");
       // v28: prefer the frontend-formatted "O2O Sales DD/MM/YYYY - DD/MM/YYYY" reference; fall back to raw period.
       const reference = String(b.reference || period).slice(0, 255);
-      const today = new Date().toISOString().slice(0,10);
-      const due = new Date(Date.now() + 30*86400000).toISOString().slice(0,10);
+      // v61: operator-picked invoice + due dates. Falls back to today / +30d if unset or malformed.
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const today = dateRe.test(String(b.invoice_date||"")) ? String(b.invoice_date) : new Date().toISOString().slice(0,10);
+      const due = dateRe.test(String(b.due_date||"")) ? String(b.due_date) : new Date(Date.now() + 30*86400000).toISOString().slice(0,10);
       const built = [];
       for (const p of invs) {
         // v36: try the pharmacy master first — fastest, most accurate. Falls back to the contacts-cache name lookup.
@@ -1236,7 +1238,7 @@ Deno.serve(async (req)=>{
       const out = await r.json();
       if (!r.ok && !out.Invoices) return j({ ok:false, error: out.Detail || out.Message || JSON.stringify(out).slice(0,500) });
       const arr = out.Invoices || [];
-      const results = built.map((p, i)=>{ const iv = arr[i]||{}; const hasErr = iv.HasErrors || (iv.ValidationErrors&&iv.ValidationErrors.length); return { pharmacy:p.pharmacy, total:p.total, number: iv.InvoiceNumber||"", contact: p.matched?"existing":"new", status: hasErr?"failed":(iv.InvoiceID?"issued":"failed"), error: hasErr?(iv.ValidationErrors||[]).map((e)=>e.Message).join("; "):undefined, contact_id: (iv.Contact && iv.Contact.ContactID) || undefined }; });
+      const results = built.map((p, i)=>{ const iv = arr[i]||{}; const hasErr = iv.HasErrors || (iv.ValidationErrors&&iv.ValidationErrors.length); return { pharmacy:p.pharmacy, total:p.total, number: iv.InvoiceNumber||"", contact: p.matched?"existing":"new", status: hasErr?"failed":(iv.InvoiceID?"issued":"failed"), error: hasErr?(iv.ValidationErrors||[]).map((e)=>e.Message).join("; "):undefined, contact_id: (iv.Contact && iv.Contact.ContactID) || undefined, invoice_id: iv.InvoiceID || undefined }; });
       // v36: write the resolved Xero ContactID back to the pharmacy master so future runs hit the fast path.
       // v60: pharmacy master's contact_id is SKINDAE-scoped — only remember when SKINDAE is the target
       //      (otherwise we'd overwrite Skindae's cached ID with another tenant's ID for the same pharmacy name).
@@ -1250,6 +1252,41 @@ Deno.serve(async (req)=>{
       }
       await logAudit(me, "o2o_issue", period, { tenant: targetTenant, issued: results.filter(x=>x.status==="issued").length, idem });
       return j({ ok:true, dry_run:false, tenant: targetTenant, issued: results.filter(x=>x.status==="issued").length, emailed:0, failed: results.filter(x=>x.status==="failed").length, results });
+    }
+    if (api === "o2o_pdfs") {
+      // v61: bulk-fetch Xero invoice PDFs for the freshly issued O2O batch.
+      // Frontend passes { tenant, invoices:[{invoice_id, pharmacy, number, total}] } and
+      // gets back { pdfs:[{filename, base64}] } which it zips locally.
+      const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const allowed = await allowedTenants(b.token);
+      const pdfTenant = String(b.tenant || SKINDAE_TENANT);
+      if (allowed.indexOf(pdfTenant) < 0) return await denyTenant(me, "o2o_pdfs", pdfTenant);
+      const list = Array.isArray(b.invoices) ? b.invoices : [];
+      if (!list.length) return j({ ok:false, error:"no invoices" });
+      const pdfAccess = await xeroAccessToken();
+      // Filenames: {Pharmacy}_{Number}_MYR{amount}.pdf; strip filesystem-hostile chars only.
+      const safe = (s: string) => String(s||"").replace(/[\\/:*?"<>|\x00-\x1f]/g, "").trim();
+      const pdfs = await Promise.all(list.map(async (iv: any) => {
+        const invoice_id = safe(iv.invoice_id||"");
+        if (!invoice_id) return { filename: null, base64: null, error: "no invoice_id" };
+        try {
+          const rr = await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + encodeURIComponent(invoice_id), { headers: { "Authorization":"Bearer " + pdfAccess, "Xero-Tenant-Id": pdfTenant, "Accept":"application/pdf" } });
+          if (!rr.ok) return { filename: null, base64: null, error: "HTTP " + rr.status };
+          const buf = new Uint8Array(await rr.arrayBuffer());
+          // base64 in chunks to avoid stack overflow on large PDFs
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode.apply(null, Array.from(buf.subarray(i, i + 8192)) as any);
+          const b64 = btoa(bin);
+          const pharm = safe(iv.pharmacy) || "invoice";
+          const num = safe(iv.number) || invoice_id.slice(0, 8);
+          const amt = (Number(iv.total) || 0).toFixed(2);
+          return { filename: pharm + "_" + num + "_MYR" + amt + ".pdf", base64: b64 };
+        } catch (e: any) {
+          return { filename: null, base64: null, error: String((e && e.message) || e).slice(0, 200) };
+        }
+      }));
+      await logAudit(me, "o2o_pdfs", "download", { count: pdfs.filter(p=>p.base64).length, tenant: pdfTenant });
+      return j({ ok:true, pdfs });
     }
     if (api === "inv_meta") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
