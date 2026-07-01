@@ -1437,7 +1437,9 @@ Deno.serve(async (req)=>{
       if (!Array.isArray(conns)) return j({ ok:false, error: "Xero /connections returned unexpected shape" });
       // Strip invisible chars (word joiner, zero-width space, BOM etc.) that sometimes creep in
       // via copy-paste on the Xero side and would otherwise render as an off-by-one indent.
-      const clean = (s: string) => String(s||"").replace(/[​-‍⁠﻿]/g, "").trim();
+      // v67: use explicit \u escapes — the previous literal invisible chars in the regex
+      // range broke the Supabase deploy build silently (each attempt fast-failed at ~19s).
+      const clean = (s: string) => String(s||"").replace(/[​‌‍⁠﻿]/g, "").trim();
       const { data: existing } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
       const before = new Map((existing||[]).map((r: any)=>[r.tenant_id, r.tenant_name]));
       const seen = new Set<string>();
