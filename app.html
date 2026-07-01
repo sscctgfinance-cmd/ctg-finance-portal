@@ -1922,6 +1922,9 @@ var O2O_TENANT=null;
 // v61: batch of successfully-issued invoices from the last live post, kept so we can
 // bulk-download their Xero PDFs as one ZIP.
 var O2O_LAST_ISSUED=null;
+// v62: keep the raw Excel bytes so switching target company re-parses under the right mode
+// (Skindae uses fixed-SKU matching; other tenants use the Package column as line description).
+var O2O_BUF=null;
 function o2oToday(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function o2oPlusDays(n){ var d=new Date(); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function o2oResetDates(){
@@ -1952,6 +1955,14 @@ function o2oOnTenantChange(sel){
   O2O_TENANT = sel.value;
   var note = document.getElementById('o2o-tenant-note');
   if(note) note.innerHTML = o2oTenantNoteHTML();
+  // v62: switching company changes how we parse the Excel (SKU-mode vs Package-mode).
+  // Re-parse the last-loaded file so the preview reflects the new company right away.
+  if(O2O_BUF){
+    try{
+      O2O_DATA = o2oParse(O2O_BUF);
+      o2oEnrichWithPharmacyMaster().then(o2oRenderPreview);
+    }catch(e){}
+  }
 }
 function renderO2O(){
   o2oInitTenant();
@@ -2049,18 +2060,40 @@ function o2oParse(buf){
     if(hdrRow>=0){
       var hdr=rows[hdrRow];
       var cDate=colIdx(hdr,'date'), cPkg=colIdx(hdr,'package'), cPrice=colIdx(hdr,'price');
+      // v62: Skindae uses fixed SKU regex map (existing behaviour). Other tenants (DRSMILE etc.)
+      // don't share Skindae's SKUs — instead we group by the Package column verbatim and use
+      // that as the invoice line Description. Same 19.2% commission handling either way.
+      var useSkuMode = o2oIsSkindae();
       for(var r=hdrRow+1;r<rows.length;r++){
         var row=rows[r]||[];
         var pkg=row[cPkg], price=row[cPrice];
         if(!pkg||typeof price!=='number'||price<=0) continue;
-        var hit=o2oMatchSku(pkg);
-        if(!hit){ unmatched.push({pkg:String(pkg),price:price}); continue; }
-        var key=hit.code;
-        if(!grouped[key]) grouped[key]={code:hit.code,description:hit.desc,label:hit.label,unit_price:price,quantity:0,gross:0};
-        grouped[key].quantity++;
-        grouped[key].gross+=price;
-        // last-write-wins for unit_price (in case of slight rounding diffs in source)
-        grouped[key].unit_price=price;
+        if(useSkuMode){
+          var hit=o2oMatchSku(pkg);
+          if(!hit){ unmatched.push({pkg:String(pkg),price:price}); continue; }
+          var key=hit.code;
+          if(!grouped[key]) grouped[key]={code:hit.code,description:hit.desc,label:hit.label,unit_price:price,quantity:0,gross:0};
+          grouped[key].quantity++;
+          grouped[key].gross+=price;
+          // last-write-wins for unit_price (in case of slight rounding diffs in source)
+          grouped[key].unit_price=price;
+        } else {
+          // Non-Skindae: description IS the Package column value. Group rows with the same
+          // Package + unit price into one line item so the invoice stays tidy.
+          // Guard against summary rows below the data section (Total Sales / Commission /
+          // Insurans / Billing / etc.) — those either have no Date, or hold a rate (0.192)
+          // in the Date column. Data rows carry a real Date value: either a JS Date object
+          // or an Excel-serial number well above the 10000 threshold (~1927).
+          if(cDate<0) continue;
+          var dv = row[cDate];
+          var isRealDate = (dv instanceof Date) || (typeof dv === 'number' && dv > 10000);
+          if(!isRealDate) continue;
+          var desc = String(pkg).trim();
+          var keyNs = desc + '|' + price;
+          if(!grouped[keyNs]) grouped[keyNs]={code:null,description:desc,label:desc,unit_price:price,quantity:0,gross:0};
+          grouped[keyNs].quantity++;
+          grouped[keyNs].gross+=price;
+        }
       }
     }
     var lines=[];
@@ -2101,7 +2134,7 @@ function o2oParse(buf){
 function o2oPick(input){
   var f=input.files[0]; if(!f)return;
   var rd=new FileReader();
-  rd.onload=function(e){ try{ O2O_DATA=o2oParse(e.target.result); o2oEnrichWithPharmacyMaster().then(o2oRenderPreview); }
+  rd.onload=function(e){ try{ O2O_BUF=e.target.result; O2O_DATA=o2oParse(O2O_BUF); o2oEnrichWithPharmacyMaster().then(o2oRenderPreview); }
     catch(err){ document.getElementById('o2o-out').innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>'; } };
   rd.readAsArrayBuffer(f);
 }
