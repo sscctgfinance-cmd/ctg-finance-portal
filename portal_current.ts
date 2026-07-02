@@ -762,10 +762,18 @@ Important:
   const newVendorBlock = requireKnownVendor && newVendorLines > 0;
   if (newVendorBlock) issues.push(newVendorLines + " line(s) coded only by AI (new vendor / no learned rule) — review to teach the system");
 
+  // Wave 4 spec §G: Xero transaction-type gate. Credit notes / already-paid docs must NOT
+  // auto-post as a bill — route to human review with the reason.
+  const typeGate = apXeroTypeGate(parsed);
+  if (!typeGate.autoPostable) issues.push(typeGate.reason);
+
   // If still no decision (i.e. passed compliance) → route on amount + confidence
   if (!decision){
     const compliant = (parsed.amount_consistent !== false) && (parsed.date_consistent !== false);
-    if (!compliant || reconcileFail || parsed.confidence === "low" || unmappedLines > 0 || newVendorBlock || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
+    if (!typeGate.autoPostable){
+      decision = "needs_review";
+      reasoning = typeGate.reason;
+    } else if (!compliant || reconcileFail || parsed.confidence === "low" || unmappedLines > 0 || newVendorBlock || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
       decision = "needs_review";
       reasoning = "Compliant but " + (reconcileFail ? "line amounts don't reconcile to the stated total" : unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : newVendorBlock ? newVendorLines + " line(s) coded only by AI (new vendor) — review to teach the system" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
     } else if (total > cap){
@@ -807,7 +815,15 @@ Important:
   }
   if (decision === "duplicate_rejected"){
     replySubject = "Re: " + (item.subject || "") + " — DUPLICATE CLAIM, not processed";
-    replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for the submission. After review, this claim appears to be a duplicate of an already-paid bill:\n\n  • Existing bill: " + (dupHit.number || dupHit.invoice_id) + "\n  • Date: " + dupHit.inv_date + "\n  • Total: MYR " + dupHit.total + "\n  • Status: " + dupHit.status + " (amount due: MYR " + dupHit.amount_due + ")\n\nThe new submission for MYR " + total + " matches the same vendor and amount, and that earlier bill has already been settled.\n\nIf you believe this is a different claim and not a duplicate, please reply with:\n  1. The reason this is a separate transaction\n  2. Distinct supporting invoices and a fresh payment receipt that has NOT been claimed before\n\nNo bill has been created in Xero for this submission.\n\nBest regards,\nCTG Finance AP";
+    {
+      // Defensive: Layer 2/4 duplicate hits don't carry inv_date/amount_due, so only show
+      // the fields we actually have.
+      const exLines = ["  • Existing record: " + (dupHit.number || dupHit.invoice_id || "(on file)")];
+      if (dupHit.inv_date) exLines.push("  • Date: " + dupHit.inv_date);
+      if (dupHit.total != null) exLines.push("  • Total: MYR " + dupHit.total);
+      if (dupHit.status) exLines.push("  • Status: " + dupHit.status + (dupHit.amount_due != null ? (" (amount due: MYR " + dupHit.amount_due + ")") : ""));
+      replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for the submission. After review, this appears to be a duplicate of a submission we have already recorded:\n\n" + exLines.join("\n") + "\n\nThe new submission for MYR " + total + " matches an earlier one on the same key details.\n\nIf you believe this is a different, separate transaction, please reply with:\n  1. The reason this is a separate transaction\n  2. Distinct supporting invoices and a fresh payment receipt that has NOT been claimed before\n\nNo bill has been created in Xero for this submission.\n\nBest regards,\nCTG Finance AP";
+    }
   } else if (decision === "compliance_rejected"){
     replySubject = "Re: " + (item.subject || "") + " — supporting documents needed";
     replyBody = "Hi " + (item.from_name || "team") + ",\n\nThank you for your submission. To process this " + (parsed.doc_type||"claim") + " for MYR " + total + ", we need the following items added/corrected:\n\n" + issues.map(i => "  • " + i).join("\n") + "\n\nOnce you reply with the corrected/additional documents, we'll process it. Until then, no bill has been created in Xero.\n\nBest regards,\nCTG Finance AP";
@@ -856,6 +872,57 @@ async function logDecision(inboxId, decision, reasoning, dupOf, ruleVersions){
 }
 
 // Auto-post the bill to Xero as AUTHORISED, attach source files, update status.
+// Wave 4 (spec §G): decide the Xero transaction type. Only normal payables (ACCPAY),
+// incl. reimbursements (billed to the claimant as a contact), are safe to auto-post as a
+// bill. Credit notes and already-paid (spend) documents post to DIFFERENT Xero endpoints —
+// auto-posting them as a bill would double what we owe or mis-record cash, so we refuse to
+// auto-post and route to human review with a clear reason instead.
+function apXeroTypeGate(verdict){
+  const t = String(verdict.suggested_xero_type||"").toUpperCase();
+  const doc = String(verdict.doc_type||"").toLowerCase();
+  if (t === "APCREDIT" || doc === "credit_note" || doc === "creditnote"){
+    return { autoPostable:false, xeroType:"ACCPAYCREDIT", reason:"This is a supplier CREDIT NOTE — it must be entered as a Xero credit note (reduces what we owe), not as a bill. Handle manually." };
+  }
+  if (t === "SPEND"){
+    return { autoPostable:false, xeroType:"SPEND", reason:"Document indicates it is ALREADY PAID — record it as a spend/bank transaction against the paying account, not as an unpaid bill. Handle manually." };
+  }
+  // ACCPAY (default) and EXPENSE_CLAIM (reimbursement billed to the claimant) → normal bill.
+  return { autoPostable:true, xeroType:"ACCPAY", reason:null };
+}
+
+// Wave 4: build a minimal, always-valid single-page PDF (Helvetica, Latin-1 text) with the
+// AP audit summary, so Xero has a human-readable cover sheet alongside the source files.
+// Hand-rolled (no dependency) with runtime-computed xref offsets so it is always well-formed.
+function buildAuditPdf(titleLines){
+  const esc = (s) => String(s==null?"":s).split("").map(function(ch){return ch.charCodeAt(0)>255?" ":ch;}).join("").replace(/\\/g,"\\\\").replace(/\(/g,"\\(").replace(/\)/g,"\\)");
+  // Wrap long lines to ~92 chars so nothing runs off the page.
+  const wrapped = [];
+  for (const raw of titleLines){
+    const s = String(raw==null?"":raw);
+    if (s.length <= 92){ wrapped.push(s); continue; }
+    let rest = s;
+    while (rest.length > 92){ wrapped.push(rest.slice(0,92)); rest = rest.slice(92); }
+    if (rest) wrapped.push(rest);
+  }
+  const body = wrapped.slice(0, 60); // one page
+  const content = "BT /F1 10 Tf 40 800 Td 13 TL\n" + body.map((l,i)=> (i===0? "" : "T* ") + "(" + esc(l) + ") Tj").join("\n") + "\nET";
+  const enc = new TextEncoder();
+  const objs = [];
+  objs.push("<</Type/Catalog/Pages 2 0 R>>");
+  objs.push("<</Type/Pages/Kids[3 0 R]/Count 1>>");
+  objs.push("<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>");
+  objs.push("<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>");
+  objs.push("<</Length " + enc.encode(content).length + ">>\nstream\n" + content + "\nendstream");
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  for (let i=0;i<objs.length;i++){ offsets.push(enc.encode(pdf).length); pdf += (i+1) + " 0 obj\n" + objs[i] + "\nendobj\n"; }
+  const xrefStart = enc.encode(pdf).length;
+  pdf += "xref\n0 " + (objs.length+1) + "\n0000000000 65535 f \n";
+  for (const off of offsets){ pdf += String(off).padStart(10,"0") + " 00000 n \n"; }
+  pdf += "trailer\n<</Size " + (objs.length+1) + "/Root 1 0 R>>\nstartxref\n" + xrefStart + "\n%%EOF";
+  return enc.encode(pdf);
+}
+
 async function apAutoPostBill(inboxId, item, verdict, lines){
   const vendor = verdict.vendor_name || item.from_name || item.from_email || "Unknown";
   const access = await xeroAccessToken();
@@ -907,6 +974,41 @@ async function apAutoPostBill(inboxId, item, verdict, lines){
     ai_verdict: verdict || null,
   });
 
+  // Wave 4 (spec §G/§77): attach a machine-generated AUDIT COVER SHEET (PDF) first, then the
+  // original source files. The cover sheet gives Xero a self-contained audit record of how the
+  // AI reached this bill — best-effort, never blocks the post.
+  try {
+    const coverPdf = buildAuditPdf([
+      "CTG FINANCE — AP AUTO-POST AUDIT COVER SHEET",
+      "",
+      "Xero Bill:     " + (iv.InvoiceNumber||"") + "   (" + (iv.InvoiceID||"") + ")",
+      "Vendor:        " + vendor,
+      "Bill total:    MYR " + (Number(iv.Total||verdict.total||0)).toFixed(2),
+      "Invoice no:    " + (verdict.invoice_no||"(Xero auto)"),
+      "Invoice date:  " + (inv.Date||""),
+      "Due date:      " + (inv.DueDate||""),
+      "Status posted: SUBMITTED (Awaiting Approval — payment requires a human)",
+      "",
+      "Source email:  " + (item.subject||""),
+      "From:          " + (item.from_name||"") + " <" + (item.from_email||"") + ">",
+      "Doc type:      " + (verdict.doc_type||""),
+      "",
+      "Line items + GL coding:",
+      ...lines.map((l,i)=> "  " + (i+1) + ". " + String(l.description||"").slice(0,60) + "  x" + (Number(l.quantity)||1) + " @ " + (Number(l.unit_amount)||0).toFixed(2) + "  -> GL " + (l.account_code||"?") + (l.gl_reason? ("  ("+String(l.gl_reason).slice(0,50)+")") : "")),
+      "",
+      "AI verdict:    " + (verdict.server_decision||"auto_authorised"),
+      "Reasoning:     " + (verdict.server_reasoning||""),
+      "Confidence:    " + (verdict.confidence||"n/a"),
+      "",
+      "Generated by CTG Finance Portal · " + new Date(Date.now()+8*3600*1000).toISOString().slice(0,19).replace("T"," ") + " MYT",
+    ]);
+    await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + iv.InvoiceID + "/Attachments/" + encodeURIComponent("AP_Audit_CoverSheet.pdf"), {
+      method:"POST",
+      headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type":"application/pdf" },
+      body: coverPdf,
+    });
+  } catch(_e){}
+
   // Attach source files to the Xero invoice (best-effort)
   if (item.attachments && Array.isArray(item.attachments)){
     for (const a of item.attachments){
@@ -923,7 +1025,7 @@ async function apAutoPostBill(inboxId, item, verdict, lines){
       } catch(_e){}
     }
   }
-  await logDecision(inboxId, "auto_posted", "Posted to Xero as " + iv.InvoiceNumber + " (" + iv.InvoiceID + ")");
+  await logDecision(inboxId, "auto_posted", "Posted to Xero as " + iv.InvoiceNumber + " (" + iv.InvoiceID + ") · type " + (verdict._xero_type||"ACCPAY") + " · cover sheet + " + ((item.attachments||[]).length) + " file(s) attached");
 }
 
 // Auto-reply via Gmail SMTP (preferred) or Resend.
