@@ -5021,9 +5021,11 @@ function apRenderDetail(){
               '<table id="ap_lines" style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left">Description</th><th style="text-align:left">Qty</th><th style="text-align:left">Unit</th><th style="text-align:left">GL</th></tr></thead><tbody>'+billLines+'</tbody></table>'+
             '</div>'+
             '<label style="display:flex;align-items:center;gap:7px;font-size:11.5px;margin-top:10px;cursor:pointer"><input type="checkbox" id="ap_teach" style="width:auto"/>🎓 Remember these GL codes — auto-code similar bills next time (teaches the rule engine)</label>'+
-            '<div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">'+
+            '<div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">'+
               (canRerun?'<button class="btn" id="ap_rerun_btn" onclick="apRerun()">🔁 Re-run AI</button>':'')+
               '<button class="btn d" onclick="apReject()">Reject</button>'+
+              // v67: preview the exact Xero payload before posting — spec §F/§69
+              '<button class="btn" id="ap_preview_btn" onclick="apPreviewPayload()" title="See the exact Xero JSON payload + sanity checks before posting">🔍 Preview payload</button>'+
               '<button class="btn p" id="ap_post_btn" onclick="apPostBill()">✓ Post to Xero</button>'+
             '</div>'+
           '</div>'
@@ -5065,8 +5067,8 @@ async function apSendReply(){
   try{ const r=await call({api:'ap_reply_send', id:AP_ACTIVE_ID, subject, body}); if(r&&r.ok){ toast('✓ Reply sent'); renderAp(); apOpen(AP_ACTIVE_ID); } else toast(r&&r.error||'Failed',true); }
   catch(e){ toast(e.message,true); }
 }
-async function apPostBill(){
-  if(!AP_ACTIVE_ID) return;
+// v67: read current bill + line-items form state without submitting. Shared by preview and post.
+function apCollectBill(){
   const bill={}; document.querySelectorAll('[data-bk]').forEach(el=>{ bill[el.dataset.bk] = (el.type==='number')?Number(el.value)||0:el.value; });
   const lineMap={}; document.querySelectorAll('#ap_lines [data-li-i]').forEach(el=>{
     const i=el.dataset.liI, k=el.dataset.liK;
@@ -5074,6 +5076,62 @@ async function apPostBill(){
     lineMap[i][k] = (k==='quantity'||k==='unit_amount')?Number(el.value)||0:el.value;
   });
   bill.line_items = Object.keys(lineMap).map(k=>lineMap[k]).filter(l=>l.description||l.unit_amount||Number(l.quantity)>0);
+  return bill;
+}
+// v67: ask the backend to build the exact Xero payload without posting. Shows a modal with
+// the JSON + sanity checks + a Post-anyway button that runs the real ap_post.
+async function apPreviewPayload(){
+  if(!AP_ACTIVE_ID) return;
+  const bill = apCollectBill();
+  await runOnce('ap_preview_btn','Building preview…', async()=>{
+    try{
+      const r = await call({api:'ap_post_preview', id:AP_ACTIVE_ID, bill});
+      if(!r || !r.ok){ toast((r&&r.error)||'Preview failed', true); return; }
+      apShowPreviewModal(r);
+    }catch(e){ toast(e.message,true); }
+  });
+}
+function apShowPreviewModal(r){
+  const pretty = JSON.stringify({ Invoices: [r.payload] }, null, 2);
+  const rows = (r.checks||[]).map(function(c){
+    var mark = c.pass ? '<span style="color:var(--green-soft);font-weight:600">✓</span>' : '<span style="color:var(--red-soft);font-weight:600">✗</span>';
+    return '<tr><td style="padding:6px 8px;width:24px;text-align:center">'+mark+'</td>'+
+           '<td style="padding:6px 8px;font-size:12.5px">'+esc(c.name)+'</td>'+
+           '<td style="padding:6px 8px;font-size:11.5px;color:var(--muted)">'+esc(c.detail||'')+'</td></tr>';
+  }).join('');
+  var warns = (r.warnings||[]).length
+    ? '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)">⚠ '+(r.warnings||[]).map(esc).join('<br>')+'</div>'
+    : '';
+  var anyFail = (r.checks||[]).some(function(c){return !c.pass;});
+  var host = document.getElementById('ap_preview_modal');
+  if(!host){ host = document.createElement('div'); host.id='ap_preview_modal'; document.body.appendChild(host); }
+  host.innerHTML =
+    '<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)apPreviewClose()">'+
+      '<div style="background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:16px;width:min(900px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column">'+
+        '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
+          '<div><div style="font-size:15px;font-weight:700">🔍 Xero payload preview</div>'+
+          '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">This is the EXACT JSON that will POST to Xero. Nothing has been sent yet.</div></div>'+
+          '<button class="btn" onclick="apPreviewClose()" style="padding:6px 11px">Close</button>'+
+        '</div>'+
+        '<div style="padding:16px 20px;overflow:auto;flex:1">'+
+          warns+
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Sanity checks</div>'+
+          '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px"><table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table></div>'+
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Payload · POST /Invoices  ·  tenant '+esc((r.tenant_id||'').slice(0,8))+'…</div>'+
+          '<pre style="background:rgba(7,13,23,.7);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11.5px;line-height:1.5;overflow:auto;max-height:340px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-soft);white-space:pre">'+esc(pretty)+'</pre>'+
+          '<div style="font-size:11px;color:var(--muted);margin-top:6px">Idempotency-Key: <code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px">'+esc(r.idempotency_key||'')+'</code></div>'+
+        '</div>'+
+        '<div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">'+
+          '<button class="btn" onclick="apPreviewClose()">Cancel</button>'+
+          '<button class="btn p" '+(anyFail?'style="opacity:.75"':'')+' onclick="apPreviewClose();apPostBill();">'+(anyFail?'⚠ Post anyway':'✓ Looks good — Post to Xero')+'</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+}
+function apPreviewClose(){ var el = document.getElementById('ap_preview_modal'); if(el) el.innerHTML=''; }
+async function apPostBill(){
+  if(!AP_ACTIVE_ID) return;
+  const bill = apCollectBill();
   const teach = document.getElementById('ap_teach') && document.getElementById('ap_teach').checked;
   if(!confirm('Create Bill in Xero for '+(bill.vendor_name||'?')+' · Total: RM '+(Number(bill.total||0)).toFixed(2)+'?')) return;
   await runOnce('ap_post_btn','Posting…', async()=>{

@@ -1698,6 +1698,50 @@ Deno.serve(async (req)=>{
       try { await processApEmail(Number(b.id), route); return j({ ok:true }); }
       catch(e){ return j({ ok:false, error: String(e).slice(0,400) }); }
     }
+    if (api === "ap_post_preview") {
+      // v67: dry-run preview of the exact Xero payload that ap_post would send.
+      // Spec §F/§69: operator sees the exact JSON + sanity checks before authorising the live POST.
+      // No Xero call happens here — read-only.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+      if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
+      const item = getRes.item;
+      const overrides = b.bill || {};
+      const verdict = item.ai_verdict || {};
+      const vendor = overrides.vendor_name || verdict.vendor_name || item.from_name || item.from_email;
+      const lines = overrides.line_items || verdict.line_items || [];
+      const warnings: string[] = [];
+      const checks: { name: string; pass: boolean; detail?: string }[] = [];
+      if (!vendor) warnings.push("Missing vendor name");
+      if (!lines.length) warnings.push("No line items");
+      const now = new Date(Date.now() + 8*3600*1000);
+      const today = now.toISOString().slice(0,10);
+      const due = overrides.due_date || verdict.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
+      const invDate = overrides.invoice_date || verdict.invoice_date || today;
+      const cid = await resolveContact(item.tenant_id, vendor);
+      const inv: any = { Type:"ACCPAY", Contact: cid?{ContactID:cid}:{Name:String(vendor||"").slice(0,500)}, Date: invDate, DueDate: due, Status:"DRAFT", LineAmountTypes: "Exclusive", LineItems: lines.map((l:any)=>({ Description:String(l.description||"Item").slice(0,4000), Quantity:Number(l.quantity)||1, UnitAmount:Number(l.unit_amount)||0, AccountCode: l.account_code || verdict.suggested_gl_account || "610-1000" })) };
+      if (verdict.invoice_no || overrides.invoice_no) inv.InvoiceNumber = String(overrides.invoice_no || verdict.invoice_no).slice(0,255);
+      if (verdict.currency || overrides.currency) inv.CurrencyCode = String(overrides.currency || verdict.currency);
+      // Sanity checks
+      checks.push({ name:"Vendor contact resolved in Xero", pass: !!cid, detail: cid ? "Existing contact ID matched" : "Will create new contact by Name" });
+      checks.push({ name:"Vendor name present", pass: !!vendor });
+      checks.push({ name:"At least one line item", pass: lines.length > 0, detail: `${lines.length} line(s)` });
+      const missingCodes = lines.filter((l:any)=>!l.account_code && !verdict.suggested_gl_account).length;
+      checks.push({ name:"Every line has an account code", pass: missingCodes === 0, detail: missingCodes ? `${missingCodes} line(s) will fall back to 610-1000` : "OK" });
+      const lineTotal = lines.reduce((s:number,l:any)=>s+(Number(l.quantity)||1)*(Number(l.unit_amount)||0), 0);
+      const roundedLineTotal = Math.round(lineTotal*100)/100;
+      const claimedTotal = Number(verdict.total_amount||0);
+      const tolerance = 0.02;
+      if (claimedTotal > 0) {
+        checks.push({ name:"Subtotal reconciliation (line-sum vs claimed total)", pass: Math.abs(roundedLineTotal - claimedTotal) <= tolerance, detail: `line-sum=${roundedLineTotal.toFixed(2)} vs claimed=${claimedTotal.toFixed(2)} MYR` });
+      }
+      checks.push({ name:"Invoice date is valid ISO date", pass: /^\d{4}-\d{2}-\d{2}$/.test(invDate) });
+      checks.push({ name:"Due date ≥ invoice date", pass: due >= invDate, detail: `Date=${invDate}, DueDate=${due}` });
+      checks.push({ name:"Invoice number present", pass: !!inv.InvoiceNumber, detail: inv.InvoiceNumber || "(Xero auto-generates on post)" });
+      const idem = await sha256Hex(JSON.stringify(inv) + "|inbox:" + b.id);
+      return j({ ok:true, dry_run:true, payload: inv, idempotency_key: idem, warnings, checks, tenant_id: item.tenant_id });
+    }
     if (api === "ap_post") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.id) return j({ ok:false, error:"id required" });
