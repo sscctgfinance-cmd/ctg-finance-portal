@@ -371,6 +371,69 @@ async function recordRateLimit(tenant_id, errMsg){
 //   4. Server-side GL MAPPING via portal_gl_rules (learned patterns).
 //   5. Decision tree → status + (auto-post | auto-reply) without human intervention.
 // Every decision is logged to portal_ap_decisions for audit.
+// Wave 5 (CTG Finance OS Principle 5 — AI Provider swappable):
+// Provider-agnostic vision LLM call. Business logic builds a NEUTRAL content list
+// ([{kind:"text"|"image"|"pdf", ...}]) and this adapter converts it to whichever provider
+// the tenant picked. Switching provider never touches extraction/dedup/coding logic.
+// Returns { ok, text, error }.
+function resolveModel(provider, aiModel){
+  provider = String(provider||"anthropic").toLowerCase();
+  const m = String(aiModel||"");
+  if (provider === "openai") return /^(gpt|o\d|chatgpt)/i.test(m) ? m : "gpt-4o-mini";
+  if (provider === "gemini") return /^gemini/i.test(m) ? m : "gemini-2.0-flash";
+  return /^claude/i.test(m) ? m : "claude-haiku-4-5-20251001";
+}
+async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
+  provider = String(provider||"anthropic").toLowerCase();
+  maxTokens = maxTokens || 2500;
+  try {
+    if (provider === "openai"){
+      const key = Deno.env.get("OPENAI_API_KEY");
+      if (!key) return { ok:false, error:"OPENAI_API_KEY not set" };
+      const content = neutral.map((b)=>{
+        if (b.kind === "text")  return { type:"text", text: b.text };
+        if (b.kind === "image") return { type:"image_url", image_url:{ url:"data:"+b.mime+";base64,"+b.b64 } };
+        if (b.kind === "pdf")   return { type:"file", file:{ filename:"invoice.pdf", file_data:"data:application/pdf;base64,"+b.b64 } };
+        return { type:"text", text:"" };
+      });
+      const r = await fetch("https://api.openai.com/v1/chat/completions", { method:"POST", headers:{ "Authorization":"Bearer "+key, "Content-Type":"application/json" }, body: JSON.stringify({ model, max_tokens: maxTokens, response_format:{ type:"json_object" }, messages:[ { role:"system", content: systemPrompt }, { role:"user", content } ] }) });
+      const out = await r.json();
+      if (!r.ok) return { ok:false, error:"OpenAI "+r.status+": "+JSON.stringify(out.error||out).slice(0,300) };
+      const txt = (out.choices && out.choices[0] && out.choices[0].message && out.choices[0].message.content) || "";
+      return { ok:true, text: txt };
+    }
+    if (provider === "gemini"){
+      const key = Deno.env.get("GEMINI_API_KEY");
+      if (!key) return { ok:false, error:"GEMINI_API_KEY not set" };
+      const parts = neutral.map((b)=>{
+        if (b.kind === "text")  return { text: b.text };
+        if (b.kind === "image") return { inline_data:{ mime_type: b.mime, data: b.b64 } };
+        if (b.kind === "pdf")   return { inline_data:{ mime_type:"application/pdf", data: b.b64 } };
+        return { text:"" };
+      });
+      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: maxTokens, responseMimeType:"application/json" } }) });
+      const out = await r.json();
+      if (!r.ok) return { ok:false, error:"Gemini "+r.status+": "+JSON.stringify(out.error||out).slice(0,300) };
+      const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || "";
+      return { ok:true, text: txt };
+    }
+    // default: anthropic
+    const key = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!key) return { ok:false, error:"ANTHROPIC_API_KEY not set" };
+    const content = neutral.map((b)=>{
+      if (b.kind === "text")  return { type:"text", text: b.text };
+      if (b.kind === "image") return { type:"image", source:{ type:"base64", media_type: b.mime, data: b.b64 } };
+      if (b.kind === "pdf")   return { type:"document", source:{ type:"base64", media_type:"application/pdf", data: b.b64 } };
+      return { type:"text", text:"" };
+    });
+    const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key": key, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify({ model, max_tokens: maxTokens, system: systemPrompt, messages:[{ role:"user", content }] }) });
+    const out = await r.json();
+    if (!r.ok) return { ok:false, error:"Claude API "+r.status+": "+JSON.stringify(out.error||out).slice(0,300) };
+    const txt = (out.content && out.content[0] && out.content[0].text) || "";
+    return { ok:true, text: txt };
+  } catch(e){ return { ok:false, error: String((e&&e.message)||e).slice(0,300) }; }
+}
+
 async function processApEmail(inboxId, route){
   const { data: item } = await sb.from("portal_ap_inbox").select("*").eq("id", inboxId).single();
   if (!item) throw new Error("inbox item not found");
@@ -384,16 +447,14 @@ async function processApEmail(inboxId, route){
     routedTenantName = (cur && cur.tenant_name) || "";
     knownCompanyText = rows.map((t)=>"- " + (t.tenant_name || t.tenant_id) + " [" + t.tenant_id + "]").join("\n");
   } catch(_e){}
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey){
-    await logDecision(inboxId, "needs_review", "ANTHROPIC_API_KEY not set");
-    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"ANTHROPIC_API_KEY not set — manual review only" }).eq("id", inboxId);
-    return;
-  }
+  // Wave 5: which LLM provider this tenant uses (default anthropic). Key presence is
+  // checked inside callVisionLLM so a missing key routes to needs_review, not a crash.
+  const aiProvider = String(route.ai_provider || "anthropic").toLowerCase();
+  const aiModelResolved = resolveModel(aiProvider, route.ai_model);
 
-  // ── Step 1: build multimodal content ───────────────────────────────
+  // ── Step 1: build NEUTRAL multimodal content (provider-agnostic) ────
   const contentBlocks = [];
-  contentBlocks.push({ type:"text", text:
+  contentBlocks.push({ kind:"text", text:
     "ROUTED XERO TENANT ID: " + (item.tenant_id||"") + "\n" +
     "ROUTED COMPANY NAME: " + (routedTenantName || "(unknown)") + "\n\n" +
     "KNOWN GROUP COMPANIES:\n" + (knownCompanyText || "(not loaded)") + "\n\n" +
@@ -411,18 +472,17 @@ async function processApEmail(inboxId, route){
           const buf = new Uint8Array(await f.arrayBuffer());
           let bin = ""; const chunk = 8192;
           for (let i=0; i<buf.length; i+=chunk) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+chunk, buf.length)));
-          contentBlocks.push({ type:"image", source:{ type:"base64", media_type: mime, data: btoa(bin) } });
+          contentBlocks.push({ kind:"image", mime, b64: btoa(bin) });
         }
       } catch(_e){}
     } else if (mime === "application/pdf"){
       try {
-        // Claude DOES accept PDFs natively as document blocks — use that instead of just naming the file.
         const { data: f } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
         if (f){
           const buf = new Uint8Array(await f.arrayBuffer());
           let bin = ""; const chunk = 8192;
           for (let i=0; i<buf.length; i+=chunk) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+chunk, buf.length)));
-          contentBlocks.push({ type:"document", source:{ type:"base64", media_type:"application/pdf", data: btoa(bin) } });
+          contentBlocks.push({ kind:"pdf", b64: btoa(bin) });
         }
       } catch(_e){}
     }
@@ -578,28 +638,21 @@ Important:
 - Put every problem in issues.
 - Keep reply_body empty if no reply is needed.
 - Use Malaysia context and MYR unless another currency is clearly shown.`;
-  const body = { model: route.ai_model || "claude-haiku-4-5-20251001", max_tokens: 2500, system: sys, messages: [{ role:"user", content: contentBlocks }] };
+  // Wave 5: call whichever provider the tenant selected (default Anthropic).
   let parsed = null;
-  try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key": apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
-    if (!r.ok){
-      const t = await r.text();
-      await logDecision(inboxId, "needs_review", "Claude API " + r.status + ": " + t.slice(0,300));
-      await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Claude API error " + r.status + ": " + t.slice(0,200) }).eq("id", inboxId);
-      return;
-    }
-    const out = await r.json();
-    const txt = (out.content && out.content[0] && out.content[0].text) || "";
-    const m = txt.match(/\{[\s\S]*\}/);
-    if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
-  } catch(e){
-    await logDecision(inboxId, "needs_review", "Claude exception: " + String(e).slice(0,300));
-    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Processing error: " + String(e).slice(0,200) }).eq("id", inboxId);
+  const llm = await callVisionLLM(aiProvider, aiModelResolved, sys, contentBlocks, 2500);
+  if (!llm.ok){
+    await logDecision(inboxId, "needs_review", "LLM (" + aiProvider + ") error: " + llm.error);
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"AI (" + aiProvider + ") error: " + String(llm.error).slice(0,200) }).eq("id", inboxId);
     return;
   }
+  {
+    const m = String(llm.text||"").match(/\{[\s\S]*\}/);
+    if (m) { try { parsed = JSON.parse(m[0]); } catch(_e){} }
+  }
   if (!parsed){
-    await logDecision(inboxId, "needs_review", "Could not parse Claude JSON");
-    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse Claude response" }).eq("id", inboxId);
+    await logDecision(inboxId, "needs_review", "Could not parse " + aiProvider + " JSON output");
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"Could not parse AI (" + aiProvider + ") response" }).eq("id", inboxId);
     return;
   }
   parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
@@ -842,7 +895,7 @@ Important:
     reply_body: replyBody,
   }).eq("id", inboxId);
 
-  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v4-dedup", cap, dup_layer: dupLayer, reconcile_fail: reconcileFail, line_sum: roundedLineSum, gl_unmapped: unmappedLines, gl_new_vendor_lines: newVendorLines, gl_match_types: enrichedLines.map((l)=>l.gl_match_type), gl_min_confidence: enrichedLines.reduce((m,l)=>Math.min(m, Number(l.gl_confidence||1)), 1), require_known_vendor: requireKnownVendor, company_routing_status: routingStatus, tax_review: taxReview });
+  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v5-provider", ai_provider: aiProvider, ai_model: aiModelResolved, cap, dup_layer: dupLayer, reconcile_fail: reconcileFail, line_sum: roundedLineSum, gl_unmapped: unmappedLines, gl_new_vendor_lines: newVendorLines, gl_match_types: enrichedLines.map((l)=>l.gl_match_type), gl_min_confidence: enrichedLines.reduce((m,l)=>Math.min(m, Number(l.gl_confidence||1)), 1), require_known_vendor: requireKnownVendor, company_routing_status: routingStatus, tax_review: taxReview });
 
   // ── Step 7: take action automatically per decision ────────────────
   if (decision === "auto_authorised"){
@@ -1894,6 +1947,7 @@ Deno.serve(async (req)=>{
         duplicate_check_days: fullSettings?.duplicate_check_days ?? 90,
         require_4item_reimbursement: fullSettings?.require_4item_reimbursement ?? true,
         require_known_vendor_for_autopost: fullSettings?.require_known_vendor_for_autopost ?? true,
+        ai_provider: fullSettings?.ai_provider || 'anthropic',
         auto_post_when_compliant: fullSettings?.auto_post_when_compliant ?? true,
         auto_reply_when_rejected: fullSettings?.auto_reply_when_rejected ?? true,
         reply_from_email: fullSettings?.reply_from_email || null,
@@ -1920,6 +1974,7 @@ Deno.serve(async (req)=>{
         duplicate_check_days: settings?.duplicate_check_days ?? 90,
         require_4item_reimbursement: settings?.require_4item_reimbursement ?? true,
         require_known_vendor_for_autopost: settings?.require_known_vendor_for_autopost ?? true,
+        ai_provider: settings?.ai_provider || 'anthropic',
         auto_post_when_compliant: settings?.auto_post_when_compliant ?? true,
         auto_reply_when_rejected: settings?.auto_reply_when_rejected ?? true,
         reply_from_email: settings?.reply_from_email || null,
