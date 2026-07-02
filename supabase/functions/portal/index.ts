@@ -616,21 +616,32 @@ Important:
     if (Array.isArray(dupRows) && dupRows.length > 0) dupHit = dupRows[0];
   } catch (_e) {}
 
-  // ── Step 4: server-side GL mapping for each line item ──────────────
+  // ── Step 4: GL coding cascade for each line item (Wave 2, spec §E) ──
+  // Cascade: learned vendor+line → learned vendor → keyword rule → LLM suggestion → default.
+  // High-confidence learned/keyword matches let us keep the audit trail rich AND flag
+  // pure-LLM-guess lines (new vendor, no rule) so they never silently auto-post.
+  const vendorForCoding = parsed.vendor_name || item.from_name || item.from_email || "";
   const enrichedLines = [];
-  let unmappedLines = 0;
+  let unmappedLines = 0;     // no code at all after all fallbacks (should be ~0 with default)
+  let newVendorLines = 0;    // relied only on the raw LLM guess — no learned history, no keyword rule
   for (const li of (parsed.line_items||[])){
-    let acc = null, kw = null;
+    let acc = null, gl_conf = null, gl_reason = null, gl_match = null;
     try {
-      const { data: mapRows } = await sb.rpc("portal_ap_map_gl", { p_tenant: item.tenant_id, p_description: li.description || "" });
-      if (Array.isArray(mapRows) && mapRows.length > 0){ acc = mapRows[0].account_code; kw = mapRows[0].matched_keyword; }
+      const { data: casRows } = await sb.rpc("portal_ap_gl_cascade", { p_tenant: item.tenant_id, p_vendor: vendorForCoding, p_description: li.description || "" });
+      if (Array.isArray(casRows) && casRows.length > 0){
+        acc = casRows[0].account_code;
+        gl_conf = Number(casRows[0].gl_confidence);
+        gl_reason = casRows[0].gl_reason;
+        gl_match = casRows[0].match_type;
+      }
     } catch (_e) {}
-    if (!acc) unmappedLines++;
-    enrichedLines.push({ ...li, account_code: acc, gl_matched_keyword: kw });
-  }
-  // Fallback to settings default_gl_account for unmapped lines
-  for (const li of enrichedLines){
-    if (!li.account_code) li.account_code = route.default_gl_account || "904-2200"; // 904-2200 G&A - Others is the safe catch-all
+    if (!acc){
+      // Cascade found nothing → keep the LLM's own suggestion if it gave one.
+      if (li.account_code){ acc = li.account_code; gl_match = "llm"; gl_conf = 0.40; gl_reason = "LLM suggestion (no learned history or keyword rule)"; newVendorLines++; }
+      else { newVendorLines++; }
+    }
+    if (!acc){ acc = route.default_gl_account || "904-2200"; gl_match = "default"; gl_conf = 0.20; gl_reason = "Fell back to default GL — no match anywhere"; unmappedLines++; }
+    enrichedLines.push({ ...li, account_code: acc, gl_confidence: gl_conf, gl_reason, gl_match_type: gl_match, gl_matched_keyword: gl_match==="keyword" ? (gl_reason||"") : null });
   }
 
   // ── Step 5: COMPLIANCE GATING ──────────────────────────────────────
@@ -695,12 +706,20 @@ Important:
   if (!parsed.date_consistent) issues.push("Period dates are inconsistent (subject vs filename vs form vs receipts)");
   if (hasTaxRisk) issues.push("Tax/accounting review needed: SST/WHT/imported service tax/capitalisation/prepayment risk detected");
 
+  // Wave 2 spec §E: "New vendor / low confidence → never auto-post."
+  // A line coded only by the raw LLM guess (no learned vendor history, no keyword rule)
+  // means we haven't seen this vendor/line before — route to human review so the operator's
+  // decision is captured into vendor_coding_history and future bills auto-code confidently.
+  const requireKnownVendor = route.require_known_vendor_for_autopost !== false; // default true
+  const newVendorBlock = requireKnownVendor && newVendorLines > 0;
+  if (newVendorBlock) issues.push(newVendorLines + " line(s) coded only by AI (new vendor / no learned rule) — review to teach the system");
+
   // If still no decision (i.e. passed compliance) → route on amount + confidence
   if (!decision){
     const compliant = (parsed.amount_consistent !== false) && (parsed.date_consistent !== false);
-    if (!compliant || parsed.confidence === "low" || unmappedLines > 0 || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
+    if (!compliant || parsed.confidence === "low" || unmappedLines > 0 || newVendorBlock || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
       decision = "needs_review";
-      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
+      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : newVendorBlock ? newVendorLines + " line(s) coded only by AI (new vendor) — review to teach the system" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
     } else if (total > cap){
       decision = "needs_review";
       reasoning = "Amount " + total + " > auto-post cap " + cap + " — DRAFT for approver";
@@ -759,7 +778,7 @@ Important:
     reply_body: replyBody,
   }).eq("id", inboxId);
 
-  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v2", cap, gl_unmapped: unmappedLines, company_routing_status: routingStatus, tax_review: taxReview });
+  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v3-cascade", cap, gl_unmapped: unmappedLines, gl_new_vendor_lines: newVendorLines, gl_match_types: enrichedLines.map((l)=>l.gl_match_type), gl_min_confidence: enrichedLines.reduce((m,l)=>Math.min(m, Number(l.gl_confidence||1)), 1), require_known_vendor: requireKnownVendor, company_routing_status: routingStatus, tax_review: taxReview });
 
   // ── Step 7: take action automatically per decision ────────────────
   if (decision === "auto_authorised"){
