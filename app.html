@@ -5102,7 +5102,25 @@ function apShowPreviewModal(r){
   var warns = (r.warnings||[]).length
     ? '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)">⚠ '+(r.warnings||[]).map(esc).join('<br>')+'</div>'
     : '';
-  var anyFail = (r.checks||[]).some(function(c){return !c.pass;});
+  // v68 (Wave 1b): existing Xero bills that could be dups
+  var dupes = (r.xero_dupes||[]);
+  var dupesBlock = dupes.length ? (
+    '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:10px 12px;margin-bottom:12px">'+
+      '<div style="font-size:12.5px;font-weight:600;color:var(--red-soft);margin-bottom:6px">🚨 Xero already has '+dupes.length+' bill'+(dupes.length>1?'s':'')+' that may be duplicates:</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'+
+      '<thead><tr style="color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.04em"><th style="text-align:left;padding:4px">Match</th><th style="text-align:left;padding:4px">Invoice #</th><th style="text-align:left;padding:4px">Contact</th><th style="text-align:right;padding:4px">Total</th><th style="text-align:left;padding:4px">Date</th><th style="text-align:left;padding:4px">Status</th></tr></thead>'+
+      '<tbody>'+
+      dupes.map(function(d){
+        return '<tr><td style="padding:4px"><span class="pill" style="background:rgba(239,68,68,.15);color:var(--red-soft);font-size:10px;padding:2px 6px;border-radius:4px">'+esc(d.match_type||'')+'</span></td>'+
+               '<td style="padding:4px;font-family:ui-monospace,Menlo,monospace">'+esc(d.invoice_number||'—')+'</td>'+
+               '<td style="padding:4px">'+esc(d.contact_name||'')+'</td>'+
+               '<td style="padding:4px;text-align:right;font-variant-numeric:tabular-nums">RM '+Number(d.total||0).toFixed(2)+'</td>'+
+               '<td style="padding:4px">'+esc(d.date||'')+'</td>'+
+               '<td style="padding:4px"><span class="muted">'+esc(d.status||'')+'</span></td></tr>';
+      }).join('')+
+      '</tbody></table></div>'
+  ) : '';
+  var anyFail = (r.checks||[]).some(function(c){return !c.pass;}) || dupes.length > 0;
   var host = document.getElementById('ap_preview_modal');
   if(!host){ host = document.createElement('div'); host.id='ap_preview_modal'; document.body.appendChild(host); }
   host.innerHTML =
@@ -5115,6 +5133,7 @@ function apShowPreviewModal(r){
         '</div>'+
         '<div style="padding:16px 20px;overflow:auto;flex:1">'+
           warns+
+          dupesBlock+
           '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Sanity checks</div>'+
           '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px"><table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table></div>'+
           '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Payload · POST /Invoices  ·  tenant '+esc((r.tenant_id||'').slice(0,8))+'…</div>'+

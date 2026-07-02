@@ -151,6 +151,41 @@ async function hmacSha256B64(key, msg){
   const sig = await crypto.subtle.sign("HMAC", k, enc.encode(msg));
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
+// v69 (Wave 1c, spec §E): record every successful AP post into vendor_coding_history so the
+// cascade (Wave 2) can learn from real decisions. Best-effort — failures never block posting.
+async function recordVendorCodingHistory(
+  tenant_id: string,
+  vendor_name: string,
+  lines: any[],
+  source: string,
+  opts: { operator_id?: string; invoice_id?: string; invoice_number?: string; invoice_amount?: number; invoice_date?: string; ai_verdict?: any } = {}
+){
+  try {
+    if (!tenant_id || !vendor_name || !Array.isArray(lines) || !lines.length) return;
+    const rows = lines
+      .filter((l:any)=> l && l.account_code)
+      .map((l:any)=>({
+        tenant_id,
+        vendor_name: String(vendor_name).slice(0,500),
+        line_description: String(l.description || "").slice(0,500),
+        account_code: String(l.account_code),
+        tax_type: l.tax_type || null,
+        tracking_category_id: l.tracking_category_id || null,
+        tracking_option_id: l.tracking_option_id || null,
+        source,
+        operator_id: opts.operator_id || null,
+        invoice_id: opts.invoice_id || null,
+        invoice_number: opts.invoice_number || null,
+        invoice_amount: opts.invoice_amount ?? null,
+        invoice_date: opts.invoice_date || null,
+        ai_verdict: opts.ai_verdict || null,
+      }));
+    if (!rows.length) return;
+    await sb.from("vendor_coding_history").insert(rows);
+  } catch (e) {
+    try { console.error("recordVendorCodingHistory failed:", e && ((e as any).message || e)); } catch (_) {}
+  }
+}
 function timingSafeEqual(a, b){ if (typeof a!=="string" || typeof b!=="string" || a.length!==b.length) return false; let r=0; for (let i=0;i<a.length;i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r===0; }
 async function sha256Hex(s){ const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
 // Parse a Xero ProfitAndLoss report into income[] / expenses[] account breakdowns + totals.
@@ -796,6 +831,14 @@ async function apAutoPostBill(inboxId, item, verdict, lines){
     xero_invoice_number: iv.InvoiceNumber,
     posted_at: new Date().toISOString(),
   }).eq("id", inboxId);
+  // v69 (Wave 1c): every successful auto-post seeds the vendor coding history for future cascade.
+  await recordVendorCodingHistory(item.tenant_id, vendor, lines, "auto_post", {
+    invoice_id: iv.InvoiceID,
+    invoice_number: iv.InvoiceNumber,
+    invoice_amount: Number(iv.Total || 0),
+    invoice_date: inv.Date,
+    ai_verdict: verdict || null,
+  });
 
   // Attach source files to the Xero invoice (best-effort)
   if (item.attachments && Array.isArray(item.attachments)){
@@ -1739,8 +1782,56 @@ Deno.serve(async (req)=>{
       checks.push({ name:"Invoice date is valid ISO date", pass: /^\d{4}-\d{2}-\d{2}$/.test(invDate) });
       checks.push({ name:"Due date ≥ invoice date", pass: due >= invDate, detail: `Date=${invDate}, DueDate=${due}` });
       checks.push({ name:"Invoice number present", pass: !!inv.InvoiceNumber, detail: inv.InvoiceNumber || "(Xero auto-generates on post)" });
+
+      // v68 (Wave 1b, spec §D): live Xero cross-check for existing bills from this vendor.
+      // Catches human-entered bills that AP dedup fingerprint misses. Bounded to last 90 days.
+      // Set { check_xero:false } in the request body to skip this if you're rapid-previewing.
+      const xero_dupes: any[] = [];
+      if (b.check_xero !== false) {
+        try {
+          const accessCheck = await xeroAccessToken();
+          const ninetyDaysAgo = new Date(Date.now() - 90*86400000);
+          const dateStr = "DateTime(" + ninetyDaysAgo.getUTCFullYear() + "," + (ninetyDaysAgo.getUTCMonth()+1) + "," + ninetyDaysAgo.getUTCDate() + ")";
+          let whereClause = 'Type=="ACCPAY" AND Status!="VOIDED" AND Date>=' + dateStr;
+          if (cid) whereClause += ' AND Contact.ContactID==GUID("' + cid + '")';
+          const d = await xeroGet(accessCheck, item.tenant_id, "Invoices?where=" + encodeURIComponent(whereClause));
+          const existing = (d.Invoices || []) as any[];
+          // If we don't have a contact_id, filter locally on vendor-name match to keep results relevant.
+          const filtered = cid ? existing : existing.filter((iv:any)=>{
+            const cname = String((iv.Contact||{}).Name||"").toLowerCase();
+            return cname && cname.indexOf(String(vendor||"").toLowerCase()) >= 0;
+          });
+          const targetInvNo = String(inv.InvoiceNumber||"").trim().toLowerCase();
+          const targetTotal = Number(inv.LineItems.reduce((s:number,l:any)=>s+(Number(l.Quantity)||1)*(Number(l.UnitAmount)||0),0));
+          const targetDateMs = Date.parse(inv.Date+"T00:00:00Z") || Date.now();
+          for (const iv of filtered) {
+            const ivNo = String(iv.InvoiceNumber||"").trim().toLowerCase();
+            const ivTotal = Number(iv.Total||0);
+            const ivDateMs = Date.parse(String(iv.DateString||iv.Date||"").slice(0,10)+"T00:00:00Z");
+            const numMatch = targetInvNo && ivNo && ivNo === targetInvNo;
+            const totalDelta = ivDateMs ? Math.abs(ivDateMs - targetDateMs)/86400000 : 999;
+            const amountMatch = targetTotal > 0 && ivTotal > 0 && Math.abs(targetTotal - ivTotal) <= 0.02 && totalDelta <= 7;
+            if (numMatch || amountMatch) {
+              xero_dupes.push({
+                match_type: numMatch ? "invoice_number" : "amount+date",
+                invoice_id: iv.InvoiceID,
+                invoice_number: iv.InvoiceNumber,
+                contact_name: (iv.Contact||{}).Name || "",
+                total: ivTotal,
+                date: String(iv.DateString||iv.Date||"").slice(0,10),
+                status: iv.Status
+              });
+            }
+          }
+          checks.push({ name:"No existing Xero bill with the same invoice number for this vendor", pass: !xero_dupes.some(d=>d.match_type==="invoice_number"), detail: xero_dupes.length ? xero_dupes.length + " potential dup(s) found in Xero" : "OK" });
+          checks.push({ name:"No existing Xero bill with same amount + date within 7 days", pass: !xero_dupes.some(d=>d.match_type==="amount+date"), detail: "" });
+        } catch (e: any) {
+          checks.push({ name:"Xero cross-check", pass: false, detail: "Xero API error: " + String(e.message||e).slice(0,120) + " — proceed with caution" });
+        }
+      }
+
       const idem = await sha256Hex(JSON.stringify(inv) + "|inbox:" + b.id);
-      return j({ ok:true, dry_run:true, payload: inv, idempotency_key: idem, warnings, checks, tenant_id: item.tenant_id });
+      return j({ ok:true, dry_run:true, payload: inv, idempotency_key: idem, warnings, checks, xero_dupes, tenant_id: item.tenant_id });
     }
     if (api === "ap_post") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -1769,6 +1860,20 @@ Deno.serve(async (req)=>{
       if (iv.HasErrors) return j({ ok:false, error:(iv.ValidationErrors||[]).map((e)=>e.Message).join("; ") });
       await sb.rpc("portal_ap_inbox_update", { p_token: b.token||"", p_id: Number(b.id), p_patch: { status:"posted", xero_invoice_id: iv.InvoiceID, xero_invoice_number: iv.InvoiceNumber, posted_at: new Date().toISOString() } });
       await logAudit(me, "ap_post", iv.InvoiceNumber||iv.InvoiceID||"", { inbox_id:b.id, vendor, total: iv.Total });
+      // v69 (Wave 1c): learn vendor → account_code from every successful manual post.
+      // If a human edited the verdict before posting, that's a human_override signal.
+      const overrodeCoding = Array.isArray(overrides.line_items) && overrides.line_items.some((ol:any, i:number)=>{
+        const orig = (verdict.line_items||[])[i];
+        return orig && ol && ol.account_code && orig.account_code && ol.account_code !== orig.account_code;
+      });
+      await recordVendorCodingHistory(item.tenant_id, vendor, lines, overrodeCoding ? "human_override" : "manual_post", {
+        operator_id: me && me.user && me.user.id ? String(me.user.id) : undefined,
+        invoice_id: iv.InvoiceID,
+        invoice_number: iv.InvoiceNumber,
+        invoice_amount: Number(iv.Total || 0),
+        invoice_date: inv.Date,
+        ai_verdict: verdict || null,
+      });
       // Attach the source files to the Xero invoice (best-effort).
       if (item.attachments && Array.isArray(item.attachments)) {
         for (const a of item.attachments){ try { const { data: fileData } = await sb.storage.from("portal-ap-uploads").download(a.storage_path); if (fileData){ const buf = await fileData.arrayBuffer(); await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + iv.InvoiceID + "/Attachments/" + encodeURIComponent(a.name), { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": item.tenant_id, "Content-Type": a.mime||"application/octet-stream" }, body: buf }); } } catch(_e){} }
