@@ -396,7 +396,7 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
         if (b.kind === "pdf")   return { type:"file", file:{ filename:"invoice.pdf", file_data:"data:application/pdf;base64,"+b.b64 } };
         return { type:"text", text:"" };
       });
-      const r = await fetch("https://api.openai.com/v1/chat/completions", { method:"POST", headers:{ "Authorization":"Bearer "+key, "Content-Type":"application/json" }, body: JSON.stringify({ model, max_tokens: maxTokens, response_format:{ type:"json_object" }, messages:[ { role:"system", content: systemPrompt }, { role:"user", content } ] }) });
+      const r = await fetch("https://api.openai.com/v1/chat/completions", { method:"POST", headers:{ "Authorization":"Bearer "+key, "Content-Type":"application/json" }, body: JSON.stringify({ model, max_completion_tokens: maxTokens, response_format:{ type:"json_object" }, messages:[ { role:"system", content: systemPrompt }, { role:"user", content } ] }) });
       const out = await r.json();
       if (!r.ok) return { ok:false, error:"OpenAI "+r.status+": "+JSON.stringify(out.error||out).slice(0,300) };
       const txt = (out.choices && out.choices[0] && out.choices[0].message && out.choices[0].message.content) || "";
@@ -800,7 +800,7 @@ Important:
     const expected = Math.round((roundedLineSum + tax - disc) * 100) / 100;
     const gap = Math.abs(expected - total);
     // tolerance: 1 cent per line (rounding) or 0.5% of total, whichever is larger, min RM0.02
-    const tol = Math.max(0.02, (parsed.line_items||[]).length * 0.01, total * 0.005);
+    const tol = Math.max(0.02, (parsed.line_items||[]).length * 0.01, Math.min(total * 0.005, 25));
     if (gap > tol){
       reconcileFail = true;
       issues.push("Amount reconciliation failed: lines(" + roundedLineSum.toFixed(2) + ") + tax(" + tax.toFixed(2) + ") − discount(" + disc.toFixed(2) + ") = " + expected.toFixed(2) + " ≠ stated total " + total.toFixed(2) + " (gap " + gap.toFixed(2) + " MYR)");
@@ -2016,7 +2016,7 @@ Deno.serve(async (req)=>{
       checks.push({ name:"Every line has an account code", pass: missingCodes === 0, detail: missingCodes ? `${missingCodes} line(s) will fall back to 610-1000` : "OK" });
       const lineTotal = lines.reduce((s:number,l:any)=>s+(Number(l.quantity)||1)*(Number(l.unit_amount)||0), 0);
       const roundedLineTotal = Math.round(lineTotal*100)/100;
-      const claimedTotal = Number(verdict.total_amount||0);
+      const claimedTotal = Number(verdict.total||0);
       const tolerance = 0.02;
       if (claimedTotal > 0) {
         checks.push({ name:"Subtotal reconciliation (line-sum vs claimed total)", pass: Math.abs(roundedLineTotal - claimedTotal) <= tolerance, detail: `line-sum=${roundedLineTotal.toFixed(2)} vs claimed=${claimedTotal.toFixed(2)} MYR` });
