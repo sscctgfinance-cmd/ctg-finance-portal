@@ -879,6 +879,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   </div>
   <div class="tabs" id="sub-tabs">
     <!-- Dashboard -->
+    <div class="tab"        data-t="cfo"      data-cat="dashboard"  onclick="tab('cfo')"        id="tab-cfo">🎯 CFO Cockpit</div>
     <div class="tab active" data-t="overview" data-cat="dashboard"  onclick="tab('overview')">📊 Overview</div>
     <div class="tab"        data-t="today"    data-cat="dashboard"  onclick="tab('today')">☀️ Today</div>
     <div class="tab"        data-t="smart"    data-cat="dashboard"  onclick="tab('smart')"      id="tab-smart">🧠 Smart</div>
@@ -902,6 +903,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="users"    data-cat="admin"      onclick="tab('users')"      id="tab-users">👥 Users</div>
   </div>
 
+  <div id="cfo"         class="hide"></div>
   <div id="overview"></div>
   <div id="approvals"   class="hide"></div>
   <div id="collections" class="hide"></div>
@@ -1276,9 +1278,9 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    const asyncTabs = ['overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap'];
+    const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -1291,6 +1293,7 @@ function spin(id){document.getElementById(id).innerHTML='<div class="cards"><div
 async function render(t){
   loaded[t]=true;
   try{
+    if(t==='cfo')        return await renderCFO();
     if(t==='overview')   return await renderOverview();
     if(t==='approvals')  return await renderApprovals();
     if(t==='collections')return renderCollections();
@@ -1394,6 +1397,98 @@ function ovHeader(){
     '</div></div>';
 }
 
+/* ═══ CFO Cockpit — group financial analytics from invoice cache ═══ */
+var CFO_DATA=null;
+// Compact revenue/bills trend line chart (SVG). mon = [{month:'YYYY-MM', revenue, bills}]
+function cfoTrend(mon){
+  var w=780,h=210,pad=40, n=mon.length; if(!n) return '<div class="muted" style="padding:20px">No monthly data.</div>';
+  var rev=mon.map(function(m){return Number(m.revenue)||0;});
+  var bil=mon.map(function(m){return Number(m.bills)||0;});
+  var max=Math.max(1,Math.max.apply(null,rev),Math.max.apply(null,bil));
+  var xat=function(i){ return pad + (n<=1?(w-2*pad)/2:(i*(w-2*pad)/(n-1))); };
+  var yat=function(v){ return h-pad - (v/max)*(h-2*pad); };
+  var line=function(arr){ return arr.map(function(v,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+yat(v).toFixed(1);}).join(' '); };
+  var area='M'+xat(0).toFixed(1)+' '+(h-pad)+' '+rev.map(function(v,i){return 'L'+xat(i).toFixed(1)+' '+yat(v).toFixed(1);}).join(' ')+' L'+xat(n-1).toFixed(1)+' '+(h-pad)+' Z';
+  var grid=''; for(var k=0;k<=2;k++){ var gy=h-pad-(k/2)*(h-2*pad); grid+='<line x1="'+pad+'" y1="'+gy.toFixed(1)+'" x2="'+(w-pad)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+'<text x="'+(pad-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+M(max*k/2)+'</text>'; }
+  var dots=rev.map(function(v,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+yat(v).toFixed(1)+'" r="2.5" fill="var(--coral)"><title>'+esc(mon[i].month+' revenue '+M(v))+'</title></circle>';}).join('');
+  var xlab=mon.map(function(m,i){ if(n>8 && i%2) return ''; return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-pad+15)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.month.slice(5))+'</text>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+
+    '<path d="'+area+'" fill="var(--coral)" opacity=".10"/>'+
+    '<path d="'+line(rev)+'" fill="none" stroke="var(--coral)" stroke-width="2.5"/>'+
+    '<path d="'+line(bil)+'" fill="none" stroke="var(--sky-soft)" stroke-width="2" stroke-dasharray="5 4"/>'+
+    dots+xlab+'</svg>';
+}
+// Horizontal stacked bar for AR aging → SVG
+function cfoAgingBar(a){
+  var segs=[['Current',Number(a.current)||0,'#3ddc97'],['1-30d',Number(a.d1_30)||0,'#f5a623'],['31-60d',Number(a.d31_60)||0,'#ff7537'],['61-90d',Number(a.d61_90)||0,'#e85d3c'],['90+d',Number(a.d90plus)||0,'#c0392b']];
+  var tot=segs.reduce(function(s,x){return s+x[1];},0)||1; var x=0, w=780,h=30;
+  var rects=segs.map(function(s){ var bw=(s[1]/tot)*w; var r='<rect x="'+x.toFixed(1)+'" y="0" width="'+Math.max(0,bw).toFixed(1)+'" height="'+h+'" fill="'+s[2]+'"><title>'+esc(s[0]+': '+M(s[1]))+'</title></rect>'; x+=bw; return r; }).join('');
+  var legend=segs.map(function(s){ return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11.5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s[2]+'"></span>'+s[0]+' <b style="margin-left:2px">'+M(s[1])+'</b></span>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block;border-radius:6px;overflow:hidden">'+rects+'</svg>'+'<div style="margin-top:8px">'+legend+'</div>';
+}
+async function renderCFO(){
+  var el=document.getElementById('cfo'); if(!el) return;
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>🎯 CFO Cockpit · group financial position</h3></div><div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing group analytics from '+(((COMPANIES||[]).length)||5)+' companies…</div></div>';
+  try{
+    var r=await call({api:'group_dashboard', months:12});
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load group analytics')+'</div></div></div>'; return; }
+    CFO_DATA=r; cfoRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+function cfoRender(){
+  var el=document.getElementById('cfo'); if(!el||!CFO_DATA) return;
+  var r=CFO_DATA, g=r.group||{}, cos=r.companies||[], mon=r.monthly||[], aging=r.ar_aging||{}, top=r.top_customers||[], alerts=r.alerts||[];
+  var wc=Number(g.working_capital)||0;
+  var overdue=Number(g.ar_overdue)||0, arOpen=Number(g.ar_open)||0;
+  var revCur=Number(g.rev_cur)||0, revPrev=Number(g.rev_prev)||0;
+  var momPct = revPrev>0 ? Math.round((revCur-revPrev)/revPrev*100) : null;
+  // ── Hero KPIs ──
+  var kpis='<div class="cards" style="grid-template-columns:repeat(5,1fr)">'+
+    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:var(--green-soft)">'+M(g.revenue)+'</div><div class="l">Revenue · 12 mo</div></div>'+
+    '<div class="card"><div class="c-ico">📥</div><div class="n" style="color:var(--sky-soft)">'+M(g.ar_open)+'</div><div class="l">Receivables (owed to us)</div></div>'+
+    '<div class="card"><div class="c-ico">📤</div><div class="n" style="color:var(--amber)">'+M(g.ap_open)+'</div><div class="l">Payables (we owe)</div></div>'+
+    '<div class="card '+(wc>=0?'green':'red')+'"><div class="c-ico">⚖️</div><div class="n" style="color:'+(wc>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(wc)+'</div><div class="l">Net working capital</div></div>'+
+    '<div class="card"><div class="c-ico">⏰</div><div class="n" style="color:'+(overdue>0?'var(--red-soft)':'var(--muted)')+'">'+M(overdue)+'</div><div class="l">Overdue AR'+(arOpen>0?(' · '+Math.round(overdue/arOpen*100)+'%'):'')+'</div></div>'+
+  '</div>';
+  // ── Alerts ──
+  var alertHtml='';
+  if(alerts.length){
+    alertHtml='<div class="panel" style="margin-bottom:16px;border-color:rgba(245,158,11,.25)"><div class="panel-hd"><h3>⚠ Analyst alerts</h3></div>'+
+      alerts.map(function(a){ var col=a.severity==='high'?'var(--red-soft)':'var(--amber)'; return '<div style="display:flex;gap:9px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--border)"><span style="color:'+col+'">'+(a.severity==='high'?'🔴':'🟠')+'</span><span>'+esc(a.text)+'</span></div>'; }).join('')+
+    '</div>';
+  }
+  // ── Trend ──
+  var trendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills</div></div>'+cfoTrend(mon)+'</div>';
+  // ── Per-company scorecard ──
+  var maxRev=Math.max.apply(null,[1].concat(cos.map(function(c){return Number(c.revenue)||0;})));
+  var rows=cos.map(function(c){
+    var dot=c.health==='green'?'🟢':c.health==='amber'?'🟡':'🔴';
+    var cwc=Number(c.working_capital)||0;
+    var revBar=Math.round((Number(c.revenue)||0)/maxRev*100);
+    return '<tr>'+
+      '<td><b>'+esc(c.tenant_name)+'</b> '+dot+'</td>'+
+      '<td style="min-width:130px"><div style="background:var(--panel-2);border-radius:4px;height:7px;overflow:hidden"><div style="width:'+revBar+'%;height:100%;background:var(--coral)"></div></div><div class="muted" style="font-size:10.5px;margin-top:2px">'+M(c.revenue)+'</div></td>'+
+      '<td class="amt" style="color:var(--sky-soft)">'+M(c.ar_open)+'</td>'+
+      '<td class="amt" style="color:var(--amber)">'+M(c.ap_open)+'</td>'+
+      '<td class="amt" style="color:'+(cwc>=0?'var(--green-soft)':'var(--red-soft)')+';font-weight:700">'+M(cwc)+'</td>'+
+    '</tr>';
+  }).join('');
+  var scoreHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏢 Company scorecard</h3><span class="muted" style="font-size:11px">🟢 healthy · 🟡 watch · 🔴 cash pressure</span></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Revenue (12mo)</th><th class="amt">AR (owed us)</th><th class="amt">AP (we owe)</th><th class="amt">Working capital</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  // ── AR aging + Top customers side by side ──
+  var agingHtml='<div class="panel"><div class="panel-hd"><h3>📊 Receivables aging</h3></div>'+cfoAgingBar(aging)+'</div>';
+  var maxCust=Math.max.apply(null,[1].concat(top.map(function(c){return Number(c.revenue)||0;})));
+  var custRows=top.map(function(c,i){ var bar=Math.round((Number(c.revenue)||0)/maxCust*100); return '<div style="display:flex;align-items:center;gap:10px;padding:5px 0"><span class="muted" style="width:16px;font-size:11px">'+(i+1)+'</span><span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.contact)+'</span><div style="width:120px;background:var(--panel-2);border-radius:4px;height:7px;overflow:hidden"><div style="width:'+bar+'%;height:100%;background:'+OV_PALETTE[i%OV_PALETTE.length]+'"></div></div><span class="amt" style="width:90px;font-size:12px">'+M(c.revenue)+'</span></div>'; }).join('');
+  var custHtml='<div class="panel"><div class="panel-hd"><h3>👑 Top customers · revenue</h3></div>'+(custRows||'<div class="muted" style="padding:14px">No customer data.</div>')+'</div>';
+  el.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 14px;flex-wrap:wrap;gap:8px">'+
+      '<div class="muted" style="font-size:12.5px">Group financial position across all '+cos.length+' companies · from live invoice data'+(momPct!=null?(' · revenue this month '+(momPct>=0?'▲':'▼')+' '+Math.abs(momPct)+'% vs last'):'')+'</div>'+
+      '<button class="btn sm" onclick="CFO_DATA=null;renderCFO()">↻ Refresh</button>'+
+    '</div>'+
+    kpis + '<div style="height:16px"></div>' + alertHtml + trendHtml + scoreHtml +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'+agingHtml+custHtml+'</div>';
+  loaded.cfo=true;
+}
 async function renderOverview(){
   // Default (no range) → legacy YTD overview (with bank balances).
   // With range → portal_overview_range from the local invoice cache (income+expenses+net only; bank is point-in-time and excluded).

@@ -2220,6 +2220,12 @@ Deno.serve(async (req)=>{
       const { data } = await sb.rpc("portal_cashflow_forecast", { p_token: b.token||"", p_days: Number(b.days)||90, p_tenant: b.tenant||null });
       return j(data || { ok:true });
     }
+    if (api === "group_dashboard") {
+      // CFO Cockpit — group analytics from the invoice cache (reliable), not the Xero P&L.
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_group_dashboard", { p_token: b.token||"", p_months: Number(b.months)||12 });
+      return j(data || { ok:true });
+    }
     if (api === "pnl_report") {
       // Live Profit & Loss from Xero per tenant → revenue/expense account breakdown for the dashboard charts.
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
