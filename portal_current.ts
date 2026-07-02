@@ -188,6 +188,8 @@ async function recordVendorCodingHistory(
 }
 function timingSafeEqual(a, b){ if (typeof a!=="string" || typeof b!=="string" || a.length!==b.length) return false; let r=0; for (let i=0;i<a.length;i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r===0; }
 async function sha256Hex(s){ const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
+// v68 (Wave 3): SHA-256 of raw bytes — used to fingerprint AP attachment files at intake.
+async function sha256HexBytes(bytes){ const buf = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(buf)).map((x)=>x.toString(16).padStart(2,"0")).join(""); }
 // Parse a Xero ProfitAndLoss report into income[] / expenses[] account breakdowns + totals.
 // Xero report shape: Reports[0].Rows = [Header, Section{Title, Rows:[Row|SummaryRow]}, ...].
 // Each data Row's Cells = [accountName, ..., amount]; SummaryRow holds section totals.
@@ -533,6 +535,8 @@ Required JSON schema:
   "currency": string,
   "subtotal": number,
   "tax_amount": number,
+  "discount_amount": number,
+  "claimant": string|null,
   "total": number,
   "line_items": [{"description": string, "quantity": number, "unit_amount": number, "account_code": string|null, "tax_type": string|null, "gl_confidence": "high|medium|low", "gl_reason": string, "gl_matched_keyword": string|null}],
   "bill_to_company": string|null,
@@ -604,17 +608,38 @@ Important:
   parsed.tax_review = parsed.tax_review || {};
   if (!parsed.currency) parsed.currency = "MYR";
 
-  // ── Step 3: server-side DUPLICATE check ────────────────────────────
+  // ── Step 3: layered DUPLICATE detection (Wave 3, spec §D) ───────────
+  // Layer 1 (message-id + attachment SHA-256) already ran at intake in ap_inbound.
+  // Here we run the content-based layers against Claude's extracted fields.
   let dupHit = null;
+  let dupLayer = null;
+  const dupVendor = parsed.vendor_name || (item.from_name || item.from_email || "");
+  // Layer 3: vendor + total within N days (already-posted bills in Xero cache).
   try {
     const { data: dupRows } = await sb.rpc("portal_ap_find_duplicate", {
       p_tenant: item.tenant_id,
-      p_vendor: parsed.vendor_name || (item.from_name || item.from_email || ""),
+      p_vendor: dupVendor,
       p_total: Number(parsed.total||0),
       p_days: Number(route.duplicate_check_days || 90),
     });
-    if (Array.isArray(dupRows) && dupRows.length > 0) dupHit = dupRows[0];
+    if (Array.isArray(dupRows) && dupRows.length > 0){ dupHit = dupRows[0]; dupLayer = "L3_vendor_total"; }
   } catch (_e) {}
+  // Layer 2: hard key (vendor + invoice_no) — same invoice number even if total/date drifted.
+  if (!dupHit && parsed.invoice_no){
+    try {
+      const { data: r2 } = await sb.rpc("portal_ap_find_dup_invoice_no", { p_tenant: item.tenant_id, p_vendor: dupVendor, p_invoice_no: String(parsed.invoice_no) });
+      if (Array.isArray(r2) && r2.length > 0){ dupHit = { invoice_id: r2[0].ref, number: String(parsed.invoice_no), status: r2[0].status, total: r2[0].total, source: r2[0].source }; dupLayer = "L2_invoice_no"; }
+    } catch (_e) {}
+  }
+  // Layer 4: reimbursement fuzzy — same claimant + amount + date(±3d).
+  if (!dupHit && String(parsed.doc_type||"").toLowerCase() === "reimbursement"){
+    try {
+      const claimant = parsed.claimant || parsed.vendor_name || "";
+      const rdate = /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.invoice_date||"")) ? String(parsed.invoice_date) : null;
+      const { data: r4 } = await sb.rpc("portal_ap_find_dup_reimbursement", { p_tenant: item.tenant_id, p_claimant: claimant, p_total: Number(parsed.total||0), p_date: rdate, p_exclude_inbox: inboxId });
+      if (Array.isArray(r4) && r4.length > 0){ dupHit = { invoice_id: String(r4[0].inbox_id), number: "", status: r4[0].status, total: r4[0].total, source: "reimbursement_claim" }; dupLayer = "L4_reimbursement"; }
+    } catch (_e) {}
+  }
 
   // ── Step 4: GL coding cascade for each line item (Wave 2, spec §E) ──
   // Cascade: learned vendor+line → learned vendor → keyword rule → LLM suggestion → default.
@@ -678,7 +703,11 @@ Important:
     issues.push(reasoning);
   } else if (dupHit){
     decision = "duplicate_rejected";
-    reasoning = "Duplicate of existing bill " + (dupHit.number||dupHit.invoice_id) + " (" + dupHit.status + ", " + dupHit.inv_date + ", total " + dupHit.total + ")";
+    const dupWhat = dupLayer === "L2_invoice_no" ? "same invoice number already recorded"
+                  : dupLayer === "L4_reimbursement" ? "same claimant + amount + date already claimed"
+                  : "same vendor + amount within the dedup window";
+    reasoning = "Duplicate (" + (dupLayer||"L3") + " — " + dupWhat + "): " + (dupHit.number||dupHit.invoice_id||"") + " [" + (dupHit.status||"") + (dupHit.inv_date?(", "+dupHit.inv_date):"") + ", total " + (dupHit.total!=null?dupHit.total:"?") + "]";
+    issues.push("Possible duplicate — " + dupWhat + ". Review before posting.");
   } else if (parsed.doc_type === "reimbursement" && route.require_4item_reimbursement !== false){
     const miss = [];
     if (!parsed.reimb_has_claim_form) miss.push("a formal claim form");
@@ -706,6 +735,25 @@ Important:
   if (!parsed.date_consistent) issues.push("Period dates are inconsistent (subject vs filename vs form vs receipts)");
   if (hasTaxRisk) issues.push("Tax/accounting review needed: SST/WHT/imported service tax/capitalisation/prepayment risk detected");
 
+  // Wave 3 spec §C: deterministic AMOUNT RECONCILIATION (never trust the LLM's arithmetic).
+  // Sum the line items ourselves and compare to the claimed total. Tolerate small rounding,
+  // and allow the gap to be explained by a stated tax/discount figure when present.
+  let reconcileFail = false;
+  const lineSum = (parsed.line_items||[]).reduce((s, l) => s + (Number(l.quantity)||1) * (Number(l.unit_amount)||0), 0);
+  const roundedLineSum = Math.round(lineSum * 100) / 100;
+  if (total > 0 && roundedLineSum > 0){
+    const tax = Number(parsed.tax_amount || parsed.sst_amount || 0);
+    const disc = Number(parsed.discount_amount || 0);
+    const expected = Math.round((roundedLineSum + tax - disc) * 100) / 100;
+    const gap = Math.abs(expected - total);
+    // tolerance: 1 cent per line (rounding) or 0.5% of total, whichever is larger, min RM0.02
+    const tol = Math.max(0.02, (parsed.line_items||[]).length * 0.01, total * 0.005);
+    if (gap > tol){
+      reconcileFail = true;
+      issues.push("Amount reconciliation failed: lines(" + roundedLineSum.toFixed(2) + ") + tax(" + tax.toFixed(2) + ") − discount(" + disc.toFixed(2) + ") = " + expected.toFixed(2) + " ≠ stated total " + total.toFixed(2) + " (gap " + gap.toFixed(2) + " MYR)");
+    }
+  }
+
   // Wave 2 spec §E: "New vendor / low confidence → never auto-post."
   // A line coded only by the raw LLM guess (no learned vendor history, no keyword rule)
   // means we haven't seen this vendor/line before — route to human review so the operator's
@@ -717,9 +765,9 @@ Important:
   // If still no decision (i.e. passed compliance) → route on amount + confidence
   if (!decision){
     const compliant = (parsed.amount_consistent !== false) && (parsed.date_consistent !== false);
-    if (!compliant || parsed.confidence === "low" || unmappedLines > 0 || newVendorBlock || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
+    if (!compliant || reconcileFail || parsed.confidence === "low" || unmappedLines > 0 || newVendorBlock || routingStatus === "company_matched_medium_confidence" || hasTaxRisk){
       decision = "needs_review";
-      reasoning = "Compliant but " + (unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : newVendorBlock ? newVendorLines + " line(s) coded only by AI (new vendor) — review to teach the system" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
+      reasoning = "Compliant but " + (reconcileFail ? "line amounts don't reconcile to the stated total" : unmappedLines>0 ? unmappedLines + " line(s) need a GL code" : newVendorBlock ? newVendorLines + " line(s) coded only by AI (new vendor) — review to teach the system" : "low confidence / consistency / company-routing / tax issues") + " — DRAFT for human review";
     } else if (total > cap){
       decision = "needs_review";
       reasoning = "Amount " + total + " > auto-post cap " + cap + " — DRAFT for approver";
@@ -778,7 +826,7 @@ Important:
     reply_body: replyBody,
   }).eq("id", inboxId);
 
-  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v3-cascade", cap, gl_unmapped: unmappedLines, gl_new_vendor_lines: newVendorLines, gl_match_types: enrichedLines.map((l)=>l.gl_match_type), gl_min_confidence: enrichedLines.reduce((m,l)=>Math.min(m, Number(l.gl_confidence||1)), 1), require_known_vendor: requireKnownVendor, company_routing_status: routingStatus, tax_review: taxReview });
+  await logDecision(inboxId, decision, reasoning, dupHit ? (dupHit.invoice_id||null) : null, { rule_pack:"ap-controller-v4-dedup", cap, dup_layer: dupLayer, reconcile_fail: reconcileFail, line_sum: roundedLineSum, gl_unmapped: unmappedLines, gl_new_vendor_lines: newVendorLines, gl_match_types: enrichedLines.map((l)=>l.gl_match_type), gl_min_confidence: enrichedLines.reduce((m,l)=>Math.min(m, Number(l.gl_confidence||1)), 1), require_known_vendor: requireKnownVendor, company_routing_status: routingStatus, tax_review: taxReview });
 
   // ── Step 7: take action automatically per decision ────────────────
   if (decision === "auto_authorised"){
@@ -1700,8 +1748,14 @@ Deno.serve(async (req)=>{
         // Still record it (with no tenant) so admin can see rejected mails — actually just log & drop for now.
         return j({ ok:false, error: (route&&route.error)||"routing failed" });
       }
-      // Store attachments
+      // Layer 1a dedup — by Gmail message-id (skip re-delivery of the exact same email).
+      if (messageId) {
+        const { data: existing } = await sb.from("portal_ap_inbox").select("id").eq("message_id", messageId).maybeSingle();
+        if (existing) return j({ ok:true, deduped:true, reason:"message_id", id: existing.id });
+      }
+      // Store attachments + compute a SHA-256 per file (Layer 1b — same bytes = same document).
       const storedAtts = [];
+      let attachmentDupOf = null; // inbox_id of a prior non-rejected case that had an identical file
       for (const a of attachments) {
         try {
           const name = String(a.Name || a.filename || "file").replace(/[^a-zA-Z0-9._-]/g,"_").slice(0,180);
@@ -1709,24 +1763,35 @@ Deno.serve(async (req)=>{
           const b64 = String(a.Content || a.content || "").replace(/^data:[^,]+,/,"");
           if (!b64) continue;
           const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+          const sha = await sha256HexBytes(bytes);
+          if (!attachmentDupOf){
+            try { const { data: dupRows } = await sb.rpc("portal_ap_attachment_dup", { p_tenant: route.tenant_id, p_sha: sha }); if (Array.isArray(dupRows) && dupRows.length > 0) attachmentDupOf = dupRows[0].inbox_id; } catch(_e){}
+          }
           const path = route.tenant_id + "/" + Date.now() + "_" + Math.random().toString(36).slice(2,8) + "_" + name;
           const up = await sb.storage.from("portal-ap-uploads").upload(path, bytes, { contentType: mime });
-          if (!up.error) storedAtts.push({ name, mime, size: bytes.length, storage_path: path });
+          if (!up.error) storedAtts.push({ name, mime, size: bytes.length, storage_path: path, sha256: sha });
         } catch(_e){}
-      }
-      // Dedup by message_id
-      if (messageId) {
-        const { data: existing } = await sb.from("portal_ap_inbox").select("id").eq("message_id", messageId).maybeSingle();
-        if (existing) return j({ ok:true, deduped:true, id: existing.id });
       }
       const { data: inserted } = await sb.from("portal_ap_inbox").insert({ tenant_id: route.tenant_id, message_id: messageId, from_email: fromEmail, from_name: fromName, to_email: toEmail, subject, text_body: textBody, html_body: htmlBody, attachments: storedAtts, raw_payload: p, status: "received" }).select("id").single();
       const inboxId = inserted && inserted.id;
+      // Record each attachment hash against this case so future identical files are caught.
+      if (inboxId){
+        for (const a of storedAtts){ if (a.sha256){ try { await sb.rpc("portal_ap_record_attachment_hash", { p_tenant: route.tenant_id, p_sha: a.sha256, p_inbox: inboxId, p_filename: a.name }); } catch(_e){} } }
+      }
+      // Layer 1b short-circuit: an identical file was already processed → mark duplicate and
+      // skip Claude entirely (saves the vision cost on obvious resends).
+      if (inboxId && attachmentDupOf){
+        await sb.from("portal_ap_inbox").update({ status:"duplicate", status_detail:"Identical attachment already processed in case #" + attachmentDupOf }).eq("id", inboxId);
+        try { await logDecision(inboxId, "duplicate_rejected", "Layer-1b: identical file bytes as case #" + attachmentDupOf, null, { dedup_layer:"attachment_sha256", duplicate_of_inbox: attachmentDupOf }); } catch(_e){}
+        return j({ ok:true, id: inboxId, deduped:true, reason:"attachment_sha256", duplicate_of: attachmentDupOf });
+      }
       // Hydrate full settings for the AP automation pipeline (duplicate-check window, 4-item gate, auto-post toggle, reply identity).
       const { data: fullSettings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", route.tenant_id).maybeSingle();
       const fullRoute = {
         ...route,
         duplicate_check_days: fullSettings?.duplicate_check_days ?? 90,
         require_4item_reimbursement: fullSettings?.require_4item_reimbursement ?? true,
+        require_known_vendor_for_autopost: fullSettings?.require_known_vendor_for_autopost ?? true,
         auto_post_when_compliant: fullSettings?.auto_post_when_compliant ?? true,
         auto_reply_when_rejected: fullSettings?.auto_reply_when_rejected ?? true,
         reply_from_email: fullSettings?.reply_from_email || null,
@@ -1752,6 +1817,7 @@ Deno.serve(async (req)=>{
         ai_model: settings?.ai_model || "claude-haiku-4-5-20251001",
         duplicate_check_days: settings?.duplicate_check_days ?? 90,
         require_4item_reimbursement: settings?.require_4item_reimbursement ?? true,
+        require_known_vendor_for_autopost: settings?.require_known_vendor_for_autopost ?? true,
         auto_post_when_compliant: settings?.auto_post_when_compliant ?? true,
         auto_reply_when_rejected: settings?.auto_reply_when_rejected ?? true,
         reply_from_email: settings?.reply_from_email || null,
