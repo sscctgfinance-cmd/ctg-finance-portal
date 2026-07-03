@@ -1513,8 +1513,11 @@ Deno.serve(async (req)=>{
           for (const c of (health.crons||[])){ if (c && c.overdue) problems.push("Cron overdue: " + c.cron_name + " (last ran " + (c.last_run_at||"never") + ")"); }
           const nowMs = Date.now();
           for (const t of (health.tenants||[])){
-            const ageH = t.cache_last_updated ? (nowMs - new Date(t.cache_last_updated).getTime())/3600000 : 999;
-            if (ageH > 3) problems.push("Stale cache: " + t.tenant_name + " (" + Math.round(ageH) + "h since last update)");
+            // Staleness = the sync MECHANISM stopped running (last_delta_sync_at), NOT "no data changed".
+            // A quiet tenant legitimately has an old cache_last_updated — that is normal, not a fault.
+            // Delta runs every 20 min, so >90 min without a delta = ~4 consecutive misses = real problem.
+            const deltaMin = t.last_delta_sync_at ? (nowMs - new Date(t.last_delta_sync_at).getTime())/60000 : 99999;
+            if (deltaMin > 90) problems.push("Delta sync stalled: " + t.tenant_name + " (last ran " + (t.last_delta_sync_at ? Math.round(deltaMin)+"m ago" : "never") + ")");
             if (t.last_error) problems.push("Sync error: " + t.tenant_name + " — " + String(t.last_error).slice(0,80));
           }
           const signature = problems.slice().sort().join(" || ");
