@@ -313,26 +313,31 @@ async function processWebhookEvents(list){
     catch (e) { if (it.id){ const { data: cur } = await sb.from("xero_webhook_events").select("attempts").eq("id", it.id).single(); const a = (cur && cur.attempts) || 0; try { await sb.from("xero_webhook_events").update({ attempts: a+1, last_attempt_at: new Date().toISOString(), last_error: String(e).slice(0,500) }).eq("id", it.id); } catch(_e){} } }
   }
 }
-// v70 (sync-hardening): the webhook retry loop is now rate-limit-aware + budgeted.
-// ROOT CAUSE this fixes: the old loop fetched EVERY webhook resource from Xero individually
-// with no budget and no cooldown check. On a busy day that exhausted Xero's DAILY API cap;
-// each fetch then threw, climbing `attempts` to >=5 where `.lt("attempts",5)` permanently
-// excluded the event — 5,630 events silently stuck for 15 days.
-// Four defences, mirroring what runDelta/runBackfill already do:
-//   (1) SKIP-IF-CACHED  — if the hourly delta already re-cached this invoice at a version
-//       >= the event, mark it processed with ZERO Xero calls (drains redundant events free).
-//   (2) COOLDOWN-AWARE  — honour per-tenant isRateLimited(); never burn attempts on a tenant
-//       that is in cooldown, and set a cooldown the moment a daily-cap error fires.
-//   (3) BUDGET          — cap real Xero fetches per run so a backlog can never re-storm the cap.
-//   (4) NO PERMA-STICK  — widen the attempts gate (<12) and order fewest-tried first, so a
-//       transient failure no longer means permanent exclusion.
+// v71 (Tier-1 accuracy+speed): BATCH-BY-IDS. Instead of one Xero GET per changed invoice,
+// group all pending INVOICE resource-ids per tenant and fetch up to 50 in a single
+// `Invoices?IDs=g1,g2,...` call — cutting API usage 50–100× so the daily cap is never the
+// bottleneck. Non-invoice events (CONTACT/PAYMENT/CREDITNOTE) stay individual (rare).
+// Retains the v70 discipline: skip-if-cached (0 calls), cooldown-aware, per-run budget, no perma-stick.
+async function fetchInvoiceIdsBatch(access, tenant, ids){
+  // Returns { applied, deleted, error }. IDs requested but NOT returned by Xero are treated as
+  // gone (VOIDED/DELETED) and pruned from cache so the cache mirrors Xero exactly.
+  const d = await xeroGet(access, tenant, "Invoices?IDs=" + ids.join(","));
+  const arr = (d && d.Invoices) || [];
+  const r = await applyInvoiceBatch(tenant, arr);
+  let deleted = r.deleted || 0;
+  const returned = new Set(arr.map((iv)=>iv.InvoiceID));
+  const missing = ids.filter((id)=> !returned.has(id));
+  if (missing.length){ try { await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).in("invoice_id", missing); deleted += missing.length; } catch(_e){} }
+  return { applied: r.upserted || 0, deleted, error: r.error || null };
+}
 async function processPendingDedup(limit){
-  const MAX_FETCHES = 25; // real Xero calls per run — leaves daily headroom for delta + backfill
+  const MAX_CALLS = 30;   // Xero API calls per run (one call = up to 50 invoices batched)
+  const BATCH = 50;       // invoice ids per Xero call
   const { data: pend } = await sb.from("xero_webhook_events")
     .select("id,tenant_id,event_category,resource_id,attempts,event_date,received_at")
     .eq("processed", false).lt("attempts", 12)
     .order("attempts", { ascending:true }).order("received_at", { ascending:true })
-    .limit(limit||400);
+    .limit(limit||600);
   if (!pend || !pend.length){ const { count } = await sb.from("xero_webhook_events").select("id", { count:"exact", head:true }).eq("processed", false); return { processed: 0, deduplicated: 0, remaining: count||0 }; }
   // Dedup identical (tenant|category|resource) events into one bucket; track newest event time.
   const buckets = new Map();
@@ -342,7 +347,7 @@ async function processPendingDedup(limit){
     const b = buckets.get(key); b.ids.push(row.id); if (row.attempts > b.maxAttempts) b.maxAttempts = row.attempts;
     const ts = new Date(row.event_date || row.received_at || 0).getTime(); if (ts > b.eventTs) b.eventTs = ts;
   }
-  // (1) Pre-load cache freshness for every INVOICE resource in bulk → decide skip-if-cached with no API calls.
+  // Pre-load cache freshness for every INVOICE resource in bulk → skip-if-cached with no API calls.
   const invIds = [...buckets.values()].filter((b)=>b.ev.eventCategory === "INVOICE").map((b)=>b.ev.resourceId);
   const cacheFresh = new Map();
   for (let i=0; i<invIds.length; i+=300){
@@ -350,38 +355,65 @@ async function processPendingDedup(limit){
     const { data: rows } = await sb.from("xero_invoice_cache").select("invoice_id,updated_at").in("invoice_id", chunk);
     for (const r of (rows||[])) cacheFresh.set(r.invoice_id, new Date(r.updated_at || 0).getTime());
   }
-  let processed = 0, skippedCached = 0, fetches = 0, cooldownSkipped = 0;
-  const tenantBlocked = new Map(); // tenant_id -> true once cooldown / daily-cap seen this run
+  let processed = 0, skippedCached = 0, calls = 0, cooldownSkipped = 0, deleted = 0;
+  const tenantBlocked = new Map();
+  // Partition: invoice buckets that genuinely need a fetch (grouped per tenant) vs misc buckets.
+  const invByTenant = new Map(); // tenant_id -> [bucket,...]
+  const miscBuckets = [];
   for (const bucket of buckets.values()){
-    const tid = bucket.ev.tenantId;
-    // (1) Already covered by the delta? (cached version at least as new as the event) → drain free.
     if (bucket.ev.eventCategory === "INVOICE"){
       const cachedTs = cacheFresh.get(bucket.ev.resourceId);
-      if (cachedTs !== undefined && cachedTs + 5000 >= bucket.eventTs){
+      if (cachedTs !== undefined && cachedTs + 5000 >= bucket.eventTs){ // delta already covered it → free drain
         await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString(), last_error: "covered-by-delta" }).in("id", bucket.ids);
         processed += bucket.ids.length; skippedCached += bucket.ids.length; continue;
       }
+      if (!invByTenant.has(bucket.ev.tenantId)) invByTenant.set(bucket.ev.tenantId, []);
+      invByTenant.get(bucket.ev.tenantId).push(bucket);
+    } else {
+      miscBuckets.push(bucket);
     }
-    // (2) Tenant in cooldown (persisted, or a daily-cap hit earlier this run)? Leave it — do NOT burn attempts.
+  }
+  const access = (invByTenant.size || miscBuckets.length) ? await xeroAccessToken() : null;
+  // ── Batched invoice fetches, per tenant, 50 ids/call.
+  for (const [tid, tbuckets] of invByTenant){
+    if (await isRateLimited(tid)){ tenantBlocked.set(tid, true); cooldownSkipped += tbuckets.reduce((n,b)=>n+b.ids.length,0); continue; }
+    for (let i=0; i<tbuckets.length; i+=BATCH){
+      if (calls >= MAX_CALLS){ cooldownSkipped += tbuckets.slice(i).reduce((n,b)=>n+b.ids.length,0); break; }
+      const chunk = tbuckets.slice(i, i+BATCH);
+      const rowIds = chunk.flatMap((b)=>b.ids);
+      try {
+        calls++;
+        const r = await fetchInvoiceIdsBatch(access, tid, chunk.map((b)=>b.ev.resourceId));
+        deleted += r.deleted;
+        await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString() }).in("id", rowIds);
+        processed += rowIds.length;
+      } catch (e) {
+        const msg = String(e);
+        if (/rate limit/i.test(msg)){ await recordRateLimit(tid, msg); tenantBlocked.set(tid, true); }
+        for (const b of chunk){ await sb.from("xero_webhook_events").update({ attempts: b.maxAttempts + 1, last_attempt_at: new Date().toISOString(), last_error: msg.slice(0,500) }).in("id", b.ids); }
+        break; // stop this tenant's remaining batches for the run
+      }
+    }
+  }
+  // ── Misc (contact/payment/creditnote): individual, with remaining budget.
+  for (const bucket of miscBuckets){
+    const tid = bucket.ev.tenantId;
+    if (calls >= MAX_CALLS){ cooldownSkipped += bucket.ids.length; continue; }
     if (tenantBlocked.get(tid)){ cooldownSkipped += bucket.ids.length; continue; }
-    const blocked = await isRateLimited(tid);
-    if (blocked){ tenantBlocked.set(tid, true); cooldownSkipped += bucket.ids.length; continue; }
-    // (3) Budget guard — once the per-run fetch cap is hit, defer the rest to the next 5-min run.
-    if (fetches >= MAX_FETCHES){ cooldownSkipped += bucket.ids.length; continue; }
-    // (4) Genuine fetch.
+    if (await isRateLimited(tid)){ tenantBlocked.set(tid, true); cooldownSkipped += bucket.ids.length; continue; }
     try {
-      fetches++;
+      calls++;
       await processOneEvent(bucket.ev);
       await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString() }).in("id", bucket.ids);
       processed += bucket.ids.length;
     } catch (e) {
       const msg = String(e);
-      if (/rate limit/i.test(msg)){ await recordRateLimit(tid, msg); tenantBlocked.set(tid, true); } // stop hammering the dead budget
+      if (/rate limit/i.test(msg)){ await recordRateLimit(tid, msg); tenantBlocked.set(tid, true); }
       await sb.from("xero_webhook_events").update({ attempts: bucket.maxAttempts + 1, last_attempt_at: new Date().toISOString(), last_error: msg.slice(0,500) }).in("id", bucket.ids);
     }
   }
   const { count } = await sb.from("xero_webhook_events").select("id", { count:"exact", head:true }).eq("processed", false);
-  return { processed, skipped_cached: skippedCached, fetched: fetches, cooldown_skipped: cooldownSkipped, deduplicated: pend.length - buckets.size, unique_resources: buckets.size, remaining: count||0 };
+  return { processed, skipped_cached: skippedCached, xero_calls: calls, deleted, cooldown_skipped: cooldownSkipped, deduplicated: pend.length - buckets.size, unique_resources: buckets.size, remaining: count||0 };
 }
 async function syncStateUpdate(tenant_id, patch){ try{ await sb.from("xero_sync_state").upsert({ tenant_id, ...patch }, { onConflict: "tenant_id" }); } catch(_e){} }
 // ── v28: per-tenant rate-limit guard. Skip syncing tenants currently in cooldown.
@@ -1301,6 +1333,23 @@ async function runDelta(access, list, sinceISO){
   return { fetched, upserted, deleted, per };
 }
 async function processPending(limit){ return processPendingDedup(limit); }
+// v71 (watchdog): send an operator alert via Gmail SMTP. Recipient = portal_secrets 'alert_email'
+// if set, else the finance mailbox itself. Best-effort — never throws.
+async function sendAlertEmail(subject, body){
+  const gmailUser = Deno.env.get("GMAIL_USER");
+  const gmailPass = Deno.env.get("GMAIL_APP_PASSWORD");
+  if (!gmailUser || !gmailPass) return { ok:false, error:"no gmail creds" };
+  let to = gmailUser;
+  try { const { data } = await sb.from("portal_secrets").select("value").eq("key","alert_email").maybeSingle(); if (data && data.value) to = data.value; } catch(_e){}
+  let smtpClient: any = null;
+  try {
+    const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
+    smtpClient = new SMTPClient({ connection:{ hostname:"smtp.gmail.com", port:465, tls:true, auth:{ username: gmailUser, password: gmailPass } } });
+    await smtpClient.send({ from: "CTG Sync Watchdog <" + gmailUser + ">", to, subject, content: body });
+    return { ok:true, to };
+  } catch(e){ return { ok:false, error:String(e).slice(0,300) }; }
+  finally { if (smtpClient){ try { await smtpClient.close(); } catch(_e){} } }
+}
 async function handleWebhook(req, sig){
   const key = await getWebhookKey();
   const raw = await req.text();
@@ -1313,14 +1362,14 @@ async function handleWebhook(req, sig){
     const rows = events.map((e)=>({ tenant_id:e.tenantId||null, event_category:e.eventCategory||null, event_type:e.eventType||null, resource_id:e.resourceId||null, resource_url:e.resourceUrl||null, event_date:e.eventDateUtc||null, raw:e }));
     let inserted = [];
     try { const { data } = await sb.from("xero_webhook_events").insert(rows).select("id"); inserted = data || []; } catch (_e) {}
-    const withIds = events.map((e,i)=>({ ev:e, id: inserted[i] && inserted[i].id }));
-    // v64: log webhook-processing errors instead of swallowing them silently — earlier
-    // regressions in this pipeline were masked because .catch(()=>{}) suppressed both
-    // the DB write failures and the Xero sync failures.
+    // v71: process INLINE on receipt (seconds, not the 5-min cron) via the BATCHED processor —
+    // it picks up the rows just inserted, batches invoice fetches, and is skip-if-cached +
+    // cooldown + budget aware. Fire-and-forget after the 200 so Xero's "intent to receive" stays healthy.
+    // v64: still log errors instead of swallowing them — earlier regressions were masked by .catch(()=>{}).
     try {
-      const p = processWebhookEvents(withIds).catch((e)=>{ try { console.error("processWebhookEvents failed:", e && (e.stack || e.message || e)); } catch (_) {} });
+      const p = processPendingDedup(150).catch((e)=>{ try { console.error("inline processPendingDedup failed:", e && (e.stack || e.message || e)); } catch (_) {} });
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(p);
-    } catch (e) { try { console.error("processWebhookEvents dispatch threw:", e); } catch (_) {} }
+    } catch (e) { try { console.error("inline webhook dispatch threw:", e); } catch (_) {} }
   }
   return new Response(null, { status: 200 });
 }
@@ -1442,6 +1491,56 @@ Deno.serve(async (req)=>{
       const work = (async ()=>{ try { const pr = await processPending(300); if (pr.processed > 0 || pr.remaining > 0) await sb.from("portal_audit").insert({ action:"cron_retry", ref:"every5min", detail: pr });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_retry", p_status:"ok", p_detail:{ processed:pr.processed, remaining:pr.remaining } }); } catch (_e) {}
       } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_retry_error", ref:"every5min", detail:{ error:String(e) } }); } catch (_e) {} try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_retry", p_status:"error", p_detail:{ error:String(e).slice(0,400) } }); } catch (_e) {} } })();
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
+      return j({ ok:true, started:true });
+    }
+    if (api === "cron_watchdog") {
+      // v71 (Tier-1 reliability): the SILENT-FAILURE alarm. The real damage last time wasn't that
+      // sync broke — it's that nobody knew for 15 days. This cron reads portal_sync_health and
+      // emails the operator (throttled) the moment backlog / stuck events / an overdue cron / a
+      // stale cache appears, so a silent regression can never hide again.
+      const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
+      const work = (async ()=>{
+        try {
+          const { data: h } = await sb.rpc("portal_sync_health");
+          const health = h || {};
+          const problems = [];
+          const backlog = Number(health.pending_events_total||0);
+          const failing = Number(health.pending_events_failing||0);
+          if (backlog > 200) problems.push("Webhook backlog: " + backlog + " events pending");
+          if (failing > 0) problems.push(failing + " webhook event(s) failing (rate-limit / Xero error)");
+          for (const c of (health.crons||[])){ if (c && c.overdue) problems.push("Cron overdue: " + c.cron_name + " (last ran " + (c.last_run_at||"never") + ")"); }
+          const nowMs = Date.now();
+          for (const t of (health.tenants||[])){
+            const ageH = t.cache_last_updated ? (nowMs - new Date(t.cache_last_updated).getTime())/3600000 : 999;
+            if (ageH > 3) problems.push("Stale cache: " + t.tenant_name + " (" + Math.round(ageH) + "h since last update)");
+            if (t.last_error) problems.push("Sync error: " + t.tenant_name + " — " + String(t.last_error).slice(0,80));
+          }
+          const signature = problems.slice().sort().join(" || ");
+          let state: any = {};
+          try { const { data: st } = await sb.from("portal_secrets").select("value").eq("key","watchdog_state").maybeSingle(); if (st && st.value) state = JSON.parse(st.value); } catch(_e){}
+          let emailed: any = null;
+          if (problems.length){
+            // Throttle: re-email only when the problem set CHANGES, or >6h since the last alert.
+            const changed = signature !== (state.signature || "");
+            const stale6h = (nowMs - (state.alerted_at ? new Date(state.alerted_at).getTime() : 0)) > 6*3600*1000;
+            if (changed || stale6h){
+              const bodyTxt = "CTG Finance — Xero sync watchdog flagged " + problems.length + " issue(s):\n\n" +
+                problems.map((p,i)=>(i+1)+". "+p).join("\n") +
+                "\n\nOpen the portal → Users tab → Xero Sync Health for details.\nChecked at: " + new Date().toISOString();
+              emailed = await sendAlertEmail("⚠ CTG Xero sync — " + problems.length + " issue(s) detected", bodyTxt);
+            }
+            const newState = { signature, alerted_at: (emailed && emailed.ok) ? new Date().toISOString() : (state.alerted_at||null), last_check: new Date().toISOString(), problems };
+            await sb.from("portal_secrets").upsert({ key:"watchdog_state", value: JSON.stringify(newState), updated_at:new Date().toISOString() }, { onConflict:"key" });
+          } else {
+            // Healthy — reset the signature so the next problem alerts immediately (recovery = clean slate).
+            await sb.from("portal_secrets").upsert({ key:"watchdog_state", value: JSON.stringify({ signature:"", alerted_at: state.alerted_at||null, last_check: new Date().toISOString(), problems:[] }), updated_at:new Date().toISOString() }, { onConflict:"key" });
+          }
+          await sb.from("portal_audit").insert({ action: problems.length ? "cron_watchdog_alert" : "cron_watchdog_ok", ref:"every30min", detail:{ problems, emailed } });
+          try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_watchdog", p_status:"ok", p_detail:{ problems: problems.length } }); } catch(_e){}
+        } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_watchdog_error", ref:"every30min", detail:{ error:String(e) } }); } catch(_e){} }
+      })();
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       return j({ ok:true, started:true });
     }
@@ -2669,6 +2768,6 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v70 sync-hardened: webhook retry skip-if-cached+budget+cooldown-aware, delta every 20min" });
+    return j({ ok:true, hint:"portal v71 sync-fast: batch-by-IDs webhook fetch + inline second-level processing + silent-failure watchdog alert" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
