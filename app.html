@@ -1799,9 +1799,44 @@ function ovMarginLine(mon){
   var xlab=pts.map(function(p,i){if(n>8&&i%2)return '';return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8.5" fill="var(--muted)">'+esc(p.month.slice(5))+'</text>';}).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+(zy!=null?'<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>':'')+'<path d="'+line+'" fill="none" stroke="#a479e2" stroke-width="2.5"/>'+dots+xlab+'</svg>';
 }
+// Expense breakdown: top vendors by AP spend (horizontal bars + share%).
+function ovVendorBars(vendors){
+  var vs=(vendors||[]).slice(0,8);
+  if(!vs.length) return '<div class="muted" style="padding:14px">No vendor spend in period.</div>';
+  var tot=vs.reduce(function(s,v){return s+(Number(v.spend)||0);},0)||1;
+  var max=Math.max.apply(null,[1].concat(vs.map(function(v){return Number(v.spend)||0;})));
+  return '<div style="padding:2px 0">'+vs.map(function(v,i){
+    var sp=Number(v.spend)||0, barW=Math.round(sp/max*100), share=Math.round(sp/tot*100), col=OV_PALETTE[i%OV_PALETTE.length];
+    return '<div style="display:flex;align-items:center;gap:10px;padding:5px 0">'+
+      '<span class="muted" style="width:16px;font-size:11px">'+(i+1)+'</span>'+
+      '<span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cfoShortName(v.vendor))+'</span>'+
+      '<div style="width:130px;background:var(--panel-2);border-radius:4px;height:8px;overflow:hidden"><div style="width:'+barW+'%;height:100%;background:'+col+'"></div></div>'+
+      '<span class="amt" style="width:92px;font-size:12px">'+M(sp)+'</span>'+
+      '<span class="muted" style="width:34px;text-align:right;font-size:11px">'+share+'%</span>'+
+    '</div>';
+  }).join('')+'</div>';
+}
+// Cumulative operating net (running sum of revenue−bills) — a cash-sediment proxy, NOT bank balance.
+function ovCumNet(mon){
+  var n=(mon||[]).length; if(!n) return '';
+  var cum=0, pts=mon.map(function(m){cum+=(Number(m.revenue)||0)-(Number(m.bills)||0); return {month:m.month, v:cum};});
+  var w=780,h=200,padL=52,padR=12,padT=14,padB=28;
+  var vals=pts.map(function(p){return p.v;});
+  var top=Math.max.apply(null,[1].concat(vals)), bot=Math.min.apply(null,[0].concat(vals)); var rng=(top-bot)||1;
+  var xat=function(i){return padL+(n<=1?(w-padL-padR)/2:i*(w-padL-padR)/(n-1));};
+  var y=function(v){return padT+(top-v)/rng*(h-padT-padB);};
+  var grid=''; for(var k=0;k<=3;k++){var gv=top-(k/3)*rng, gy=y(gv); grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/><text x="'+(padL-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="8.5" fill="var(--muted)">'+cfoMk(gv)+'</text>';}
+  var zy=(bot<0&&top>0)?y(0):null, baseY=(zy!=null?zy:(h-padB));
+  var line=pts.map(function(p,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+y(p.v).toFixed(1);}).join(' ');
+  var area='M'+xat(0).toFixed(1)+' '+baseY.toFixed(1)+' '+pts.map(function(p,i){return 'L'+xat(i).toFixed(1)+' '+y(p.v).toFixed(1);}).join(' ')+' L'+xat(n-1).toFixed(1)+' '+baseY.toFixed(1)+' Z';
+  var dots=pts.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+y(p.v).toFixed(1)+'" r="2.2" fill="#3ddc97"><title>'+esc(p.month+' 累计 '+M(p.v))+'</title></circle>';}).join('');
+  var xlab=pts.map(function(p,i){if(n>8&&i%2)return '';return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8.5" fill="var(--muted)">'+esc(p.month.slice(5))+'</text>';}).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+(zy!=null?'<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>':'')+'<path d="'+area+'" fill="#3ddc97" opacity=".10"/><path d="'+line+'" fill="none" stroke="#3ddc97" stroke-width="2.5"/>'+dots+xlab+'</svg>';
+}
 function ovTrendRender(){
   var el=document.getElementById('ov-trend'); if(!el||!OV_TREND) return;
   var mon=OV_TREND.monthly||[];
+  var vendors=OV_TREND.top_vendors||[];
   var totRev=mon.reduce(function(s,m){return s+(Number(m.revenue)||0);},0);
   var totExp=mon.reduce(function(s,m){return s+(Number(m.bills)||0);},0);
   var net=totRev-totExp, margin=totRev>0?Math.round(net/totRev*100):0;
@@ -1815,7 +1850,10 @@ function ovTrendRender(){
     '<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills · all companies</div></div>'+cfoTrend(mon)+'</div>'+
     '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📊 收入 vs 支出 · 月度 P&L</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> 营收 &nbsp;<span style="color:#e85d3c">■</span> 支出 &nbsp;<span style="color:#5b9bd5">━</span> 净额</div></div>'+kpis+ovPnlBars(mon)+
       '<div class="muted" style="font-size:11px;margin-top:8px">数据来自可靠的发票缓存:营收=应收(AR)开票、支出=供应商账单(AP)。不含薪资/折旧等非账单开支,非完整会计损益。</div></div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📉 净额率走势 · Net margin %</h3><span class="muted" style="font-size:11px">净额 ÷ 营收</span></div>'+ovMarginLine(mon)+'</div>';
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📉 净额率走势 · Net margin %</h3><span class="muted" style="font-size:11px">净额 ÷ 营收</span></div>'+ovMarginLine(mon)+'</div>'+
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>🏭 开销分类 · Top 供应商占比</h3><span class="muted" style="font-size:11px">近12个月 · 谁花最多</span></div>'+ovVendorBars(vendors)+'</div>'+
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💵 累计经营净额 · Cumulative net</h3><span class="muted" style="font-size:11px">营收−账单 逐月累计</span></div>'+ovCumNet(mon)+
+      '<div class="muted" style="font-size:11px;margin-top:8px">这是累计的经营净额(应收 − 应付账单),反映资金沉淀趋势 —— <b>不是银行余额</b>。要真实的银行余额历史,我可以另设每月快照,以后自动长出真趋势。</div></div>';
 }
 /* ── Financial dashboard charts (Xero P&L → revenue/expense/profit + 开销占比) ── */
 var OV_PNL=null, OV_PNL_KEY='';
