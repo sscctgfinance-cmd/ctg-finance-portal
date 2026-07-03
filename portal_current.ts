@@ -2264,7 +2264,9 @@ Deno.serve(async (req)=>{
       return j({ ok:true, id: inboxId });
     }
     if (api === "ap_process") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data: _cs } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      const _bySecret = _cs && _cs.value && b.cron_secret === _cs.value;
+      if (!_bySecret){ const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); }
       if (!b.id) return j({ ok:false, error:"id required" });
       const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
       if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
