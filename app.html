@@ -2914,10 +2914,12 @@ function sbiFormRender(inv){
   f.innerHTML='<div class="panel" style="margin-bottom:16px;border-color:var(--coral-soft)"><div class="panel-hd"><h3>'+(SBI.editId?'Edit':'New')+' self-billed invoice</h3><button class="btn sm" onclick="document.getElementById(\'sbi_form\').innerHTML=\'\'">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
       '<div><label class="muted" style="font-size:11px">Paying company *</label><select id="sbi_co" onchange="sbiPickCompany()" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+coOpts+'</select></div>'+
-      '<div><label class="muted" style="font-size:11px">Payee (individual) *</label><select id="sbi_payee" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+payOpts+'</select></div>'+
+      '<div><label class="muted" style="font-size:11px">Payee (individual) *</label><select id="sbi_payee" onchange="sbiPickPayee()" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+payOpts+'</select></div>'+
     '</div>'+
     '<div id="sbi_buyer_box" style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px"><div class="muted" style="font-size:11px;margin-bottom:6px">BUYER (company) — auto-filled from Company Info, editable</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:6px">'+inp('sbi_bname','Legal name',inv.buyer_name)+inp('sbi_bssm','SSM no.',inv.buyer_ssm)+inp('sbi_btin','TIN',inv.buyer_tin)+inp('sbi_bsst','SST no.',inv.buyer_sst)+'</div>'+inp('sbi_baddr','Registered address',inv.buyer_address)+'</div>'+
+    '<div style="background:var(--panel-2);border:1px solid var(--coral-soft);border-radius:8px;padding:10px;margin-bottom:10px"><div class="muted" style="font-size:11px;margin-bottom:6px">💳 PAYMENT DETAILS (BANK) — required</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'+inp('sbi_bank_name','Bank name *',inv.payee_bank_name)+inp('sbi_bank_holder','Account holder name',inv.payee_bank_holder)+inp('sbi_bank_acct','Account number *',inv.payee_bank_account)+'</div></div>'+
     '<div style="display:grid;grid-template-columns:130px 130px 1fr 220px;gap:10px;margin-bottom:10px">'+
       '<div><label class="muted" style="font-size:11px">Invoice date</label>'+inp('sbi_date','',inv.invoice_date||todayLocalISO(),'type="date"')+'</div>'+
       '<div><label class="muted" style="font-size:11px">Due date</label>'+inp('sbi_due','',inv.due_date,'type="date"')+'</div>'+
@@ -2944,6 +2946,12 @@ async function sbiPickCompany(){
   var set=function(id,v){var e=document.getElementById(id);if(e&&!e.value)e.value=v||'';};
   document.getElementById('sbi_bname').value=bu.name||''; document.getElementById('sbi_bssm').value=bu.ssm||''; document.getElementById('sbi_btin').value=bu.tin||''; document.getElementById('sbi_bsst').value=bu.sst||''; document.getElementById('sbi_baddr').value=bu.address||'';
   if(!r.has_info) toast('Tip: fill this company in Company Info once, so the buyer block auto-fills next time.');
+}
+function sbiPickPayee(){
+  var id=parseInt(document.getElementById('sbi_payee').value,10); if(!id)return;
+  var p=SBI.payees.find(function(x){return x.id===id;}); if(!p)return;
+  var set=function(fid,v){var e=document.getElementById(fid); if(e&&!e.value) e.value=v||'';};
+  set('sbi_bank_name',p.bank_name); set('sbi_bank_holder',p.name); set('sbi_bank_acct',p.bank_account);
 }
 function sbiLinesRender(){
   var box=document.getElementById('sbi_lines'); if(!box)return;
@@ -2972,6 +2980,8 @@ function sbiFilesRead(){return new Promise(function(res){var inp=document.getEle
 async function sbiSave(){
   var co=document.getElementById('sbi_co').value, payee=document.getElementById('sbi_payee').value;
   if(!co){toast('Select the paying company',true);return;} if(!payee){toast('Select the payee',true);return;}
+  var bankNm=document.getElementById('sbi_bank_name').value.trim(), bankAc=document.getElementById('sbi_bank_acct').value.trim();
+  if(!bankNm||!bankAc){toast('Bank name and account number are required for payment',true);return;}
   var wt=document.getElementById('sbi_wht').value;
   var rate= wt==='custom'? (parseFloat(document.getElementById('sbi_wht_rate').value)||0) : (SBI_WHT.find(function(w){return w.v===wt;})||{}).rate||0;
   var files=await sbiFilesRead();
@@ -2979,6 +2989,7 @@ async function sbiSave(){
     buyer_name:document.getElementById('sbi_bname').value,buyer_ssm:document.getElementById('sbi_bssm').value,buyer_tin:document.getElementById('sbi_btin').value,buyer_sst:document.getElementById('sbi_bsst').value,buyer_address:document.getElementById('sbi_baddr').value,
     invoice_date:document.getElementById('sbi_date').value||null,due_date:document.getElementById('sbi_due').value||null,
     payment_type:document.getElementById('sbi_ptype').value,classification_code:document.getElementById('sbi_class').value,
+    payee_bank_name:bankNm,payee_bank_account:bankAc,payee_bank_holder:document.getElementById('sbi_bank_holder').value.trim(),
     line_items:SBI.lines.filter(function(l){return (l.description||'')||l.amount;}),
     wht_type:wt,wht_rate:rate,gl_account:document.getElementById('sbi_gl').value,wht_gl_account:document.getElementById('sbi_whtgl').value,
     notes:document.getElementById('sbi_notes').value,new_attachments:files};
@@ -3000,7 +3011,7 @@ function sbiInvoiceHTML(v){
   var whtRow=(Number(v.wht_amount)||0)>0?'<tr><td colspan="4" class="r">Less: Withholding tax ('+(v.wht_rate||0)+'%)</td><td class="r">-'+Number(v.wht_amount).toFixed(2)+'</td></tr>':'';
   var fmt=function(n){return (v.currency||'MYR')+' '+Number(n||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});};
   return '<!doctype html><html><head><meta charset="utf-8"><title>'+esc(v.invoice_no||'Self-Billed Invoice')+'</title><style>'+
-    'body{font-family:Arial,Helvetica,sans-serif;color:#111;max-width:800px;margin:24px auto;padding:0 24px;font-size:13px}'+
+    'body{font-family:Arial,Helvetica,sans-serif;color:#111;max-width:800px;margin:24px auto;padding:0 24px;font-size:13px;text-transform:uppercase}'+
     'h1{font-size:20px;letter-spacing:1px;margin:0 0 2px}.sub{color:#666;font-size:11px;margin-bottom:18px}'+
     '.row{display:flex;justify-content:space-between;gap:24px}.box{flex:1}.lbl{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}'+
     'b{font-size:13px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;text-align:left}th{background:#f5f5f5}.r{text-align:right}'+
@@ -3015,7 +3026,7 @@ function sbiInvoiceHTML(v){
     '<div class="box" style="border:1px solid #eee;border-radius:6px;padding:10px;margin-bottom:6px"><div class="lbl">Supplier (individual)</div><b>'+esc(v.payee_name||'')+'</b> &nbsp; <span style="color:#666">'+esc((v.payee_id_type||'').toUpperCase())+' '+esc(v.payee_id_no||'')+'</span><div>TIN: '+esc(v.payee_tin||'—')+' &nbsp; Payment type: '+esc(v.payment_type||'')+(v.classification_code?(' &nbsp; Class: '+esc(v.classification_code)):'')+'</div><div style="color:#555">'+esc(v.payee_address||'')+'</div></div>'+
     '<table><thead><tr><th style="width:26px">#</th><th>Description</th><th class="r" style="width:50px">Qty</th><th class="r" style="width:90px">Unit price</th><th class="r" style="width:100px">Amount</th></tr></thead><tbody>'+items+'</tbody></table>'+
     '<table class="tot" style="margin-top:8px"><tr><td colspan="4" class="r">Subtotal</td><td class="r" style="width:100px">'+Number(v.gross_amount||0).toFixed(2)+'</td></tr>'+(Number(v.sst_amount)>0?'<tr><td colspan="4" class="r">SST</td><td class="r">'+Number(v.sst_amount).toFixed(2)+'</td></tr>':'')+whtRow+'<tr class="net"><td colspan="4" class="r">NET PAYABLE</td><td class="r">'+fmt(v.net_payable)+'</td></tr></table>'+
-    '<div style="margin-top:16px"><div class="lbl">Payment to</div>'+esc(v.payee_bank_name||'')+' &nbsp; '+esc(v.payee_bank_account||'')+'</div>'+
+    '<div style="margin-top:16px;border:1.5px solid #111;border-radius:6px;padding:10px"><div class="lbl" style="color:#111;font-weight:bold">Payment details</div><table style="border:none;margin-top:2px"><tr><td style="border:none;padding:2px 8px 2px 0;color:#666;width:130px">Bank name</td><td style="border:none;padding:2px 0"><b>'+esc(v.payee_bank_name||'—')+'</b></td></tr><tr><td style="border:none;padding:2px 8px 2px 0;color:#666">Account holder</td><td style="border:none;padding:2px 0"><b>'+esc(v.payee_bank_holder||v.payee_name||'—')+'</b></td></tr><tr><td style="border:none;padding:2px 8px 2px 0;color:#666">Account number</td><td style="border:none;padding:2px 0"><b>'+esc(v.payee_bank_account||'—')+'</b></td></tr></table></div>'+
     '<div class="decl">This is a <b>self-billed invoice</b> issued by '+esc(v.buyer_name||co)+' on behalf of '+esc(v.payee_name||'')+'. '+((Number(v.wht_amount)||0)>0?('Withholding tax of '+(v.wht_rate||0)+'% ('+fmt(v.wht_amount)+') has been deducted and will be remitted to LHDN. '):'')+'Retain this document and all supporting evidence for audit. WHT applicability and MyInvois classification to be confirmed by a licensed tax agent.</div>'+
     '</body></html>';
 }

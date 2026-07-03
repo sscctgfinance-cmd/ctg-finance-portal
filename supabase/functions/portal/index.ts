@@ -2156,6 +2156,10 @@ Deno.serve(async (req)=>{
       if (!inv.individual_id) return j({ ok:false, error:"Payee is required" });
       const { data: payee } = await sb.from("portal_individuals").select("*").eq("id", Number(inv.individual_id)).single();
       if (!payee) return j({ ok:false, error:"Payee not found" });
+      // Bank details are mandatory for payment.
+      const bankName = String(inv.payee_bank_name || payee.bank_name || "").trim();
+      const bankAcct = String(inv.payee_bank_account || payee.bank_account || "").trim();
+      if (!bankName || !bankAcct) return j({ ok:false, error:"Bank name and account number are required for payment" });
       const { data: ci } = await sb.from("portal_company_info").select("legal_name,ssm_new,myinvois_tin,sst_no,reg_address,reg_postcode,reg_city,reg_state").eq("tenant_id", inv.tenant_id).maybeSingle();
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", inv.tenant_id).maybeSingle();
       const buyerAddr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
@@ -2182,7 +2186,8 @@ Deno.serve(async (req)=>{
       const row: any = {
         tenant_id: inv.tenant_id, individual_id: Number(inv.individual_id),
         payee_name: payee.name, payee_id_type: payee.id_type, payee_id_no: payee.id_no, payee_tin: payee.tin,
-        payee_address: payee.address, payee_bank_name: payee.bank_name, payee_bank_account: payee.bank_account,
+        payee_address: payee.address, payee_bank_name: bankName, payee_bank_account: bankAcct,
+        payee_bank_holder: String(inv.payee_bank_holder || payee.name || "").trim() || null,
         buyer_name: (inv.buyer_name||(ci&&ci.legal_name)||(tn&&tn.tenant_name)||""), buyer_ssm: (inv.buyer_ssm||(ci&&ci.ssm_new)||""),
         buyer_tin: (inv.buyer_tin||(ci&&ci.myinvois_tin)||""), buyer_sst: (inv.buyer_sst||(ci&&ci.sst_no)||""), buyer_address: (inv.buyer_address||buyerAddr),
         invoice_date: inv.invoice_date || null, due_date: inv.due_date || null,
