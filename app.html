@@ -86,6 +86,12 @@ h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.3px;color:#fff}
 /* ── Inputs ── */
 select,input:not([type=file]){padding:9px 12px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;background:rgba(7,13,23,.7);color:var(--text);transition:.16s;font-family:inherit}
 select:focus,input:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
+/* Dropdown options — native popup needs an explicit solid background per theme, else text is invisible. */
+select option, optgroup{ background:#0e1621; color:#E8EEF7; }
+select option:checked, select option:hover{ background:#1b2942; }
+:root[data-theme="light"] select option, :root[data-theme="light"] optgroup{ background:#ffffff; color:#15233F; }
+:root[data-theme="light"] select option:checked, :root[data-theme="light"] select option:hover{ background:#E6EEF8; }
+input::placeholder, textarea::placeholder{ color:var(--muted); opacity:.8; }
 textarea{padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;font-family:inherit;min-height:74px;background:rgba(7,13,23,.7);color:var(--text);resize:vertical;width:100%;transition:.16s}
 textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
 
@@ -764,6 +770,13 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .card.amber .n{ -webkit-text-fill-color:var(--amber); color:var(--amber); }
 :root[data-theme="light"] .panel{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
 :root[data-theme="light"] .panel h3{ color:var(--text); }
+/* Light-mode: elements hard-set to white text must flip to dark so they stay legible. */
+:root[data-theme="light"] h1,
+:root[data-theme="light"] .who b,
+:root[data-theme="light"] .notif-hd h4,
+:root[data-theme="light"] .notif-item .nt,
+:root[data-theme="light"] .modal h3,
+:root[data-theme="light"] .tab.active{ color:var(--text); }
 :root[data-theme="light"] .bigtable{ background:linear-gradient(180deg,#ffffff,#FAFCFE); }
 :root[data-theme="light"] .bigtable th{ background:var(--surface2); color:var(--muted); }
 :root[data-theme="light"] .tbl-wrap{ border-color:var(--border); }
@@ -3889,9 +3902,9 @@ async function arAgingLoad(){
       var col=i.days_overdue>60?'var(--red-soft)':i.days_overdue>0?'var(--amber)':'var(--muted)';
       return '<tr><td class="muted" style="font-size:11.5px">'+esc(i.tenant_name||'')+'</td><td><b style="font-size:12.5px">'+esc(i.contact||'?')+'</b></td><td class="muted" style="font-size:11.5px">'+esc(i.number||'')+'</td><td class="amt" style="font-weight:700">'+M(i.amount_due)+'</td><td class="muted" style="font-size:11.5px">'+esc(i.due_date||'')+'</td><td style="color:'+col+';font-weight:700;font-size:12px">'+(i.days_overdue>0?(i.days_overdue+'d'):'—')+'</td></tr>';
     }).join('');
-    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px"><div class="muted" style="font-size:12px">'+r.count+' open invoice(s)</div><div style="font-size:17px;font-weight:800;color:#fff">'+M(r.total)+' <span class="muted" style="font-size:11px;font-weight:600">total outstanding</span></div></div>'+cards+
+    el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px"><div class="muted" style="font-size:12px">'+r.count+' open invoice(s)</div><div style="font-size:17px;font-weight:800;color:var(--text)">'+M(r.total)+' <span class="muted" style="font-size:11px;font-weight:600">total outstanding</span></div></div>'+cards+
       '<div id="ar_drill"></div>'+
-      '<h4 style="font-size:12.5px;margin:18px 0 8px;color:#fff">Top exposures</h4><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      '<h4 style="font-size:12.5px;margin:18px 0 8px;color:var(--text)">Top exposures</h4><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 async function saveWebhookKey(){
@@ -3955,7 +3968,7 @@ async function smartLoad(){
     var sevC={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
     var aHtml = alerts.length ? alerts.map(function(a){return '<div style="padding:12px 14px;border:1px solid var(--border);border-left:3px solid '+sevC[a.sev]+';border-radius:9px;margin-bottom:8px;background:rgba(7,13,23,.4)"><div style="font-weight:700;font-size:13px">'+a.t+'</div><div class="muted" style="font-size:12px">'+a.d+'</div></div>';}).join('')
       : '<div class="card" style="max-width:360px"><div class="n" style="color:var(--green-soft);font-size:16px">✓ All clear</div><div class="l">No anomalies detected in your current data</div></div>';
-    document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:#fff">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
+    document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:var(--text)">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
       '<div class="muted" style="font-size:11px;margin-top:16px;line-height:1.6">Rule-based intelligence over live Xero data — duplicate &amp; anomaly detection, cash-risk &amp; profit insights. Add an AI key in the backend to unlock natural-language CFO Q&amp;A and photo→bill extraction.</div>';
   }catch(e){ document.getElementById('smart_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
