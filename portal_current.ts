@@ -514,6 +514,81 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
   } catch(e){ return { ok:false, error: String((e&&e.message)||e).slice(0,300) }; }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Google Document AI — high-precision OCR for invoices/receipts.
+// Two-stage AP path (opt-in per tenant via portal_ap_settings.ocr_provider='docai'):
+//   Document AI extracts structured fields (with confidence) → GPT-5.4 does the reasoning.
+// Auth is a service-account JWT (RS256) exchanged for a short-lived access token.
+// Config lives in Supabase Edge secrets: GOOGLE_DOCAI_SA (full service-account JSON),
+// GOOGLE_DOCAI_PROJECT, GOOGLE_DOCAI_LOCATION (us|eu), GOOGLE_DOCAI_INVOICE_PROCESSOR,
+// GOOGLE_DOCAI_EXPENSE_PROCESSOR (optional; falls back to the invoice processor).
+// ─────────────────────────────────────────────────────────────────────
+let __docaiTok: any = null;
+function b64urlJson(obj: any){ return btoa(JSON.stringify(obj)).replace(/=+$/,"").replace(/\+/g,"-").replace(/\//g,"_"); }
+async function docaiAccessToken(){
+  const now = Math.floor(Date.now()/1000);
+  if (__docaiTok && __docaiTok.exp > now + 60) return __docaiTok.token;
+  const saRaw = Deno.env.get("GOOGLE_DOCAI_SA");
+  if (!saRaw) throw new Error("GOOGLE_DOCAI_SA not set");
+  const sa = JSON.parse(saRaw);
+  const aud = sa.token_uri || "https://oauth2.googleapis.com/token";
+  const unsigned = b64urlJson({ alg:"RS256", typ:"JWT" }) + "." +
+    b64urlJson({ iss: sa.client_email, scope:"https://www.googleapis.com/auth/cloud-platform", aud, iat: now, exp: now+3600 });
+  const pemBody = String(sa.private_key||"").replace(/-----BEGIN PRIVATE KEY-----/,"").replace(/-----END PRIVATE KEY-----/,"").replace(/\s+/g,"");
+  const der = Uint8Array.from(atob(pemBody), (c)=>c.charCodeAt(0));
+  const key = await crypto.subtle.importKey("pkcs8", der, { name:"RSASSA-PKCS1-v1_5", hash:"SHA-256" }, false, ["sign"]);
+  const sigBuf = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
+  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf))).replace(/=+$/,"").replace(/\+/g,"-").replace(/\//g,"_");
+  const jwt = unsigned + "." + sigB64;
+  const r = await fetch(aud, { method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" },
+    body: "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + encodeURIComponent(jwt) });
+  const d = await r.json();
+  if (!d.access_token) throw new Error("DocAI token exchange failed: " + JSON.stringify(d).slice(0,200));
+  __docaiTok = { token: d.access_token, exp: now + (Number(d.expires_in)||3600) };
+  return d.access_token;
+}
+async function callDocAI(b64: string, mime: string, kind: string){
+  const project = Deno.env.get("GOOGLE_DOCAI_PROJECT");
+  const location = Deno.env.get("GOOGLE_DOCAI_LOCATION") || "us";
+  const proc = kind === "expense"
+    ? (Deno.env.get("GOOGLE_DOCAI_EXPENSE_PROCESSOR") || Deno.env.get("GOOGLE_DOCAI_INVOICE_PROCESSOR"))
+    : Deno.env.get("GOOGLE_DOCAI_INVOICE_PROCESSOR");
+  if (!project || !proc) return { ok:false, error:"Doc AI project/processor not configured" };
+  try {
+    const token = await docaiAccessToken();
+    const url = "https://" + location + "-documentai.googleapis.com/v1/projects/" + project + "/locations/" + location + "/processors/" + proc + ":process";
+    const r = await fetch(url, { method:"POST", headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" },
+      body: JSON.stringify({ rawDocument:{ content:b64, mimeType:mime }, skipHumanReview:true }) });
+    if (!r.ok) return { ok:false, error:"Doc AI "+r.status+": "+(await r.text()).slice(0,220) };
+    const d = await r.json();
+    return { ok:true, doc: d.document || null };
+  } catch(e){ return { ok:false, error: String((e&&e.message)||e).slice(0,220) }; }
+}
+// Turn Doc AI's entity graph into a compact, GPT-readable extraction block with confidences.
+function docaiEntitiesToText(doc: any){
+  if (!doc) return "";
+  const ents = doc.entities || [];
+  const fields: string[] = []; const lines: string[] = [];
+  for (const e of ents){
+    const t = String(e.type||"");
+    const conf = (e.confidence!=null) ? ("  (conf "+Math.round(Number(e.confidence)*100)+"%)") : "";
+    if (t === "line_item"){
+      const parts = (e.properties||[]).map((p: any)=> String(p.type||"").replace("line_item/","") + "=" + (((p.normalizedValue&&p.normalizedValue.text)||p.mentionText||"").toString().replace(/\s+/g," ").trim()));
+      lines.push("  · " + parts.join(", "));
+    } else {
+      const v = ((e.normalizedValue&&e.normalizedValue.text)||e.mentionText||"").toString().replace(/\s+/g," ").trim();
+      fields.push("  - " + t + ": " + v + conf);
+    }
+  }
+  let out = "GOOGLE DOCUMENT AI — HIGH-PRECISION STRUCTURED EXTRACTION\n" +
+    "(Fields below were OCR-extracted by Google's purpose-built invoice/receipt parser, each with a confidence score. " +
+    "Trust these exact values over your own reading of the image; explicitly flag any field with confidence < 70% as an issue.)\n\nFIELDS:\n" +
+    (fields.length ? fields.join("\n") : "  (none extracted)");
+  if (lines.length) out += "\n\nLINE ITEMS:\n" + lines.join("\n");
+  if (doc.text) out += "\n\nFULL OCR TEXT:\n" + String(doc.text).slice(0, 6000);
+  return out;
+}
+
 async function processApEmail(inboxId, route){
   const { data: item } = await sb.from("portal_ap_inbox").select("*").eq("id", inboxId).single();
   if (!item) throw new Error("inbox item not found");
@@ -565,6 +640,43 @@ async function processApEmail(inboxId, route){
           contentBlocks.push({ kind:"pdf", b64: btoa(bin) });
         }
       } catch(_e){}
+    }
+  }
+
+  // ── Step 1b (opt-in): Google Document AI high-precision OCR → GPT-5.4 reasoning ──
+  // Only runs when this tenant's portal_ap_settings.ocr_provider = 'docai'. Otherwise the
+  // effective provider stays whatever the tenant picked (default vision-LLM) — zero change.
+  let effProvider = aiProvider, effModel = aiModelResolved;
+  let ocrProvider = String(route.ocr_provider || "").toLowerCase();
+  if (!ocrProvider){
+    try {
+      const { data: apc } = await sb.from("portal_ap_settings").select("ocr_provider,ai_model").eq("tenant_id", item.tenant_id).maybeSingle();
+      if (apc){ ocrProvider = String(apc.ocr_provider || "vision-llm").toLowerCase(); if (!route.ai_model && apc.ai_model) route.ai_model = apc.ai_model; }
+    } catch(_e){}
+  }
+  if (!ocrProvider) ocrProvider = "vision-llm";
+  if (ocrProvider === "docai"){
+    const isReimb = /reimburse|claim|expense|report|报销|申请|索赔/i.test(String(item.subject||"") + " " + String(item.text_body||""));
+    const docaiTexts = []; let docaiOk = false;
+    for (const blk of contentBlocks){
+      if (blk.kind === "pdf" || blk.kind === "image"){
+        const res = await callDocAI(blk.b64, blk.mime || "application/pdf", isReimb ? "expense" : "invoice");
+        if (res.ok && res.doc){ const txt = docaiEntitiesToText(res.doc); if (txt){ docaiTexts.push(txt); docaiOk = true; } }
+        else docaiTexts.push("(Document AI could not read this file: " + (res.error||"empty") + ")");
+      }
+    }
+    if (docaiOk){
+      // Prepend the structured extraction so GPT-5.4 reasons over exact fields.
+      contentBlocks.splice(1, 0, { kind:"text", text: docaiTexts.join("\n\n---- next document ----\n\n") });
+      // Invoices: Doc AI already read everything precisely → drop heavy image/pdf blocks (text-only GPT-5.4 = cheaper).
+      // Reimbursements: KEEP the images so GPT-5.4 can visually verify signatures / stamps / payment proof.
+      if (!isReimb){ for (let i=contentBlocks.length-1; i>=0; i--){ if (contentBlocks[i].kind === "image" || contentBlocks[i].kind === "pdf") contentBlocks.splice(i,1); } }
+      effProvider = "openai";
+      effModel = resolveModel("openai", route.ai_model || "gpt-5.4");
+      try { await logDecision(inboxId, "processing", "Doc AI OCR ok (" + docaiTexts.length + " doc[s]) → reasoning with " + effModel + (isReimb?" +image":" text-only")); } catch(_e){}
+    } else {
+      // Doc AI unavailable/failed → fall back to the tenant's normal vision provider (never silently lose the doc).
+      try { await logDecision(inboxId, "processing", "Doc AI unavailable, fell back to " + aiProvider + " vision: " + String(docaiTexts[0]||"").slice(0,120)); } catch(_e){}
     }
   }
 
@@ -718,12 +830,12 @@ Important:
 - Put every problem in issues.
 - Keep reply_body empty if no reply is needed.
 - Use Malaysia context and MYR unless another currency is clearly shown.`;
-  // Wave 5: call whichever provider the tenant selected (default Anthropic).
+  // Wave 5 + Doc AI: call the effective provider (Doc AI mode forces openai/GPT-5.4; else tenant's pick).
   let parsed = null;
-  const llm = await callVisionLLM(aiProvider, aiModelResolved, sys, contentBlocks, 2500);
+  const llm = await callVisionLLM(effProvider, effModel, sys, contentBlocks, 2500);
   if (!llm.ok){
-    await logDecision(inboxId, "needs_review", "LLM (" + aiProvider + ") error: " + llm.error);
-    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"AI (" + aiProvider + ") error: " + String(llm.error).slice(0,200) }).eq("id", inboxId);
+    await logDecision(inboxId, "needs_review", "LLM (" + effProvider + ") error: " + llm.error);
+    await sb.from("portal_ap_inbox").update({ status:"needs_review", status_detail:"AI (" + effProvider + ") error: " + String(llm.error).slice(0,200) }).eq("id", inboxId);
     return;
   }
   {
@@ -2777,6 +2889,6 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v72 fin-analytics: DSO/DPO + customer credit risk + intercompany; sync-fast batch+inline+watchdog" });
+    return j({ ok:true, hint:"portal v73 AP: opt-in Google Document AI OCR -> GPT-5.4 reasoning (ocr_provider=docai); fin-analytics; sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
