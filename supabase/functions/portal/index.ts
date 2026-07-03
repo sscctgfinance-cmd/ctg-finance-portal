@@ -2058,6 +2058,27 @@ Deno.serve(async (req)=>{
       let auth = "?";
       try { const tok = await docaiAccessToken(); auth = tok ? "ok" : "no-token"; }
       catch(e){ return j({ ok:false, verdict:"auth_failed", where:"service-account JWT / GOOGLE_DOCAI_SA", detail: String((e&&e.message)||e).slice(0,300) }); }
+      if (b.inbox_id){
+        // Read-only extraction demo: run Doc AI on a real inbox attachment, return the fields it extracts.
+        const { data: item } = await sb.from("portal_ap_inbox").select("attachments,subject").eq("id", Number(b.inbox_id)).single();
+        const atts = (item && item.attachments) || [];
+        const results = [];
+        for (const a of atts){
+          if (!a.storage_path){ continue; }
+          const { data: f } = await sb.storage.from("portal-ap-uploads").download(a.storage_path);
+          if (!f){ results.push({ file:a.name, error:"download failed" }); continue; }
+          const buf = new Uint8Array(await f.arrayBuffer());
+          let bin=""; const ch=8192; for (let i=0;i<buf.length;i+=ch) bin += String.fromCharCode.apply(null, buf.subarray(i, Math.min(i+ch, buf.length)));
+          const res = await callDocAI(btoa(bin), a.mime || "application/pdf", "invoice");
+          if (!res.ok){ results.push({ file:a.name, error:res.error }); continue; }
+          const ents = (res.doc && res.doc.entities) || [];
+          const fields = {};
+          for (const e of ents){ const t=String(e.type||""); if (t && t!=="line_item"){ fields[t] = { value:(((e.normalizedValue&&e.normalizedValue.text)||e.mentionText||"")+"").replace(/\s+/g," ").trim(), conf: e.confidence!=null?Math.round(Number(e.confidence)*100):null }; } }
+          const lineItems = ents.filter((e)=>e.type==="line_item").map((e)=> (e.properties||[]).reduce((o,p)=>{ o[String(p.type||"").replace("line_item/","")]=(((p.normalizedValue&&p.normalizedValue.text)||p.mentionText||"")+"").replace(/\s+/g," ").trim(); return o; }, {}));
+          results.push({ file:a.name, entity_count:ents.length, fields, line_items:lineItems.slice(0,25) });
+        }
+        return j({ ok:true, verdict:"extraction", auth, subject:(item&&item.subject)||"", results });
+      }
       const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC";
       const res = await callDocAI(png1x1, "image/png", "invoice");
       if (res.ok) return j({ ok:true, verdict:"fully_working", auth, process:"ok", entities:(res.doc&&res.doc.entities?res.doc.entities.length:0) });
