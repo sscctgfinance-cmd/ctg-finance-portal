@@ -2218,6 +2218,36 @@ Deno.serve(async (req)=>{
       await logAudit(me, "sbi_void", String(b.id), {});
       return j({ ok:true });
     }
+    if (api === "sbi_post_xero") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data: v } = await sb.from("portal_self_billed_invoices").select("*").eq("id", Number(b.id)).single();
+      if (!v) return j({ ok:false, error:"not found" });
+      if (v.xero_bill_id) return j({ ok:false, error:"Already posted to Xero" });
+      if (v.status==="void") return j({ ok:false, error:"Invoice is void" });
+      const gl = v.gl_account || "610-1000";
+      const items = Array.isArray(v.line_items)? v.line_items : [];
+      const lines: any[] = items.map((l: any)=>{
+        const up=Number(l.unit_price)||0;
+        return up>0
+          ? { Description:String(l.description||("Payment to "+v.payee_name)).slice(0,4000), Quantity:Number(l.qty)||1, UnitAmount:up, AccountCode: gl }
+          : { Description:String(l.description||("Payment to "+v.payee_name)).slice(0,4000), Quantity:1, UnitAmount:Number(l.amount)||0, AccountCode: gl };
+      });
+      if (!lines.length) lines.push({ Description:"Payment to "+v.payee_name, Quantity:1, UnitAmount:Number(v.gross_amount)||0, AccountCode: gl });
+      if (Number(v.wht_amount)>0){ lines.push({ Description:"Less: Withholding tax "+(v.wht_rate||0)+"% — to remit to LHDN", Quantity:1, UnitAmount:-(Number(v.wht_amount)||0), AccountCode: v.wht_gl_account || gl }); }
+      // Safety red line: SUBMITTED (Awaiting Approval), never AUTHORISED — payment stays a human click in Xero.
+      const inv: any = { Type:"ACCPAY", Contact:{ Name:String(v.payee_name||"Individual").slice(0,500) },
+        Reference: v.invoice_no||undefined, Date: v.invoice_date||undefined, DueDate: v.due_date||undefined,
+        Status:"SUBMITTED", LineAmountTypes:"Exclusive", LineItems: lines };
+      let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
+      const idem = "sbi-"+v.id+"-"+String(v.invoice_no||"").replace(/[^A-Za-z0-9-]/g,"");
+      const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": v.tenant_id, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
+      const out = await r.json();
+      if (!r.ok) return j({ ok:false, error:"Xero "+r.status+": "+JSON.stringify(out.Elements||out.Message||out).slice(0,300) });
+      const bill = (out.Invoices||[])[0]; const billId = bill && bill.InvoiceID;
+      await sb.from("portal_self_billed_invoices").update({ xero_bill_id: billId||null, status:(v.status==='draft'?'approved':v.status), approved_by:(me.user&&me.user.email)||v.approved_by||null, approved_at: v.approved_at||new Date().toISOString(), updated_at:new Date().toISOString() }).eq("id", v.id);
+      await logAudit(me, "sbi_post_xero", String(v.id), { xero_bill_id: billId, net: v.net_payable });
+      return j({ ok:true, xero_bill_id: billId, number: bill&&bill.InvoiceNumber });
+    }
     if (api === "set_webhook_key") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const key = String(b.key||"").trim();
