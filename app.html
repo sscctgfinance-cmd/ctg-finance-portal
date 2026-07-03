@@ -1426,6 +1426,57 @@ function cfoAgingBar(a){
   var legend=segs.map(function(s){ return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11.5px"><span style="width:10px;height:10px;border-radius:2px;background:'+s[2]+'"></span>'+s[0]+' <b style="margin-left:2px">'+M(s[1])+'</b></span>'; }).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block;border-radius:6px;overflow:hidden">'+rects+'</svg>'+'<div style="margin-top:8px">'+legend+'</div>';
 }
+// Compact money for on-chart labels: RM3.6M / RM560k / RM1,200
+function cfoMk(v){ v=Number(v)||0; var s=v<0?'-':''; v=Math.abs(v);
+  if(v>=1e6) return s+'RM'+(v/1e6).toFixed(v>=1e7?0:1)+'M';
+  if(v>=1e3) return s+'RM'+Math.round(v/1e3)+'k';
+  return s+'RM'+Math.round(v); }
+function cfoShortName(n){ return String(n||'').replace(/\s*(SDN\s*BHD|CTG4U)\s*/gi,' ').replace(/\s+/g,' ').trim(); }
+// Vertical bar chart — revenue per company for the period, sorted desc, with MoM (this month vs last).
+function cfoRevBars(cos){
+  var data=(cos||[]).map(function(c){return {name:c.tenant_name,rev:Number(c.revenue)||0,cur:Number(c.rev_cur)||0,prev:Number(c.rev_prev)||0};})
+    .sort(function(a,b){return b.rev-a.rev;});
+  var n=data.length; if(!n) return '<div class="muted" style="padding:20px">No revenue data.</div>';
+  var w=780,h=270,padL=52,padR=12,padB=56,padT=14;
+  var max=Math.max.apply(null,[1].concat(data.map(function(d){return d.rev;})));
+  var slot=(w-padL-padR)/n, barW=Math.min(64,slot*0.56);
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var grid=''; for(var k=0;k<=3;k++){ var gy=padT+(k/3)*(h-padB-padT);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>'; }
+  var bars=data.map(function(d,i){
+    var cx=padL+slot*i+slot/2, x=cx-barW/2, y=yat(d.rev), bh=(h-padB)-y, col=OV_PALETTE[i%OV_PALETTE.length];
+    var mom = d.prev>0 ? Math.round((d.cur-d.prev)/d.prev*100) : null;
+    var momTxt = mom===null?'':(mom>=0?('▲'+mom+'%'):('▼'+Math.abs(mom)+'%'));
+    var momCol = mom===null?'var(--muted)':(mom>=0?'#3ddc97':'#e85d3c');
+    return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="'+col+'"><title>'+esc(d.name+' — '+M(d.rev))+'</title></rect>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(y-5).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="800" fill="var(--text)">'+cfoMk(d.rev)+'</text>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9.5" fill="var(--muted)">'+esc(cfoShortName(d.name).slice(0,13))+'</text>'+
+      (momTxt?'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+30)+'" text-anchor="middle" font-size="9" fill="'+momCol+'">'+momTxt+'</text>':'');
+  }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg>';
+}
+// Multi-line chart — one line per company, monthly revenue over the period.
+function cfoRevLines(cm){
+  var series=(cm||[]).filter(function(s){return s.series && s.series.length;});
+  if(!series.length) return '<div class="muted" style="padding:20px">No monthly data.</div>';
+  var months=series[0].series.map(function(p){return p.month;}), n=months.length;
+  var w=780,h=250,padL=48,padR=12,padB=30,padT=12;
+  var max=1; series.forEach(function(s){s.series.forEach(function(p){var v=Number(p.revenue)||0; if(v>max)max=v;});});
+  var xat=function(i){return padL+(n<=1?(w-padL-padR)/2:i*(w-padL-padR)/(n-1));};
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var grid=''; for(var k=0;k<=3;k++){ var gy=padT+(k/3)*(h-padB-padT);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>'; }
+  var lines=series.map(function(s,idx){ var col=OV_PALETTE[idx%OV_PALETTE.length];
+    var d=s.series.map(function(p,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+yat(Number(p.revenue)||0).toFixed(1);}).join(' ');
+    var dots=s.series.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+yat(Number(p.revenue)||0).toFixed(1)+'" r="2" fill="'+col+'"><title>'+esc(cfoShortName(s.tenant_name)+' '+p.month+' '+M(p.revenue))+'</title></circle>';}).join('');
+    return '<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2"/>'+dots;
+  }).join('');
+  var xlab=months.map(function(m,i){ if(n>8&&i%2) return ''; return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+15)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.slice(5))+'</text>'; }).join('');
+  var legend=series.map(function(s,idx){ var col=OV_PALETTE[idx%OV_PALETTE.length]; return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px"><span style="width:12px;height:3px;border-radius:2px;background:'+col+'"></span>'+esc(cfoShortName(s.tenant_name))+'</span>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+lines+xlab+'</svg><div style="margin-top:8px">'+legend+'</div>';
+}
 async function renderCFO(){
   var el=document.getElementById('cfo'); if(!el) return;
   el.innerHTML='<div class="panel"><div class="panel-hd"><h3>🎯 CFO Cockpit · group financial position</h3></div><div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing group analytics from '+(((COMPANIES||[]).length)||5)+' companies…</div></div>';
@@ -1459,6 +1510,10 @@ function cfoRender(){
   }
   // ── Trend ──
   var trendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills</div></div>'+cfoTrend(mon)+'</div>';
+  // ── Revenue by company: comparison bar + monthly multi-line ──
+  var cm=r.companies_monthly||[];
+  var revCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏆 各公司营收对比 · Revenue by company</h3><span class="muted" style="font-size:11px">'+(r.period_months||12)+'-month total · ▲▼ this month vs last</span></div>'+cfoRevBars(cos)+'</div>';
+  var revLineHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📊 各公司月度营收走势 · Monthly revenue by company</h3></div>'+cfoRevLines(cm)+'</div>';
   // ── Per-company scorecard ──
   var maxRev=Math.max.apply(null,[1].concat(cos.map(function(c){return Number(c.revenue)||0;})));
   var rows=cos.map(function(c){
@@ -1485,7 +1540,7 @@ function cfoRender(){
       '<div class="muted" style="font-size:12.5px">Group financial position across all '+cos.length+' companies · from live invoice data'+(momPct!=null?(' · revenue this month '+(momPct>=0?'▲':'▼')+' '+Math.abs(momPct)+'% vs last'):'')+'</div>'+
       '<button class="btn sm" onclick="CFO_DATA=null;renderCFO()">↻ Refresh</button>'+
     '</div>'+
-    kpis + '<div style="height:16px"></div>' + alertHtml + trendHtml + scoreHtml +
+    kpis + '<div style="height:16px"></div>' + alertHtml + revCmpHtml + revLineHtml + trendHtml + scoreHtml +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'+agingHtml+custHtml+'</div>';
   loaded.cfo=true;
 }
