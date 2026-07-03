@@ -1512,8 +1512,8 @@ function cfoRender(){
   var trendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills</div></div>'+cfoTrend(mon)+'</div>';
   // ── Revenue by company: comparison bar + monthly multi-line ──
   var cm=r.companies_monthly||[];
-  var revCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏆 各公司营收对比 · Revenue by company</h3><span class="muted" style="font-size:11px">'+(r.period_months||12)+'-month total · ▲▼ this month vs last</span></div>'+cfoRevBars(cos)+'</div>';
-  var revLineHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📊 各公司月度营收走势 · Monthly revenue by company</h3></div>'+cfoRevLines(cm)+'</div>';
+  var revCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏆 Revenue by company</h3><span class="muted" style="font-size:11px">'+(r.period_months||12)+'-month total · ▲▼ this month vs last</span></div>'+cfoRevBars(cos)+'</div>';
+  var revLineHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📊 Monthly revenue by company</h3></div>'+cfoRevLines(cm)+'</div>';
   // ── Per-company scorecard ──
   var maxRev=Math.max.apply(null,[1].concat(cos.map(function(c){return Number(c.revenue)||0;})));
   var rows=cos.map(function(c){
@@ -1581,7 +1581,7 @@ function finDsoBars(cos){
 }
 // 13-week cash flow: inflow (green, up) vs outflow (red, down) + cumulative net line (blue).
 function finCashflowChart(wks){
-  if(!wks||!wks.length) return '<div class="muted" style="padding:16px">没有带到期日的未清发票可预测。</div>';
+  if(!wks||!wks.length) return '<div class="muted" style="padding:16px">No dated open invoices to forecast.</div>';
   var w=780,h=250,padL=46,padR=12,padT=16,padB=38,n=wks.length;
   var cum=0, cums=wks.map(function(x){cum+=Number(x.net)||0; return cum;});
   var vals=[]; wks.forEach(function(x){vals.push(Number(x.inflow)||0); vals.push(Number(x.outflow)||0);}); cums.forEach(function(c){vals.push(Math.abs(c));});
@@ -1591,21 +1591,21 @@ function finCashflowChart(wks){
   var zy=y(0), slot=(w-padL-padR)/n, bw=Math.min(16,slot*0.42);
   var bars=wks.map(function(x,i){
     var cx=padL+slot*i+slot/2, inf=Number(x.inflow)||0, outf=Number(x.outflow)||0;
-    var bi=inf>0?'<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+y(inf).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(inf)).toFixed(1)+'" fill="#3ddc97" opacity=".85"><title>Wk'+x.week+' 流入 '+M(inf)+'</title></rect>':'';
-    var bo=outf>0?'<rect x="'+(cx+1).toFixed(1)+'" y="'+zy.toFixed(1)+'" width="'+bw+'" height="'+Math.abs(y(outf)-zy).toFixed(1)+'" fill="#e85d3c" opacity=".85"><title>Wk'+x.week+' 流出 '+M(outf)+'</title></rect>':'';
+    var bi=inf>0?'<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+y(inf).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(inf)).toFixed(1)+'" fill="#3ddc97" opacity=".85"><title>Wk'+x.week+' Inflow '+M(inf)+'</title></rect>':'';
+    var bo=outf>0?'<rect x="'+(cx+1).toFixed(1)+'" y="'+zy.toFixed(1)+'" width="'+bw+'" height="'+Math.abs(y(outf)-zy).toFixed(1)+'" fill="#e85d3c" opacity=".85"><title>Wk'+x.week+' Outflow '+M(outf)+'</title></rect>':'';
     var lbl=(n<=13)?'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8" fill="var(--muted)">'+esc(x.week_start)+'</text>':'';
     return bi+bo+lbl;
   }).join('');
   var linePts=cums.map(function(c,i){return (i?'L':'M')+(padL+slot*i+slot/2).toFixed(1)+' '+y(c).toFixed(1);}).join(' ');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+
     '<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>'+
-    bars+'<path d="'+linePts+'" fill="none" stroke="#5b9bd5" stroke-width="2"><title>累计净现金</title></path></svg>';
+    bars+'<path d="'+linePts+'" fill="none" stroke="#5b9bd5" stroke-width="2"><title>Cumulative net cash</title></path></svg>';
 }
 // Revenue forecast: solid blue history + dashed amber projection.
 function finForecastChart(hist,fc){
   var all=(hist||[]).map(function(p){return {m:p.month,v:Number(p.revenue)||0,f:false};})
     .concat((fc||[]).map(function(p){return {m:p.month,v:Number(p.projected)||0,f:true};}));
-  var n=all.length; if(n<2) return '<div class="muted" style="padding:16px">历史数据不足以预测。</div>';
+  var n=all.length; if(n<2) return '<div class="muted" style="padding:16px">Not enough history to forecast.</div>';
   var w=780,h=240,padL=48,padR=12,padT=14,padB=30, hi=(hist||[]).length;
   var max=Math.max.apply(null,[1].concat(all.map(function(p){return p.v;})));
   var xat=function(i){return padL+i*(w-padL-padR)/(n-1);};
@@ -1613,7 +1613,7 @@ function finForecastChart(hist,fc){
   var grid=''; for(var k=0;k<=3;k++){var gy=padT+(k/3)*(h-padB-padT); grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/><text x="'+(padL-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>';}
   var hp=all.slice(0,hi).map(function(p,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+yat(p.v).toFixed(1);}).join(' ');
   var fp=all.slice(Math.max(0,hi-1)).map(function(p,i){var idx=Math.max(0,hi-1)+i; return (i?'L':'M')+xat(idx).toFixed(1)+' '+yat(p.v).toFixed(1);}).join(' ');
-  var dots=all.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+yat(p.v).toFixed(1)+'" r="2.5" fill="'+(p.f?'#f5a623':'#5b9bd5')+'"><title>'+esc(p.m+' '+(p.f?'预测 ':'')+M(p.v))+'</title></circle>';}).join('');
+  var dots=all.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+yat(p.v).toFixed(1)+'" r="2.5" fill="'+(p.f?'#f5a623':'#5b9bd5')+'"><title>'+esc(p.m+' '+(p.f?'Forecast ':'')+M(p.v))+'</title></circle>';}).join('');
   var xlab=all.map(function(p,i){ if(n>10&&i%2)return ''; return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+14)+'" text-anchor="middle" font-size="8.5" fill="'+(p.f?'#f5a623':'var(--muted)')+'">'+esc(p.m.slice(2))+'</text>';}).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+
     '<path d="'+hp+'" fill="none" stroke="#5b9bd5" stroke-width="2.5"/>'+
@@ -1627,19 +1627,19 @@ function cfoAnalyticsRender(){
   var ic=r.intercompany||{};
   // ── ① DSO / DPO ──
   var gapTxt = (g.cash_gap!=null)? (g.cash_gap>0
-      ? ('你平均 <b>'+g.dso+'</b> 天收到客户的钱,却只用 <b>'+g.dpo+'</b> 天就得付供应商 → 中间 <b style="color:var(--red-soft)">'+g.cash_gap+' 天</b>的资金缺口要你自己垫。')
-      : ('你平均 <b>'+g.dso+'</b> 天收款、<b>'+g.dpo+'</b> 天付款 → 供应商账期比客户还长 <b style="color:var(--green-soft)">'+Math.abs(g.cash_gap)+' 天</b>,营运资金是净流入的。'))
-    : '数据不足以计算现金缺口。';
-  var dsoHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>⏱️ 收付款周期 · DSO / DPO</h3>'+
-    '<div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">■</span> DSO 收款天数 &nbsp; <span style="color:#f5a623">■</span> DPO 付款天数</div></div>'+
+      ? ('On average you collect from customers in <b>'+g.dso+'</b> days but must pay suppliers in <b>'+g.dpo+'</b> days &rarr; a <b style="color:var(--red-soft)">'+g.cash_gap+'-day</b> cash gap you finance yourself.')
+      : ('On average you collect in <b>'+g.dso+'</b> days and pay in <b>'+g.dpo+'</b> days &rarr; supplier terms run <b style="color:var(--green-soft)">'+Math.abs(g.cash_gap)+' days</b> longer than customer terms, so working capital is net-positive.'))
+    : 'Not enough data to compute the cash gap.';
+  var dsoHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>⏱️ Collection &amp; payment cycle · DSO / DPO</h3>'+
+    '<div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">■</span> DSO (days to collect) &nbsp; <span style="color:#f5a623">■</span> DPO (days to pay)</div></div>'+
     finDsoBars(cos)+
     '<div class="muted" style="font-size:12.5px;margin-top:10px;line-height:1.7">'+gapTxt+
-    ' <span style="opacity:.75">DSO=应收÷日均营收,DPO=应付÷日均采购(近12个月)。DSO 越低越好、DPO 适度拉长有利现金。</span></div></div>';
+    ' <span style="opacity:.75">DSO = AR &divide; avg daily revenue; DPO = AP &divide; avg daily purchases (trailing 12 months). Lower DSO is better; moderately higher DPO helps cash.</span></div></div>';
   // ── ② Customer credit risk ──
   var riskCards='<div class="cards" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">'+
-    '<div class="card"><div class="c-ico">📥</div><div class="n" style="color:var(--sky-soft)">'+M(ct.total_ar_open)+'</div><div class="l">应收总额 Open AR</div></div>'+
-    '<div class="card"><div class="c-ico">⏰</div><div class="n" style="color:var(--amber)">'+M(ct.total_overdue)+'</div><div class="l">已逾期 Overdue</div></div>'+
-    '<div class="card"><div class="c-ico">⚠️</div><div class="n" style="color:var(--red-soft)">'+M(ct.est_bad_debt)+'</div><div class="l">预估坏账拨备</div></div>'+
+    '<div class="card"><div class="c-ico">📥</div><div class="n" style="color:var(--sky-soft)">'+M(ct.total_ar_open)+'</div><div class="l">Open AR</div></div>'+
+    '<div class="card"><div class="c-ico">⏰</div><div class="n" style="color:var(--amber)">'+M(ct.total_overdue)+'</div><div class="l">Overdue</div></div>'+
+    '<div class="card"><div class="c-ico">⚠️</div><div class="n" style="color:var(--red-soft)">'+M(ct.est_bad_debt)+'</div><div class="l">Est. bad-debt provision</div></div>'+
   '</div>';
   var rrows=custs.map(function(c){
     var risk=Number(c.risk)||0;
@@ -1654,29 +1654,29 @@ function cfoAnalyticsRender(){
       '<td><span class="pill" style="background:rgba(232,93,60,.14);color:'+rc+';font-size:10px">'+risk+'%</span></td>'+
     '</tr>';
   }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No open receivables.</td></tr>';
-  var riskHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🎯 客户赊账风险 · Customer credit risk</h3><span class="muted" style="font-size:11px">按逾期敞口排序 · 风险%=预估坏账÷该客户应收</span></div>'+
+  var riskHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🎯 Customer credit risk</h3><span class="muted" style="font-size:11px">Sorted by overdue exposure · Risk% = est. bad debt &divide; that customer\'s AR</span></div>'+
     riskCards+
-    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>客户 Customer</th><th class="amt">应收</th><th class="amt">逾期</th><th class="amt">最久</th><th class="amt">坏账拨备</th><th>风险</th></tr></thead><tbody>'+rrows+'</tbody></table></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">拨备估算:逾期 30–60天×10% · 60–90天×25% · 90天+×50%。</div></div>';
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Customer</th><th class="amt">AR</th><th class="amt">Overdue</th><th class="amt">Worst age</th><th class="amt">Provision</th><th>Risk</th></tr></thead><tbody>'+rrows+'</tbody></table></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">Provision estimate: 30–60 days &times;10% · 60–90 days &times;25% · 90+ days &times;50%.</div></div>';
   // ── ③ Intercompany ──
   var pairs=(ic.pairs||[]);
   var icBody;
   if(pairs.length){
-    icBody='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>债权方(应收)</th><th>债务方(应付)</th><th class="amt">应收记账</th><th class="amt">应付记账</th><th class="amt">差异</th></tr></thead><tbody>'+
+    icBody='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Creditor (records AR)</th><th>Debtor (records AP)</th><th class="amt">AR booked</th><th class="amt">AP booked</th><th class="amt">Difference</th></tr></thead><tbody>'+
       pairs.map(function(p){ var diff=Number(p.difference)||0; return '<tr><td><b>'+esc(cfoShortName(p.creditor||''))+'</b></td><td>'+esc(cfoShortName(p.debtor||''))+'</td><td class="amt">'+M(p.creditor_says_owed)+'</td><td class="amt">'+M(p.debtor_says_payable)+'</td><td class="amt" style="color:'+(Math.abs(diff)>1?'var(--red-soft)':'var(--green-soft)')+';font-weight:700">'+M(diff)+'</td></tr>'; }).join('')+
       '</tbody></table></div>';
   } else {
-    icBody='<div class="muted" style="padding:14px;font-size:12.5px">目前没有明显的公司间往来余额(集团内部未清合计 '+M(ic.total_intercompany_open||0)+')。当 5 家实体之间开始互相开票时,这里会自动列出「谁欠谁」以及两边记账是否对得上。</div>';
+    icBody='<div class="muted" style="padding:14px;font-size:12.5px">No material intercompany balances (group internal open total '+M(ic.total_intercompany_open||0)+'). Once the 5 entities start invoicing each other, this lists who owes whom and whether both sides\' books agree.</div>';
   }
-  var icHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔗 公司间往来 · Intercompany</h3><span class="muted" style="font-size:11px">一方记应收应等于另一方记应付</span></div>'+icBody+'</div>';
+  var icHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔗 Intercompany</h3><span class="muted" style="font-size:11px">One side\'s AR should equal the other side\'s AP</span></div>'+icBody+'</div>';
   // ④ 13-week cash flow
   var cf=r.cashflow_13w||[];
   var cfIn=cf.reduce(function(s,x){return s+(Number(x.inflow)||0);},0);
   var cfOut=cf.reduce(function(s,x){return s+(Number(x.outflow)||0);},0);
   var cfNet=cfIn-cfOut;
-  var cfHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>💧 13周现金流预测 · 13-week cash flow</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> 流入 &nbsp;<span style="color:#e85d3c">■</span> 流出 &nbsp;<span style="color:#5b9bd5">━</span> 累计净额</div></div>'+
+  var cfHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>💧 13-week cash flow forecast</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> Inflow &nbsp;<span style="color:#e85d3c">■</span> Outflow &nbsp;<span style="color:#5b9bd5">━</span> Cumulative net</div></div>'+
     finCashflowChart(cf)+
-    '<div class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">未来 13 周:预计流入 <b style="color:var(--green-soft)">'+M(cfIn)+'</b> · 流出 <b style="color:var(--red-soft)">'+M(cfOut)+'</b> · 净 <b style="color:'+(cfNet>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(cfNet)+'</b>。<span style="opacity:.75">按未清 AR/AP 到期日排布,逾期项归入第 1 周(现在)。</span></div></div>';
+    '<div class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">Next 13 weeks: expected inflow <b style="color:var(--green-soft)">'+M(cfIn)+'</b> · outflow <b style="color:var(--red-soft)">'+M(cfOut)+'</b> · net <b style="color:'+(cfNet>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(cfNet)+'</b>. <span style="opacity:.75">Placed by open AR/AP due dates; overdue items fall into week 1 (now).</span></div></div>';
   // ⑤ vendor spend
   var vs=r.vendor_spend||{}; var vtot=Number(vs.total_spend365)||0;
   var vrows=(vs.vendors||[]).map(function(vv){
@@ -1686,15 +1686,15 @@ function cfoAnalyticsRender(){
       '<td class="amt" style="font-weight:700">'+M(vv.spend)+'</td><td class="amt muted" style="font-size:11.5px">'+share+'%</td>'+
       '<td class="amt" style="color:var(--amber)">'+M(vv.ap_open)+'</td></tr>';
   }).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">No vendor spend.</td></tr>';
-  var vendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏭 供应商支出 · Vendor spend</h3><span class="muted" style="font-size:11px">近 12 个月 · 合计 '+M(vtot)+'</span></div>'+
-    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>供应商 Vendor</th><th>占比</th><th class="amt">近12月支出</th><th class="amt">%</th><th class="amt">未付 AP</th></tr></thead><tbody>'+vrows+'</tbody></table></div></div>';
+  var vendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏭 Vendor spend</h3><span class="muted" style="font-size:11px">Trailing 12 months · total '+M(vtot)+'</span></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Vendor</th><th>Share</th><th class="amt">Spend (12mo)</th><th class="amt">%</th><th class="amt">Open AP</th></tr></thead><tbody>'+vrows+'</tbody></table></div></div>';
   // ⑥ revenue forecast
   var fc=r.revenue_forecast||{}; var fcEx=(fc.excluded||[]);
-  var fcHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔮 营收预测 · Revenue forecast</h3><div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">━</span> 实际 &nbsp;<span style="color:#f5a623">╌</span> 预测(未来3月)</div></div>'+
+  var fcHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔮 Revenue forecast</h3><div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">━</span> Actual &nbsp;<span style="color:#f5a623">╌</span> Forecast (next 3 mo)</div></div>'+
     finForecastChart(fc.history,fc.forecast)+
-    '<div class="muted" style="font-size:11.5px;margin-top:8px">基于近 6 个完整月的线性趋势外推,仅供参考。'+(fcEx.length?('<span style="color:var(--amber)"> ⚠ '+esc(fcEx.join('、'))+' 数据疑似未完整,已从预测中剔除。</span>'):'')+'</div></div>';
-  var stamp='<div class="muted" style="font-size:11px;text-align:right;margin-top:6px">分析基于可靠的发票缓存 · '+(r.generated_at?new Date(r.generated_at).toLocaleString('en-GB',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'')+'</div>';
-  el.innerHTML='<div style="border-top:2px solid var(--border);margin:8px 0 16px;padding-top:16px"><h3 style="margin:0 0 4px;font-size:15px">📐 财务分析 · Financial Analytics</h3><div class="muted" style="font-size:12px;margin-bottom:14px">收付款周期、赊账风险、现金流预测、供应商支出、营收预测、公司间往来——分析师视角</div></div>'+dsoHtml+riskHtml+cfHtml+fcHtml+vendHtml+icHtml+stamp;
+    '<div class="muted" style="font-size:11.5px;margin-top:8px">Linear trend extrapolation from the last 6 complete months — indicative only.'+(fcEx.length?('<span style="color:var(--amber)"> ⚠ '+esc(fcEx.join(', '))+' looked incomplete and '+(fcEx.length>1?'were':'was')+' excluded from the forecast.</span>'):'')+'</div></div>';
+  var stamp='<div class="muted" style="font-size:11px;text-align:right;margin-top:6px">Analysis from the reliable invoice cache · '+(r.generated_at?new Date(r.generated_at).toLocaleString('en-GB',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'')+'</div>';
+  el.innerHTML='<div style="border-top:2px solid var(--border);margin:8px 0 16px;padding-top:16px"><h3 style="margin:0 0 4px;font-size:15px">📐 Financial Analytics</h3><div class="muted" style="font-size:12px;margin-bottom:14px">Collection &amp; payment cycle, credit risk, cash-flow forecast, vendor spend, revenue forecast, intercompany — an analyst\'s view.</div></div>'+dsoHtml+riskHtml+cfHtml+fcHtml+vendHtml+icHtml+stamp;
 }
 async function renderOverview(){
   // Default (no range) → legacy YTD overview (with bank balances).
@@ -1772,13 +1772,13 @@ function ovPnlBars(mon){
   var grid=''; for(var k=0;k<=4;k++){ var gv=top-(k/4)*rng, gy=y(gv); grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/><text x="'+(padL-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="8.5" fill="var(--muted)">'+cfoMk(gv)+'</text>'; }
   var bars=mon.map(function(m,i){
     var cx=padL+slot*i+slot/2, rev=Number(m.revenue)||0, exp=Number(m.bills)||0;
-    var rb='<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+y(rev).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(rev)).toFixed(1)+'" fill="#3ddc97" opacity=".9"><title>'+esc(m.month+' 营收 '+M(rev))+'</title></rect>';
-    var eb='<rect x="'+(cx+1).toFixed(1)+'" y="'+y(exp).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(exp)).toFixed(1)+'" fill="#e85d3c" opacity=".85"><title>'+esc(m.month+' 支出 '+M(exp))+'</title></rect>';
+    var rb='<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+y(rev).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(rev)).toFixed(1)+'" fill="#3ddc97" opacity=".9"><title>'+esc(m.month+' Revenue '+M(rev))+'</title></rect>';
+    var eb='<rect x="'+(cx+1).toFixed(1)+'" y="'+y(exp).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(exp)).toFixed(1)+'" fill="#e85d3c" opacity=".85"><title>'+esc(m.month+' Expenses '+M(exp))+'</title></rect>';
     var lbl=(n>8&&i%2)?'':'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8.5" fill="var(--muted)">'+esc(m.month.slice(5))+'</text>';
     return rb+eb+lbl;
   }).join('');
   var netPts=nets.map(function(v,i){return (i?'L':'M')+(padL+slot*i+slot/2).toFixed(1)+' '+y(v).toFixed(1);}).join(' ');
-  var netDots=nets.map(function(v,i){return '<circle cx="'+(padL+slot*i+slot/2).toFixed(1)+'" cy="'+y(v).toFixed(1)+'" r="2" fill="#5b9bd5"><title>'+esc(mon[i].month+' 净额 '+M(v))+'</title></circle>';}).join('');
+  var netDots=nets.map(function(v,i){return '<circle cx="'+(padL+slot*i+slot/2).toFixed(1)+'" cy="'+y(v).toFixed(1)+'" r="2" fill="#5b9bd5"><title>'+esc(mon[i].month+' Net '+M(v))+'</title></circle>';}).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+
     '<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1.5"/>'+
     bars+'<path d="'+netPts+'" fill="none" stroke="#5b9bd5" stroke-width="2"/>'+netDots+'</svg>';
@@ -1829,7 +1829,7 @@ function ovCumNet(mon){
   var zy=(bot<0&&top>0)?y(0):null, baseY=(zy!=null?zy:(h-padB));
   var line=pts.map(function(p,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+y(p.v).toFixed(1);}).join(' ');
   var area='M'+xat(0).toFixed(1)+' '+baseY.toFixed(1)+' '+pts.map(function(p,i){return 'L'+xat(i).toFixed(1)+' '+y(p.v).toFixed(1);}).join(' ')+' L'+xat(n-1).toFixed(1)+' '+baseY.toFixed(1)+' Z';
-  var dots=pts.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+y(p.v).toFixed(1)+'" r="2.2" fill="#3ddc97"><title>'+esc(p.month+' 累计 '+M(p.v))+'</title></circle>';}).join('');
+  var dots=pts.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+y(p.v).toFixed(1)+'" r="2.2" fill="#3ddc97"><title>'+esc(p.month+' Cumulative '+M(p.v))+'</title></circle>';}).join('');
   var xlab=pts.map(function(p,i){if(n>8&&i%2)return '';return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8.5" fill="var(--muted)">'+esc(p.month.slice(5))+'</text>';}).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+(zy!=null?'<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>':'')+'<path d="'+area+'" fill="#3ddc97" opacity=".10"/><path d="'+line+'" fill="none" stroke="#3ddc97" stroke-width="2.5"/>'+dots+xlab+'</svg>';
 }
@@ -1841,21 +1841,21 @@ function ovTrendRender(){
   var totExp=mon.reduce(function(s,m){return s+(Number(m.bills)||0);},0);
   var net=totRev-totExp, margin=totRev>0?Math.round(net/totRev*100):0;
   var kpis='<div class="cards" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">'+
-    '<div class="card"><div class="c-ico">💰</div><div class="n" style="color:var(--green-soft)">'+M(totRev)+'</div><div class="l">营收 Revenue · 12mo</div></div>'+
-    '<div class="card"><div class="c-ico">📤</div><div class="n" style="color:var(--red-soft)">'+M(totExp)+'</div><div class="l">支出 Expenses(账单)</div></div>'+
-    '<div class="card '+(net>=0?'green':'red')+'"><div class="c-ico">📈</div><div class="n" style="color:'+(net>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(net)+'</div><div class="l">净额 Net</div></div>'+
-    '<div class="card"><div class="c-ico">📊</div><div class="n" style="color:'+(margin>=0?'var(--sky-soft)':'var(--red-soft)')+'">'+margin+'%</div><div class="l">净额率 Margin</div></div>'+
+    '<div class="card"><div class="c-ico">💰</div><div class="n" style="color:var(--green-soft)">'+M(totRev)+'</div><div class="l">Revenue · 12mo</div></div>'+
+    '<div class="card"><div class="c-ico">📤</div><div class="n" style="color:var(--red-soft)">'+M(totExp)+'</div><div class="l">Expenses (bills)</div></div>'+
+    '<div class="card '+(net>=0?'green':'red')+'"><div class="c-ico">📈</div><div class="n" style="color:'+(net>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(net)+'</div><div class="l">Net</div></div>'+
+    '<div class="card"><div class="c-ico">📊</div><div class="n" style="color:'+(margin>=0?'var(--sky-soft)':'var(--red-soft)')+'">'+margin+'%</div><div class="l">Margin</div></div>'+
   '</div>';
   el.innerHTML=
     '<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills · all companies</div></div>'+cfoTrend(mon)+'</div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📊 收入 vs 支出 · 月度 P&L</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> 营收 &nbsp;<span style="color:#e85d3c">■</span> 支出 &nbsp;<span style="color:#5b9bd5">━</span> 净额</div></div>'+kpis+ovPnlBars(mon)+
-      '<div class="muted" style="font-size:11px;margin-top:8px">数据来自可靠的发票缓存:营收=应收(AR)开票、支出=供应商账单(AP)。不含薪资/折旧等非账单开支,非完整会计损益。</div></div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📉 净额率走势 · Net margin %</h3><span class="muted" style="font-size:11px">净额 ÷ 营收</span></div>'+ovMarginLine(mon)+'</div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>🏭 开销分类 · Top 供应商占比</h3><span class="muted" style="font-size:11px">近12个月 · 谁花最多</span></div>'+ovVendorBars(vendors)+'</div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💵 累计经营净额 · Cumulative net</h3><span class="muted" style="font-size:11px">营收−账单 逐月累计</span></div>'+ovCumNet(mon)+
-      '<div class="muted" style="font-size:11px;margin-top:8px">这是累计的经营净额(应收 − 应付账单),反映资金沉淀趋势 —— <b>不是银行余额</b>。要真实的银行余额历史,我可以另设每月快照,以后自动长出真趋势。</div></div>';
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📊 Revenue vs Expenses · monthly P&L</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> Revenue &nbsp;<span style="color:#e85d3c">■</span> Expenses &nbsp;<span style="color:#5b9bd5">━</span> Net</div></div>'+kpis+ovPnlBars(mon)+
+      '<div class="muted" style="font-size:11px;margin-top:8px">From the reliable invoice cache: Revenue = AR invoicing, Expenses = supplier bills (AP). Excludes payroll/depreciation and other non-billed costs — not a full accounting P&L.</div></div>'+
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📉 Net margin % trend</h3><span class="muted" style="font-size:11px">Net &divide; Revenue</span></div>'+ovMarginLine(mon)+'</div>'+
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>🏭 Expense breakdown · top vendors</h3><span class="muted" style="font-size:11px">Trailing 12 months · who spent the most</span></div>'+ovVendorBars(vendors)+'</div>'+
+    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💵 Cumulative operating net</h3><span class="muted" style="font-size:11px">Revenue − bills, cumulated monthly</span></div>'+ovCumNet(mon)+
+      '<div class="muted" style="font-size:11px;margin-top:8px">Cumulative operating net (AR − AP bills), showing the trend of retained funds — <b>not a bank balance</b>. For a true bank-balance history I can add a monthly snapshot job that builds the real trend over time.</div></div>';
 }
-/* ── Financial dashboard charts (Xero P&L → revenue/expense/profit + 开销占比) ── */
+/* ── Financial dashboard charts (Xero P&L → revenue/expense/profit + expense breakdown) ── */
 var OV_PNL=null, OV_PNL_KEY='';
 const OV_PALETTE=['#e85d3c','#f5a623','#3ddc97','#5b9bd5','#a479e2','#f291b3','#16a766','#ff7537','#4a86e8','#cf8933','#9aa7b8'];
 async function ovChartsLoad(){
@@ -1944,9 +1944,9 @@ function ovChartsRender(){
             '<div style="flex:1;min-width:120px;background:var(--panel-2);border-radius:10px;padding:12px"><div class="muted" style="font-size:10.5px;text-transform:uppercase">Expense ratio</div><div style="font-size:20px;font-weight:700;color:var(--amber)">'+(rev>0?(exp/rev*100).toFixed(1):'0')+'%</div></div>'+
           '</div>'+
         '</div>'+
-        // RIGHT: expense breakdown donut (开销占比) + legend
+        // RIGHT: expense breakdown donut + legend
         '<div>'+
-          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Expense breakdown (开销占比)</div>'+
+          '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Expense breakdown</div>'+
           '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">'+
             '<div style="position:relative;flex:none">'+ovDonut(segs,exp,170)+
               '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none"><div class="muted" style="font-size:10px;text-transform:uppercase">Total exp</div><div style="font-size:15px;font-weight:700">'+M(exp)+'</div></div>'+
@@ -3395,7 +3395,7 @@ async function xeroSyncLoad(){
       '<p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.55">Click to fetch the latest company names from Xero. Renamed a company in Xero, or a name has stray invisible characters? This pulls the current names and updates every dropdown / header in the portal.</p>'+
       '<div id="trefresh_out" class="muted" style="font-size:12.5px">Currently loaded: '+((COMPANIES||[]).length)+' companies.</div>'+
     '</div>'+
-    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn p sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 立即对账 · Reconcile vs Xero (live API)</button></div><div id="xdrift_out" style="margin-bottom:12px"></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn p sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Reconcile vs Xero (live API)</button></div><div id="xdrift_out" style="margin-bottom:12px"></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
     // v40+: Live AR audit — directly compare live Xero open-AR total vs cache. Click to run.
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔬 Live AR audit <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· compares cache total vs live Xero query (proves zero drift)</span></h3><button class="btn p sm" id="xaudit_btn" onclick="syncAudit()">⚖ Run audit now</button></div><div id="audit_out"><div class="muted" style="font-size:12.5px;padding:8px 0">Click Run audit. The backend queries Xero live for each company\'s open AR and shows the RM-level delta. Anything > RM 1.00 is flagged.</div></div></div>'+
     // v37: force-resync tool — paste an invoice number or ID, fetches latest from Xero and overwrites cache. Use when one specific invoice looks wrong.
@@ -3508,9 +3508,9 @@ async function xeroDeltaNow(){
   if(btn){ btn.disabled=false; btn.textContent='⚡ Delta sync (changes only)'; }
 }
 async function xeroDriftCheck(){
-  var btn=document.getElementById('xdrift_btn'); if(btn){ btn.disabled=true; btn.textContent='实时核对中 Checking…'; }
+  var btn=document.getElementById('xdrift_btn'); if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
   var out=document.getElementById('xdrift_out');
-  if(out) out.innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0"><span class="spin"></span> 正在实时调用 Xero API,逐张比对每家公司的未清发票(应收+应付)…</div>';
+  if(out) out.innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0"><span class="spin"></span> Calling the Xero API live and reconciling each company\'s open invoices (AR + AP) one by one…</div>';
   try{
     var r=await call({api:'drift_check'});
     if(!r||r.ok===false){ if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'Reconcile failed')+'</div>'; toast((r&&r.error)||'Reconcile failed',true); }
@@ -3519,9 +3519,9 @@ async function xeroDriftCheck(){
       var rows=res.map(function(x){
         var nm=esc(x.tenant_name||x.tenant||'');
         if(x.error) return '<tr><td><b>'+nm+'</b></td><td colspan="4" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td><td><span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">error</span></td></tr>';
-        if(x.skipped) return '<tr><td><b>'+nm+'</b></td><td colspan="4" class="muted" style="font-size:11.5px">⏳ Xero 限流冷却中,稍后自动重试</td><td><span class="pill" style="font-size:9.5px">skipped</span></td></tr>';
+        if(x.skipped) return '<tr><td><b>'+nm+'</b></td><td colspan="4" class="muted" style="font-size:11.5px">⏳ Xero rate-limit cooldown — will auto-retry shortly</td><td><span class="pill" style="font-size:9.5px">skipped</span></td></tr>';
         var miss=x.missing||0, ex=x.extra||0, okv=(Math.abs(x.drift||0)===0 && miss===0 && ex===0);
-        var verdict=okv?'<span class="pill pill-green" style="font-size:9.5px">✓ 一致 in sync</span>':'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ 漂移 '+(x.drift>0?'+':'')+(x.drift||0)+'</span>';
+        var verdict=okv?'<span class="pill pill-green" style="font-size:9.5px">✓ in sync</span>':'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ drift '+(x.drift>0?'+':'')+(x.drift||0)+'</span>';
         return '<tr><td><b>'+nm+'</b></td>'+
           '<td class="amt">'+(x.xero_open!=null?x.xero_open:'—')+'</td>'+
           '<td class="amt">'+(x.cache_open!=null?x.cache_open:'—')+'</td>'+
@@ -3532,14 +3532,14 @@ async function xeroDriftCheck(){
       var checked=res.filter(function(x){return !x.error && !x.skipped;}).length;
       var allOk=checked>0 && res.every(function(x){ return x.skipped || (!x.error && Math.abs(x.drift||0)===0 && (x.missing||0)===0 && (x.extra||0)===0); });
       var banner=allOk
-        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ '+checked+' 家公司与 Xero 完全一致 · 数据准确</div><div class="nd">实时调用 Xero API,逐张比对未清发票 ID(应收+应付)—— 零缺失、零多余。核对于 '+esc(new Date().toLocaleString("en-GB",{hour:"2-digit",minute:"2-digit"}))+'</div></div>'
-        : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default;margin-bottom:10px"><div class="nt">⚠ 检测到漂移(系统已自动修复)</div><div class="nd">缺失的已从 Xero 补回、多余的已剔除。可再点一次「立即对账」确认归零。</div></div>';
-      if(out) out.innerHTML=banner+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>公司 Company</th><th class="amt">Xero 实时未清</th><th class="amt">缓存未清</th><th class="amt">缺失</th><th class="amt">多余</th><th>结论 Verdict</th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">「未清」=状态为 AUTHORISED / SUBMITTED 的应收+应付发票。此对账直接读取 Xero API 实时数据,不经缓存。</div>';
-      toast(allOk?'✓ 全部与 Xero 一致 · 数据准确':'漂移已自动修复,请再核对一次');
+        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ '+checked+' companies fully match Xero · data accurate</div><div class="nd">Live Xero API, reconciling every open invoice ID (AR + AP) — zero missing, zero extra. Checked at '+esc(new Date().toLocaleString("en-GB",{hour:"2-digit",minute:"2-digit"}))+'</div></div>'
+        : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default;margin-bottom:10px"><div class="nt">⚠ Drift detected (auto-repaired)</div><div class="nd">Missing rows were re-fetched from Xero and extras removed. Click Reconcile again to confirm it is back to zero.</div></div>';
+      if(out) out.innerHTML=banner+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Xero open (live)</th><th class="amt">Cache open</th><th class="amt">Missing</th><th class="amt">Extra</th><th>Verdict</th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">&ldquo;Open&rdquo; = AUTHORISED / SUBMITTED AR + AP invoices. This reconciliation reads live Xero API data directly, bypassing the cache.</div>';
+      toast(allOk?'✓ All companies match Xero · data accurate':'Drift auto-repaired — please reconcile again');
     }
   }catch(e){ if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; toast(e.message,true); }
   syncHealthLoad();
-  if(btn){ btn.disabled=false; btn.textContent='🔍 立即对账 · Reconcile vs Xero (live API)'; }
+  if(btn){ btn.disabled=false; btn.textContent='🔍 Reconcile vs Xero (live API)'; }
 }
 async function syncAudit(){
   var out = document.getElementById('audit_out');
