@@ -1589,13 +1589,31 @@ async function renderOverview(){
     h+='<div class="status-bar"><div class="dot-green"></div>'+esc(OV_RANGE.from)+' → '+esc(OV_RANGE.to)+' · From cached invoices (AR + AP). Bank balance excluded for period view.</div>';
     document.getElementById('overview').innerHTML=h;
   }
-  // Financial charts (live Xero Profit & Loss) — appended below, lazy-loaded.
+  // Group revenue & bills monthly trend (from invoice cache) + live Xero P&L — appended below, lazy-loaded.
   const ovEl=document.getElementById('overview');
-  if(ovEl){ ovEl.insertAdjacentHTML('beforeend','<div id="ov-charts" style="margin-top:14px"></div>'); ovChartsLoad(); }
+  if(ovEl){ ovEl.insertAdjacentHTML('beforeend','<div id="ov-trend" style="margin-top:14px"></div><div id="ov-charts" style="margin-top:14px"></div>'); ovTrendLoad(); ovChartsLoad(); }
   const lr=document.getElementById('last-refresh');
   if(lr)lr.innerHTML='<div class="dot-green"></div>Refreshed '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
 }
 
+/* ── Group revenue & bills monthly trend on the Overview (same data as CFO Cockpit) ── */
+var OV_TREND=null;
+async function ovTrendLoad(){
+  var el=document.getElementById('ov-trend'); if(!el) return;
+  if(OV_TREND){ ovTrendRender(); return; }
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Loading group trend…</div></div>';
+  try{
+    var r=await call({api:'group_dashboard', months:12});
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load trend')+'</div></div></div>'; return; }
+    OV_TREND=r; ovTrendRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+function ovTrendRender(){
+  var el=document.getElementById('ov-trend'); if(!el||!OV_TREND) return;
+  var mon=OV_TREND.monthly||[];
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3>'+
+    '<div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills · all companies</div></div>'+cfoTrend(mon)+'</div>';
+}
 /* ── Financial dashboard charts (Xero P&L → revenue/expense/profit + 开销占比) ── */
 var OV_PNL=null, OV_PNL_KEY='';
 const OV_PALETTE=['#e85d3c','#f5a623','#3ddc97','#5b9bd5','#a479e2','#f291b3','#16a766','#ff7537','#4a86e8','#cf8933','#9aa7b8'];
