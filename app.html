@@ -1236,6 +1236,7 @@ async function showApp(){
     else if(t==='cashflow') el.classList.remove('hide'); // Cashflow forecast: gated server-side
     else if(t==='ocr') el.classList.toggle('hide', !canManage); // OCR: admin-only (costs API credits)
     else if(t==='ap') el.classList.toggle('hide', !canManage);  // AP Inbox: admin-only (Claude API + sends emails)
+    else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
