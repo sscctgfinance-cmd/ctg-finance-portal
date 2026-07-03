@@ -2095,6 +2095,129 @@ Deno.serve(async (req)=>{
       const { data } = await sb.from("portal_audit").select("*").order("created_at", { ascending:false }).limit(Math.min(Number(b.limit)||120, 300));
       return j({ ok:true, events: data||[] });
     }
+    // ── Self-Billed Invoices — companies issue invoices on individuals' behalf, for payment (MY tax/audit) ──
+    if (api === "individuals_list") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_individuals").select("*").eq("active", true).order("name");
+      return j({ ok:true, individuals: data||[] });
+    }
+    if (api === "individual_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const p = b.payee || {};
+      if (!String(p.name||"").trim()) return j({ ok:false, error:"Name is required" });
+      const row: any = { name:String(p.name).trim(), id_type:p.id_type||'ic', id_no:p.id_no||null, tin:p.tin||null,
+        address:p.address||null, phone:p.phone||null, email:p.email||null, bank_name:p.bank_name||null,
+        bank_account:p.bank_account||null, default_payment_type:p.default_payment_type||'service', notes:p.notes||null,
+        updated_at:new Date().toISOString() };
+      let res: any;
+      if (p.id){ res = await sb.from("portal_individuals").update(row).eq("id", Number(p.id)).select().single(); }
+      else { row.created_by = (me.user&&me.user.email)||null; res = await sb.from("portal_individuals").insert(row).select().single(); }
+      if (res.error) return j({ ok:false, error:res.error.message });
+      await logAudit(me, p.id?"individual_update":"individual_create", String(res.data&&res.data.id), { name: row.name });
+      return j({ ok:true, individual: res.data });
+    }
+    if (api === "individual_delete") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (!b.id) return j({ ok:false, error:"id required" });
+      const { count } = await sb.from("portal_self_billed_invoices").select("id",{count:"exact",head:true}).eq("individual_id", Number(b.id));
+      if (count && count>0){ await sb.from("portal_individuals").update({ active:false }).eq("id", Number(b.id)); return j({ ok:true, soft:true }); }
+      await sb.from("portal_individuals").delete().eq("id", Number(b.id));
+      await logAudit(me, "individual_delete", String(b.id), {});
+      return j({ ok:true });
+    }
+    if (api === "sbi_list") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      let q = sb.from("portal_self_billed_invoices").select("id,invoice_no,tenant_id,payee_name,invoice_date,payment_type,gross_amount,wht_amount,net_payable,status,xero_bill_id,created_at").order("created_at",{ascending:false}).limit(Math.min(Number(b.limit)||200,500));
+      if (b.tenant) q = q.eq("tenant_id", b.tenant);
+      if (b.status) q = q.eq("status", b.status);
+      const { data } = await q;
+      return j({ ok:true, invoices: data||[] });
+    }
+    if (api === "sbi_get") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_self_billed_invoices").select("*").eq("id", Number(b.id)).single();
+      if (data && Array.isArray(data.attachments)){
+        for (const a of data.attachments){ if (a && a.storage_path){ try{ const { data:s } = await sb.storage.from("portal-ap-uploads").createSignedUrl(a.storage_path,300); if (s) a.download_url = s.signedUrl; }catch(_e){} } }
+      }
+      return j({ ok:true, invoice: data });
+    }
+    if (api === "sbi_buyer") {
+      // fetch buyer (company) details for the form auto-fill
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data: ci } = await sb.from("portal_company_info").select("legal_name,ssm_new,myinvois_tin,sst_no,reg_address,reg_postcode,reg_city,reg_state,bank_accounts").eq("tenant_id", b.tenant).maybeSingle();
+      const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", b.tenant).maybeSingle();
+      const addr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
+      return j({ ok:true, buyer: { name:(ci&&ci.legal_name)||(tn&&tn.tenant_name)||"", ssm:(ci&&ci.ssm_new)||"", tin:(ci&&ci.myinvois_tin)||"", sst:(ci&&ci.sst_no)||"", address:addr }, has_info: !!(ci&&ci.legal_name) });
+    }
+    if (api === "sbi_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const inv = b.invoice || {};
+      if (!inv.tenant_id) return j({ ok:false, error:"Paying company is required" });
+      if (!inv.individual_id) return j({ ok:false, error:"Payee is required" });
+      const { data: payee } = await sb.from("portal_individuals").select("*").eq("id", Number(inv.individual_id)).single();
+      if (!payee) return j({ ok:false, error:"Payee not found" });
+      const { data: ci } = await sb.from("portal_company_info").select("legal_name,ssm_new,myinvois_tin,sst_no,reg_address,reg_postcode,reg_city,reg_state").eq("tenant_id", inv.tenant_id).maybeSingle();
+      const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", inv.tenant_id).maybeSingle();
+      const buyerAddr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
+      const items = Array.isArray(inv.line_items) ? inv.line_items : [];
+      const gross = items.reduce((s: number, it: any)=> s + (Number(it.amount) || (Number(it.qty||1)*Number(it.unit_price||0))), 0);
+      const sst = Number(inv.sst_amount||0);
+      const whtType = String(inv.wht_type||"none");
+      const whtRate = whtType==="none" ? 0 : Number(inv.wht_rate||0);
+      const whtAmount = Math.round(gross * whtRate/100 * 100)/100;
+      const net = Math.round((gross + sst - whtAmount)*100)/100;
+      // attachments: keep existing + upload any new base64 docs
+      let atts: any[] = Array.isArray(inv.attachments) ? inv.attachments.filter((a: any)=>a && a.storage_path) : [];
+      if (Array.isArray(inv.new_attachments)){
+        for (const a of inv.new_attachments){
+          try{ const b64=String(a.b64||"").replace(/^data:[^,]+,/,""); if(!b64) continue;
+            const bytes=Uint8Array.from(atob(b64), (c)=>c.charCodeAt(0));
+            const nm=String(a.name||"doc").replace(/[^a-zA-Z0-9._-]/g,"_").slice(0,120);
+            const path=inv.tenant_id+"/sbi/"+Date.now()+"_"+Math.random().toString(36).slice(2,7)+"_"+nm;
+            const up=await sb.storage.from("portal-ap-uploads").upload(path, bytes, { contentType:a.mime||"application/octet-stream" });
+            if(!up.error) atts.push({ name:nm, mime:a.mime||"", size:bytes.length, storage_path:path });
+          }catch(_e){}
+        }
+      }
+      const row: any = {
+        tenant_id: inv.tenant_id, individual_id: Number(inv.individual_id),
+        payee_name: payee.name, payee_id_type: payee.id_type, payee_id_no: payee.id_no, payee_tin: payee.tin,
+        payee_address: payee.address, payee_bank_name: payee.bank_name, payee_bank_account: payee.bank_account,
+        buyer_name: (inv.buyer_name||(ci&&ci.legal_name)||(tn&&tn.tenant_name)||""), buyer_ssm: (inv.buyer_ssm||(ci&&ci.ssm_new)||""),
+        buyer_tin: (inv.buyer_tin||(ci&&ci.myinvois_tin)||""), buyer_sst: (inv.buyer_sst||(ci&&ci.sst_no)||""), buyer_address: (inv.buyer_address||buyerAddr),
+        invoice_date: inv.invoice_date || null, due_date: inv.due_date || null,
+        payment_type: inv.payment_type||'service', classification_code: inv.classification_code||null,
+        currency: inv.currency||'MYR', line_items: items, gross_amount: gross, sst_amount: sst,
+        wht_type: whtType, wht_rate: whtRate, wht_amount: whtAmount, net_payable: net,
+        gl_account: inv.gl_account||null, wht_gl_account: inv.wht_gl_account||null, attachments: atts,
+        notes: inv.notes||null, updated_at: new Date().toISOString()
+      };
+      let res: any;
+      if (inv.id){ res = await sb.from("portal_self_billed_invoices").update(row).eq("id", Number(inv.id)).select().single(); }
+      else {
+        const nm = String((tn&&tn.tenant_name)||"").replace(/CTG4U|SDN BHD|MALAYSIA|HOLDING|WHITENING|SKINCARE/gi,"").replace(/[^A-Za-z]/g,"").toUpperCase().slice(0,7) || "CO";
+        const yr = String((inv.invoice_date? new Date(inv.invoice_date): new Date()).getFullYear());
+        const { count } = await sb.from("portal_self_billed_invoices").select("id",{count:"exact",head:true}).eq("tenant_id", inv.tenant_id).gte("invoice_date", yr+"-01-01").lte("invoice_date", yr+"-12-31");
+        row.invoice_no = "SB-"+nm+"-"+yr+"-"+String((count||0)+1).padStart(4,"0");
+        row.created_by = (me.user&&me.user.email)||null; row.status='draft';
+        res = await sb.from("portal_self_billed_invoices").insert(row).select().single();
+      }
+      if (res.error) return j({ ok:false, error:res.error.message });
+      await logAudit(me, inv.id?"sbi_update":"sbi_create", String(res.data&&res.data.id), { invoice_no: res.data&&res.data.invoice_no, net });
+      return j({ ok:true, invoice: res.data });
+    }
+    if (api === "sbi_approve") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_self_billed_invoices").update({ status:'approved', approved_by:(me.user&&me.user.email)||null, approved_at:new Date().toISOString() }).eq("id", Number(b.id)).select().single();
+      await logAudit(me, "sbi_approve", String(b.id), {});
+      return j({ ok:true, invoice: data });
+    }
+    if (api === "sbi_void") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      await sb.from("portal_self_billed_invoices").update({ status:'void', updated_at:new Date().toISOString() }).eq("id", Number(b.id));
+      await logAudit(me, "sbi_void", String(b.id), {});
+      return j({ ok:true });
+    }
     if (api === "set_webhook_key") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const key = String(b.key||"").trim();
@@ -2940,6 +3063,6 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v73 AP: opt-in Google Document AI OCR -> GPT-5.4 reasoning (ocr_provider=docai); fin-analytics; sync-fast" });
+    return j({ ok:true, hint:"portal v74 self-billed invoices (individuals->5 cos, MY tax/audit, WHT) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
