@@ -1579,6 +1579,46 @@ function finDsoBars(cos){
   }).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg>';
 }
+// 13-week cash flow: inflow (green, up) vs outflow (red, down) + cumulative net line (blue).
+function finCashflowChart(wks){
+  if(!wks||!wks.length) return '<div class="muted" style="padding:16px">没有带到期日的未清发票可预测。</div>';
+  var w=780,h=250,padL=46,padR=12,padT=16,padB=38,n=wks.length;
+  var cum=0, cums=wks.map(function(x){cum+=Number(x.net)||0; return cum;});
+  var vals=[]; wks.forEach(function(x){vals.push(Number(x.inflow)||0); vals.push(Number(x.outflow)||0);}); cums.forEach(function(c){vals.push(Math.abs(c));});
+  var maxV=Math.max.apply(null,[1].concat(vals));
+  var mid=(padT+(h-padB))/2;
+  var y=function(v){ return mid - (v/maxV)*((h-padT-padB)/2); };
+  var zy=y(0), slot=(w-padL-padR)/n, bw=Math.min(16,slot*0.42);
+  var bars=wks.map(function(x,i){
+    var cx=padL+slot*i+slot/2, inf=Number(x.inflow)||0, outf=Number(x.outflow)||0;
+    var bi=inf>0?'<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+y(inf).toFixed(1)+'" width="'+bw+'" height="'+Math.abs(zy-y(inf)).toFixed(1)+'" fill="#3ddc97" opacity=".85"><title>Wk'+x.week+' 流入 '+M(inf)+'</title></rect>':'';
+    var bo=outf>0?'<rect x="'+(cx+1).toFixed(1)+'" y="'+zy.toFixed(1)+'" width="'+bw+'" height="'+Math.abs(y(outf)-zy).toFixed(1)+'" fill="#e85d3c" opacity=".85"><title>Wk'+x.week+' 流出 '+M(outf)+'</title></rect>':'';
+    var lbl=(n<=13)?'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+13)+'" text-anchor="middle" font-size="8" fill="var(--muted)">'+esc(x.week_start)+'</text>':'';
+    return bi+bo+lbl;
+  }).join('');
+  var linePts=cums.map(function(c,i){return (i?'L':'M')+(padL+slot*i+slot/2).toFixed(1)+' '+y(c).toFixed(1);}).join(' ');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+
+    '<line x1="'+padL+'" y1="'+zy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zy.toFixed(1)+'" stroke="var(--border)" stroke-width="1"/>'+
+    bars+'<path d="'+linePts+'" fill="none" stroke="#5b9bd5" stroke-width="2"><title>累计净现金</title></path></svg>';
+}
+// Revenue forecast: solid blue history + dashed amber projection.
+function finForecastChart(hist,fc){
+  var all=(hist||[]).map(function(p){return {m:p.month,v:Number(p.revenue)||0,f:false};})
+    .concat((fc||[]).map(function(p){return {m:p.month,v:Number(p.projected)||0,f:true};}));
+  var n=all.length; if(n<2) return '<div class="muted" style="padding:16px">历史数据不足以预测。</div>';
+  var w=780,h=240,padL=48,padR=12,padT=14,padB=30, hi=(hist||[]).length;
+  var max=Math.max.apply(null,[1].concat(all.map(function(p){return p.v;})));
+  var xat=function(i){return padL+i*(w-padL-padR)/(n-1);};
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var grid=''; for(var k=0;k<=3;k++){var gy=padT+(k/3)*(h-padB-padT); grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/><text x="'+(padL-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>';}
+  var hp=all.slice(0,hi).map(function(p,i){return (i?'L':'M')+xat(i).toFixed(1)+' '+yat(p.v).toFixed(1);}).join(' ');
+  var fp=all.slice(Math.max(0,hi-1)).map(function(p,i){var idx=Math.max(0,hi-1)+i; return (i?'L':'M')+xat(idx).toFixed(1)+' '+yat(p.v).toFixed(1);}).join(' ');
+  var dots=all.map(function(p,i){return '<circle cx="'+xat(i).toFixed(1)+'" cy="'+yat(p.v).toFixed(1)+'" r="2.5" fill="'+(p.f?'#f5a623':'#5b9bd5')+'"><title>'+esc(p.m+' '+(p.f?'预测 ':'')+M(p.v))+'</title></circle>';}).join('');
+  var xlab=all.map(function(p,i){ if(n>10&&i%2)return ''; return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+14)+'" text-anchor="middle" font-size="8.5" fill="'+(p.f?'#f5a623':'var(--muted)')+'">'+esc(p.m.slice(2))+'</text>';}).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+
+    '<path d="'+hp+'" fill="none" stroke="#5b9bd5" stroke-width="2.5"/>'+
+    '<path d="'+fp+'" fill="none" stroke="#f5a623" stroke-width="2.5" stroke-dasharray="5 4"/>'+dots+xlab+'</svg>';
+}
 function cfoAnalyticsRender(){
   var el=document.getElementById('cfo-analytics'); if(!el||!FIN_DATA) return;
   var r=FIN_DATA;
@@ -1628,9 +1668,33 @@ function cfoAnalyticsRender(){
   } else {
     icBody='<div class="muted" style="padding:14px;font-size:12.5px">目前没有明显的公司间往来余额(集团内部未清合计 '+M(ic.total_intercompany_open||0)+')。当 5 家实体之间开始互相开票时,这里会自动列出「谁欠谁」以及两边记账是否对得上。</div>';
   }
-  var icHtml='<div class="panel" style="margin-bottom:4px"><div class="panel-hd"><h3>🔗 公司间往来 · Intercompany</h3><span class="muted" style="font-size:11px">一方记应收应等于另一方记应付</span></div>'+icBody+'</div>';
+  var icHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔗 公司间往来 · Intercompany</h3><span class="muted" style="font-size:11px">一方记应收应等于另一方记应付</span></div>'+icBody+'</div>';
+  // ④ 13-week cash flow
+  var cf=r.cashflow_13w||[];
+  var cfIn=cf.reduce(function(s,x){return s+(Number(x.inflow)||0);},0);
+  var cfOut=cf.reduce(function(s,x){return s+(Number(x.outflow)||0);},0);
+  var cfNet=cfIn-cfOut;
+  var cfHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>💧 13周现金流预测 · 13-week cash flow</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> 流入 &nbsp;<span style="color:#e85d3c">■</span> 流出 &nbsp;<span style="color:#5b9bd5">━</span> 累计净额</div></div>'+
+    finCashflowChart(cf)+
+    '<div class="muted" style="font-size:12px;margin-top:10px;line-height:1.7">未来 13 周:预计流入 <b style="color:var(--green-soft)">'+M(cfIn)+'</b> · 流出 <b style="color:var(--red-soft)">'+M(cfOut)+'</b> · 净 <b style="color:'+(cfNet>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(cfNet)+'</b>。<span style="opacity:.75">按未清 AR/AP 到期日排布,逾期项归入第 1 周(现在)。</span></div></div>';
+  // ⑤ vendor spend
+  var vs=r.vendor_spend||{}; var vtot=Number(vs.total_spend365)||0;
+  var vrows=(vs.vendors||[]).map(function(vv){
+    var share=vtot>0?Math.round(100*(Number(vv.spend)||0)/vtot):0;
+    return '<tr><td><b style="font-size:12.5px">'+esc(cfoShortName(vv.vendor))+'</b></td>'+
+      '<td style="min-width:110px"><div style="background:var(--panel-2);border-radius:4px;height:7px;overflow:hidden"><div style="width:'+share+'%;height:100%;background:var(--coral)"></div></div></td>'+
+      '<td class="amt" style="font-weight:700">'+M(vv.spend)+'</td><td class="amt muted" style="font-size:11.5px">'+share+'%</td>'+
+      '<td class="amt" style="color:var(--amber)">'+M(vv.ap_open)+'</td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">No vendor spend.</td></tr>';
+  var vendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏭 供应商支出 · Vendor spend</h3><span class="muted" style="font-size:11px">近 12 个月 · 合计 '+M(vtot)+'</span></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>供应商 Vendor</th><th>占比</th><th class="amt">近12月支出</th><th class="amt">%</th><th class="amt">未付 AP</th></tr></thead><tbody>'+vrows+'</tbody></table></div></div>';
+  // ⑥ revenue forecast
+  var fc=r.revenue_forecast||{}; var fcEx=(fc.excluded||[]);
+  var fcHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🔮 营收预测 · Revenue forecast</h3><div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">━</span> 实际 &nbsp;<span style="color:#f5a623">╌</span> 预测(未来3月)</div></div>'+
+    finForecastChart(fc.history,fc.forecast)+
+    '<div class="muted" style="font-size:11.5px;margin-top:8px">基于近 6 个完整月的线性趋势外推,仅供参考。'+(fcEx.length?('<span style="color:var(--amber)"> ⚠ '+esc(fcEx.join('、'))+' 数据疑似未完整,已从预测中剔除。</span>'):'')+'</div></div>';
   var stamp='<div class="muted" style="font-size:11px;text-align:right;margin-top:6px">分析基于可靠的发票缓存 · '+(r.generated_at?new Date(r.generated_at).toLocaleString('en-GB',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'')+'</div>';
-  el.innerHTML='<div style="border-top:2px solid var(--border);margin:8px 0 16px;padding-top:16px"><h3 style="margin:0 0 4px;font-size:15px">📐 财务分析 · Financial Analytics</h3><div class="muted" style="font-size:12px;margin-bottom:14px">收付款周期、客户赊账风险、公司间往来——分析师视角</div></div>'+dsoHtml+riskHtml+icHtml+stamp;
+  el.innerHTML='<div style="border-top:2px solid var(--border);margin:8px 0 16px;padding-top:16px"><h3 style="margin:0 0 4px;font-size:15px">📐 财务分析 · Financial Analytics</h3><div class="muted" style="font-size:12px;margin-bottom:14px">收付款周期、赊账风险、现金流预测、供应商支出、营收预测、公司间往来——分析师视角</div></div>'+dsoHtml+riskHtml+cfHtml+fcHtml+vendHtml+icHtml+stamp;
 }
 async function renderOverview(){
   // Default (no range) → legacy YTD overview (with bank balances).
