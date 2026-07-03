@@ -3306,7 +3306,7 @@ async function xeroSyncLoad(){
       '<p class="muted" style="font-size:12.5px;margin:0 0 12px;line-height:1.55">Click to fetch the latest company names from Xero. Renamed a company in Xero, or a name has stray invisible characters? This pulls the current names and updates every dropdown / header in the portal.</p>'+
       '<div id="trefresh_out" class="muted" style="font-size:12.5px">Currently loaded: '+((COMPANIES||[]).length)+' companies.</div>'+
     '</div>'+
-    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 Drift check vs Xero</button></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
+    '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🩺 Per-company sync health</h3><button class="btn p sm" id="xdrift_btn" onclick="xeroDriftCheck()">🔍 立即对账 · Reconcile vs Xero (live API)</button></div><div id="xdrift_out" style="margin-bottom:12px"></div><div id="syncH_out"><div class="load"><span class="spin"></span>Loading…</div></div></div>'+
     // v40+: Live AR audit — directly compare live Xero open-AR total vs cache. Click to run.
     '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>🔬 Live AR audit <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· compares cache total vs live Xero query (proves zero drift)</span></h3><button class="btn p sm" id="xaudit_btn" onclick="syncAudit()">⚖ Run audit now</button></div><div id="audit_out"><div class="muted" style="font-size:12.5px;padding:8px 0">Click Run audit. The backend queries Xero live for each company\'s open AR and shows the RM-level delta. Anything > RM 1.00 is flagged.</div></div></div>'+
     // v37: force-resync tool — paste an invoice number or ID, fetches latest from Xero and overwrites cache. Use when one specific invoice looks wrong.
@@ -3419,16 +3419,38 @@ async function xeroDeltaNow(){
   if(btn){ btn.disabled=false; btn.textContent='⚡ Delta sync (changes only)'; }
 }
 async function xeroDriftCheck(){
-  var btn=document.getElementById('xdrift_btn'); if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
-  try{ var r=await call({api:'drift_check'});
-    if(r&&r.ok!==false){
-      var anyDrift=(r.results||[]).some(function(x){ return Math.abs(x.drift||0)>0 || x.error; });
-      toast(anyDrift?'Drift detected — see panel for details':'✓ All companies in sync with Xero');
+  var btn=document.getElementById('xdrift_btn'); if(btn){ btn.disabled=true; btn.textContent='实时核对中 Checking…'; }
+  var out=document.getElementById('xdrift_out');
+  if(out) out.innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0"><span class="spin"></span> 正在实时调用 Xero API,逐张比对每家公司的未清发票(应收+应付)…</div>';
+  try{
+    var r=await call({api:'drift_check'});
+    if(!r||r.ok===false){ if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'Reconcile failed')+'</div>'; toast((r&&r.error)||'Reconcile failed',true); }
+    else {
+      var res=r.results||[];
+      var rows=res.map(function(x){
+        var nm=esc(x.tenant_name||x.tenant||'');
+        if(x.error) return '<tr><td><b>'+nm+'</b></td><td colspan="4" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td><td><span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">error</span></td></tr>';
+        if(x.skipped) return '<tr><td><b>'+nm+'</b></td><td colspan="4" class="muted" style="font-size:11.5px">⏳ Xero 限流冷却中,稍后自动重试</td><td><span class="pill" style="font-size:9.5px">skipped</span></td></tr>';
+        var miss=x.missing||0, ex=x.extra||0, okv=(Math.abs(x.drift||0)===0 && miss===0 && ex===0);
+        var verdict=okv?'<span class="pill pill-green" style="font-size:9.5px">✓ 一致 in sync</span>':'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ 漂移 '+(x.drift>0?'+':'')+(x.drift||0)+'</span>';
+        return '<tr><td><b>'+nm+'</b></td>'+
+          '<td class="amt">'+(x.xero_open!=null?x.xero_open:'—')+'</td>'+
+          '<td class="amt">'+(x.cache_open!=null?x.cache_open:'—')+'</td>'+
+          '<td class="amt" style="color:'+(miss?'var(--red-soft)':'var(--muted)')+'">'+miss+'</td>'+
+          '<td class="amt" style="color:'+(ex?'var(--red-soft)':'var(--muted)')+'">'+ex+'</td>'+
+          '<td>'+verdict+'</td></tr>';
+      }).join('');
+      var checked=res.filter(function(x){return !x.error && !x.skipped;}).length;
+      var allOk=checked>0 && res.every(function(x){ return x.skipped || (!x.error && Math.abs(x.drift||0)===0 && (x.missing||0)===0 && (x.extra||0)===0); });
+      var banner=allOk
+        ? '<div class="notif-item" style="border-left-color:var(--green-soft);cursor:default;margin-bottom:10px"><div class="nt">✓ '+checked+' 家公司与 Xero 完全一致 · 数据准确</div><div class="nd">实时调用 Xero API,逐张比对未清发票 ID(应收+应付)—— 零缺失、零多余。核对于 '+esc(new Date().toLocaleString("en-GB",{hour:"2-digit",minute:"2-digit"}))+'</div></div>'
+        : '<div class="notif-item" style="border-left-color:var(--amber);cursor:default;margin-bottom:10px"><div class="nt">⚠ 检测到漂移(系统已自动修复)</div><div class="nd">缺失的已从 Xero 补回、多余的已剔除。可再点一次「立即对账」确认归零。</div></div>';
+      if(out) out.innerHTML=banner+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>公司 Company</th><th class="amt">Xero 实时未清</th><th class="amt">缓存未清</th><th class="amt">缺失</th><th class="amt">多余</th><th>结论 Verdict</th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">「未清」=状态为 AUTHORISED / SUBMITTED 的应收+应付发票。此对账直接读取 Xero API 实时数据,不经缓存。</div>';
+      toast(allOk?'✓ 全部与 Xero 一致 · 数据准确':'漂移已自动修复,请再核对一次');
     }
-    else toast((r&&r.error)||'Drift check failed',true);
-  }catch(e){ toast(e.message,true); }
+  }catch(e){ if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; toast(e.message,true); }
   syncHealthLoad();
-  if(btn){ btn.disabled=false; btn.textContent='🔍 Drift check vs Xero'; }
+  if(btn){ btn.disabled=false; btn.textContent='🔍 立即对账 · Reconcile vs Xero (live API)'; }
 }
 async function syncAudit(){
   var out = document.getElementById('audit_out');
