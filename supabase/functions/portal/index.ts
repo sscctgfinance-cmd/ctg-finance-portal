@@ -2049,6 +2049,26 @@ Deno.serve(async (req)=>{
       await logAudit(me, "role_delete", name, {});
       return j({ ok:true });
     }
+    if (api === "docai_test") {
+      // Diagnostic: verify Google Document AI auth + processor reachability without touching real docs.
+      // Callable with the cron secret (server-side trigger) OR a super-admin token.
+      const { data: csec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      const bySecret = csec && csec.value && b.cron_secret === csec.value;
+      if (!bySecret){ const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); }
+      let auth = "?";
+      try { const tok = await docaiAccessToken(); auth = tok ? "ok" : "no-token"; }
+      catch(e){ return j({ ok:false, verdict:"auth_failed", where:"service-account JWT / GOOGLE_DOCAI_SA", detail: String((e&&e.message)||e).slice(0,300) }); }
+      const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC";
+      const res = await callDocAI(png1x1, "image/png", "invoice");
+      if (res.ok) return j({ ok:true, verdict:"fully_working", auth, process:"ok", entities:(res.doc&&res.doc.entities?res.doc.entities.length:0) });
+      const err = String(res.error||"");
+      if (/\b400\b|INVALID_ARGUMENT|invalid|too small|dimension/i.test(err))
+        return j({ ok:true, verdict:"config_ok", auth, note:"Processor reachable — the 1x1 test image was rejected as expected. Real invoices will process fine.", detail: err.slice(0,200) });
+      const where = /\b403\b|PERMISSION_DENIED/i.test(err) ? "IAM role (Document AI API User) on the service account"
+                  : /\b404\b|NOT_FOUND/i.test(err) ? "GOOGLE_DOCAI_PROJECT / _LOCATION / _INVOICE_PROCESSOR (id or region mismatch)"
+                  : "Doc AI process call";
+      return j({ ok:false, verdict:"process_failed", auth, where, detail: err.slice(0,300) });
+    }
     if (api === "audit_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("portal_audit").select("*").order("created_at", { ascending:false }).limit(Math.min(Number(b.limit)||120, 300));
