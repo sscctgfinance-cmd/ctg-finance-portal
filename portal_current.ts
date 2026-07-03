@@ -2268,11 +2268,19 @@ Deno.serve(async (req)=>{
       const _bySecret = _cs && _cs.value && b.cron_secret === _cs.value;
       if (!_bySecret){ const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); }
       if (!b.id) return j({ ok:false, error:"id required" });
-      const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
-      if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
-      const { data: settings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", getRes.item.tenant_id).single();
+      let itemTenant;
+      if (_bySecret){
+        const { data: it } = await sb.from("portal_ap_inbox").select("tenant_id").eq("id", Number(b.id)).single();
+        if (!it) return j({ ok:false, error:"not found" });
+        itemTenant = it.tenant_id;
+      } else {
+        const { data: getRes } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
+        if (!getRes || !getRes.ok || !getRes.item) return j({ ok:false, error:"not found" });
+        itemTenant = getRes.item.tenant_id;
+      }
+      const { data: settings } = await sb.from("portal_ap_settings").select("*").eq("tenant_id", itemTenant).single();
       const route = {
-        tenant_id: getRes.item.tenant_id,
+        tenant_id: itemTenant,
         default_gl_account: settings?.default_gl_account || "904-2200",
         max_auto_post_amount: settings?.max_auto_post_amount || 1000,
         ai_model: settings?.ai_model || "claude-haiku-4-5-20251001",
