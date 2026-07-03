@@ -2376,6 +2376,12 @@ Deno.serve(async (req)=>{
       const { data } = await sb.rpc("portal_group_dashboard", { p_token: b.token||"", p_months: Number(b.months)||12 });
       return j(data || { ok:true });
     }
+    if (api === "fin_analytics") {
+      // Financial-analyst toolkit — DSO/DPO + cash-conversion, customer AR credit risk, intercompany matrix.
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.rpc("portal_fin_analytics", { p_token: b.token||"", p_months: Number(b.months)||12 });
+      return j(data || { ok:true });
+    }
     if (api === "pnl_report") {
       // Live Profit & Loss from Xero per tenant → revenue/expense account breakdown for the dashboard charts.
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -2771,6 +2777,6 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v71 sync-fast: batch-by-IDs webhook fetch + inline second-level processing + silent-failure watchdog alert" });
+    return j({ ok:true, hint:"portal v72 fin-analytics: DSO/DPO + customer credit risk + intercompany; sync-fast batch+inline+watchdog" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

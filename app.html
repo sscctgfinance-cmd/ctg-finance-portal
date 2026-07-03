@@ -1541,8 +1541,96 @@ function cfoRender(){
       '<button class="btn sm" onclick="CFO_DATA=null;renderCFO()">↻ Refresh</button>'+
     '</div>'+
     kpis + '<div style="height:16px"></div>' + alertHtml + revCmpHtml + revLineHtml + trendHtml + scoreHtml +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'+agingHtml+custHtml+'</div>';
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'+agingHtml+custHtml+'</div>'+
+    '<div id="cfo-analytics" style="margin-top:16px"></div>';
   loaded.cfo=true;
+  cfoAnalyticsLoad();
+}
+/* ── Financial-analyst toolkit: DSO/DPO · customer credit risk · intercompany ── */
+var FIN_DATA=null;
+async function cfoAnalyticsLoad(){
+  var el=document.getElementById('cfo-analytics'); if(!el) return;
+  if(FIN_DATA){ cfoAnalyticsRender(); return; }
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📐 Financial analytics</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing DSO/DPO, customer risk, intercompany…</div></div>';
+  try{
+    var r=await call({api:'fin_analytics', months:12});
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load analytics')+'</div></div></div>'; return; }
+    FIN_DATA=r; cfoAnalyticsRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+// Grouped bars: DSO (blue) vs DPO (amber) per company + cash-gap note.
+function finDsoBars(cos){
+  var data=(cos||[]).filter(function(c){return c.dso!=null||c.dpo!=null;});
+  var n=data.length; if(!n) return '<div class="muted" style="padding:16px">Not enough data.</div>';
+  var w=780,h=250,padL=40,padR=12,padB=52,padT=14;
+  var max=Math.max.apply(null,[10].concat(data.map(function(c){return Math.max(Number(c.dso)||0,Number(c.dpo)||0);})));
+  var slot=(w-padL-padR)/n, bw=Math.min(26,slot*0.28);
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var grid=''; for(var k=0;k<=3;k++){ var gy=padT+(k/3)*(h-padB-padT); grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/><text x="'+(padL-6)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+Math.round(max*(3-k)/3)+'d</text>'; }
+  var bars=data.map(function(c,i){
+    var cx=padL+slot*i+slot/2;
+    var dso=Number(c.dso)||0, dpo=Number(c.dpo)||0;
+    var x1=cx-bw-2, x2=cx+2;
+    var b1='<rect x="'+x1.toFixed(1)+'" y="'+yat(dso).toFixed(1)+'" width="'+bw+'" height="'+Math.max(0,(h-padB)-yat(dso)).toFixed(1)+'" rx="2" fill="#5b9bd5"><title>DSO '+dso+'d</title></rect><text x="'+(x1+bw/2).toFixed(1)+'" y="'+(yat(dso)-3).toFixed(1)+'" text-anchor="middle" font-size="8.5" fill="#5b9bd5">'+dso+'</text>';
+    var b2='<rect x="'+x2.toFixed(1)+'" y="'+yat(dpo).toFixed(1)+'" width="'+bw+'" height="'+Math.max(0,(h-padB)-yat(dpo)).toFixed(1)+'" rx="2" fill="#f5a623"><title>DPO '+dpo+'d</title></rect><text x="'+(x2+bw/2).toFixed(1)+'" y="'+(yat(dpo)-3).toFixed(1)+'" text-anchor="middle" font-size="8.5" fill="#f5a623">'+dpo+'</text>';
+    var lbl='<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9.5" fill="var(--muted)">'+esc(cfoShortName(c.tenant_name).slice(0,12))+'</text>';
+    var gap=(c.cash_gap!=null)?('<text x="'+cx.toFixed(1)+'" y="'+(h-padB+30)+'" text-anchor="middle" font-size="9" fill="'+(c.cash_gap>0?'#e85d3c':'#3ddc97')+'">gap '+(c.cash_gap>0?'+':'')+c.cash_gap+'d</text>'):'';
+    return b1+b2+lbl+gap;
+  }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg>';
+}
+function cfoAnalyticsRender(){
+  var el=document.getElementById('cfo-analytics'); if(!el||!FIN_DATA) return;
+  var r=FIN_DATA;
+  var dd=r.dso_dpo||{}, g=dd.group||{}, cos=dd.companies||[];
+  var cr=r.customer_risk||{}, ct=cr.totals||{}, custs=cr.customers||[];
+  var ic=r.intercompany||{};
+  // ── ① DSO / DPO ──
+  var gapTxt = (g.cash_gap!=null)? (g.cash_gap>0
+      ? ('你平均 <b>'+g.dso+'</b> 天收到客户的钱,却只用 <b>'+g.dpo+'</b> 天就得付供应商 → 中间 <b style="color:var(--red-soft)">'+g.cash_gap+' 天</b>的资金缺口要你自己垫。')
+      : ('你平均 <b>'+g.dso+'</b> 天收款、<b>'+g.dpo+'</b> 天付款 → 供应商账期比客户还长 <b style="color:var(--green-soft)">'+Math.abs(g.cash_gap)+' 天</b>,营运资金是净流入的。'))
+    : '数据不足以计算现金缺口。';
+  var dsoHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>⏱️ 收付款周期 · DSO / DPO</h3>'+
+    '<div class="muted" style="font-size:11.5px"><span style="color:#5b9bd5">■</span> DSO 收款天数 &nbsp; <span style="color:#f5a623">■</span> DPO 付款天数</div></div>'+
+    finDsoBars(cos)+
+    '<div class="muted" style="font-size:12.5px;margin-top:10px;line-height:1.7">'+gapTxt+
+    ' <span style="opacity:.75">DSO=应收÷日均营收,DPO=应付÷日均采购(近12个月)。DSO 越低越好、DPO 适度拉长有利现金。</span></div></div>';
+  // ── ② Customer credit risk ──
+  var riskCards='<div class="cards" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">'+
+    '<div class="card"><div class="c-ico">📥</div><div class="n" style="color:var(--sky-soft)">'+M(ct.total_ar_open)+'</div><div class="l">应收总额 Open AR</div></div>'+
+    '<div class="card"><div class="c-ico">⏰</div><div class="n" style="color:var(--amber)">'+M(ct.total_overdue)+'</div><div class="l">已逾期 Overdue</div></div>'+
+    '<div class="card"><div class="c-ico">⚠️</div><div class="n" style="color:var(--red-soft)">'+M(ct.est_bad_debt)+'</div><div class="l">预估坏账拨备</div></div>'+
+  '</div>';
+  var rrows=custs.map(function(c){
+    var risk=Number(c.risk)||0;
+    var rc=risk>=40?'var(--red-soft)':risk>=15?'var(--amber)':'var(--muted)';
+    var wd=Number(c.worst_days)||0;
+    return '<tr>'+
+      '<td><b style="font-size:12.5px">'+esc(c.cust)+'</b><div class="muted" style="font-size:10.5px">'+esc(cfoShortName(c.tenant_name))+'</div></td>'+
+      '<td class="amt" style="color:var(--sky-soft)">'+M(c.ar_open)+'</td>'+
+      '<td class="amt" style="color:'+(Number(c.overdue)>0?'var(--amber)':'var(--muted)')+'">'+M(c.overdue)+'</td>'+
+      '<td class="amt" style="font-size:11.5px;color:'+(wd>60?'var(--red-soft)':wd>0?'var(--amber)':'var(--muted)')+'">'+(wd>0?wd+'d':'—')+'</td>'+
+      '<td class="amt" style="color:var(--red-soft)">'+M(c.provision)+'</td>'+
+      '<td><span class="pill" style="background:rgba(232,93,60,.14);color:'+rc+';font-size:10px">'+risk+'%</span></td>'+
+    '</tr>';
+  }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No open receivables.</td></tr>';
+  var riskHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🎯 客户赊账风险 · Customer credit risk</h3><span class="muted" style="font-size:11px">按逾期敞口排序 · 风险%=预估坏账÷该客户应收</span></div>'+
+    riskCards+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>客户 Customer</th><th class="amt">应收</th><th class="amt">逾期</th><th class="amt">最久</th><th class="amt">坏账拨备</th><th>风险</th></tr></thead><tbody>'+rrows+'</tbody></table></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">拨备估算:逾期 30–60天×10% · 60–90天×25% · 90天+×50%。</div></div>';
+  // ── ③ Intercompany ──
+  var pairs=(ic.pairs||[]);
+  var icBody;
+  if(pairs.length){
+    icBody='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>债权方(应收)</th><th>债务方(应付)</th><th class="amt">应收记账</th><th class="amt">应付记账</th><th class="amt">差异</th></tr></thead><tbody>'+
+      pairs.map(function(p){ var diff=Number(p.difference)||0; return '<tr><td><b>'+esc(cfoShortName(p.creditor||''))+'</b></td><td>'+esc(cfoShortName(p.debtor||''))+'</td><td class="amt">'+M(p.creditor_says_owed)+'</td><td class="amt">'+M(p.debtor_says_payable)+'</td><td class="amt" style="color:'+(Math.abs(diff)>1?'var(--red-soft)':'var(--green-soft)')+';font-weight:700">'+M(diff)+'</td></tr>'; }).join('')+
+      '</tbody></table></div>';
+  } else {
+    icBody='<div class="muted" style="padding:14px;font-size:12.5px">目前没有明显的公司间往来余额(集团内部未清合计 '+M(ic.total_intercompany_open||0)+')。当 5 家实体之间开始互相开票时,这里会自动列出「谁欠谁」以及两边记账是否对得上。</div>';
+  }
+  var icHtml='<div class="panel" style="margin-bottom:4px"><div class="panel-hd"><h3>🔗 公司间往来 · Intercompany</h3><span class="muted" style="font-size:11px">一方记应收应等于另一方记应付</span></div>'+icBody+'</div>';
+  var stamp='<div class="muted" style="font-size:11px;text-align:right;margin-top:6px">分析基于可靠的发票缓存 · '+(r.generated_at?new Date(r.generated_at).toLocaleString('en-GB',{month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'')+'</div>';
+  el.innerHTML='<div style="border-top:2px solid var(--border);margin:8px 0 16px;padding-top:16px"><h3 style="margin:0 0 4px;font-size:15px">📐 财务分析 · Financial Analytics</h3><div class="muted" style="font-size:12px;margin-bottom:14px">收付款周期、客户赊账风险、公司间往来——分析师视角</div></div>'+dsoHtml+riskHtml+icHtml+stamp;
 }
 async function renderOverview(){
   // Default (no range) → legacy YTD overview (with bank balances).
