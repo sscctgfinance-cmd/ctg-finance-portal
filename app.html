@@ -3345,7 +3345,7 @@ async function syncHealthLoad(){
     }).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">No companies</td></tr>';
     el.innerHTML = alertBanner +
       '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cached</th><th class="amt">Open AR</th><th>Cache age</th><th>Open AR freshness</th><th>Last sync (F=full, Δ=delta)</th><th>Drift</th><th>Last error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Hourly delta sync at :07. Daily full sync 02:00 MYT. Auto drift-repair 02:30 MYT. Webhook retry every 5 min. Real-time push: INVOICE / CONTACT / PAYMENT / CREDITNOTE. <b>If you see drift &gt; 50 or stale records &gt; 100</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b>.</div>';
+      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Delta sync every 20 min (:07/:27/:47). Daily full sync 02:00 MYT. Auto drift-repair 02:30 MYT. Webhook retry every 5 min (rate-limit-aware: skips invoices the delta already cached, capped fetches/run, honours cooldowns). Real-time push: INVOICE / CONTACT / PAYMENT / CREDITNOTE. <b>If you see drift &gt; 50 or stale records &gt; 100</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b>.</div>';
   }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 async function arAgingLoad(){

@@ -313,27 +313,75 @@ async function processWebhookEvents(list){
     catch (e) { if (it.id){ const { data: cur } = await sb.from("xero_webhook_events").select("attempts").eq("id", it.id).single(); const a = (cur && cur.attempts) || 0; try { await sb.from("xero_webhook_events").update({ attempts: a+1, last_attempt_at: new Date().toISOString(), last_error: String(e).slice(0,500) }).eq("id", it.id); } catch(_e){} } }
   }
 }
+// v70 (sync-hardening): the webhook retry loop is now rate-limit-aware + budgeted.
+// ROOT CAUSE this fixes: the old loop fetched EVERY webhook resource from Xero individually
+// with no budget and no cooldown check. On a busy day that exhausted Xero's DAILY API cap;
+// each fetch then threw, climbing `attempts` to >=5 where `.lt("attempts",5)` permanently
+// excluded the event — 5,630 events silently stuck for 15 days.
+// Four defences, mirroring what runDelta/runBackfill already do:
+//   (1) SKIP-IF-CACHED  — if the hourly delta already re-cached this invoice at a version
+//       >= the event, mark it processed with ZERO Xero calls (drains redundant events free).
+//   (2) COOLDOWN-AWARE  — honour per-tenant isRateLimited(); never burn attempts on a tenant
+//       that is in cooldown, and set a cooldown the moment a daily-cap error fires.
+//   (3) BUDGET          — cap real Xero fetches per run so a backlog can never re-storm the cap.
+//   (4) NO PERMA-STICK  — widen the attempts gate (<12) and order fewest-tried first, so a
+//       transient failure no longer means permanent exclusion.
 async function processPendingDedup(limit){
-  const { data: pend } = await sb.from("xero_webhook_events").select("id,tenant_id,event_category,resource_id,attempts").eq("processed", false).lt("attempts", 5).order("received_at", { ascending:true }).limit(limit||200);
+  const MAX_FETCHES = 25; // real Xero calls per run — leaves daily headroom for delta + backfill
+  const { data: pend } = await sb.from("xero_webhook_events")
+    .select("id,tenant_id,event_category,resource_id,attempts,event_date,received_at")
+    .eq("processed", false).lt("attempts", 12)
+    .order("attempts", { ascending:true }).order("received_at", { ascending:true })
+    .limit(limit||400);
   if (!pend || !pend.length){ const { count } = await sb.from("xero_webhook_events").select("id", { count:"exact", head:true }).eq("processed", false); return { processed: 0, deduplicated: 0, remaining: count||0 }; }
+  // Dedup identical (tenant|category|resource) events into one bucket; track newest event time.
   const buckets = new Map();
   for (const row of pend){
     const key = row.tenant_id + "|" + row.event_category + "|" + row.resource_id;
-    if (!buckets.has(key)) buckets.set(key, { ev:{ tenantId: row.tenant_id, eventCategory: row.event_category, resourceId: row.resource_id }, ids:[], maxAttempts:0 });
+    if (!buckets.has(key)) buckets.set(key, { ev:{ tenantId: row.tenant_id, eventCategory: row.event_category, resourceId: row.resource_id }, ids:[], maxAttempts:0, eventTs:0 });
     const b = buckets.get(key); b.ids.push(row.id); if (row.attempts > b.maxAttempts) b.maxAttempts = row.attempts;
+    const ts = new Date(row.event_date || row.received_at || 0).getTime(); if (ts > b.eventTs) b.eventTs = ts;
   }
-  let processed = 0;
+  // (1) Pre-load cache freshness for every INVOICE resource in bulk → decide skip-if-cached with no API calls.
+  const invIds = [...buckets.values()].filter((b)=>b.ev.eventCategory === "INVOICE").map((b)=>b.ev.resourceId);
+  const cacheFresh = new Map();
+  for (let i=0; i<invIds.length; i+=300){
+    const chunk = invIds.slice(i, i+300);
+    const { data: rows } = await sb.from("xero_invoice_cache").select("invoice_id,updated_at").in("invoice_id", chunk);
+    for (const r of (rows||[])) cacheFresh.set(r.invoice_id, new Date(r.updated_at || 0).getTime());
+  }
+  let processed = 0, skippedCached = 0, fetches = 0, cooldownSkipped = 0;
+  const tenantBlocked = new Map(); // tenant_id -> true once cooldown / daily-cap seen this run
   for (const bucket of buckets.values()){
+    const tid = bucket.ev.tenantId;
+    // (1) Already covered by the delta? (cached version at least as new as the event) → drain free.
+    if (bucket.ev.eventCategory === "INVOICE"){
+      const cachedTs = cacheFresh.get(bucket.ev.resourceId);
+      if (cachedTs !== undefined && cachedTs + 5000 >= bucket.eventTs){
+        await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString(), last_error: "covered-by-delta" }).in("id", bucket.ids);
+        processed += bucket.ids.length; skippedCached += bucket.ids.length; continue;
+      }
+    }
+    // (2) Tenant in cooldown (persisted, or a daily-cap hit earlier this run)? Leave it — do NOT burn attempts.
+    if (tenantBlocked.get(tid)){ cooldownSkipped += bucket.ids.length; continue; }
+    const blocked = await isRateLimited(tid);
+    if (blocked){ tenantBlocked.set(tid, true); cooldownSkipped += bucket.ids.length; continue; }
+    // (3) Budget guard — once the per-run fetch cap is hit, defer the rest to the next 5-min run.
+    if (fetches >= MAX_FETCHES){ cooldownSkipped += bucket.ids.length; continue; }
+    // (4) Genuine fetch.
     try {
+      fetches++;
       await processOneEvent(bucket.ev);
       await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString() }).in("id", bucket.ids);
       processed += bucket.ids.length;
     } catch (e) {
-      await sb.from("xero_webhook_events").update({ attempts: bucket.maxAttempts + 1, last_attempt_at: new Date().toISOString(), last_error: String(e).slice(0,500) }).in("id", bucket.ids);
+      const msg = String(e);
+      if (/rate limit/i.test(msg)){ await recordRateLimit(tid, msg); tenantBlocked.set(tid, true); } // stop hammering the dead budget
+      await sb.from("xero_webhook_events").update({ attempts: bucket.maxAttempts + 1, last_attempt_at: new Date().toISOString(), last_error: msg.slice(0,500) }).in("id", bucket.ids);
     }
   }
   const { count } = await sb.from("xero_webhook_events").select("id", { count:"exact", head:true }).eq("processed", false);
-  return { processed, deduplicated: pend.length - buckets.size, unique_resources: buckets.size, remaining: count||0 };
+  return { processed, skipped_cached: skippedCached, fetched: fetches, cooldown_skipped: cooldownSkipped, deduplicated: pend.length - buckets.size, unique_resources: buckets.size, remaining: count||0 };
 }
 async function syncStateUpdate(tenant_id, patch){ try{ await sb.from("xero_sync_state").upsert({ tenant_id, ...patch }, { onConflict: "tenant_id" }); } catch(_e){} }
 // ── v28: per-tenant rate-limit guard. Skip syncing tenants currently in cooldown.
@@ -2621,6 +2669,6 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v28 ModifiedAfter+ID-reconcile+rate-limit-cooldown" });
+    return j({ ok:true, hint:"portal v70 sync-hardened: webhook retry skip-if-cached+budget+cooldown-aware, delta every 20min" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
