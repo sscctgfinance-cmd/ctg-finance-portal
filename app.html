@@ -3044,13 +3044,19 @@ function srRenderResult(){
 var SR_COLS=['*ContactName','*InvoiceNumber','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType'];
 function srRowArr(l){ return [l.contact,l.inv,l.date,l.due,l.desc,l.qty,l.amt,l.acc,l.tax]; }
 function srTag(){ var ds=SR.out.map(function(l){return l.date;}).filter(Boolean).sort(); return ds.length?(ds[0].replace(/\//g,'')+'_'+ds[ds.length-1].replace(/\//g,'')):'export'; }
+// Exact Xero "Sales Invoices" import template (29 columns, order matters).
+var SR_XERO_COLS=['*ContactName','EmailAddress','POAddressLine1','POAddressLine2','POAddressLine3','POAddressLine4','POCity','PORegion','POPostalCode','POCountry','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','Total','InventoryItemCode','*Description','*Quantity','*UnitAmount','Discount','*AccountCode','*TaxType','TaxAmount','TrackingName1','TrackingOption1','TrackingName2','TrackingOption2','Currency','BrandingTheme'];
+function srXeroRow(l){
+  var m={'*ContactName':l.contact,'*InvoiceNumber':l.inv,'Reference':l.ch,'*InvoiceDate':l.date,'*DueDate':l.due,'*Description':l.desc,'*Quantity':'1','*UnitAmount':l.amt.toFixed(2),'*AccountCode':l.acc,'*TaxType':l.tax};
+  return SR_XERO_COLS.map(function(h){ return (m[h]!=null?m[h]:''); });
+}
 function srDownloadCSV(){
   if(!SR.out.length){ toast('Nothing to export.',true); return; }
   var q=function(x){ x=String(x==null?'':x); return /[",\n\r]/.test(x)?('"'+x.replace(/"/g,'""')+'"'):x; };
-  var out=[SR_COLS.join(',')];
-  SR.out.forEach(function(l){ var a=srRowArr(l); out.push([a[0],a[1],a[2],a[3],q(a[4]),a[5],a[6].toFixed(2),a[7],a[8]].map(q).join(',')); });
+  var out=[SR_XERO_COLS.join(',')];
+  SR.out.forEach(function(l){ out.push(srXeroRow(l).map(q).join(',')); });
   var blob=new Blob(['﻿'+out.join('\r\n')],{type:'text/csv;charset=utf-8'});
-  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='IPROCARE_Xero_Sales_Import_'+srTag()+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='IPROCARE_Xero_SalesInvoice_'+srTag()+'.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
 function srDownloadXlsx(){
   if(!SR.out.length){ toast('Nothing to export.',true); return; }
