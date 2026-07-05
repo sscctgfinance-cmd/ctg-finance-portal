@@ -3047,7 +3047,7 @@ function srTag(){ var ds=SR.out.map(function(l){return l.date;}).filter(Boolean)
 // Exact Xero "Sales Invoices" import template (29 columns, order matters).
 var SR_XERO_COLS=['*ContactName','EmailAddress','POAddressLine1','POAddressLine2','POAddressLine3','POAddressLine4','POCity','PORegion','POPostalCode','POCountry','*InvoiceNumber','Reference','*InvoiceDate','*DueDate','Total','InventoryItemCode','*Description','*Quantity','*UnitAmount','Discount','*AccountCode','*TaxType','TaxAmount','TrackingName1','TrackingOption1','TrackingName2','TrackingOption2','Currency','BrandingTheme'];
 function srXeroRow(l){
-  var m={'*ContactName':l.contact,'*InvoiceNumber':l.inv,'Reference':l.inv,'*InvoiceDate':l.date,'*DueDate':l.due,'*Description':l.desc,'*Quantity':'1','*UnitAmount':l.amt.toFixed(2),'*AccountCode':l.acc,'*TaxType':l.tax};
+  var m={'*ContactName':l.contact,'*InvoiceNumber':l.inv,'Reference':l.inv,'*InvoiceDate':l.date,'*DueDate':l.due,'*Description':l.desc,'*Quantity':'1','*UnitAmount':l.amt.toFixed(2),'*AccountCode':l.acc,'*TaxType':l.tax,'Currency':'MYR'};
   return SR_XERO_COLS.map(function(h){ return (m[h]!=null?m[h]:''); });
 }
 function srDownloadCSV(){
