@@ -2919,6 +2919,15 @@ var SR_CHAN2ACC={ 'WHATSAPP':'500-0600','FACEBOOK':'500-0600','INSTA':'500-0600'
 var SR_ACCNAME={ '500-0100':'Retail Sales (O2O)','500-0200':'WebStore Sales (Shopify)','500-0300':'COD','500-0400':'Shopee Sales','500-0500':'Lazada Sales','500-0600':'Meta Platform Sales (FB/IG/WhatsApp)','500-0700':'TikTok Sales','500-0800':'Live Streaming Sales','500-0900':'Exhibition Event','500-1000':'One-Day Shop Manager Event' };
 var SR_CFG={ 'ATOME':{id:'PIC Name',date:'Transaction Date',amt:'Transaction Amount'},'PAYEX':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'PINE LABS':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'AHAPAY':{id:'PIC Name',date:'Transaction Date & Time',amt:'Transaction Amount'},'UOB BANK':{id:'Databees Order ID',date:'Date',amt:'Deposit'} };
 function srAcc(ch){ return SR_CHAN2ACC[String(ch||'').trim().toUpperCase()]||'500-1000'; }
+// Xero can't import Chinese/emoji/weird symbols — translate known CN terms, strip everything non-ASCII.
+var SR_ZH=[['普通长期','Standard Long-term'],['回购配套','Repurchase Package'],['普通优惠','Standard Offer'],['线下专属','Offline Exclusive'],['新品','New Item'],['回购','Repurchase'],['优惠','Offer'],['配套','Package'],['12月','December'],['11月','November'],['10月','October'],['1月','January'],['2月','February'],['3月','March'],['4月','April'],['5月','May'],['6月','June'],['7月','July'],['8月','August'],['9月','September']];
+function srClean(s){
+  if(s==null) return s; s=String(s);
+  for(var i=0;i<SR_ZH.length;i++){ s=s.split(SR_ZH[i][0]).join(SR_ZH[i][1]); }
+  s=s.split('【').join(' ').split('】').join(' ');
+  var out=''; for(var j=0;j<s.length;j++){ out += (s.charCodeAt(j)<128 ? s.charAt(j) : ' '); }
+  return out.replace(/\s+/g,' ').trim().replace(/\s+,/g,',').replace(/,\s*,/g,', ');
+}
 function srNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
 function srAnyDate(v){ // clean sources (ISO string or JS Date)
   if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
@@ -3001,7 +3010,7 @@ function srBuild(){
   var iNo=H.indexOf('Order No'), iCh=H.indexOf('Channel'), iPkg=H.indexOf('Package'), iOd=H.indexOf('Order Date');
   var LK={};
   for(var i=1;i<aoa.length;i++){ var r=aoa[i]; var so=r[iNo]; if(so===''||so==null)continue; so=String(so).trim();
-    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':String(r[iPkg]).trim(), odate:srAnyDate(r[iOd])}; }
+    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd])}; }
   // Sales lines
   var lines=[], seq={};
   SR.sf.wb.SheetNames.forEach(function(sn){
@@ -3011,7 +3020,7 @@ function srBuild(){
       var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
       var pdate=srFixDate(o[cfg.date], sn);
       var inv,acc,pkg,ch,idate,matched;
-      if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=String(od.ch||'').trim(); idate=od.odate||pdate; matched=true; }
+      if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=od.odate||pdate; matched=true; }
       else { var per=srPer(pdate); seq[per]=(seq[per]||0)+1; inv='YRDZ_'+per+'_'+('000'+seq[per]).slice(-4); acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
       var ds=srDmy(idate);
       lines.push({contact:'DATABEES',inv:inv,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
