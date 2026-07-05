@@ -3259,6 +3259,44 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_claim_decide",String(b.id),{ status:b.status });
       return j({ ok:true });
     }
-    return j({ ok:true, hint:"portal v77 + HR (employees/leave/claims) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    if (api === "hr_payroll_data") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const mo=Number(b.month), yr=Number(b.year);
+      const [emp, rt, adj, run] = await Promise.all([
+        sb.from("hr_employees").select("*").eq("status","active").order("emp_no"),
+        sb.from("hr_statutory_rates").select("rates").eq("id",1).single(),
+        sb.from("hr_payroll_adjustments").select("*").eq("period_month",mo).eq("period_year",yr).order("created_at"),
+        sb.from("hr_payroll_runs").select("*").eq("period_month",mo).eq("period_year",yr).maybeSingle(),
+      ]);
+      let payslips:any[]=[];
+      if (run.data){ const ps=await sb.from("hr_payslips").select("*").eq("run_id",run.data.id); payslips=ps.data||[]; }
+      return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips });
+    }
+    if (api === "hr_adj_add") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const a=b.adj||{};
+      const { error } = await sb.from("hr_payroll_adjustments").insert({ employee_id:Number(a.employeeId), period_month:Number(a.month), period_year:Number(a.year), kind:a.kind, label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epfSubject!==false });
+      if (error) return j({ ok:false, error:error.message });
+      await logAudit(me,"hr_adj_add",String(a.employeeId),{ kind:a.kind, amount:a.amount });
+      return j({ ok:true });
+    }
+    if (api === "hr_adj_del") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { error } = await sb.from("hr_payroll_adjustments").delete().eq("id",Number(b.id));
+      if (error) return j({ ok:false, error:error.message });
+      return j({ ok:true });
+    }
+    if (api === "hr_payroll_finalise") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[];
+      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"period_month,period_year" }).select().single();
+      if (e1) return j({ ok:false, error:e1.message });
+      await sb.from("hr_payslips").delete().eq("run_id",run.id);
+      const payload = rows.map((r:any)=>({ run_id:run.id, employee_id:r.employeeId, gross:r.gross, epf_ee:r.epfEe, epf_er:r.epfEr, socso_ee:r.socsoEe, socso_er:r.socsoEr, eis_ee:r.eisEe, eis_er:r.eisEr, pcb:r.pcb, net:r.net, employer_cost:r.employerCost }));
+      if (payload.length){ const { error:e2 } = await sb.from("hr_payslips").insert(payload); if (e2) return j({ ok:false, error:e2.message }); }
+      await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
+      return j({ ok:true, runId:run.id });
+    }
+    return j({ ok:true, hint:"portal v78 + HR (employees/leave/claims/payroll) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

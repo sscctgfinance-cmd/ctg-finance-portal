@@ -2918,7 +2918,33 @@ function sbiPtypeChange(){
   var wht=document.getElementById('sbi_wht'); if(wht&&!wht.dataset.touched){ wht.value=(pt==='commission')?'s107d_2':'none'; sbiWhtChange(); }
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
-var HR={ data:null, view:'dashboard', editEmp:null };
+var HR={ data:null, view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
+var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
+var HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
+function hrRoundUp(n){ return Math.ceil(n-1e-9); }
+function hrCompute(emp,cfg,adj){ adj=adj||[];
+  var earn=adj.filter(function(a){return ['allowance','bonus','ot'].indexOf(a.kind)>=0;});
+  var addEarn=earn.reduce(function(s,a){return s+Number(a.amount||0);},0);
+  var addEarnStat=earn.filter(function(a){return a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
+  var unpaid=adj.filter(function(a){return a.kind==='unpaid_leave';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
+  var otherDed=adj.filter(function(a){return a.kind==='deduction';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
+  var base=Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0);
+  var gross=+(base+addEarn-unpaid).toFixed(2);
+  var statWage=Math.max(0, base+addEarnStat-unpaid);
+  var erEpfRate = statWage<=cfg.epf.threshold ? cfg.epf.erRateLow : cfg.epf.erRateHigh;
+  var epfOn=emp.epf_eligible!==false, epfEe=epfOn?hrRoundUp(statWage*cfg.epf.eeRate):0, epfEr=epfOn?hrRoundUp(statWage*erEpfRate):0;
+  var sBase=Math.min(statWage,cfg.socso.ceiling), socsoOn=emp.socso_eligible!==false;
+  var socsoEe=socsoOn?+(sBase*cfg.socso.eeRate).toFixed(2):0, socsoEr=socsoOn?+(sBase*cfg.socso.erRate).toFixed(2):0;
+  var eBase=Math.min(statWage,cfg.eis.ceiling), eisOn=emp.eis_eligible!==false;
+  var eisEe=eisOn?+(eBase*cfg.eis.eeRate).toFixed(2):0, eisEr=eisOn?+(eBase*cfg.eis.erRate).toFixed(2):0;
+  var annual=statWage*12, chargeable=Math.max(0, annual-cfg.reliefPersonal-Math.min(epfEe*12,cfg.reliefEpfMax));
+  var tax=0, prev=0;
+  for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0], rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; }
+  var pcb = emp.resident===false ? +(statWage*0.3).toFixed(2) : +(tax/12).toFixed(2);
+  var net=+(gross-epfEe-socsoEe-eisEe-pcb-otherDed).toFixed(2);
+  var employerCost=+(gross+epfEr+socsoEr+eisEr).toFixed(2);
+  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, pcb:pcb, net:net, employerCost:employerCost };
+}
 async function renderHR(){
   var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
@@ -2931,12 +2957,13 @@ async function renderHR(){
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['leave','🌴 Leave'],['claims','🧾 Claims']];
+  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['payroll','💰 Payroll'],['leave','🌴 Leave'],['claims','🧾 Claims']];
   var nav='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+tabs.map(function(t){return '<button class="btn sm'+(HR.view===t[0]?' p':'')+'" onclick="hrNav(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
   var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc((HR.data.employer&&HR.data.employer.name)||'I PROCARE MALAYSIA SDN BHD')+'</div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
+  else if(HR.view==='payroll') body=hrPayroll();
   else if(HR.view==='leave') body=hrLeave();
   else if(HR.view==='claims') body=hrClaims();
   el.innerHTML=head+nav+body;
@@ -3004,6 +3031,63 @@ function hrClaims(){
 }
 async function hrDecideLeave(id,status){ var r=await call({api:'hr_leave_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.leaves||[]).find(function(l){return l.id===id;}); if(x)x.status=status; hrRender(); toast('Leave '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
 async function hrDecideClaim(id,status){ var r=await call({api:'hr_claim_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.claims||[]).find(function(c){return c.id===id;}); if(x)x.status=status; hrRender(); toast('Claim '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
+// ---- Payroll (Wave 2) ----
+function hrPayroll(){
+  var p=HR.pay; if(!p.month){ var d=new Date(); p.month=d.getMonth()+1; p.year=d.getFullYear(); }
+  var picker='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'+
+    '<select id="hr_pm" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+HR_MONTHS.slice(1).map(function(m,i){return '<option value="'+(i+1)+'"'+((i+1)===p.month?' selected':'')+'>'+m+'</option>';}).join('')+'</select>'+
+    '<select id="hr_py" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+[p.year-1,p.year,p.year+1].map(function(y){return '<option value="'+y+'"'+(y===p.year?' selected':'')+'>'+y+'</option>';}).join('')+'</select>'+
+    '<button class="btn sm" onclick="hrPickPeriod()">Load</button></div>';
+  if(!p.data){ hrLoadPayroll(); return picker+'<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Computing payroll…</div></div>'; }
+  var cfg=p.data.rates; if(!cfg) return picker+'<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>No statutory rates configured (hr_statutory_rates)</div></div></div>';
+  var emps=p.data.employees||[], adjs=p.data.adjustments||[];
+  var rows=emps.map(function(e){ var a=adjs.filter(function(x){return x.employee_id===e.id;}); return { e:e, p:hrCompute(e,cfg,a), adj:a }; });
+  HR.pay._rows=rows;
+  var tot=rows.reduce(function(t,r){ var q=r.p; t.gross+=q.gross;t.epfEe+=q.epfEe;t.epfEr+=q.epfEr;t.socsoEe+=q.socsoEe;t.socsoEr+=q.socsoEr;t.eisEe+=q.eisEe;t.eisEr+=q.eisEr;t.pcb+=q.pcb;t.net+=q.net;t.cost+=q.employerCost; return t; },{gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,pcb:0,net:0,cost:0});
+  var finalised=!!p.data.run && p.data.run.status==='finalised';
+  var trs=rows.map(function(r){ var q=r.p; return '<tr><td><b>'+esc(r.e.emp_no)+'</b> '+esc(r.e.name)+'</td><td class="amt">'+M(q.gross)+'</td><td class="amt">'+M(q.epfEe)+'</td><td class="amt">'+M(q.socsoEe)+'</td><td class="amt">'+M(q.eisEe)+'</td><td class="amt">'+M(q.pcb)+'</td><td class="amt" style="font-weight:700;color:var(--green-soft)">'+M(q.net)+'</td><td><button class="btn xs" onclick="hrAdjOpen('+r.e.id+')">Adj'+(r.adj.length?(' ('+r.adj.length+')'):'')+'</button></td></tr>'; }).join('');
+  var table='<div class="panel"><div class="panel-hd"><h3>Payroll — '+HR_MONTHS[p.month]+' '+p.year+(finalised?' <span class="pill pill-green" style="font-size:10px">FINALISED</span>':'')+'</h3><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt">PCB</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+trs+
+    '<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+rows.length+')</td><td class="amt">'+M(tot.gross)+'</td><td class="amt">'+M(tot.epfEe)+'</td><td class="amt">'+M(tot.socsoEe)+'</td><td class="amt">'+M(tot.eisEe)+'</td><td class="amt">'+M(tot.pcb)+'</td><td class="amt" style="color:var(--green-soft)">'+M(tot.net)+'</td><td></td></tr>'+
+    '</tbody></table></div></div>';
+  var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
+  var sum='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('')+'</div>';
+  var adjPanel = p.adjEmp? hrAdjPanel(p.adjEmp) : '';
+  return picker+table+sum+adjPanel;
+}
+function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.adjEmp=null; hrRender(); }
+async function hrLoadPayroll(){
+  if(HR.pay.loading) return; HR.pay.loading=true;
+  try{ var r=await call({api:'hr_payroll_data',month:HR.pay.month,year:HR.pay.year}); HR.pay.loading=false; if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true); }
+  catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
+}
+async function hrFinalise(){
+  var rows=(HR.pay._rows||[]).map(function(r){ var q=r.p; return { employeeId:r.e.id, gross:q.gross, epfEe:q.epfEe, epfEr:q.epfEr, socsoEe:q.socsoEe, socsoEr:q.socsoEr, eisEe:q.eisEe, eisEr:q.eisEr, pcb:q.pcb, net:q.net, employerCost:q.employerCost }; });
+  if(!rows.length){ toast('No active employees',true); return; }
+  if(!confirm('Finalise payroll for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' ('+rows.length+' employees)? Saves payslips for the period.')) return;
+  var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows});
+  if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
+}
+function hrAdjOpen(id){ HR.pay.adjEmp=(HR.pay.adjEmp===id?null:id); hrRender(); if(HR.pay.adjEmp){ setTimeout(function(){var el=document.getElementById('hr_adjpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});},50); } }
+function hrAdjPanel(empId){
+  var e=(HR.pay.data.employees||[]).find(function(x){return x.id===empId;}); if(!e) return '';
+  var adjs=(HR.pay.data.adjustments||[]).filter(function(x){return x.employee_id===empId;});
+  var KINDS=[['allowance','Allowance'],['bonus','Bonus'],['ot','Overtime'],['deduction','Deduction'],['unpaid_leave','Unpaid leave']];
+  var list=adjs.map(function(a){return '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px"><span>'+esc(a.kind)+(a.label?(' · '+esc(a.label)):'')+' — '+M(a.amount)+(a.epf_subject===false?' <span class="muted">(non-EPF)</span>':'')+'</span><button class="btn xs" onclick="hrDelAdj('+a.id+')">✕</button></div>';}).join('')||'<div class="muted" style="font-size:12px;padding:6px 0">No adjustments this month</div>';
+  return '<div class="panel" id="hr_adjpanel" style="max-width:640px;margin-top:14px;border-color:var(--coral-soft)"><div class="panel-hd"><h3>Adjustments — '+esc(e.name)+' · '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'</h3><button class="btn sm" onclick="hrAdjOpen('+empId+')">✕ Close</button></div>'+list+
+    '<div style="display:grid;grid-template-columns:120px 1fr 120px;gap:6px;margin-top:12px">'+
+      '<select id="hr_ak" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+KINDS.map(function(k){return '<option value="'+k[0]+'">'+k[1]+'</option>';}).join('')+'</select>'+
+      '<input id="hr_al" placeholder="Label (optional)" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+
+      '<input id="hr_aa" type="number" step="0.01" placeholder="Amount" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+
+    '</div><div style="display:flex;align-items:center;gap:8px;margin-top:8px"><button class="btn p sm" onclick="hrAddAdj('+empId+')">+ Add</button><span class="muted" style="font-size:11px">Allowance/Bonus/OT count toward EPF/SOCSO by default; Deduction &amp; Unpaid leave reduce net.</span></div></div>';
+}
+async function hrAddAdj(empId){
+  var kind=document.getElementById('hr_ak').value, label=document.getElementById('hr_al').value, amount=document.getElementById('hr_aa').value;
+  if(!(Number(amount))){ toast('Enter an amount',true); return; }
+  var r=await call({api:'hr_adj_add',adj:{ employeeId:empId, month:HR.pay.month, year:HR.pay.year, kind:kind, label:label, amount:amount, epfSubject:true }});
+  if(r&&r.ok){ HR.pay.data=null; hrRender(); toast('Adjustment added'); } else toast((r&&r.error)||'Failed',true);
+}
+async function hrDelAdj(id){ var r=await call({api:'hr_adj_del',id:id}); if(r&&r.ok){ HR.pay.data=null; hrRender(); toast('Removed'); } else toast((r&&r.error)||'Failed',true); }
 
 // ===== Sales Reconciliation → Xero Sales Import (Order Form + multi-gateway Sales file) =====
 var SR={ of:null, sf:null, out:[], rendered:false };
