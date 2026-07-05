@@ -3044,11 +3044,9 @@ function gwConvertPayex(fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     var d=gwParseDate(gwPick(r,'Date')); if(!d) return;
     var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
-    var payee=String(gwPick(r,'CustomerName')||gwPick(r,'FpxBuyerName')||gwPick(r,'CardHolderName')||'Customer').trim();
-    var method=String(gwPick(r,'TransactionType')||'').trim(), brand=String(gwPick(r,'CardBrand')||gwPick(r,'FpxBuyerBankName')||'').trim();
-    var desc=(method+(brand?(' · '+brand):'')).trim()||'Payex sale';
+    var txid=String(gwPick(r,'TransactionId')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
-    if(net!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:payee,desc:desc,ref:ref,kind:net<0?'out':'in'});
+    if(net!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:'SHOPIFY',desc:txid,ref:ref,kind:net<0?'out':'in'});
   });
   if(f.set){
     var byDate={};
@@ -3066,11 +3064,9 @@ function gwConvertAtome(fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d) return;
     var amt=gwNum(gwPick(r,'Transaction Amount'));
-    var typ=String(gwPick(r,'Transaction Type')||'MERCHANDISE').trim();
+    var txid=String(gwPick(r,'Transaction ID')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
-    var ecom=String(gwPick(r,'E-commerce Platform Order ID')||'').trim();
-    var desc='Atome '+typ+(ecom?(' · '+ecom):'');
-    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'Atome',desc:desc,ref:ref,kind:amt<0?'out':'in'});
+    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:txid,ref:ref,kind:amt<0?'out':'in'});
   });
   if(f.payout) f.payout.rows.forEach(function(r){
     var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
