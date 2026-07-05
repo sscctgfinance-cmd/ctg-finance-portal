@@ -909,6 +909,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="recon"       data-cat="operations" onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="gateway"     data-cat="operations" onclick="tab('gateway')"     id="tab-gateway">🔁 Gateway → Xero</div>
     <div class="tab"        data-t="bankfeed"    data-cat="operations" onclick="tab('bankfeed')"    id="tab-bankfeed">🔗 Bank Feed</div>
+    <div class="tab"        data-t="salesrecon"  data-cat="operations" onclick="tab('salesrecon')"  id="tab-salesrecon">📊 Sales Reconciliation</div>
     <div class="tab"        data-t="close"       data-cat="operations" onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="calendar"    data-cat="operations" onclick="tab('calendar')"    id="tab-calendar">📅 Calendar</div>
     <div class="tab"        data-t="ap"          data-cat="operations" onclick="tab('ap')"          id="tab-ap">📧 AP Inbox</div>
@@ -929,6 +930,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="selfbill"    class="hide"></div>
   <div id="gateway"     class="hide"></div>
   <div id="bankfeed"    class="hide"></div>
+  <div id="salesrecon"  class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
@@ -1256,6 +1258,7 @@ async function showApp(){
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
     else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
     else if(t==='bankfeed') el.classList.toggle('hide', !canManage); // Bank Feed launcher (Fusioneta): admin-only
+    else if(t==='salesrecon') el.classList.toggle('hide', !canManage); // Sales Reconciliation → Xero import: admin-only
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
@@ -1300,7 +1303,7 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
     const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
@@ -1325,6 +1328,7 @@ async function render(t){
     if(t==='selfbill')   return renderSelfbill();
     if(t==='gateway')    return renderGateway();
     if(t==='bankfeed')   return renderBankFeed();
+    if(t==='salesrecon') return renderSalesRecon();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
@@ -2909,6 +2913,149 @@ function sbiPtypeChange(){
   var cls=document.getElementById('sbi_class'); if(cls&&!cls.dataset.touched) cls.value=sbiClassDefault(pt);
   var wht=document.getElementById('sbi_wht'); if(wht&&!wht.dataset.touched){ wht.value=(pt==='commission')?'s107d_2':'none'; sbiWhtChange(); }
 }
+// ===== Sales Reconciliation → Xero Sales Import (Order Form + multi-gateway Sales file) =====
+var SR={ of:null, sf:null, out:[], rendered:false };
+var SR_CHAN2ACC={ 'WHATSAPP':'500-0600','FACEBOOK':'500-0600','INSTA':'500-0600','COMMUNITY':'500-0600','FB LIVE':'500-0800','WEBSTORE':'500-0200','SHOPEE':'500-0400','EXPO':'500-0900','ILADY O2O':'500-0100','YRDZ':'500-1000' };
+var SR_ACCNAME={ '500-0100':'Retail Sales (O2O)','500-0200':'WebStore Sales (Shopify)','500-0300':'COD','500-0400':'Shopee Sales','500-0500':'Lazada Sales','500-0600':'Meta Platform Sales (FB/IG/WhatsApp)','500-0700':'TikTok Sales','500-0800':'Live Streaming Sales','500-0900':'Exhibition Event','500-1000':'One-Day Shop Manager Event' };
+var SR_CFG={ 'ATOME':{id:'PIC Name',date:'Transaction Date',amt:'Transaction Amount'},'PAYEX':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'PINE LABS':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'AHAPAY':{id:'PIC Name',date:'Transaction Date & Time',amt:'Transaction Amount'},'UOB BANK':{id:'Databees Order ID',date:'Date',amt:'Deposit'} };
+function srAcc(ch){ return SR_CHAN2ACC[String(ch||'').trim().toUpperCase()]||'500-1000'; }
+function srNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
+function srAnyDate(v){ // clean sources (ISO string or JS Date)
+  if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
+  var s=String(v==null?'':v).split(/[ T]/)[0].trim(); if(!s)return null;
+  var m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if(m)return new Date(+m[1],+m[2]-1,+m[3]);
+  var p=s.split(/[\/.]/); if(p.length===3){ var a=+p[0],b=+p[1],c=+p[2]; if(a>12)return new Date(c,b-1,a); return new Date(c,b-1,a); } return null;
+}
+function srFixDate(v,sheet){ // gateway sheets: Excel swapped DD/MM->MM/DD (datetime day always =6), UOB=MM/DD text
+  if(v instanceof Date && !isNaN(v)){ var mo=v.getMonth()+1, dy=v.getDate(); if(dy<=12) return new Date(v.getFullYear(), dy-1, mo); return new Date(v.getFullYear(),v.getMonth(),v.getDate()); }
+  var s=String(v==null?'':v).split(/[ T]/)[0].trim(); if(!s)return null;
+  var iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if(iso)return new Date(+iso[1],+iso[2]-1,+iso[3]);
+  var p=s.split(/[\/.\-]/); if(p.length!==3)return null; var a=+p[0],b=+p[1],c=+p[2];
+  return (String(sheet).toUpperCase()==='UOB BANK') ? new Date(c,a-1,b) : new Date(c,b-1,a);
+}
+function srDmy(d){ if(!(d instanceof Date)||isNaN(d))return ''; return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
+function srPer(d){ if(!(d instanceof Date)||isNaN(d))d=new Date(); return ('0'+(d.getMonth()+1)).slice(-2)+"'"+d.getFullYear(); }
+function srSheetRows(ws){
+  var aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
+  var hr=0; for(var i=0;i<Math.min(8,aoa.length);i++){ if(aoa[i].filter(function(c){return c!==''&&c!=null;}).length>=4){hr=i;break;} }
+  var H=(aoa[hr]||[]).map(function(c){return String(c).trim();}); var rows=[];
+  for(var i=hr+1;i<aoa.length;i++){ var r=aoa[i]; if(!r.some(function(c){return c!==''&&c!=null;}))continue; var o={}; H.forEach(function(h,j){o[h]=r[j];}); rows.push(o); }
+  return rows;
+}
+function renderSalesRecon(){
+  var el=document.getElementById('salesrecon'); if(!el) return; if(SR.rendered)return; SR.rendered=true; loaded.salesrecon=true;
+  el.innerHTML=
+    '<div style="margin-bottom:14px"><h2 style="margin:0;font-size:19px">📊 Sales Reconciliation → Xero</h2>'+
+    '<div class="muted" style="font-size:12px">Match each collected payment to its order (via SO in PIC Name / Databees Order ID), tag Channel + Package, and build a Xero Sales Invoice import. Runs in your browser.</div></div>'+
+    '<div class="panel"><div class="panel-hd"><h3>1 · Drop the two files</h3><button class="btn sm" onclick="srReset()">Clear</button></div>'+
+      '<div id="sr-drop" style="border:1.5px dashed var(--border);border-radius:12px;padding:22px;text-align:center;cursor:pointer;background:var(--panel-2)" onclick="document.getElementById(\'sr-fi\').click()">'+
+        'Drop the <b style="color:var(--coral-soft)">Order Form</b> and the <b style="color:var(--coral-soft)">Sales (all gateways)</b> .xlsx here, or click.<br><span class="muted" style="font-size:12px">Auto-detects which is which.</span>'+
+        '<input type="file" id="sr-fi" multiple accept=".xlsx,.xls" style="display:none"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">'+
+        '<div class="fchip" id="sr-chip-of" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">📋</div><div><div style="font-weight:600;font-size:13px">Order Form</div><div class="muted" style="font-size:11.5px" id="sr-chip-of-s">not loaded</div></div></div>'+
+        '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
+      '</div>'+
+      '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b>, Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · DueDate = InvoiceDate.</div></div>'+
+    '<div class="panel hide" id="sr-result">'+
+      '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
+      '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
+      '<div style="font-size:12px;font-weight:600;margin:6px 0">Revenue by Account (Xero)</div><div class="tbl-wrap" style="margin-bottom:14px"><table class="bigtable"><thead><tr><th>Account</th><th>Name</th><th>Channels</th><th class="amt" style="text-align:right">Lines</th><th class="amt" style="text-align:right">Amount (MYR)</th></tr></thead><tbody id="sr-acctbody"></tbody></table></div>'+
+      '<div style="font-size:12px;font-weight:600;margin:6px 0">Sales Import preview (first 150)</div><div class="tbl-wrap" style="max-height:360px;overflow:auto"><table class="bigtable"><thead><tr><th>Contact</th><th>Invoice No</th><th>Date</th><th>Description</th><th class="amt" style="text-align:right">Amount</th><th>Acct</th><th>Gateway</th></tr></thead><tbody id="sr-tbody"></tbody></table></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px" id="sr-note"></div></div>';
+  var dz=document.getElementById('sr-drop');
+  ['dragover','dragenter'].forEach(function(e){dz.addEventListener(e,function(ev){ev.preventDefault();dz.style.borderColor='var(--coral)';});});
+  dz.addEventListener('dragleave',function(ev){ev.preventDefault();dz.style.borderColor='var(--border)';});
+  dz.addEventListener('drop',function(ev){ev.preventDefault();dz.style.borderColor='var(--border)';srFiles(ev.dataTransfer.files);});
+  document.getElementById('sr-fi').addEventListener('change',function(ev){srFiles(ev.target.files);ev.target.value='';});
+}
+function srReset(){ SR.of=null;SR.sf=null;SR.out=[]; document.getElementById('sr-chip-of-s').textContent='not loaded'; document.getElementById('sr-chip-sf-s').textContent='not loaded'; document.getElementById('sr-chip-of').style.borderColor='var(--border)'; document.getElementById('sr-chip-sf').style.borderColor='var(--border)'; document.getElementById('sr-result').classList.add('hide'); document.getElementById('sr-build').disabled=true; }
+function srFiles(list){
+  gwLoadXlsx(function(){
+    [].forEach.call(list,function(file){
+      var rd=new FileReader();
+      rd.onload=function(){
+        try{
+          var wb=XLSX.read(rd.result,{type:'array',cellDates:true});
+          var names=wb.SheetNames.map(function(s){return s.toUpperCase().trim();});
+          var isSales=names.some(function(n){return SR_CFG[n];});
+          if(isSales){ SR.sf={name:file.name,wb:wb}; document.getElementById('sr-chip-sf-s').textContent=file.name+' · '+wb.SheetNames.length+' sheets'; document.getElementById('sr-chip-sf').style.borderColor='var(--green-soft)'; }
+          else {
+            var ws=wb.Sheets[wb.SheetNames[0]]; var H=(XLSX.utils.sheet_to_json(ws,{header:1,defval:''})[0]||[]).map(function(c){return String(c).trim();});
+            if(H.indexOf('Order No')>=0){ SR.of={name:file.name,wb:wb}; document.getElementById('sr-chip-of-s').textContent=file.name; document.getElementById('sr-chip-of').style.borderColor='var(--green-soft)'; }
+            else { toast(file.name+': unrecognised — not the Order Form nor the Sales file',true); }
+          }
+          document.getElementById('sr-build').disabled=!(SR.of&&SR.sf);
+        }catch(e){ toast(file.name+': read failed — '+(e.message||e),true); }
+      };
+      rd.readAsArrayBuffer(file);
+    });
+  });
+}
+function srBuild(){
+  if(!SR.of||!SR.sf){ toast('Load both the Order Form and the Sales file.',true); return; }
+  // Order Form lookup: SO -> {ch,pkg,odate}
+  var ofWs=SR.of.wb.Sheets[SR.of.wb.SheetNames[0]];
+  var aoa=XLSX.utils.sheet_to_json(ofWs,{header:1,raw:true,defval:''});
+  var H=(aoa[0]||[]).map(function(c){return String(c).trim();});
+  var iNo=H.indexOf('Order No'), iCh=H.indexOf('Channel'), iPkg=H.indexOf('Package'), iOd=H.indexOf('Order Date');
+  var LK={};
+  for(var i=1;i<aoa.length;i++){ var r=aoa[i]; var so=r[iNo]; if(so===''||so==null)continue; so=String(so).trim();
+    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':String(r[iPkg]).trim(), odate:srAnyDate(r[iOd])}; }
+  // Sales lines
+  var lines=[], seq={};
+  SR.sf.wb.SheetNames.forEach(function(sn){
+    var cfg=SR_CFG[sn.toUpperCase().trim()]; if(!cfg)return;
+    srSheetRows(SR.sf.wb.Sheets[sn]).forEach(function(o){
+      var amt=srNum(o[cfg.amt]); if(!amt)return;
+      var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
+      var pdate=srFixDate(o[cfg.date], sn);
+      var inv,acc,pkg,ch,idate,matched;
+      if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=String(od.ch||'').trim(); idate=od.odate||pdate; matched=true; }
+      else { var per=srPer(pdate); seq[per]=(seq[per]||0)+1; inv='YRDZ_'+per+'_'+('000'+seq[per]).slice(-4); acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
+      var ds=srDmy(idate);
+      lines.push({contact:'DATABEES',inv:inv,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
+    });
+  });
+  SR.out=lines; srRenderResult();
+}
+function srRenderResult(){
+  var lines=SR.out, tot=0, mt=0, um=0, umAmt=0, byAcc={};
+  lines.forEach(function(l){ tot+=l.amt; if(l.matched)mt++; else {um++; umAmt+=l.amt;} var a=byAcc[l.acc]||(byAcc[l.acc]={n:0,amt:0,ch:{}}); a.n++; a.amt+=l.amt; a.ch[l.ch]=1; });
+  var cards=[['Sales invoice lines',lines.length+'',''],['Matched to SO',mt+'','var(--green-soft)'],['Unmatched (YRDZ)',um+' · '+M(umAmt),'var(--amber)'],['Total (actual received)',M(tot),'var(--coral-soft)']];
+  document.getElementById('sr-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;'+(c[2]?('color:'+c[2]):'')+'">'+c[1]+'</div></div>';}).join('');
+  var accRows=Object.keys(byAcc).sort().map(function(code){ var a=byAcc[code]; return '<tr><td><b>'+esc(code)+'</b></td><td class="muted">'+esc(SR_ACCNAME[code]||'')+'</td><td class="muted" style="font-size:11px">'+esc(Object.keys(a.ch).join(' / '))+'</td><td class="amt" style="text-align:right">'+a.n+'</td><td class="amt" style="text-align:right;font-weight:600">'+M(a.amt)+'</td></tr>'; }).join('');
+  document.getElementById('sr-acctbody').innerHTML=accRows;
+  var show=lines.slice(0,150);
+  document.getElementById('sr-tbody').innerHTML=show.map(function(l){ var col=l.matched?'var(--text)':'var(--amber)';
+    return '<tr><td class="muted">'+esc(l.contact)+'</td><td style="color:'+col+'">'+esc(l.inv)+'</td><td>'+esc(l.date)+'</td><td class="muted">'+esc(l.desc)+'</td><td class="amt" style="text-align:right;font-weight:600">'+l.amt.toFixed(2)+'</td><td>'+esc(l.acc)+'</td><td class="muted">'+esc(l.gw)+'</td></tr>'; }).join('');
+  document.getElementById('sr-note').textContent='Preview shows first '+show.length+' of '+lines.length+' lines. Download includes all. Xero Sales CSV = ContactName/InvoiceNumber/InvoiceDate/DueDate/Description/Quantity/UnitAmount/AccountCode/TaxType.';
+  document.getElementById('sr-result').classList.remove('hide');
+}
+var SR_COLS=['*ContactName','*InvoiceNumber','*InvoiceDate','*DueDate','*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType'];
+function srRowArr(l){ return [l.contact,l.inv,l.date,l.due,l.desc,l.qty,l.amt,l.acc,l.tax]; }
+function srTag(){ var ds=SR.out.map(function(l){return l.date;}).filter(Boolean).sort(); return ds.length?(ds[0].replace(/\//g,'')+'_'+ds[ds.length-1].replace(/\//g,'')):'export'; }
+function srDownloadCSV(){
+  if(!SR.out.length){ toast('Nothing to export.',true); return; }
+  var q=function(x){ x=String(x==null?'':x); return /[",\n\r]/.test(x)?('"'+x.replace(/"/g,'""')+'"'):x; };
+  var out=[SR_COLS.join(',')];
+  SR.out.forEach(function(l){ var a=srRowArr(l); out.push([a[0],a[1],a[2],a[3],q(a[4]),a[5],a[6].toFixed(2),a[7],a[8]].map(q).join(',')); });
+  var blob=new Blob(['﻿'+out.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='IPROCARE_Xero_Sales_Import_'+srTag()+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+function srDownloadXlsx(){
+  if(!SR.out.length){ toast('Nothing to export.',true); return; }
+  var wb=XLSX.utils.book_new();
+  var imp=[SR_COLS.concat(['Channel','Gateway'])]; SR.out.forEach(function(l){ imp.push(srRowArr(l).concat([l.ch,l.gw])); });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(imp), 'Sales Import');
+  var byAcc={}; SR.out.forEach(function(l){ var a=byAcc[l.acc]||(byAcc[l.acc]={n:0,amt:0}); a.n++; a.amt+=l.amt; });
+  var sm=[['Account Code','Account Name','Lines','Amount (MYR)']]; Object.keys(byAcc).sort().forEach(function(c){ sm.push([c,SR_ACCNAME[c]||'',byAcc[c].n,Math.round(byAcc[c].amt*100)/100]); });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sm), 'Xero Summary');
+  var un=[SR_COLS.concat(['Gateway'])]; SR.out.filter(function(l){return !l.matched;}).forEach(function(l){ un.push(srRowArr(l).concat([l.gw])); });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(un), 'Unmatched (YRDZ)');
+  XLSX.writeFile(wb, 'IPROCARE_Sales_Reconciliation_'+srTag()+'.xlsx');
+}
+
 // ===== Bank Feed launcher (opens the Fusioneta bank-feed in a new tab) =====
 function renderBankFeed(){
   var el=document.getElementById('bankfeed'); if(!el) return; loaded.bankfeed=true;
