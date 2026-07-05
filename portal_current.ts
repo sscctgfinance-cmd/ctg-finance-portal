@@ -3199,6 +3199,66 @@ Deno.serve(async (req)=>{
       await logAudit(me, "totp_disable", me.user.email, {});
       return j(data);
     }
-    return j({ ok:true, hint:"portal v76 self-billed invoices (dropdowns + auto Reference + invoice-PDF attach to Xero bill) + Doc AI OCR + fin-analytics + sync-fast" });
+    // ===== HR / Payroll (Wave 1: employees, leave, claims) — reads hr_* via service role, gated by portal admin =====
+    if (api === "hr_bootstrap") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const [emp, lt, lv, cl, ei] = await Promise.all([
+        sb.from("hr_employees").select("*").order("emp_no"),
+        sb.from("hr_leave_types").select("*").eq("active",true).order("code"),
+        sb.from("hr_leave_requests").select("*, employee:hr_employees(name,dept)").order("date_from",{ascending:false}),
+        sb.from("hr_claims").select("*, employee:hr_employees(name,dept)").order("claim_date",{ascending:false}),
+        sb.from("hr_employer_info").select("*").eq("id",1).maybeSingle(),
+      ]);
+      return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null });
+    }
+    if (api === "hr_emp_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const f = b.emp||{};
+      const patch: any = {
+        name:f.name, ic_no:f.ic||null, email:f.email||null, dept:f.dept||null, position:f.position||null,
+        basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
+        bank_name:f.bankName||null, bank_account:f.bankAccount||null,
+        epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
+        phone:f.phone||null, address:f.address||null, resident:f.resident!==false,
+        epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
+        marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
+      };
+      let res:any;
+      if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
+      else {
+        const { data:last } = await sb.from("hr_employees").select("emp_no").order("emp_no",{ascending:false}).limit(1);
+        const n = (last&&last[0]&&last[0].emp_no)? parseInt(String(last[0].emp_no).slice(1))+1 : 1;
+        patch.emp_no = "E"+String(n).padStart(3,"0"); patch.status="active";
+        res = await sb.from("hr_employees").insert(patch).select().single();
+      }
+      if (res.error) return j({ ok:false, error:res.error.message });
+      await logAudit(me,"hr_emp_save",String(res.data&&res.data.id),{ name:f.name });
+      return j({ ok:true, employee:res.data });
+    }
+    if (api === "hr_leave_decide") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const id=Number(b.id), status=String(b.status||"");
+      const { data:req } = await sb.from("hr_leave_requests").select("*").eq("id",id).single();
+      if (!req) return j({ ok:false, error:"not found" });
+      await sb.from("hr_leave_requests").update({ status }).eq("id",id);
+      if (status==="Approved"){
+        const year = new Date(req.date_from).getFullYear();
+        const { data:lt } = await sb.from("hr_leave_types").select("id,paid").eq("name",req.leave_type).maybeSingle();
+        if (lt && lt.paid){
+          const { data:bal } = await sb.from("hr_leave_balances").select("id,taken").eq("employee_id",req.employee_id).eq("leave_type_id",lt.id).eq("year",year).maybeSingle();
+          if (bal) await sb.from("hr_leave_balances").update({ taken: Number(bal.taken)+Number(req.days) }).eq("id",bal.id);
+        }
+      }
+      await logAudit(me,"hr_leave_decide",String(id),{ status });
+      return j({ ok:true });
+    }
+    if (api === "hr_claim_decide") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",Number(b.id));
+      if (error) return j({ ok:false, error:error.message });
+      await logAudit(me,"hr_claim_decide",String(b.id),{ status:b.status });
+      return j({ ok:true });
+    }
+    return j({ ok:true, hint:"portal v77 + HR (employees/leave/claims) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

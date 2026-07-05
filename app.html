@@ -913,6 +913,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="close"       data-cat="operations" onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="calendar"    data-cat="operations" onclick="tab('calendar')"    id="tab-calendar">📅 Calendar</div>
     <div class="tab"        data-t="ap"          data-cat="operations" onclick="tab('ap')"          id="tab-ap">📧 AP Inbox</div>
+    <div class="tab"        data-t="hr"          data-cat="operations" onclick="tab('hr')"          id="tab-hr">👥 HR / Payroll</div>
     <!-- Master Data -->
     <div class="tab"        data-t="info"     data-cat="data"       onclick="tab('info')"       id="tab-info">🏢 Company Info</div>
     <div class="tab"        data-t="pharm"    data-cat="data"       onclick="tab('pharm')"      id="tab-pharm">🏪 Pharmacies</div>
@@ -931,6 +932,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="gateway"     class="hide"></div>
   <div id="bankfeed"    class="hide"></div>
   <div id="salesrecon"  class="hide"></div>
+  <div id="hr"          class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
@@ -1259,6 +1261,7 @@ async function showApp(){
     else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
     else if(t==='bankfeed') el.classList.toggle('hide', !canManage); // Bank Feed launcher (Fusioneta): admin-only
     else if(t==='salesrecon') el.classList.toggle('hide', !canManage); // Sales Reconciliation → Xero import: admin-only
+    else if(t==='hr') el.classList.toggle('hide', !canManage); // HR / Payroll: admin-only (salary/IC data)
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
@@ -1303,7 +1306,7 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','hr','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
     const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
@@ -1329,6 +1332,7 @@ async function render(t){
     if(t==='gateway')    return renderGateway();
     if(t==='bankfeed')   return renderBankFeed();
     if(t==='salesrecon') return renderSalesRecon();
+    if(t==='hr')         return renderHR();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
@@ -2913,6 +2917,94 @@ function sbiPtypeChange(){
   var cls=document.getElementById('sbi_class'); if(cls&&!cls.dataset.touched) cls.value=sbiClassDefault(pt);
   var wht=document.getElementById('sbi_wht'); if(wht&&!wht.dataset.touched){ wht.value=(pt==='commission')?'s107d_2':'none'; sbiWhtChange(); }
 }
+// ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
+var HR={ data:null, view:'dashboard', editEmp:null };
+async function renderHR(){
+  var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
+  el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
+  try{
+    var r=await call({api:'hr_bootstrap'});
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc((r&&r.error)||'Failed to load HR')+'</div></div></div>'; return; }
+    HR.data=r; HR.view=HR.view||'dashboard'; HR.editEmp=null; hrRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
+function hrRender(){
+  var el=document.getElementById('hr'); if(!el||!HR.data) return;
+  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['leave','🌴 Leave'],['claims','🧾 Claims']];
+  var nav='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+tabs.map(function(t){return '<button class="btn sm'+(HR.view===t[0]?' p':'')+'" onclick="hrNav(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
+  var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc((HR.data.employer&&HR.data.employer.name)||'I PROCARE MALAYSIA SDN BHD')+'</div></div>';
+  var body='';
+  if(HR.view==='dashboard') body=hrDashboard();
+  else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
+  else if(HR.view==='leave') body=hrLeave();
+  else if(HR.view==='claims') body=hrClaims();
+  el.innerHTML=head+nav+body;
+}
+function hrDashboard(){
+  var e=HR.data.employees||[], lv=HR.data.leaves||[], cl=HR.data.claims||[];
+  var active=e.filter(function(x){return x.status==='active';});
+  var pendLv=lv.filter(function(x){return x.status==='Pending';}), pendCl=cl.filter(function(x){return x.status==='Pending';});
+  var monthly=active.reduce(function(s,x){return s+(Number(x.basic_salary)||0)+(Number(x.fixed_allowance)||0);},0);
+  var cards=[['Active employees',active.length,'var(--sky-soft)'],['Pending leave',pendLv.length,pendLv.length?'var(--amber)':'var(--muted)'],['Pending claims',pendCl.length,pendCl.length?'var(--amber)':'var(--muted)'],['Monthly gross (basic+allow)',M(monthly),'var(--green-soft)']];
+  var out='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">'+cards.map(function(c){return '<div class="panel" style="padding:14px;margin:0"><div class="muted" style="font-size:11px">'+c[0]+'</div><div style="font-size:22px;font-weight:700;margin-top:4px;color:'+c[2]+'">'+c[1]+'</div></div>';}).join('')+'</div>';
+  out+='<div class="panel"><div class="panel-hd"><h3>Needs your action</h3></div>';
+  if(!pendLv.length&&!pendCl.length) out+='<div class="muted" style="padding:14px">Nothing pending 🎉</div>';
+  else{
+    if(pendLv.length) out+='<div style="font-size:12px;font-weight:600;margin:6px 0">Leave</div>'+pendLv.slice(0,6).map(function(x){return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span>'+esc((x.employee&&x.employee.name)||'—')+' · '+esc(x.leave_type)+' · '+esc(x.date_from)+'→'+esc(x.date_to)+' ('+x.days+'d)</span><span style="white-space:nowrap"><button class="btn xs" onclick="hrDecideLeave('+x.id+',\'Approved\')">Approve</button> <button class="btn xs" onclick="hrDecideLeave('+x.id+',\'Rejected\')">Reject</button></span></div>';}).join('');
+    if(pendCl.length) out+='<div style="font-size:12px;font-weight:600;margin:10px 0 6px">Claims</div>'+pendCl.slice(0,6).map(function(x){return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span>'+esc((x.employee&&x.employee.name)||'—')+' · '+esc(x.category)+' · '+M(x.amount)+'</span><span style="white-space:nowrap"><button class="btn xs" onclick="hrDecideClaim('+x.id+',\'Approved\')">Approve</button> <button class="btn xs" onclick="hrDecideClaim('+x.id+',\'Rejected\')">Reject</button></span></div>';}).join('');
+  }
+  return out+'</div>';
+}
+function hrEmployees(){
+  var e=(HR.data.employees||[]).slice().sort(function(a,b){return String(a.emp_no).localeCompare(String(b.emp_no));});
+  var rows=e.map(function(x){return '<tr><td><b>'+esc(x.emp_no||'')+'</b></td><td>'+esc(x.name||'')+'</td><td class="muted">'+esc(x.dept||'')+'</td><td class="muted">'+esc(x.position||'')+'</td><td class="amt">'+M(x.basic_salary)+'</td><td class="amt">'+M(x.fixed_allowance)+'</td><td class="muted" style="font-size:11px">'+esc(x.bank_name||'')+' '+esc(x.bank_account||'')+'</td><td><span class="pill" style="font-size:10px">'+esc(x.status||'')+'</span></td><td><button class="btn xs" onclick="hrEditEmp('+x.id+')">Edit</button></td></tr>';}).join('')||'<tr><td colspan="9" class="muted" style="text-align:center;padding:20px">No employees yet</td></tr>';
+  return '<div class="panel"><div class="panel-hd"><h3>Employees ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>No</th><th>Name</th><th>Dept</th><th>Position</th><th class="amt">Basic</th><th class="amt">Allowance</th><th>Bank</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
+function hrEmpForm(){
+  var x=HR.editEmp||{};
+  var inp=function(k,ph,val,extra){return '<input id="hr_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">';};
+  var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  var ck=function(k,lbl,on){return '<label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="hr_'+k+'" '+(on?'checked':'')+' style="accent-color:var(--coral)"> '+lbl+'</label>';};
+  return '<div class="panel" style="max-width:840px"><div class="panel-hd"><h3>'+(x.id?'Edit':'New')+' employee</h3><button class="btn sm" onclick="hrNav(\'employees\')">✕ Close</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+
+      g('Name *',inp('name','Full name',x.name))+g('IC / Passport',inp('ic','',x.ic_no))+g('Email',inp('email','',x.email))+
+      g('Department',inp('dept','',x.dept))+g('Position',inp('position','',x.position))+g('Phone',inp('phone','',x.phone))+
+      g('Basic salary (RM) *',inp('basic','0',x.basic_salary,'type="number" step="0.01"'))+g('Fixed allowance (RM)',inp('allowance','0',x.fixed_allowance,'type="number" step="0.01"'))+g('&nbsp;','<div></div>')+
+      g('Bank name',inp('bankName','',x.bank_name))+g('Bank account',inp('bankAccount','',x.bank_account))+g('&nbsp;','<div></div>')+
+      g('EPF no.',inp('epfNo','',x.epf_no))+g('SOCSO no.',inp('socsoNo','',x.socso_no))+g('Tax no. (TIN)',inp('taxNo','',x.tax_no))+
+    '</div>'+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px">'+ck('epf','EPF',x.epf_eligible!==false)+ck('socso','SOCSO',x.socso_eligible!==false)+ck('eis','EIS',x.eis_eligible!==false)+ck('resident','Tax resident',x.resident!==false)+'</div>'+
+    '<button class="btn p sm" onclick="hrSaveEmp()">'+(x.id?'Save changes':'Add employee')+'</button></div>';
+}
+async function hrSaveEmp(){
+  var v=function(k){var e=document.getElementById('hr_'+k);return e?e.value:'';};
+  var chk=function(k){var e=document.getElementById('hr_'+k);return e?e.checked:false;};
+  var name=v('name').trim(); if(!name){ toast('Name is required',true); return; }
+  var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'),
+    basic:v('basic'), allowance:v('allowance'), bankName:v('bankName'), bankAccount:v('bankAccount'), epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
+    epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident') };
+  var r=await call({api:'hr_emp_save',emp:emp});
+  if(r&&r.ok){ toast('Employee saved'); HR.editEmp=null; renderHR(); } else toast((r&&r.error)||'Save failed',true);
+}
+function hrLeave(){
+  var lv=HR.data.leaves||[];
+  var rows=lv.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
+    var act=st==='Pending'?('<button class="btn xs" onclick="hrDecideLeave('+x.id+',\'Approved\')">Approve</button> <button class="btn xs" onclick="hrDecideLeave('+x.id+',\'Rejected\')">Reject</button>'):'';
+    return '<tr><td>'+esc((x.employee&&x.employee.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
+  return '<div class="panel"><div class="panel-hd"><h3>Leave requests</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+function hrClaims(){
+  var cl=HR.data.claims||[];
+  var rows=cl.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
+    var act=st==='Pending'?('<button class="btn xs" onclick="hrDecideClaim('+x.id+',\'Approved\')">Approve</button> <button class="btn xs" onclick="hrDecideClaim('+x.id+',\'Rejected\')">Reject</button>'):'';
+    return '<tr><td>'+esc((x.employee&&x.employee.name)||'—')+'</td><td>'+esc(x.category)+'</td><td class="amt">'+M(x.amount)+'</td><td class="muted">'+esc(x.claim_date)+'</td><td class="muted" style="font-size:11px">'+esc(x.note||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No claims</td></tr>';
+  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Category</th><th class="amt">Amount</th><th>Date</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+async function hrDecideLeave(id,status){ var r=await call({api:'hr_leave_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.leaves||[]).find(function(l){return l.id===id;}); if(x)x.status=status; hrRender(); toast('Leave '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
+async function hrDecideClaim(id,status){ var r=await call({api:'hr_claim_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.claims||[]).find(function(c){return c.id===id;}); if(x)x.status=status; hrRender(); toast('Claim '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
+
 // ===== Sales Reconciliation → Xero Sales Import (Order Form + multi-gateway Sales file) =====
 var SR={ of:null, sf:null, out:[], rendered:false };
 var SR_CHAN2ACC={ 'WHATSAPP':'500-0600','FACEBOOK':'500-0600','INSTA':'500-0600','COMMUNITY':'500-0600','FB LIVE':'500-0800','WEBSTORE':'500-0200','SHOPEE':'500-0400','EXPO':'500-0900','ILADY O2O':'500-0100','YRDZ':'500-1000' };
