@@ -907,6 +907,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="qinv"        data-cat="operations" onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
     <div class="tab"        data-t="selfbill"    data-cat="operations" onclick="tab('selfbill')"    id="tab-selfbill">🧑 Personal Invoices</div>
     <div class="tab"        data-t="recon"       data-cat="operations" onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
+    <div class="tab"        data-t="gateway"     data-cat="operations" onclick="tab('gateway')"     id="tab-gateway">🔁 Gateway → Xero</div>
     <div class="tab"        data-t="close"       data-cat="operations" onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="calendar"    data-cat="operations" onclick="tab('calendar')"    id="tab-calendar">📅 Calendar</div>
     <div class="tab"        data-t="ap"          data-cat="operations" onclick="tab('ap')"          id="tab-ap">📧 AP Inbox</div>
@@ -925,6 +926,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="o2o"         class="hide"></div>
   <div id="qinv"        class="hide"></div>
   <div id="selfbill"    class="hide"></div>
+  <div id="gateway"     class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
@@ -1250,6 +1252,7 @@ async function showApp(){
     else if(t==='ocr') el.classList.toggle('hide', !canManage); // OCR: admin-only (costs API credits)
     else if(t==='ap') el.classList.toggle('hide', !canManage);  // AP Inbox: admin-only (Claude API + sends emails)
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
+    else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
@@ -1294,7 +1297,7 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
     const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
@@ -1317,6 +1320,7 @@ async function render(t){
     if(t==='o2o')        return renderO2O();
     if(t==='qinv')       return renderQinv();
     if(t==='selfbill')   return renderSelfbill();
+    if(t==='gateway')    return renderGateway();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
@@ -2858,10 +2862,263 @@ function renderQinv(){
   qiAddLine(); loaded.qinv=true;
 }
 /* ── Personal (Self-Billed) Invoices — pay individuals who bill the 5 companies ── */
-var SBI={payees:[],list:[],lines:[],editId:null,showPayees:false};
+var SBI={payees:[],list:[],lines:[],editId:null,showPayees:false,accounts:[]};
 var SBI_PTYPES=['commission','service','rental','royalty','other'];
 var SBI_WHT=[{v:'none',label:'None',rate:0},{v:'s107d_2',label:'s.107D 2% (resident agent/dealer/distributor)',rate:2},{v:'nr_10',label:'Non-resident 10%',rate:10},{v:'custom',label:'Custom rate…',rate:null}];
 function sbiShort(n){return cfoShortName(n);}
+// MyInvois classification codes most relevant to self-billed payments to individuals.
+var SBI_CLASS=[
+ {c:'037',d:'037 · Self-billed — payment to agents / dealers / distributors (commission)'},
+ {c:'036',d:'036 · Self-billed — others (service / freelance / rental / royalty)'},
+ {c:'035',d:'035 · Self-billed — importation of services (non-resident supplier)'},
+ {c:'034',d:'034 · Self-billed — importation of goods'},
+ {c:'045',d:'045 · Self-billed — non-monetary payment to agents / dealers / distributors'},
+ {c:'033',d:'033 · Self-billed — betting and gaming'},
+ {c:'027',d:'027 · Reimbursement'},
+ {c:'030',d:'030 · Repair and maintenance'},
+ {c:'031',d:'031 · Research and development'},
+ {c:'028',d:'028 · Rental of motor vehicle'},
+ {c:'022',d:'022 · Others'}
+];
+function sbiClassDefault(pt){ return pt==='commission'?'037':'036'; }
+function sbiSelStyle(){ return 'width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px'; }
+function sbiOptList(list, current, placeholder){
+  var o='<option value="">'+placeholder+'</option>';
+  o+=list.map(function(a){ return '<option value="'+esc(a.code)+'"'+(String(current||'')===String(a.code)?' selected':'')+'>'+esc(a.code+' · '+a.name)+'</option>'; }).join('');
+  return o;
+}
+function sbiFillAccountDropdowns(){
+  var exp=SBI.accounts.filter(function(a){return a.cls==='EXPENSE';});
+  var liab=SBI.accounts.filter(function(a){return a.cls==='LIABILITY';});
+  var gl=document.getElementById('sbi_gl'), wg=document.getElementById('sbi_whtgl');
+  if(gl){ var c1=gl.value; gl.innerHTML=sbiOptList(exp.length?exp:SBI.accounts, c1, exp.length?'— select expense account —':'— no accounts —'); gl.value=c1; }
+  if(wg){ var c2=wg.value; wg.innerHTML=sbiOptList(liab.length?liab:SBI.accounts, c2, '— none (only if withholding) —'); wg.value=c2; }
+}
+async function sbiLoadAccounts(tenant){
+  if(!tenant) return;
+  var gl=document.getElementById('sbi_gl'); if(gl&&!gl.value) gl.innerHTML='<option value="">Loading accounts…</option>';
+  try{ var r=await call({api:'sbi_accounts',tenant:tenant}); SBI.accounts=(r&&r.ok&&r.accounts)||[]; }catch(e){ SBI.accounts=[]; }
+  sbiFillAccountDropdowns();
+}
+function sbiPtypeChange(){
+  var pt=document.getElementById('sbi_ptype').value;
+  var cls=document.getElementById('sbi_class'); if(cls&&!cls.dataset.touched) cls.value=sbiClassDefault(pt);
+  var wht=document.getElementById('sbi_wht'); if(wht&&!wht.dataset.touched){ wht.value=(pt==='commission')?'s107d_2':'none'; sbiWhtChange(); }
+}
+// ===== Gateway → Xero bank-statement converter (Payex / Atome) =====
+var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, out:[], xlsxLoading:null, rendered:false };
+var GW_REFOPTS={
+  payex:[['TransactionId','TransactionId (unique per sale)'],['ReferenceNumber','ReferenceNumber'],['CollectionReferenceNumber','CollectionReferenceNumber'],['CollectionId','CollectionId']],
+  atome:[['Atome Order ID','Atome Order ID'],['Transaction ID','Transaction ID'],['E-commerce Platform Order ID','E-commerce Platform Order ID']]
+};
+function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
+function gwPick(row,name){ if(row[name]!=null&&row[name]!=='')return row[name]; var t=name.toLowerCase(); for(var k in row){ if(k.toLowerCase()===t) return row[k]; } return ''; }
+function gwParseDate(v){
+  if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
+  var s=String(v==null?'':v).trim(); if(!s) return null; s=s.split(/[ T]/)[0];
+  var m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(m){ var d=+m[1],mo=+m[2],y=+m[3]; if(y<100)y+=2000; return new Date(y,mo-1,d); }
+  var m2=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/); if(m2) return new Date(+m2[1],+m2[2]-1,+m2[3]);
+  var d2=new Date(s); return isNaN(d2)?null:d2;
+}
+function gwFmtDate(d,fmt){ if(!d)return ''; var dd=('0'+d.getDate()).slice(-2),mm=('0'+(d.getMonth()+1)).slice(-2),yy=d.getFullYear(); return fmt==='ymd'?(yy+'-'+mm+'-'+dd):(dd+'/'+mm+'/'+yy); }
+function gwLoadXlsx(cb){
+  if(window.XLSX) return cb();
+  if(GW.xlsxLoading){ GW.xlsxLoading.push(cb); return; }
+  GW.xlsxLoading=[cb];
+  var s=document.createElement('script'); s.src='xlsx.full.min.js';
+  s.onload=function(){ var q=GW.xlsxLoading; GW.xlsxLoading=null; q.forEach(function(f){try{f();}catch(_e){}}); };
+  s.onerror=function(){ GW.xlsxLoading=null; toast('Could not load the spreadsheet engine (xlsx.full.min.js). Check your connection and retry.',true); };
+  document.head.appendChild(s);
+}
+function renderGateway(){
+  var el=document.getElementById('gateway'); if(!el) return;
+  if(GW.rendered) return; GW.rendered=true; loaded.gateway=true;
+  el.innerHTML=
+    '<div style="margin-bottom:14px"><h2 style="margin:0;font-size:19px">🔁 Gateway → Xero</h2>'+
+    '<div class="muted" style="font-size:12px">Convert Payex / Atome Transaction &amp; Settlement exports into a Xero bank-statement CSV. Everything runs in your browser — no data leaves this page.</div></div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:14px">'+
+      '<button class="btn sm" id="gw-pt-payex" onclick="gwSetProv(\'payex\')">Payex</button>'+
+      '<button class="btn sm" id="gw-pt-atome" onclick="gwSetProv(\'atome\')">Atome</button>'+
+    '</div>'+
+    '<div class="panel">'+
+      '<div class="panel-hd"><h3 id="gw-drop-title">1 · Drop Payex files</h3><button class="btn sm" onclick="gwReset()">Clear</button></div>'+
+      '<div id="gw-drop" style="border:1.5px dashed var(--border);border-radius:12px;padding:22px;text-align:center;cursor:pointer;background:var(--panel-2)" onclick="document.getElementById(\'gw_fi\').click()">'+
+        'Drop the <b style="color:var(--coral-soft)">Transaction</b> and <b style="color:var(--coral-soft)">Settlement / Payout</b> files (.xlsx / .csv) here, or click to choose.<br>'+
+        '<span class="muted" style="font-size:12px">The tool auto-detects which file is which.</span>'+
+        '<input type="file" id="gw_fi" multiple accept=".xlsx,.xls,.csv" style="display:none">'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">'+
+        '<div class="fchip" id="gw-chip-a" style="display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">↑</div><div><div style="font-weight:600;font-size:13px" id="gw-chip-a-t">Transactions (money in)</div><div class="muted" style="font-size:11.5px;word-break:break-all" id="gw-chip-a-s">not loaded</div></div></div>'+
+        '<div class="fchip" id="gw-chip-b" style="display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">↓</div><div><div style="font-weight:600;font-size:13px" id="gw-chip-b-t">Settlements (payout + fees)</div><div class="muted" style="font-size:11.5px;word-break:break-all" id="gw-chip-b-s">not loaded</div></div></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="panel">'+
+      '<div class="panel-hd"><h3>2 · Options</h3></div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">'+
+        '<div><label class="muted" style="font-size:11px">Date format</label><select id="gw-datefmt" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)"><option value="dmy" selected>DD/MM/YYYY (Xero Malaysia default)</option><option value="ymd">YYYY-MM-DD</option></select></div>'+
+        '<div><label class="muted" style="font-size:11px">Money-in Reference</label><select id="gw-ref" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></select></div>'+
+        '<div><label class="muted" style="font-size:11px">Settlement / payout lines</label>'+
+          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0"><input type="checkbox" id="gw-payout" checked style="accent-color:var(--coral)"><span>Payout to bank (−net)</span></div>'+
+          '<div style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="gw-fee" checked style="accent-color:var(--coral)"><span>Merchant fees (MDR / Atome)</span></div>'+
+        '</div>'+
+      '</div>'+
+      '<button class="btn p" id="gw-convert" style="margin-top:14px" onclick="gwConvert()" disabled>Convert →</button>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Clearing-account model: each transaction = one money-in line (gross); each settlement/payout = one payout line (net, reconcile in Xero as a <b>Transfer</b> to your real bank) + one fee line (code to bank/merchant-fee expense). The account balance is the unsettled float — that is normal.</div>'+
+    '</div>'+
+    '<div class="panel hide" id="gw-result">'+
+      '<div class="panel-hd"><h3>3 · Result <span class="muted" id="gw-result-prov" style="font-size:12px"></span></h3>'+
+        '<div style="display:flex;gap:8px"><button class="btn sm" onclick="gwDownload(\'all\')">⬇ Xero CSV (combined)</button><button class="btn sm" onclick="gwDownload(\'in\')">money-in only</button><button class="btn sm" onclick="gwDownload(\'out\')">settlements only</button></div>'+
+      '</div>'+
+      '<div class="cards" id="gw-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
+      '<div id="gw-balbox"></div>'+
+      '<div class="tbl-wrap" style="max-height:420px;overflow:auto"><table class="bigtable"><thead><tr><th>Date</th><th>Type</th><th>Payee</th><th>Description</th><th>Reference</th><th class="amt" style="text-align:right">Amount</th></tr></thead><tbody id="gw-tbody"></tbody></table></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px" id="gw-prevnote"></div>'+
+    '</div>';
+  // drop listeners
+  var dz=document.getElementById('gw-drop');
+  ['dragover','dragenter'].forEach(function(e){dz.addEventListener(e,function(ev){ev.preventDefault();dz.style.borderColor='var(--coral)';});});
+  dz.addEventListener('dragleave',function(ev){ev.preventDefault();dz.style.borderColor='var(--border)';});
+  dz.addEventListener('drop',function(ev){ev.preventDefault();dz.style.borderColor='var(--border)';gwHandleFiles(ev.dataTransfer.files);});
+  document.getElementById('gw_fi').addEventListener('change',function(ev){gwHandleFiles(ev.target.files);ev.target.value='';});
+  gwSetProv('payex');
+}
+function gwSetProv(p){
+  GW.provider=p;
+  document.getElementById('gw-pt-payex').classList.toggle('p',p==='payex');
+  document.getElementById('gw-pt-atome').classList.toggle('p',p==='atome');
+  document.getElementById('gw-drop-title').textContent='1 · Drop '+(p==='payex'?'Payex':'Atome')+' files';
+  document.getElementById('gw-chip-b-t').textContent = p==='payex'?'Settlements (payout + MDR)':'Payout list (payout + fees)';
+  document.getElementById('gw-ref').innerHTML=GW_REFOPTS[p].map(function(o,i){return '<option value="'+esc(o[0])+'"'+(i===0?' selected':'')+'>'+esc(o[1])+'</option>';}).join('');
+  // reflect this provider's loaded files in the chips
+  var f=GW[p], a=p==='payex'?f.txn:f.txn, b=p==='payex'?f.set:f.payout;
+  gwSetChip('a',a); gwSetChip('b',b);
+  document.getElementById('gw-result').classList.add('hide');
+  gwRefreshBtn();
+}
+function gwRefreshBtn(){ var f=GW[GW.provider]; var has=GW.provider==='payex'?(f.txn||f.set):(f.txn||f.payout); document.getElementById('gw-convert').disabled=!has; }
+function gwReset(){ GW.payex={txn:null,set:null}; GW.atome={txn:null,payout:null}; GW.out=[]; gwSetChip('a',null); gwSetChip('b',null); document.getElementById('gw-result').classList.add('hide'); document.getElementById('gw_fi').value=''; gwRefreshBtn(); }
+function gwSetChip(slot,data){
+  var box=document.getElementById('gw-chip-'+slot), s=document.getElementById('gw-chip-'+slot+'-s'); if(!box) return;
+  if(!data){ box.style.borderColor='var(--border)'; s.textContent='not loaded'; return; }
+  box.style.borderColor='var(--green-soft)'; s.textContent=data.name+' · '+data.rows.length+' rows';
+}
+function gwDetect(keys){
+  if(keys.indexOf('payout id')>=0 && keys.indexOf('payout amount')>=0) return ['atome','payout'];
+  if(keys.indexOf('atome order id')>=0 || (keys.indexOf('amount receivable')>=0 && keys.indexOf('transaction amount')>=0)) return ['atome','txn'];
+  if(keys.indexOf('settlementdate')>=0 && keys.indexOf('mdr')>=0) return ['payex','set'];
+  if(keys.indexOf('customername')>=0 || (keys.indexOf('transactionid')>=0 && keys.indexOf('merchant')>=0)) return ['payex','txn'];
+  return null;
+}
+function gwHandleFiles(list){
+  gwLoadXlsx(function(){
+    [].forEach.call(list,function(file){
+      var rd=new FileReader();
+      rd.onload=function(){
+        try{
+          var wb=XLSX.read(rd.result,{type:'array',cellDates:true});
+          var ws=wb.Sheets[wb.SheetNames[0]];
+          var rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true});
+          if(!rows.length){ toast(file.name+': empty sheet',true); return; }
+          var keys=Object.keys(rows[0]).map(function(k){return k.toLowerCase().trim();});
+          var det=gwDetect(keys);
+          if(!det){ toast(file.name+': unrecognised columns (not a known Payex/Atome export)',true); return; }
+          GW[det[0]][det[1]]={name:file.name,rows:rows};
+          gwSetProv(det[0]);
+          toast(file.name+' loaded ('+rows.length+' rows)');
+        }catch(e){ toast(file.name+': read failed — '+(e.message||e),true); }
+      };
+      rd.readAsArrayBuffer(file);
+    });
+  });
+}
+function gwConvert(){
+  var fmt=document.getElementById('gw-datefmt').value, refField=document.getElementById('gw-ref').value;
+  var wantPayout=document.getElementById('gw-payout').checked, wantFee=document.getElementById('gw-fee').checked;
+  var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):gwConvertAtome(fmt,refField,wantPayout,wantFee);
+  rows.sort(function(a,b){return a.d-b.d;}); GW.out=rows; gwRenderResult();
+}
+function gwConvertPayex(fmt,refField,wantPayout,wantFee){
+  var rows=[], f=GW.payex;
+  if(f.txn) f.txn.rows.forEach(function(r){
+    var d=gwParseDate(gwPick(r,'Date')); if(!d) return;
+    var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
+    var payee=String(gwPick(r,'CustomerName')||gwPick(r,'FpxBuyerName')||gwPick(r,'CardHolderName')||'Customer').trim();
+    var method=String(gwPick(r,'TransactionType')||'').trim(), brand=String(gwPick(r,'CardBrand')||gwPick(r,'FpxBuyerBankName')||'').trim();
+    var desc=(method+(brand?(' · '+brand):'')).trim()||'Payex sale';
+    var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
+    if(net!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:payee,desc:desc,ref:ref,kind:net<0?'out':'in'});
+  });
+  if(f.set){
+    var byDate={};
+    f.set.rows.forEach(function(r){ var d=gwParseDate(gwPick(r,'SettlementDate')); if(!d) return; var k=gwFmtDate(d,'ymd');
+      if(!byDate[k]) byDate[k]={d:d,mdr:0,npx:0,noth:0};
+      byDate[k].mdr+=gwNum(gwPick(r,'MDR')); byDate[k].npx+=gwNum(gwPick(r,'NetPayex')); byDate[k].noth+=gwNum(gwPick(r,'NetOthers')); });
+    Object.keys(byDate).forEach(function(k){ var b=byDate[k], netPay=b.npx+b.noth;
+      if(wantPayout && netPay) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-netPay,payee:'Payex Settlement',desc:'Settlement payout to bank (Payex '+b.npx.toFixed(2)+' + Others '+b.noth.toFixed(2)+')',ref:'PAYEX-SETTLE-'+k,kind:'out'});
+      if(wantFee && b.mdr) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-b.mdr,payee:'Payex',desc:'MDR merchant fees',ref:'PAYEX-MDR-'+k,kind:'fee'}); });
+  }
+  return rows;
+}
+function gwConvertAtome(fmt,refField,wantPayout,wantFee){
+  var rows=[], f=GW.atome;
+  if(f.txn) f.txn.rows.forEach(function(r){
+    var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d) return;
+    var amt=gwNum(gwPick(r,'Transaction Amount'));
+    var typ=String(gwPick(r,'Transaction Type')||'MERCHANDISE').trim();
+    var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
+    var ecom=String(gwPick(r,'E-commerce Platform Order ID')||'').trim();
+    var desc='Atome '+typ+(ecom?(' · '+ecom):'');
+    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'Atome',desc:desc,ref:ref,kind:amt<0?'out':'in'});
+  });
+  if(f.payout) f.payout.rows.forEach(function(r){
+    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
+    var payoutAmt=gwNum(gwPick(r,'Payout Amount')), totalSales=gwNum(gwPick(r,'Total Sales'));
+    var pid=String(gwPick(r,'Payout ID')||'').trim();
+    var feeAmt=Math.round((payoutAmt-totalSales)*100)/100;
+    if(wantPayout && payoutAmt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:-payoutAmt,payee:'Atome Payout',desc:'Payout to bank',ref:pid||('ATOME-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'});
+    if(wantFee && feeAmt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:feeAmt,payee:'Atome',desc:'Atome fees & charges (MDR+SST'+(gwNum(gwPick(r,'All Rebates'))?'+rebates':'')+')',ref:(pid||('ATOME-'+gwFmtDate(d,'ymd')))+'-FEE',kind:'fee'});
+  });
+  return rows;
+}
+function gwRenderResult(){
+  var rows=GW.out, sIn=0,sOut=0,sFee=0,cIn=0,cOut=0;
+  rows.forEach(function(r){ if(r.kind==='in'){sIn+=r.amount;cIn++;} else if(r.kind==='fee'){sFee+=r.amount;} else {sOut+=r.amount;cOut++;} });
+  var net=sIn+sOut+sFee;
+  document.getElementById('gw-result-prov').textContent='· '+GW.provider.toUpperCase();
+  var cards=[['Money-in (sales)',cIn+' lines',gwMoney(sIn),'var(--green-soft)'],['Payout to bank',cOut+' lines',gwMoney(sOut),'var(--coral-soft)'],['Merchant fees','',gwMoney(sFee),'var(--amber)'],['Net movement',rows.length+' rows',gwMoney(net),net>=0?'var(--green-soft)':'var(--coral-soft)']];
+  document.getElementById('gw-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+(c[1]?(' · '+c[1]):'')+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;color:'+c[3]+'">'+c[2]+'</div></div>';}).join('');
+  var f=GW[GW.provider], hasTxn=f.txn, hasOut=GW.provider==='payex'?f.set:f.payout, warn='';
+  if(!hasTxn) warn='Only the settlement/payout file is loaded — money-in lines need the Transaction file.';
+  else if(!hasOut) warn='Only the Transaction file is loaded — payout + fee lines need the settlement/payout file.';
+  document.getElementById('gw-balbox').innerHTML=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
+  var show=rows.slice(0,200);
+  document.getElementById('gw-tbody').innerHTML=show.map(function(r){ var col=r.kind==='in'?'var(--green-soft)':(r.kind==='fee'?'var(--amber)':'var(--coral-soft)');
+    return '<tr><td>'+r.date+'</td><td><span class="pill" style="font-size:10px;text-transform:uppercase;color:'+col+'">'+r.kind+'</span></td><td>'+esc(r.payee)+'</td><td class="muted">'+esc(r.desc)+'</td><td class="muted">'+esc(r.ref)+'</td><td class="amt" style="text-align:right;font-weight:600;color:'+col+'">'+r.amount.toFixed(2)+'</td></tr>'; }).join('');
+  document.getElementById('gw-prevnote').textContent='Preview shows first '+show.length+' of '+rows.length+' rows; download includes all.';
+  document.getElementById('gw-result').classList.remove('hide');
+}
+function gwCSV(rows){
+  var q=function(x){ x=String(x==null?'':x); return /[",\n\r]/.test(x)?('"'+x.replace(/"/g,'""')+'"'):x; };
+  var out=['Date,Amount,Payee,Description,Reference'];
+  rows.forEach(function(r){ out.push([r.date,r.amount.toFixed(2),q(r.payee),q(r.desc),q(r.ref)].join(',')); });
+  return out.join('\r\n');
+}
+function gwDownload(which){
+  var rows=GW.out;
+  if(which==='in') rows=rows.filter(function(r){return r.kind==='in';});
+  if(which==='out') rows=rows.filter(function(r){return r.kind!=='in';});
+  if(!rows.length){ toast('Nothing to download.',true); return; }
+  var ds=rows.map(function(r){return r.d;}).sort(function(a,b){return a-b;});
+  var tag=gwFmtDate(ds[0],'ymd')+'_'+gwFmtDate(ds[ds.length-1],'ymd');
+  var prov=GW.provider.charAt(0).toUpperCase()+GW.provider.slice(1);
+  var name='Xero_'+prov+'_'+(which==='in'?'MoneyIn':which==='out'?'Settlements':'Clearing')+'_'+tag+'.csv';
+  var blob=new Blob(['﻿'+gwCSV(rows)],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
+}
+
 async function renderSelfbill(){
   var el=document.getElementById('selfbill'); if(!el) return;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading…</div></div>';
@@ -2882,7 +3139,7 @@ function sbiRender(){
     var co=(COMPANIES.find(function(c){return c.tenant_id===x.tenant_id;})||{}).tenant_name||x.tenant_id;
     var stCol={draft:'var(--muted)',approved:'var(--sky-soft)',paid:'var(--green-soft)','void':'var(--red-soft)'}[x.status]||'var(--muted)';
     return '<tr><td><b>'+esc(x.invoice_no||'—')+'</b></td><td class="muted" style="font-size:11.5px">'+esc(sbiShort(co))+'</td><td>'+esc(x.payee_name||'')+'</td><td class="muted" style="font-size:11.5px">'+esc(x.invoice_date||'')+'</td><td class="amt">'+M(x.gross_amount)+'</td><td class="amt" style="color:var(--amber)">'+M(x.wht_amount)+'</td><td class="amt" style="font-weight:700">'+M(x.net_payable)+'</td><td><span class="pill" style="color:'+stCol+';font-size:10px;text-transform:uppercase">'+esc(x.status)+'</span></td>'+
-      '<td style="white-space:nowrap"><button class="btn xs" onclick="sbiView('+x.id+')">View</button>'+(x.status==='draft'?' <button class="btn xs" onclick="sbiEdit('+x.id+')">Edit</button> <button class="btn xs" onclick="sbiApprove('+x.id+')">Approve</button>':'')+(x.status!=='void'&&!x.xero_bill_id?' <button class="btn xs" onclick="sbiPostXero('+x.id+')">&rarr; Xero</button>':'')+(x.xero_bill_id?' <span class="pill pill-green" style="font-size:9px">in Xero</span>':'')+(x.status==='draft'?' <button class="btn xs" onclick="sbiVoid('+x.id+')">Void</button>':'')+'</td></tr>';
+      '<td style="white-space:nowrap"><button class="btn xs" onclick="sbiView('+x.id+')">View</button>'+(x.status==='draft'?' <button class="btn xs" onclick="sbiEdit('+x.id+')">Edit</button> <button class="btn xs" onclick="sbiApprove('+x.id+')">Approve</button>':'')+(x.status!=='void'&&!x.xero_bill_id?' <button class="btn xs" onclick="sbiPostXero('+x.id+',false)">&rarr; Xero</button>':'')+(x.xero_bill_id?' <span class="pill pill-green" style="font-size:9px">in Xero</span> <button class="btn xs" title="Re-send the Reference and attach the invoice PDF to the existing Xero bill" onclick="sbiPostXero('+x.id+',true)">&#8635; Sync PDF</button>':'')+(x.status==='draft'?' <button class="btn xs" onclick="sbiVoid('+x.id+')">Void</button>':'')+'</td></tr>';
   }).join('')||'<tr><td colspan="9" class="muted" style="text-align:center;padding:20px">No self-billed invoices yet. Click &ldquo;New self-billed invoice&rdquo;.</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Invoices</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Invoice No</th><th>Company</th><th>Payee</th><th>Date</th><th class="amt">Gross</th><th class="amt">WHT</th><th class="amt">Net payable</th><th>Status</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   el.innerHTML=head+payees+'<div id="sbi_form"></div>'+table;
@@ -2924,6 +3181,10 @@ function sbiFormRender(inv){
   var payOpts='<option value="">— select payee —</option>'+SBI.payees.map(function(p){return '<option value="'+p.id+'"'+(inv.individual_id===p.id?' selected':'')+'>'+esc(p.name)+(p.tin?(' · TIN '+esc(p.tin)):'')+'</option>';}).join('');
   var ptOpts=SBI_PTYPES.map(function(t){return '<option value="'+t+'"'+((inv.payment_type||'service')===t?' selected':'')+'>'+t+'</option>';}).join('');
   var whtOpts=SBI_WHT.map(function(w){return '<option value="'+w.v+'"'+((inv.wht_type||'none')===w.v?' selected':'')+'>'+w.label+'</option>';}).join('');
+  var curCls=inv.classification_code||sbiClassDefault(inv.payment_type||'service');
+  var clsOpts=SBI_CLASS.map(function(x){return '<option value="'+x.c+'"'+(curCls===x.c?' selected':'')+'>'+esc(x.d)+'</option>';}).join('');
+  var glInit=inv.gl_account?('<option value="'+esc(inv.gl_account)+'" selected>'+esc(inv.gl_account)+'</option>'):'<option value="">— select company first —</option>';
+  var whtGlInit=inv.wht_gl_account?('<option value="'+esc(inv.wht_gl_account)+'" selected>'+esc(inv.wht_gl_account)+'</option>'):'<option value="">— none —</option>';
   var inp=function(id,ph,val,extra){return '<input id="'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">';};
   f.innerHTML='<div class="panel" style="margin-bottom:16px;border-color:var(--coral-soft)"><div class="panel-hd"><h3>'+(SBI.editId?'Edit':'New')+' self-billed invoice</h3><button class="btn sm" onclick="document.getElementById(\'sbi_form\').innerHTML=\'\'">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
@@ -2937,14 +3198,16 @@ function sbiFormRender(inv){
     '<div style="display:grid;grid-template-columns:130px 130px 1fr 220px;gap:10px;margin-bottom:10px">'+
       '<div><label class="muted" style="font-size:11px">Invoice date</label>'+inp('sbi_date','',inv.invoice_date||todayLocalISO(),'type="date"')+'</div>'+
       '<div><label class="muted" style="font-size:11px">Due date</label>'+inp('sbi_due','',inv.due_date,'type="date"')+'</div>'+
-      '<div><label class="muted" style="font-size:11px">Payment type</label><select id="sbi_ptype" style="width:100%;padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+ptOpts+'</select></div>'+
-      '<div><label class="muted" style="font-size:11px">MyInvois classification code</label>'+inp('sbi_class','e.g. 022',inv.classification_code)+'</div>'+
+      '<div><label class="muted" style="font-size:11px">Payment type</label><select id="sbi_ptype" onchange="sbiPtypeChange()" style="width:100%;padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+ptOpts+'</select></div>'+
+      '<div><label class="muted" style="font-size:11px">MyInvois classification</label><select id="sbi_class" onchange="this.dataset.touched=1" style="'+sbiSelStyle()+'">'+clsOpts+'</select></div>'+
     '</div>'+
     '<div class="muted" style="font-size:11px;margin-bottom:4px">Line items</div><div id="sbi_lines"></div><button class="btn xs" onclick="sbiAddLine()" style="margin:6px 0">+ line</button>'+
     '<div style="display:grid;grid-template-columns:1fr 240px;gap:16px;margin-top:10px">'+
-      '<div><label class="muted" style="font-size:11px">GL account (expense)</label>'+inp('sbi_gl','e.g. 903-0500',inv.gl_account)+'<div style="margin-top:8px"><label class="muted" style="font-size:11px">WHT payable GL (if withholding)</label>'+inp('sbi_whtgl','e.g. 205-0000',inv.wht_gl_account)+'</div><div style="margin-top:8px"><label class="muted" style="font-size:11px">Supporting docs (contract / proof / approval)</label><input type="file" id="sbi_files" multiple style="font-size:11.5px;color:var(--muted)"></div><div style="margin-top:8px"><label class="muted" style="font-size:11px">Notes</label>'+inp('sbi_notes','',inv.notes)+'</div></div>'+
+      '<div><label class="muted" style="font-size:11px">GL account (expense) — the company\'s cost account</label><select id="sbi_gl" style="'+sbiSelStyle()+'">'+glInit+'</select><div class="muted" style="font-size:10.5px;margin-top:3px">Loaded live from this company\'s Xero chart of accounts.</div>'+
+        '<div style="margin-top:8px"><label class="muted" style="font-size:11px">WHT payable GL (only if withholding)</label><select id="sbi_whtgl" style="'+sbiSelStyle()+'">'+whtGlInit+'</select></div>'+
+        '<div style="margin-top:8px"><label class="muted" style="font-size:11px">Supporting docs (contract / proof / approval)</label><input type="file" id="sbi_files" multiple style="font-size:11.5px;color:var(--muted)"></div><div style="margin-top:8px"><label class="muted" style="font-size:11px">Notes</label>'+inp('sbi_notes','',inv.notes)+'</div></div>'+
       '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:12px">'+
-        '<div style="margin-bottom:8px"><label class="muted" style="font-size:11px">Withholding tax</label><select id="sbi_wht" onchange="sbiWhtChange()" style="width:100%;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11.5px">'+whtOpts+'</select></div>'+
+        '<div style="margin-bottom:8px"><label class="muted" style="font-size:11px">Withholding tax</label><select id="sbi_wht" onchange="this.dataset.touched=1;sbiWhtChange()" style="width:100%;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11.5px">'+whtOpts+'</select></div>'+
         '<div id="sbi_wht_rate_box" style="margin-bottom:8px;display:none"><label class="muted" style="font-size:11px">WHT rate %</label>'+inp('sbi_wht_rate','',inv.wht_rate,'type="number" step="0.01"')+'</div>'+
         '<div style="border-top:1px solid var(--border);padding-top:8px;font-size:13px;line-height:1.9"><div style="display:flex;justify-content:space-between"><span class="muted">Gross</span><b id="sbi_t_gross">RM 0.00</b></div><div style="display:flex;justify-content:space-between"><span class="muted">WHT <span id="sbi_t_whtr"></span></span><b id="sbi_t_wht" style="color:var(--amber)">RM 0.00</b></div><div style="display:flex;justify-content:space-between;font-size:15px;margin-top:4px"><span>Net payable</span><b id="sbi_t_net" style="color:var(--green-soft)">RM 0.00</b></div></div>'+
         '<button class="btn p sm" style="width:100%;margin-top:10px" onclick="sbiSave()">'+(SBI.editId?'Save changes':'Create invoice')+'</button>'+
@@ -2953,6 +3216,7 @@ function sbiFormRender(inv){
     '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">⚠️ Whether WHT applies (e.g. s.107D) and the MyInvois classification should be confirmed with your licensed tax agent. e-Invoice submission to IRBM is handled via Xero once posted.</div>'+
   '</div>';
   sbiLinesRender(); sbiWhtChange(); if(inv.wht_rate&&inv.wht_type==='custom'){var e=document.getElementById('sbi_wht_rate');if(e)e.value=inv.wht_rate;}
+  if(inv.tenant_id) sbiLoadAccounts(inv.tenant_id);
 }
 async function sbiPickCompany(){
   var t=document.getElementById('sbi_co').value; if(!t)return;
@@ -2960,6 +3224,7 @@ async function sbiPickCompany(){
   var set=function(id,v){var e=document.getElementById(id);if(e&&!e.value)e.value=v||'';};
   document.getElementById('sbi_bname').value=bu.name||''; document.getElementById('sbi_bssm').value=bu.ssm||''; document.getElementById('sbi_btin').value=bu.tin||''; document.getElementById('sbi_bsst').value=bu.sst||''; document.getElementById('sbi_baddr').value=bu.address||'';
   if(!r.has_info) toast('Tip: fill this company in Company Info once, so the buyer block auto-fills next time.');
+  sbiLoadAccounts(t);
 }
 function sbiPickPayee(){
   var id=parseInt(document.getElementById('sbi_payee').value,10); if(!id)return;
@@ -3013,7 +3278,16 @@ async function sbiSave(){
 }
 async function sbiApprove(id){ if(!confirm('Approve this invoice for payment?'))return; var r=await call({api:'sbi_approve',id:id}); if(r&&r.ok){toast('Approved');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
 async function sbiVoid(id){ if(!confirm('Void this draft?'))return; var r=await call({api:'sbi_void',id:id}); if(r&&r.ok){toast('Voided');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
-async function sbiPostXero(id){ if(!confirm('Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.'))return; var r=await call({api:'sbi_post_xero',id:id}); if(r&&r.ok){toast('Posted to Xero (SUBMITTED)');renderSelfbill();} else toast((r&&r.error)||'Xero post failed',true); }
+async function sbiPostXero(id,posted){
+  var msg=posted?'Set the Reference and attach the invoice PDF to the existing Xero bill?':'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
+  if(!confirm(msg))return;
+  var r=await call({api:'sbi_post_xero',id:id});
+  if(r&&r.ok){
+    var bits=[]; if(r.reference)bits.push('Ref '+r.reference); if(r.attached_pdf)bits.push('PDF attached'); if(r.attached_docs)bits.push(r.attached_docs+' doc'+(r.attached_docs>1?'s':''));
+    toast((posted?'Synced to Xero':'Posted to Xero (SUBMITTED)')+(bits.length?' · '+bits.join(' · '):''));
+    renderSelfbill();
+  } else toast((r&&r.error)||'Xero post failed',true);
+}
 async function sbiView(id){
   var r=await call({api:'sbi_get',id:id}); if(!r||!r.invoice){toast('Not found',true);return;}
   var w=window.open('','_blank'); if(!w){toast('Allow pop-ups to view/print',true);return;}
