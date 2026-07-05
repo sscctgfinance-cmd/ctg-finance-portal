@@ -3064,9 +3064,9 @@ function gwConvertAtome(fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d) return;
     var amt=gwNum(gwPick(r,'Transaction Amount'));
-    var txid=String(gwPick(r,'Transaction ID')||'').trim();
+    var oid=String(gwPick(r,'Atome Order ID')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
-    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:txid,ref:ref,kind:amt<0?'out':'in'});
+    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:oid,ref:ref,kind:amt<0?'out':'in'});
   });
   if(f.payout) f.payout.rows.forEach(function(r){
     var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
