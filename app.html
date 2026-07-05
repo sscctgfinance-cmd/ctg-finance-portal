@@ -908,6 +908,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="selfbill"    data-cat="operations" onclick="tab('selfbill')"    id="tab-selfbill">🧑 Personal Invoices</div>
     <div class="tab"        data-t="recon"       data-cat="operations" onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="gateway"     data-cat="operations" onclick="tab('gateway')"     id="tab-gateway">🔁 Gateway → Xero</div>
+    <div class="tab"        data-t="bankfeed"    data-cat="operations" onclick="tab('bankfeed')"    id="tab-bankfeed">🔗 Bank Feed</div>
     <div class="tab"        data-t="close"       data-cat="operations" onclick="tab('close')"       id="tab-close">📋 Close</div>
     <div class="tab"        data-t="calendar"    data-cat="operations" onclick="tab('calendar')"    id="tab-calendar">📅 Calendar</div>
     <div class="tab"        data-t="ap"          data-cat="operations" onclick="tab('ap')"          id="tab-ap">📧 AP Inbox</div>
@@ -927,6 +928,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="qinv"        class="hide"></div>
   <div id="selfbill"    class="hide"></div>
   <div id="gateway"     class="hide"></div>
+  <div id="bankfeed"    class="hide"></div>
   <div id="recv"        class="hide"></div>
   <div id="today"       class="hide"></div>
   <div id="smart"       class="hide"></div>
@@ -1253,6 +1255,7 @@ async function showApp(){
     else if(t==='ap') el.classList.toggle('hide', !canManage);  // AP Inbox: admin-only (Claude API + sends emails)
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
     else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
+    else if(t==='bankfeed') el.classList.toggle('hide', !canManage); // Bank Feed launcher (Fusioneta): admin-only
     else el.classList.toggle('hide', feats.indexOf(t)<0);
   });
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
@@ -1297,7 +1300,7 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
     const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
@@ -1321,6 +1324,7 @@ async function render(t){
     if(t==='qinv')       return renderQinv();
     if(t==='selfbill')   return renderSelfbill();
     if(t==='gateway')    return renderGateway();
+    if(t==='bankfeed')   return renderBankFeed();
     if(t==='recv')       return renderRecv();
     if(t==='today')      return renderToday();
     if(t==='smart')      return renderSmart();
@@ -2905,6 +2909,19 @@ function sbiPtypeChange(){
   var cls=document.getElementById('sbi_class'); if(cls&&!cls.dataset.touched) cls.value=sbiClassDefault(pt);
   var wht=document.getElementById('sbi_wht'); if(wht&&!wht.dataset.touched){ wht.value=(pt==='commission')?'s107d_2':'none'; sbiWhtChange(); }
 }
+// ===== Bank Feed launcher (opens the Fusioneta bank-feed in a new tab) =====
+function renderBankFeed(){
+  var el=document.getElementById('bankfeed'); if(!el) return; loaded.bankfeed=true;
+  var url='https://fusioneta.com.my/app/bank-feed/program.php';
+  el.innerHTML='<div class="panel" style="max-width:620px;margin:24px auto 0;text-align:center;padding:32px 26px">'+
+    '<div style="font-size:42px;line-height:1;margin-bottom:12px">🔗</div>'+
+    '<h2 style="margin:0 0 6px;font-size:20px">Bank Feed</h2>'+
+    '<div class="muted" style="font-size:13px;line-height:1.7;margin-bottom:22px">Opens the Fusioneta bank-feed program in a new secure tab. Sign in there with your own credentials — this is a launcher, no data is stored in the portal.</div>'+
+    '<a class="btn p" href="'+url+'" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:inline-block;padding:12px 28px;font-size:14px">Open Bank Feed &#8599;</a>'+
+    '<div class="muted" style="font-size:11px;margin-top:18px;word-break:break-all">'+url+'</div>'+
+  '</div>';
+}
+
 // ===== Gateway → Xero bank-statement converter (Payex / Atome) =====
 var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, out:[], xlsxLoading:null, rendered:false };
 var GW_REFOPTS={
