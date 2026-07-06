@@ -3087,10 +3087,11 @@ function renderBankFeed(){
 }
 
 // ===== Gateway → Xero bank-statement converter (Payex / Atome) =====
-var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, out:[], xlsxLoading:null, rendered:false };
+var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, hitpay:{txn:null,payout:null}, out:[], xlsxLoading:null, rendered:false };
 var GW_REFOPTS={
   payex:[['TransactionId','TransactionId (unique per sale)'],['ReferenceNumber','ReferenceNumber'],['CollectionReferenceNumber','CollectionReferenceNumber'],['CollectionId','CollectionId']],
-  atome:[['Atome Order ID','Atome Order ID'],['Transaction ID','Transaction ID'],['E-commerce Platform Order ID','E-commerce Platform Order ID']]
+  atome:[['Atome Order ID','Atome Order ID'],['Transaction ID','Transaction ID'],['E-commerce Platform Order ID','E-commerce Platform Order ID']],
+  hitpay:[['ID','Payment ID (unique per sale)'],['Order ID','Order ID'],['Additional Reference','Additional Reference']]
 };
 function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
@@ -3118,10 +3119,11 @@ function renderGateway(){
   if(GW.rendered) return; GW.rendered=true; loaded.gateway=true;
   el.innerHTML=
     '<div style="margin-bottom:14px"><h2 style="margin:0;font-size:19px">🔁 Gateway → Xero</h2>'+
-    '<div class="muted" style="font-size:12px">Convert Payex / Atome Transaction &amp; Settlement exports into a Xero bank-statement CSV. Everything runs in your browser — no data leaves this page.</div></div>'+
+    '<div class="muted" style="font-size:12px">Convert Payex / Atome / HitPay Transaction &amp; Settlement exports into a Xero bank-statement CSV. Everything runs in your browser — no data leaves this page.</div></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:14px">'+
       '<button class="btn sm" id="gw-pt-payex" onclick="gwSetProv(\'payex\')">Payex</button>'+
       '<button class="btn sm" id="gw-pt-atome" onclick="gwSetProv(\'atome\')">Atome</button>'+
+      '<button class="btn sm" id="gw-pt-hitpay" onclick="gwSetProv(\'hitpay\')">HitPay</button>'+
     '</div>'+
     '<div class="panel">'+
       '<div class="panel-hd"><h3 id="gw-drop-title">1 · Drop Payex files</h3><button class="btn sm" onclick="gwReset()">Clear</button></div>'+
@@ -3165,27 +3167,31 @@ function renderGateway(){
   document.getElementById('gw_fi').addEventListener('change',function(ev){gwHandleFiles(ev.target.files);ev.target.value='';});
   gwSetProv('payex');
 }
+function gwProvLabel(p){ return p==='payex'?'Payex':p==='atome'?'Atome':'HitPay'; }
+function gwOutFile(p){ return GW[p].payout!==undefined?GW[p].payout:GW[p].set; }  // payout/settlement file for a provider
 function gwSetProv(p){
   GW.provider=p;
-  document.getElementById('gw-pt-payex').classList.toggle('p',p==='payex');
-  document.getElementById('gw-pt-atome').classList.toggle('p',p==='atome');
-  document.getElementById('gw-drop-title').textContent='1 · Drop '+(p==='payex'?'Payex':'Atome')+' files';
-  document.getElementById('gw-chip-b-t').textContent = p==='payex'?'Settlements (payout + MDR)':'Payout list (payout + fees)';
+  ['payex','atome','hitpay'].forEach(function(x){ var b=document.getElementById('gw-pt-'+x); if(b) b.classList.toggle('p',p===x); });
+  document.getElementById('gw-drop-title').textContent='1 · Drop '+gwProvLabel(p)+' files';
+  document.getElementById('gw-chip-b-t').textContent = p==='payex'?'Settlements (payout + MDR)':p==='hitpay'?'Payout list (net payout)':'Payout list (payout + fees)';
   document.getElementById('gw-ref').innerHTML=GW_REFOPTS[p].map(function(o,i){return '<option value="'+esc(o[0])+'"'+(i===0?' selected':'')+'>'+esc(o[1])+'</option>';}).join('');
   // reflect this provider's loaded files in the chips
-  var f=GW[p], a=p==='payex'?f.txn:f.txn, b=p==='payex'?f.set:f.payout;
-  gwSetChip('a',a); gwSetChip('b',b);
+  var f=GW[p], b=(p==='payex')?f.set:f.payout;
+  gwSetChip('a',f.txn); gwSetChip('b',b);
   document.getElementById('gw-result').classList.add('hide');
   gwRefreshBtn();
 }
-function gwRefreshBtn(){ var f=GW[GW.provider]; var has=GW.provider==='payex'?(f.txn||f.set):(f.txn||f.payout); document.getElementById('gw-convert').disabled=!has; }
-function gwReset(){ GW.payex={txn:null,set:null}; GW.atome={txn:null,payout:null}; GW.out=[]; gwSetChip('a',null); gwSetChip('b',null); document.getElementById('gw-result').classList.add('hide'); document.getElementById('gw_fi').value=''; gwRefreshBtn(); }
+function gwRefreshBtn(){ var f=GW[GW.provider]; var out=(GW.provider==='payex')?f.set:f.payout; document.getElementById('gw-convert').disabled=!(f.txn||out); }
+function gwReset(){ GW.payex={txn:null,set:null}; GW.atome={txn:null,payout:null}; GW.hitpay={txn:null,payout:null}; GW.out=[]; gwSetChip('a',null); gwSetChip('b',null); document.getElementById('gw-result').classList.add('hide'); document.getElementById('gw_fi').value=''; gwRefreshBtn(); }
 function gwSetChip(slot,data){
   var box=document.getElementById('gw-chip-'+slot), s=document.getElementById('gw-chip-'+slot+'-s'); if(!box) return;
   if(!data){ box.style.borderColor='var(--border)'; s.textContent='not loaded'; return; }
   box.style.borderColor='var(--green-soft)'; s.textContent=data.name+' · '+data.rows.length+' rows';
 }
 function gwDetect(keys){
+  // HitPay: payout file has "Payout ID" + "Net Payout Amount"; txn file has "Net/Converted Amount in MYR"
+  if(keys.indexOf('payout id')>=0 && keys.indexOf('net payout amount')>=0) return ['hitpay','payout'];
+  if(keys.indexOf('net amount in myr')>=0 || keys.indexOf('converted amount in myr')>=0 || keys.indexOf('all inclusive fee amount in myr')>=0) return ['hitpay','txn'];
   if(keys.indexOf('payout id')>=0 && keys.indexOf('payout amount')>=0) return ['atome','payout'];
   if(keys.indexOf('atome order id')>=0 || (keys.indexOf('amount receivable')>=0 && keys.indexOf('transaction amount')>=0)) return ['atome','txn'];
   if(keys.indexOf('settlementdate')>=0 && keys.indexOf('mdr')>=0) return ['payex','set'];
@@ -3204,7 +3210,7 @@ function gwHandleFiles(list){
           if(!rows.length){ toast(file.name+': empty sheet',true); return; }
           var keys=Object.keys(rows[0]).map(function(k){return k.toLowerCase().trim();});
           var det=gwDetect(keys);
-          if(!det){ toast(file.name+': unrecognised columns (not a known Payex/Atome export)',true); return; }
+          if(!det){ toast(file.name+': unrecognised columns (not a known Payex/Atome/HitPay export)',true); return; }
           GW[det[0]][det[1]]={name:file.name,rows:rows};
           gwSetProv(det[0]);
           toast(file.name+' loaded ('+rows.length+' rows)');
@@ -3217,8 +3223,36 @@ function gwHandleFiles(list){
 function gwConvert(){
   var fmt=document.getElementById('gw-datefmt').value, refField=document.getElementById('gw-ref').value;
   var wantPayout=document.getElementById('gw-payout').checked, wantFee=document.getElementById('gw-fee').checked;
-  var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):gwConvertAtome(fmt,refField,wantPayout,wantFee);
+  var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):GW.provider==='atome'?gwConvertAtome(fmt,refField,wantPayout,wantFee):gwConvertHitpay(fmt,refField,wantPayout,wantFee);
   rows.sort(function(a,b){return a.d-b.d;}); GW.out=rows; gwRenderResult();
+}
+// HitPay: charges in SGD, settled in MYR. Money-in = Converted Amount in MYR (gross);
+// fees are per-transaction (All Inclusive Fee, incl. Stripe) — aggregated to one line per day;
+// payouts = Net Payout Amount from the payout file.
+function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
+  var rows=[], f=GW.hitpay;
+  if(f.txn){
+    var feeByDate={};
+    f.txn.rows.forEach(function(r){
+      var d=gwParseDate(gwPick(r,'Completed Date')); if(!d) return;
+      var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
+      var fee=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
+      var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
+      var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
+      var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
+      if(gross!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'});
+      if(fee){ var k=gwFmtDate(d,'ymd'); (feeByDate[k]=feeByDate[k]||{d:d,fee:0,n:0}); feeByDate[k].fee+=fee; feeByDate[k].n++; }
+    });
+    if(wantFee) Object.keys(feeByDate).forEach(function(k){ var b=feeByDate[k]; var fee=Math.round(b.fee*100)/100;
+      if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay processing fees ('+b.n+' txn, incl. Stripe)',ref:'HITPAY-FEE-'+k,kind:'fee'}); });
+  }
+  if(f.payout && wantPayout) f.payout.rows.forEach(function(r){
+    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
+    var amt=gwNum(gwPick(r,'Net Payout Amount'));
+    var pid=String(gwPick(r,'Payout ID')||'').trim();
+    if(amt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:-amt,payee:'HitPay Payout',desc:'Payout to bank',ref:pid||('HITPAY-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'});
+  });
+  return rows;
 }
 function gwConvertPayex(fmt,refField,wantPayout,wantFee){
   var rows=[], f=GW.payex;
@@ -3267,8 +3301,8 @@ function gwRenderResult(){
   var cards=[['Money-in (sales)',cIn+' lines',gwMoney(sIn),'var(--green-soft)'],['Payout to bank',cOut+' lines',gwMoney(sOut),'var(--coral-soft)'],['Merchant fees','',gwMoney(sFee),'var(--amber)'],['Net movement',rows.length+' rows',gwMoney(net),net>=0?'var(--green-soft)':'var(--coral-soft)']];
   document.getElementById('gw-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+(c[1]?(' · '+c[1]):'')+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;color:'+c[3]+'">'+c[2]+'</div></div>';}).join('');
   var f=GW[GW.provider], hasTxn=f.txn, hasOut=GW.provider==='payex'?f.set:f.payout, warn='';
-  if(!hasTxn) warn='Only the settlement/payout file is loaded — money-in lines need the Transaction file.';
-  else if(!hasOut) warn='Only the Transaction file is loaded — payout + fee lines need the settlement/payout file.';
+  if(!hasTxn) warn='Only the settlement/payout file is loaded — money-in'+(GW.provider==='hitpay'?' + fee':'')+' lines need the Transaction file.';
+  else if(!hasOut) warn='Only the Transaction file is loaded — '+(GW.provider==='hitpay'?'payout lines':'payout + fee lines')+' need the '+(GW.provider==='payex'?'settlement':'payout')+' file.';
   document.getElementById('gw-balbox').innerHTML=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
   var show=rows.slice(0,200);
   document.getElementById('gw-tbody').innerHTML=show.map(function(r){ var col=r.kind==='in'?'var(--green-soft)':(r.kind==='fee'?'var(--amber)':'var(--coral-soft)');
