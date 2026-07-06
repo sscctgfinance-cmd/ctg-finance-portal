@@ -1280,10 +1280,14 @@ function hrPayroll(){
       '<button class="btn xs" onclick="hrExpBank(\'uob\')">🏦 UOB BIBPlus file</button>'+
       '<button class="btn xs" onclick="hrExpGiro()">Generic IBG/giro CSV</button>')+
     grp('🏛️ Statutory',
-      '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF (KWSP)</button>'+
+      '<button class="btn xs" onclick="hrExpKwsp()">🏛️ KWSP i-Akaun (EPF)</button>'+
+      '<button class="btn xs" onclick="hrExpAssist()">🏛️ PERKESO ASSIST (SOCSO+EIS)</button>'+
+      '<button class="btn xs" onclick="hrExpCp39()">🏛️ LHDN CP39 (PCB)</button>')+
+    grp('&nbsp;&nbsp;· raw CSV',
+      '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF</button>'+
       '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO</button>'+
       '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS</button>'+
-      '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB (LHDN)</button>')+
+      '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB</button>')+
     grp('📤 Send / post',
       '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
       (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>'))+
@@ -1454,6 +1458,52 @@ function hrExpStatutory(kind){
   else if(kind==='eis'){ name='EIS_SIP_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.2% (RM)','Employer 0.2% (RM)','Total (RM)']; var c1=0,c2=0,c3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.eisEe+p.eisEr; c1+=p.eisEe;c2+=p.eisEr;c3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.eisEe),f2(p.eisEr),f2(t)]); }); totals=['','','','TOTAL','',f2(c1),f2(c2),f2(c3)]; }
   else { name='PCB_CP39_'+tag+'.csv'; head=['No','IC (New)','TIN (Income Tax No)','Name','Country','Remuneration (RM)','PCB/MTD (RM)','CP38 (RM)']; var d1=0; rows.forEach(function(x,i){ var e=x.e,p=x.p; d1+=p.pcb; body.push([i+1,e.ic||'',e.taxNo||'',e.name,'MY',f2(p.gross),f2(p.pcb),'0.00']); }); totals=['','','','TOTAL','','',f2(d1),'0.00']; }
   hrDownload(name,hrCsv([head].concat(body,[totals]))); toast(kind.toUpperCase()+' CSV downloaded');
+}
+// ── Statutory PORTAL upload files (documented layouts — do ONE test upload per portal to confirm; specs change) ──
+function hrPadR(s,n){ s=String(s==null?'':s); return s.length>=n?s.slice(0,n):s+new Array(n-s.length+1).join(' '); }
+function hrPadL(s,n,c){ s=String(s==null?'':s); c=c||'0'; return s.length>=n?s.slice(-n):new Array(n-s.length+1).join(c)+s; }
+function hrCents(n){ return String(Math.round((Number(n)||0)*100)); }
+// EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
+function hrExpKwsp(){
+  var rows=hrCurRows().filter(function(x){ return x.p.epfEe||x.p.epfEr; });
+  if(!rows.length){ toast('No EPF contributions this period',true); return; }
+  var per=hrPeriod();
+  var lines=rows.map(function(x){ var e=x.e,p=x.p;
+    return hrPadL(String(e.epfNo||'').replace(/\D/g,''),12)      // EPF member no (12)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12)          // new IC (12)
+         + hrPadR(String(e.name||'').toUpperCase(),40)            // name (40)
+         + hrPadL(hrCents(p.gross),11)                            // wages in cents (11)
+         + hrPadL(hrCents(p.epfEe),9)                             // employee share cents (9)
+         + hrPadL(hrCents(p.epfEr),9);                            // employer share cents (9)
+  });
+  hrDownload('KWSP_iAkaun_'+per.label.replace(' ','')+'.txt', lines.join('\r\n')+'\r\n','text/plain;charset=utf-8;');
+  toast('KWSP i-Akaun file — '+lines.length+' members. Do one test upload to confirm layout.');
+}
+// SOCSO + EIS → PERKESO ASSIST combined contribution file (CSV)
+function hrExpAssist(){
+  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+  var per=hrPeriod(); var f2=function(n){ return Number(n).toFixed(2); };
+  var head=['No','No. KP Baru (New IC)','Nama Pekerja','No. Pekerja (SOCSO)','Gaji/Upah (RM)','Caruman SOCSO Pekerja','Caruman SOCSO Majikan','Caruman SIP/EIS Pekerja','Caruman SIP/EIS Majikan'];
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.ic||'',e.name,e.socsoNo||'',f2(p.gross),f2(p.socsoEe),f2(p.socsoEr),f2(p.eisEe),f2(p.eisEr)]; });
+  var t=rows.reduce(function(a,x){ a.a+=x.p.socsoEe;a.b+=x.p.socsoEr;a.c+=x.p.eisEe;a.d+=x.p.eisEr; return a; },{a:0,b:0,c:0,d:0});
+  body.push(['','','TOTAL','','',f2(t.a),f2(t.b),f2(t.c),f2(t.d)]);
+  hrDownload('PERKESO_ASSIST_'+per.label.replace(' ','')+'.csv', hrCsv([head].concat(body)),'text/csv;charset=utf-8;');
+  toast('PERKESO ASSIST file (SOCSO+EIS) — '+rows.length+' staff. Confirm columns on ASSIST.');
+}
+// PCB → LHDN CP39 / e-PCB text file (fixed-width; amounts in cents)
+function hrExpCp39(){
+  var rows=hrCurRows().filter(function(x){ return x.p.pcb>0; });
+  if(!rows.length){ toast('No PCB payable this period',true); return; }
+  var per=hrPeriod();
+  var lines=rows.map(function(x){ var e=x.e,p=x.p;
+    return hrPadR(String(e.taxNo||'').replace(/[^0-9A-Za-z]/g,''),11)  // income-tax no / TIN (11)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12)                // new IC (12)
+         + hrPadR(String(e.name||'').toUpperCase(),60)                  // name (60)
+         + hrPadL(hrCents(p.pcb),8)                                     // PCB/MTD cents (8)
+         + hrPadL('0',8);                                               // CP38 cents (8)
+  });
+  hrDownload('LHDN_CP39_'+per.label.replace(' ','')+'.txt', lines.join('\r\n')+'\r\n','text/plain;charset=utf-8;');
+  toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
 var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL'};
 function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
