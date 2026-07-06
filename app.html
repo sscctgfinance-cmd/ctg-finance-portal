@@ -889,6 +889,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <button class="tab-cat"        data-cat="operations" onclick="tabCat('operations')" id="cat-operations">🧠 Finance OS</button>
     <button class="tab-cat"        data-cat="data"       onclick="tabCat('data')"       id="cat-data">🏢 Master Data</button>
     <button class="tab-cat"        data-cat="admin"      onclick="tabCat('admin')"      id="cat-admin">⚙ Admin</button>
+    <button class="tab-cat" id="cat-hros" onclick="location.href='hros.html'" title="Open HR OS — payroll, leave &amp; claims (separate app, same login)" style="margin-left:auto;color:#8FB8DC;box-shadow:0 0 0 1px rgba(91,155,213,.32) inset">👥 HR OS →</button>
   </div>
   <div class="tabs" id="sub-tabs">
     <!-- Dashboard -->
@@ -1264,6 +1265,7 @@ async function showApp(){
   // Hide any category whose sub-tabs are all hidden (e.g. non-admin user → no Admin category).
   document.querySelectorAll('.tab-cat').forEach(function(catEl){
     const cat = catEl.dataset.cat;
+    if(!cat) return; // launcher buttons (e.g. HR OS) have no data-cat — always visible
     const anyVisible = Array.from(document.querySelectorAll('.tabs .tab[data-cat="'+cat+'"]')).some(function(t){ return !t.classList.contains('hide'); });
     catEl.classList.toggle('hide', !anyVisible);
   });
