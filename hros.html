@@ -1136,7 +1136,8 @@ function hrGridInit(){
     var sumK=function(k){ return mine.filter(function(a){return a.kind===k;}).reduce(function(s,a){return s+Number(a.amount||0);},0); };
     var setK=function(k){ var f=mine.filter(function(a){return a.kind===k;}); return f.length?Number(f[f.length-1].amount):null; };
     var bset=setK('basic_set'), aset=setK('allow_set');
-    p.grid[e.id]={ basic:(bset!=null?bset:Number(e.basic_salary||0)), allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deduction:sumK('deduction'), unpaid:sumK('unpaid_leave') };
+    var deds=mine.filter(function(a){return a.kind==='deduction';}).map(function(a){ return { label:a.label||'Other deduction', amount:Number(a.amount)||0 }; });
+    p.grid[e.id]={ basic:(bset!=null?bset:Number(e.basic_salary||0)), allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave') };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }
@@ -1147,7 +1148,7 @@ function hrGridRowCompute(e,g){
   if(Number(g.bonus)) adj.push({kind:'bonus',amount:Number(g.bonus),epf_subject:true});
   if(Number(g.ot)) adj.push({kind:'ot',amount:Number(g.ot),epf_subject:true});
   if(Number(g.allowance)) adj.push({kind:'allowance',amount:Number(g.allowance),epf_subject:true});
-  if(Number(g.deduction)) adj.push({kind:'deduction',amount:Number(g.deduction),epf_subject:false});
+  var dedTot=hrDedTot(g); if(dedTot) adj.push({kind:'deduction',amount:dedTot,epf_subject:false});
   if(Number(g.unpaid)) adj.push({kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
   return hrCompute(synth,HR.pay.data.rates,adj);
 }
@@ -1156,13 +1157,43 @@ function hrGridAll(){
   var tot={gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,pcb:0,net:0,cost:0};
   emps.forEach(function(e){ var g=p.grid[e.id]||{}; var q=hrGridRowCompute(e,g);
     var eff=Object.assign({},e,{ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0 });
-    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, deduction:Number(g.deduction)||0, unpaid:Number(g.unpaid)||0 };
+    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, deductions:(g.deductions||[]).slice(), deduction:hrDedTot(g), unpaid:Number(g.unpaid)||0 };
     rows.push({e:eff,p:q,d:d});
     tot.gross+=q.gross;tot.epfEe+=q.epfEe;tot.epfEr+=q.epfEr;tot.socsoEe+=q.socsoEe;tot.socsoEr+=q.socsoEr;tot.eisEe+=q.eisEe;tot.eisEr+=q.eisEr;tot.pcb+=q.pcb;tot.net+=q.net;tot.cost+=q.employerCost;
   });
   HR.pay._rows=rows; return { rows:rows, tot:tot };
 }
 function hrGCell(empId,field){ var g=HR.pay.grid[empId]||{}; return '<input type="number" step="0.01" value="'+(Number(g[field])||0)+'" oninput="hrGridCell(\''+empId+'\',\''+field+'\',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">'; }
+// ── Itemised deductions ──
+var HR_DED_TYPES=['Salary advance','Loan repayment','PTPTN','Zakat','CP38 (LHDN)','Insurance','Uniform / equipment','Staff welfare','Union / society','Other deduction'];
+function hrDedTot(g){ return (g&&g.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0); }
+function hrDedCell(empId){ var g=HR.pay.grid[empId]||{}; var n=(g.deductions||[]).filter(function(x){return Number(x.amount);}).length; var open=(HR.pay.dedEmp===empId);
+  return '<button class="btn xs" id="ded_'+empId+'" onclick="hrDedOpen(\''+empId+'\')" title="Itemise deductions" style="min-width:74px'+(open?';border-color:var(--coral)':'')+'">'+M(hrDedTot(g))+(n?(' · '+n):'')+' ▾</button>'; }
+function hrDedOpen(empId){ HR.pay.dedEmp=(HR.pay.dedEmp===empId?null:empId); hrRender(); if(HR.pay.dedEmp){ setTimeout(function(){ var el=document.getElementById('hr_dedpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'}); },50); } }
+function hrDedPanel(empId){
+  var e=(HR.pay.data.employees||[]).find(function(x){return x.id===empId;}); if(!e) return '';
+  var g=HR.pay.grid[empId]||{}; var deds=g.deductions||(g.deductions=[]);
+  var rows=deds.map(function(x,i){
+    return '<div style="display:grid;grid-template-columns:1fr 130px 34px;gap:6px;align-items:center;margin-bottom:6px">'+
+      '<input value="'+esc(x.label||'')+'" oninput="hrDedLabel(\''+empId+'\','+i+',this.value)" placeholder="Deduction name" list="hr_dedtypes" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+
+      '<input type="number" step="0.01" value="'+(Number(x.amount)||0)+'" oninput="hrDedAmt(\''+empId+'\','+i+',this.value)" onfocus="this.select()" placeholder="RM" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right">'+
+      '<button class="btn xs" onclick="hrDedDel(\''+empId+'\','+i+')" title="Remove">✕</button></div>';
+  }).join('')||'<div class="muted" style="font-size:12px;padding:4px 0 8px">No deductions yet — add advances, loans, PTPTN, zakat, CP38, etc.</div>';
+  return '<div class="panel" id="hr_dedpanel" style="max-width:560px;margin-top:14px;border-color:var(--coral-soft)">'+
+    '<div class="panel-hd"><h3>Deductions — '+esc(e.name)+' · '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'</h3><button class="btn sm" onclick="hrDedOpen(\''+empId+'\')">✕ Close</button></div>'+
+    '<datalist id="hr_dedtypes">'+HR_DED_TYPES.map(function(t){return '<option value="'+t+'">';}).join('')+'</datalist>'+
+    rows+
+    '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">'+
+      '<button class="btn p sm" onclick="hrDedAdd(\''+empId+'\')">+ Add deduction</button>'+
+      '<select onchange="if(this.value){hrDedAdd(\''+empId+'\',this.value);this.value=\'\';}" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"><option value="">Quick add…</option>'+HR_DED_TYPES.map(function(t){return '<option value="'+t+'">'+t+'</option>';}).join('')+'</select>'+
+      '<span id="hr_dedtotal" style="margin-left:auto;font-weight:700">Total: '+M(hrDedTot(g))+'</span>'+
+    '</div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">These reduce net pay only (not EPF/SOCSO/EIS/PCB) and appear as separate lines on the payslip. Zakat &amp; CP38 have tax effects — confirm with your tax agent.</div></div>';
+}
+function hrDedAdd(empId,label){ var g=HR.pay.grid[empId]; if(!g)return; if(!g.deductions)g.deductions=[]; g.deductions.push({label:label||'',amount:0}); hrRender(); }
+function hrDedDel(empId,i){ var g=HR.pay.grid[empId]; if(!g||!g.deductions)return; g.deductions.splice(i,1); hrRender(); }
+function hrDedLabel(empId,i,v){ var g=HR.pay.grid[empId]; if(g&&g.deductions&&g.deductions[i]) g.deductions[i].label=v; }
+function hrDedAmt(empId,i,v){ var g=HR.pay.grid[empId]; if(!g||!g.deductions||!g.deductions[i])return; g.deductions[i].amount=(v===''||v==null)?0:Number(v); if(isNaN(g.deductions[i].amount))g.deductions[i].amount=0; hrGridRecalc(); var dt=document.getElementById('hr_dedtotal'); if(dt) dt.textContent='Total: '+M(hrDedTot(g)); }
 function hrPaySumHtml(tot){
   var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
   return stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('');
@@ -1184,7 +1215,7 @@ function hrPayroll(){
   var trs=A.rows.map(function(r){ var e=r.e,q=r.p,id=e.id,mt=q._meta||{};
     var badge='<div class="muted" style="font-size:9.5px;margin-top:1px">EPF '+Math.round((mt.epfEeRate||0)*1000)/10+'% · SOC C'+(mt.socsoCat||1)+(mt.senior?' · <span style="color:var(--amber)">60+</span>':'')+(e.resident===false?' · <span style="color:var(--amber)">non-res</span>':'')+'</div>';
     return '<tr><td style="white-space:nowrap"><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</td>'+
-      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrGCell(id,'deduction')+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
+      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
       ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+ec('pcb_'+id,q.pcb)+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
   }).join('');
   var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+')</td><td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
@@ -1209,7 +1240,8 @@ function hrPayroll(){
     '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
     (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>')+
     '</div>';
-  return picker+ratesPanel+table+exp+sum;
+  var dedPanel = p.dedEmp ? hrDedPanel(p.dedEmp) : '';
+  return picker+ratesPanel+table+exp+sum+dedPanel;
 }
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
 function hrRatesPanel(cfg){
@@ -1252,7 +1284,8 @@ function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g
 function hrGridRecalc(){
   var p=HR.pay, emps=p.data.employees||[]; var A=hrGridAll(); var tot=A.tot;
   var set=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=M(v); };
-  A.rows.forEach(function(r){ var id=r.e.id,q=r.p; set('g_'+id,q.gross); set('epf_'+id,q.epfEe); set('soc_'+id,q.socsoEe); set('eis_'+id,q.eisEe); set('pcb_'+id,q.pcb); set('net_'+id,q.net); });
+  A.rows.forEach(function(r){ var id=r.e.id,q=r.p; set('g_'+id,q.gross); set('epf_'+id,q.epfEe); set('soc_'+id,q.socsoEe); set('eis_'+id,q.eisEe); set('pcb_'+id,q.pcb); set('net_'+id,q.net);
+    var db=document.getElementById('ded_'+id); if(db){ var gg=p.grid[id]||{}; var nn=(gg.deductions||[]).filter(function(x){return Number(x.amount);}).length; db.textContent=M(hrDedTot(gg))+(nn?(' · '+nn):'')+' ▾'; } });
   set('t_g',tot.gross); set('t_epf',tot.epfEe); set('t_soc',tot.socsoEe); set('t_eis',tot.eisEe); set('t_pcb',tot.pcb); set('t_net',tot.net);
   var sc=document.getElementById('hr_paysum'); if(sc) sc.innerHTML=hrPaySumHtml(tot);
 }
@@ -1265,13 +1298,13 @@ async function hrGridSave(){
     if(Number(g.bonus)) out.push({employee_id:e.id,kind:'bonus',amount:Number(g.bonus),epf_subject:true});
     if(Number(g.ot)) out.push({employee_id:e.id,kind:'ot',amount:Number(g.ot),epf_subject:true});
     if(Number(g.allowance)) out.push({employee_id:e.id,kind:'allowance',amount:Number(g.allowance),epf_subject:true});
-    if(Number(g.deduction)) out.push({employee_id:e.id,kind:'deduction',amount:Number(g.deduction),epf_subject:false});
+    (g.deductions||[]).forEach(function(x){ if(Number(x.amount)) out.push({employee_id:e.id,kind:'deduction',label:(x.label||'Other deduction'),amount:Number(x.amount),epf_subject:false}); });
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
   });
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out});
-  if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
+  if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }
-function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; hrRender(); }
+function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; hrRender(); }
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
   try{ var r=await call({api:'hr_payroll_data',month:HR.pay.month,year:HR.pay.year}); HR.pay.loading=false; if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true); }
@@ -1349,7 +1382,8 @@ function hrDrawPayslip(doc,e,p,period,d){
   row('SOCSO (PERKESO)'+(mt.socsoCat?(' · Cat '+mt.socsoCat):''),p.socsoEe,{neg:true,color:HR_RED});
   row('EIS (SIP)',p.eisEe,{neg:true,color:HR_RED});
   row('PCB / MTD (estimate)'+(mt.pcbCat===0?' · non-resident':''),p.pcb,{neg:true,color:HR_RED});
-  if(d.deduction) row('Other deductions',d.deduction,{neg:true,color:HR_RED});
+  if(d.deductions&&d.deductions.length){ d.deductions.forEach(function(x){ if(Number(x.amount)) row(x.label||'Other deduction',x.amount,{neg:true,color:HR_RED}); }); }
+  else if(d.deduction) row('Other deductions',d.deduction,{neg:true,color:HR_RED});
   y+=2;
   doc.setFillColor(HR_NETBG[0],HR_NETBG[1],HR_NETBG[2]); doc.roundedRect(m,y-5,W-2*m,11,2,2,'F');
   doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('NET PAY',m+4,y+1.5); doc.setFontSize(14); doc.text('RM '+HR_money2(p.net),W-m-4,y+2,{align:'right'}); y+=16;
