@@ -1261,6 +1261,7 @@ function hrPayroll(){
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
   var exp='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:14px"><span class="muted" style="font-size:11px">Export:</span>'+
+    '<button class="btn xs p" onclick="hrExpSummary()">📊 Payroll Summary (Excel)</button>'+
     '<button class="btn xs" onclick="hrExpPayslips()">📄 Payslips PDF</button>'+
     '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF CSV</button>'+
     '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO CSV</button>'+
@@ -1444,6 +1445,45 @@ function hrExpGiro(){
   var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.name,e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   var total=rows.reduce(function(s,x){return s+x.p.net;},0); body.push(['','','','','','TOTAL',f2(total),'','']);
   hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
+}
+// ---- Payroll Summary (styled .xls that opens formatted in Excel) ----
+var HR_HRDF_RATE=0.01; // HRD Corp levy = 1% of basic (only for HRDF-registered employers)
+function hrExpSummary(){
+  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+  var per=hrPeriod();
+  var numCell=function(v,dir){ v=Number(v)||0; var st='border:1px solid #B8C4D9;padding:4px 8px;text-align:right;'+(dir?'font-weight:bold;':''); if(!v) return '<td style="'+st+'">-</td>'; return '<td style="'+st+'mso-number-format:\'#,##0.00\'">'+v.toFixed(2)+'</td>'; };
+  var txtCell=function(v,dir){ return '<td style="border:1px solid #B8C4D9;padding:4px 8px;text-align:left;'+(dir?'font-weight:bold;':'')+'">'+esc(String(v==null?'':v))+'</td>'; };
+  var cols=['Employee','Role','Basic','Additional / Allowance','Gross Pay','EPF (Employee)','SOCSO (Employee)','EIS (Employee)','PCB (Tax)','Advance / Other Ded.','Total Deductions','Net Pay','EPF (Employer)','SOCSO (Employer)','EIS (Employer)','HRDF','Notes'];
+  var tot={basic:0,add:0,gross:0,ee_epf:0,ee_soc:0,ee_eis:0,pcb:0,oded:0,tded:0,net:0,er_epf:0,er_soc:0,er_eis:0,hrdf:0};
+  var trs=rows.map(function(r){
+    var e=r.e,p=r.p,d=r.d||{};
+    var basic=Number(d.basic!=null?d.basic:e.basic)||0;
+    var add=(Number(d.allow)||0)+(Number(d.bonus)||0)+(Number(d.ot)||0)+(Number(d.allowance)||0);
+    var oded=(d.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0);
+    var tded=p.epfEe+p.socsoEe+p.eisEe+p.pcb+oded;
+    var hrdf=Math.round(basic*HR_HRDF_RATE*100)/100;
+    var isDir=/director/i.test(e.position||'');
+    var notes=[];
+    if(d.bonus) notes.push('Bonus '+Number(d.bonus).toFixed(2));
+    if(d.ot) notes.push('OT '+Number(d.ot).toFixed(2));
+    if(d.allowance) notes.push('Allowance '+Number(d.allowance).toFixed(2));
+    (d.deductions||[]).forEach(function(x){ if(Number(x.amount)) notes.push('Less '+(x.label||'Deduction')+' '+Number(x.amount).toFixed(2)); });
+    if(d.unpaid) notes.push('Unpaid leave '+Number(d.unpaid).toFixed(2));
+    tot.basic+=basic; tot.add+=add; tot.gross+=p.gross; tot.ee_epf+=p.epfEe; tot.ee_soc+=p.socsoEe; tot.ee_eis+=p.eisEe; tot.pcb+=p.pcb; tot.oded+=oded; tot.tded+=tded; tot.net+=p.net; tot.er_epf+=p.epfEr; tot.er_soc+=p.socsoEr; tot.er_eis+=p.eisEr; tot.hrdf+=hrdf;
+    return '<tr'+(isDir?' style="background:#FFF7E6"':'')+'>'+txtCell(e.name,isDir)+txtCell(e.position||'',isDir)+numCell(basic,isDir)+numCell(add,isDir)+numCell(p.gross,isDir)+numCell(p.epfEe,isDir)+numCell(p.socsoEe,isDir)+numCell(p.eisEe,isDir)+numCell(p.pcb,isDir)+numCell(oded,isDir)+numCell(tded,isDir)+numCell(p.net,isDir)+numCell(p.epfEr,isDir)+numCell(p.socsoEr,isDir)+numCell(p.eisEr,isDir)+numCell(hrdf,isDir)+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-style:italic;color:#555">'+esc(notes.join('; '))+'</td></tr>';
+  }).join('');
+  var totRow='<tr style="background:#DCE6F1">'+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-weight:bold">TOTAL</td><td style="border:1px solid #B8C4D9"></td>'+
+    numCell(tot.basic,1)+numCell(tot.add,1)+numCell(tot.gross,1)+numCell(tot.ee_epf,1)+numCell(tot.ee_soc,1)+numCell(tot.ee_eis,1)+numCell(tot.pcb,1)+numCell(tot.oded,1)+numCell(tot.tded,1)+numCell(tot.net,1)+numCell(tot.er_epf,1)+numCell(tot.er_soc,1)+numCell(tot.er_eis,1)+numCell(tot.hrdf,1)+'<td style="border:1px solid #B8C4D9"></td></tr>';
+  var thead='<tr>'+cols.map(function(c){ var left=(['Employee','Role','Notes'].indexOf(c)>=0); return '<th style="background:#1F4E79;color:#ffffff;border:1px solid #163A5C;padding:6px 8px;font-weight:bold;text-align:'+(left?'left':'center')+';vertical-align:middle">'+esc(c)+'</th>'; }).join('')+'</tr>';
+  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'+
+    '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>'+esc(per.label)+'</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->'+
+    '</head><body><table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11px">'+
+    '<tr><td colspan="17" style="font-size:16px;font-weight:bold;padding:4px 2px">'+esc(per.label)+' Payroll</td></tr>'+
+    '<tr><td colspan="17" style="font-weight:bold;padding:0 2px 2px">'+esc(hrCompanyName())+'</td></tr>'+
+    '<tr><td colspan="17" style="color:#666;font-style:italic;padding:0 2px 10px">Payroll Summary — '+esc(per.label)+'. All amounts in RM. Headcount: '+rows.length+' employees.</td></tr>'+
+    '<thead>'+thead+'</thead><tbody>'+trs+totRow+'</tbody></table></body></html>';
+  hrDownload('Payroll_Summary_'+per.label.replace(' ','')+'.xls', html, 'application/vnd.ms-excel');
+  toast('Payroll summary (Excel) exported');
 }
 
 // ---- Payslip email (Wave 3b): password-protected PDF via send-payslip-email edge fn ----
