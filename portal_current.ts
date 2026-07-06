@@ -3297,6 +3297,63 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
     }
-    return j({ ok:true, hint:"portal v78 + HR (employees/leave/claims/payroll) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    if (api === "hr_annual") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const yr = Number(b.year);
+      const [ps, ei] = await Promise.all([
+        sb.from("hr_payslips").select("*, run:hr_payroll_runs(period_year)"),
+        sb.from("hr_employer_info").select("*").eq("id",1).maybeSingle(),
+      ]);
+      const map:any = {};
+      (ps.data||[]).forEach((s:any)=>{
+        if (!s.run || Number(s.run.period_year)!==yr) return;
+        const k = s.employee_id;
+        const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, pcb:0, net:0, months:0 });
+        t.gross+=Number(s.gross); t.epfEe+=Number(s.epf_ee); t.epfEr+=Number(s.epf_er);
+        t.socsoEe+=Number(s.socso_ee); t.socsoEr+=Number(s.socso_er);
+        t.eisEe+=Number(s.eis_ee); t.eisEr+=Number(s.eis_er);
+        t.pcb+=Number(s.pcb); t.net+=Number(s.net); t.months+=1;
+      });
+      return j({ ok:true, annual:map, employer:ei.data||{ name:"I PROCARE MALAYSIA SDN BHD", employer_no:"", address:"" } });
+    }
+    if (api === "hr_post_xero") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const runId = Number(b.runId); if (!runId) return j({ ok:false, error:"missing runId" });
+      const tenantId = String(b.tenantId||"99911869-9e91-4572-b7dc-4db51b45b6a9");
+      // Safety: portal only ever posts payroll journals as DRAFT (never auto-POSTED), mirroring the
+      // "Xero stops at SUBMITTED / human authorises" rule for AP bills.
+      const base = Deno.env.get("SUPABASE_URL")!; const srk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      let r:any;
+      try {
+        const resp = await fetch(base+"/functions/v1/xero-post-payroll", {
+          method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+srk, "apikey":srk },
+          body: JSON.stringify({ runId, status:"DRAFT", tenantId }),
+        });
+        r = await resp.json().catch(()=>({}));
+        if (!resp.ok) return j({ ok:false, error:(r&&(r.error||r.detail))||("HTTP "+resp.status) });
+      } catch(e){ return j({ ok:false, error:String(e) }); }
+      if (r && r.error) return j({ ok:false, error:r.detail? (r.error+" — "+r.detail):r.error });
+      await logAudit(me,"hr_post_xero",String(runId),{ tenantId, status:"DRAFT" });
+      return j({ ok:true, result:r });
+    }
+    if (api === "hr_send_payslip") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const p = b.payload||{};
+      if (!p.to || !p.pdfBase64) return j({ ok:false, error:"missing recipient or attachment" });
+      const base = Deno.env.get("SUPABASE_URL")!; const srk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      let r:any;
+      try {
+        const resp = await fetch(base+"/functions/v1/send-payslip-email", {
+          method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+srk, "apikey":srk },
+          body: JSON.stringify({ to:p.to, subject:p.subject, html:p.html, filename:p.filename, pdfBase64:p.pdfBase64 }),
+        });
+        r = await resp.json().catch(()=>({}));
+        if (!resp.ok) return j({ ok:false, error:(r&&(r.error||r.detail))||("HTTP "+resp.status) });
+      } catch(e){ return j({ ok:false, error:String(e) }); }
+      if (r && r.error) return j({ ok:false, error:r.detail? (r.error+" — "+r.detail):r.error });
+      await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
+      return j({ ok:true, result:r });
+    }
+    return j({ ok:true, hint:"portal v79 + HR (employees/leave/claims/payroll/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

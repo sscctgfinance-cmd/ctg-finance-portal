@@ -2957,13 +2957,14 @@ async function renderHR(){
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['payroll','💰 Payroll'],['leave','🌴 Leave'],['claims','🧾 Claims']];
+  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['payroll','💰 Payroll'],['yearend','📅 Year-end'],['leave','🌴 Leave'],['claims','🧾 Claims']];
   var nav='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+tabs.map(function(t){return '<button class="btn sm'+(HR.view===t[0]?' p':'')+'" onclick="hrNav(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
   var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc((HR.data.employer&&HR.data.employer.name)||'I PROCARE MALAYSIA SDN BHD')+'</div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
   else if(HR.view==='payroll') body=hrPayroll();
+  else if(HR.view==='yearend') body=hrYearend();
   else if(HR.view==='leave') body=hrLeave();
   else if(HR.view==='claims') body=hrClaims();
   el.innerHTML=head+nav+body;
@@ -3059,7 +3060,10 @@ function hrPayroll(){
     '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO CSV</button>'+
     '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS CSV</button>'+
     '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB/CP39 CSV</button>'+
-    '<button class="btn xs" onclick="hrExpGiro()">🏦 Bank giro CSV</button></div>';
+    '<button class="btn xs" onclick="hrExpGiro()">🏦 Bank giro CSV</button>'+
+    '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
+    (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero('+p.data.run.id+')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>')+
+    '</div>';
   return picker+table+exp+sum+adjPanel;
 }
 function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.adjEmp=null; hrRender(); }
@@ -3156,6 +3160,198 @@ function hrExpGiro(){
   var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.name,e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   var total=rows.reduce(function(s,x){return s+x.p.net;},0); body.push(['','','','','','TOTAL',f2(total),'','']);
   hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
+}
+
+// ---- Payslip email (Wave 3b): password-protected PDF via send-payslip-email edge fn ----
+function hrAbToB64(ab){ var bytes=new Uint8Array(ab),bin='',chunk=0x8000; for(var i=0;i<bytes.length;i+=chunk){ bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk)); } return btoa(bin); }
+function hrIcPassword(e){ return (String(e.ic||'').replace(/\D/g,''))||e.empNo; }
+function hrPayslipBase64(e,p,period){ var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4',encryption:{userPassword:hrIcPassword(e),ownerPassword:hrIcPassword(e)+'-o',userPermissions:['print','copy']}}); hrDrawPayslip(doc,e,p,period); return hrAbToB64(doc.output('arraybuffer')); }
+function hrPayslipEmailHtml(e,period){ return '<div style="font-family:Arial,sans-serif;color:#17231f;max-width:520px"><p>Hi '+esc(String(e.name||'').split(' ')[0])+',</p><p>Your payslip for <b>'+esc(period.label)+'</b> is attached as a PDF.</p><p>For your privacy the file is <b>password-protected</b> — open it with your <b>IC number</b> (digits only, no dashes).</p><p>If anything looks wrong, please contact Finance.</p><p style="color:#5e6e67;font-size:13px;margin-top:22px">'+esc(HR_COMPANY)+' · Finance<br>This is an automated message from ProCare·HR.</p></div>'; }
+function hrEmailAll(){
+  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+  var withEmail=rows.filter(function(r){ return r.e.email; });
+  if(!withEmail.length){ toast('No employees have an email on file',true); return; }
+  if(!confirm('Email password-protected payslips to '+withEmail.length+' employee(s) for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'? Each PDF is locked with the employee\'s IC number.')) return;
+  hrLoadJsPDF(function(){
+    var per=hrPeriod(), sent=0, failed=0, i=0;
+    toast('Sending payslips…');
+    (function next(){
+      if(i>=withEmail.length){ toast('Payslips emailed — '+sent+' sent'+(failed?(', '+failed+' failed'):'')+'.',failed>0); return; }
+      var r=withEmail[i++]; var pdf;
+      try{ pdf=hrPayslipBase64(r.e,r.p,per); }catch(err){ failed++; return next(); }
+      call({api:'hr_send_payslip',payload:{ to:r.e.email, subject:'Payslip — '+per.label, html:hrPayslipEmailHtml(r.e,per), filename:'Payslip_'+r.e.empNo+'_'+per.label.replace(' ','')+'.pdf', pdfBase64:pdf, empNo:r.e.empNo }})
+        .then(function(res){ if(res&&res.ok) sent++; else failed++; next(); })
+        .catch(function(){ failed++; next(); });
+    })();
+  });
+}
+// ---- Xero draft journal (Wave 3b): portal proxies to xero-post-payroll (DRAFT only) ----
+async function hrPostXero(runId){
+  if(!confirm('Post this payroll to Xero as a DRAFT manual journal? It will NOT be approved automatically — review and post it inside Xero.')) return;
+  toast('Posting draft journal to Xero…');
+  var r=await call({api:'hr_post_xero',runId:runId});
+  if(r&&r.ok){ toast('Xero draft journal created ✓ — review it in Xero.'); }
+  else toast((r&&r.error)||'Xero posting failed',true);
+}
+
+// ===== HR Wave 3b: Year-end (Borang EA / Form E / CP8D) =====
+var HR_YE={ year:0, annual:null, employer:null, loading:false };
+function hrYearend(){
+  var ye=HR_YE; if(!ye.year){ ye.year=new Date().getFullYear()-1; }
+  var yrs=[]; var cy=new Date().getFullYear(); for(var y=cy;y>=cy-4;y--) yrs.push(y);
+  var picker='<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">'+
+    '<span class="muted" style="font-size:12px">Tax year (Y/A)</span>'+
+    '<select id="hr_yey" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+yrs.map(function(y){return '<option value="'+y+'"'+(y===ye.year?' selected':'')+'>'+y+'</option>';}).join('')+'</select>'+
+    '<button class="btn sm" onclick="hrYePick()">Load</button></div>';
+  if(ye.annual===null){ if(!ye.loading) hrYeLoad(); return picker+'<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Aggregating finalised payslips for '+ye.year+'…</div></div>'; }
+  var emps=(HR.data.employees||[]); var ann=ye.annual||{};
+  var withPay=emps.filter(function(e){ return ann[e.id]&&ann[e.id].months>0; });
+  var tg=0,tp=0,subj=0; withPay.forEach(function(e){ var t=ann[e.id]; tg+=t.gross; tp+=t.pcb; if(t.pcb>0)subj++; });
+  var empNo=(ye.employer&&ye.employer.employer_no)||'';
+  var warn = empNo? '' : '<div class="panel" style="border-color:var(--amber);background:rgba(240,180,40,.06);padding:10px 14px;margin-bottom:12px;font-size:12.5px">⚠️ Employer E-number is not set in <b>hr_employer_info</b>. EA / Form E / CP8D will print a placeholder — set it before filing with LHDN.</div>';
+  var cards=[['Employees paid in '+ye.year,withPay.length,'var(--sky-soft)'],['Total gross remuneration',M(tg),'var(--green-soft)'],['Total PCB / MTD',M(tp),'var(--coral)'],['Subject to MTD',subj,'var(--muted)']];
+  var cardHtml='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">'+cards.map(function(c){return '<div class="panel" style="padding:14px;margin:0"><div class="muted" style="font-size:11px">'+c[0]+'</div><div style="font-size:20px;font-weight:700;margin-top:4px;color:'+c[2]+'">'+c[1]+'</div></div>';}).join('')+'</div>';
+  var rows=withPay.map(function(e){ var t=ann[e.id]; return '<tr><td><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+'</td><td class="amt">'+t.months+'</td><td class="amt">'+M(t.gross)+'</td><td class="amt">'+M(t.epfEe)+'</td><td class="amt">'+M(t.socsoEe)+'</td><td class="amt">'+M(t.pcb)+'</td><td><button class="btn xs" onclick="hrExpEA('+e.id+')">EA PDF</button></td></tr>'; }).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No finalised payslips for '+ye.year+' yet. Finalise monthly payroll first.</td></tr>';
+  var table='<div class="panel"><div class="panel-hd"><h3>Year-end '+ye.year+' — annual per-employee totals</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th class="amt">Months</th><th class="amt">Gross</th><th class="amt">EPF (ee)</th><th class="amt">SOCSO (ee)</th><th class="amt">PCB</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  var exp='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:14px"><span class="muted" style="font-size:11px">LHDN forms:</span>'+
+    '<button class="btn xs" onclick="hrExpEA(0)">📄 All EA forms (C.P.8A)</button>'+
+    '<button class="btn xs" onclick="hrExpFormE()">📋 Form E (C.P.8)</button>'+
+    '<button class="btn xs" onclick="hrExpCp8d(\'txt\')">🗂️ CP8D TXT (upload)</button>'+
+    '<button class="btn xs" onclick="hrExpCp8d(\'csv\')">CP8D CSV (review)</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">EA must reach each employee by 28 Feb. File Form e-E on MyTax by 31 March. PCB is an estimate — verify against LHDN before filing. BIK / VOLA / bonus must be added manually.</div>';
+  return picker+warn+cardHtml+table+exp;
+}
+function hrYePick(){ HR_YE.year=Number(document.getElementById('hr_yey').value); HR_YE.annual=null; hrRender(); }
+async function hrYeLoad(){
+  if(HR_YE.loading) return; HR_YE.loading=true;
+  try{ var r=await call({api:'hr_annual',year:HR_YE.year}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
+  catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
+}
+var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,pcb:0,net:0,months:0 };
+function hrDrawEA(doc,e,t,year,emp){
+  var W=210,H=297,m=16; var amt=function(n){return 'RM '+HR_money2(n);};
+  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG EA',m,12);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8A - Pin. 2023  ·  Income Tax Act 1967',m,17.5);
+  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
+  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Statement of Remuneration from Employment',W-m,17.5,{align:'right'});
+  var y=33;
+  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('FOR THE YEAR ENDED 31 DECEMBER '+year,m,y); y+=6;
+  var head=function(t2){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t2.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=6; };
+  var kv=function(k,v,x,w){ x=x||m; doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,x,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v||'—'),x+34,y); };
+  var money2=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(8.5); var c=o.bold?HR_INK:HR_MUTED; doc.setTextColor(c[0],c[1],c[2]); doc.text(label,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(amt(val),W-m,y,{align:'right'}); y+=5.5; };
+  head("Employer's particulars");
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(emp.name||'',m,y); y+=5;
+  kv("Employer's No.",emp.employer_no||'(to be filled — LHDN E number)'); y+=5;
+  if(emp.address){ doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(String(emp.address),m,y); y+=5; }
+  y+=1;
+  head('A.  Particulars of employee'); var col2=m+95;
+  kv('Name',e.name); kv('Staff No.',e.empNo,col2); y+=5;
+  kv('Designation',e.position); kv('IC / Passport',e.ic,col2); y+=5;
+  kv('Income Tax No.',e.taxNo||''); kv('EPF No.',e.epfNo||'',col2); y+=5;
+  kv('SOCSO No.',e.socsoNo||''); kv('Months paid',t.months||0,col2); y+=6;
+  head('B.  Gross income from employment');
+  money2('1(a)  Gross salary, wages, leave pay, overtime, allowances',t.gross);
+  money2("1(b)  Fees, commissions, bonus, director's fees, ESOS",0);
+  money2('2.     Benefits-in-kind (BIK)',0);
+  money2('3.     Value of living accommodation (VOLA)',0);
+  money2('Total gross remuneration (B)',t.gross,{bold:true}); y+=2;
+  head('C.  Total tax-exempt allowances / perquisites / gifts / benefits');
+  money2('Total exempt (see note)',0); y+=2;
+  head('D.  Deductions');
+  money2('1.  Monthly Tax Deduction (MTD / PCB)',t.pcb);
+  money2('2.  Deduction under CP38',0);
+  money2('3.  Zakat paid via salary deduction',0); y+=2;
+  head('E.  Contributions to approved fund & SOCSO');
+  money2("EPF (KWSP) — employee's contribution",t.epfEe);
+  money2("SOCSO (PERKESO) — employee's contribution",t.socsoEe);
+  money2('EIS (SIP) — employee\'s contribution',t.eisEe); y+=3;
+  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-28,W-m,H-28);
+  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
+  doc.text('This statement must be rendered to the employee on or before 28 February '+(year+1)+' (Income Tax Act 1967, s.83(1A)).',m,H-23);
+  doc.text('PCB shown is an estimate. BIK / VOLA / gratuity / bonus must be added manually where applicable.',m,H-19.5);
+  doc.text('Verify against the current C.P.8A on hasil.gov.my before issuing.',m,H-16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
+  doc.text('Authorised signature: ______________________________',m,H-8);
+  doc.text('Date: ____________',W-m-42,H-8);
+}
+function hrExpEA(empId){
+  hrLoadJsPDF(function(){
+    var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:'',address:''}, year=HR_YE.year;
+    var list;
+    if(empId){ var one=(HR.data.employees||[]).find(function(x){return x.id===empId;}); if(!one){toast('Employee not found',true);return;} list=[one]; }
+    else { list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }); if(!list.length){toast('No paid employees for '+year,true);return;} }
+    var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    list.forEach(function(e,i){ if(i>0)doc.addPage(); hrDrawEA(doc,hrEmpView(e),ann[e.id]||HR_EA_ZERO,year,emp); });
+    doc.save(empId?('EA_'+list[0].emp_no+'_YA'+year+'.pdf'):('EA_forms_YA'+year+'.pdf'));
+    toast('EA form(s) generated');
+  });
+}
+function hrDrawFormE(doc,employer,stats,year){
+  var W=210,H=297,m=16;
+  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG E',m,12);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8 - Return Form of Employer  ·  Income Tax Act 1967',m,17.5);
+  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
+  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Submit via e-E on MyTax by 31 March',W-m,17.5,{align:'right'});
+  var y=34;
+  var head=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=7; };
+  var kv=function(k,v){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v),W-m,y,{align:'right'}); y+=6.5; };
+  var mn=function(n){ return 'RM '+HR_money2(n); };
+  head("Employer's particulars");
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(employer.name||'',m,y); y+=6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text("Employer's No. (E)",m+2,y); doc.setFont('helvetica','bold'); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
+  doc.text(employer.employer_no||'(to be filled)',W-m,y,{align:'right'}); y+=10;
+  head('Number of employees for the year '+year);
+  kv('1.  Total employees as at 31 December',stats.total);
+  kv('2.  New employees during the year',stats.newHires);
+  kv('3.  Employees who ceased employment',stats.ceased);
+  kv('4.  Employees subject to MTD/PCB',stats.subjectPcb); y+=4;
+  head('Remuneration & tax deducted');
+  kv('Total gross remuneration paid',mn(stats.totalGross));
+  kv('Total Monthly Tax Deduction (MTD/PCB)',mn(stats.totalPcb));
+  kv('Total CP38 deductions',mn(0)); y+=8;
+  doc.setFillColor(231,241,236); doc.roundedRect(m,y-4,W-2*m,20,3,3,'F');
+  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('C.P.8D ATTACHED',m+4,y+2);
+  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(8);
+  doc.text('Per-employee detail for all '+stats.total+' employees is provided in the C.P.8D file (P{E-no}_'+year+'.txt).',m+4,y+8);
+  doc.text('EA and CP8D figures must reconcile. Employers who filed via e-Data Praisi/e-CP8D need not re-furnish CP8D.',m+4,y+13); y+=26;
+  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-34,W-m,H-34);
+  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
+  doc.text('Failure to furnish Form e-E by 31 March is an offence under s.120(1)(b), Income Tax Act 1967.',m,H-29);
+  doc.text('This is a working summary — file the official Form e-E on https://mytax.hasil.gov.my.',m,H-25.5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
+  doc.text('Declaration by employer — Name: __________________________  Signature: __________________  Date: __________',m,H-12);
+}
+function hrExpFormE(){
+  hrLoadJsPDF(function(){
+    var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:''}, year=HR_YE.year, emps=(HR.data.employees||[]);
+    var totalGross=0,totalPcb=0,subjectPcb=0; emps.forEach(function(e){ var t=ann[e.id]; if(t){ totalGross+=t.gross; totalPcb+=t.pcb; if(t.pcb>0)subjectPcb++; } });
+    var newHires=emps.filter(function(e){ return e.join_date&&new Date(e.join_date).getFullYear()===year; }).length;
+    var ceased=emps.filter(function(e){ return e.resign_date&&new Date(e.resign_date).getFullYear()===year; }).length;
+    var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    hrDrawFormE(doc,emp,{ total:emps.length, newHires:newHires, ceased:ceased, subjectPcb:subjectPcb, totalGross:totalGross, totalPcb:totalPcb },year);
+    doc.save('FormE_YA'+year+'.pdf'); toast('Form E generated');
+  });
+}
+function hrCp8dCategory(e){ var ms=String(e.maritalStatus||'single').toLowerCase(); if(ms==='married') return e.spouseWorking?3:2; if(ms==='divorced'||ms==='widowed') return 3; return (e.numChildren||0)>0?3:1; }
+function hrIntNoSen(n){ return String(Math.trunc(Number(n)||0)); }
+function hrDec2(n){ return (Number(n)||0).toFixed(2); }
+function hrFmtDMY(d){ if(!d)return ''; var x=new Date(d); if(isNaN(x))return ''; var p=function(v){return ('0'+v).slice(-2);}; return p(x.getDate())+'-'+p(x.getMonth()+1)+'-'+x.getFullYear(); }
+function hrExpCp8d(fmt){
+  var ann=HR_YE.annual||{}, emp=HR_YE.employer||{employer_no:''}, year=HR_YE.year;
+  var list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });
+  if(!list.length){ toast('No paid employees for '+year,true); return; }
+  if(fmt==='txt'){
+    var eno=(String(emp.employer_no||'').replace(/\D/g,''))||'0000000000';
+    var lines=list.map(function(o){ var e=o.emp,t=o.tot; var ic=(String(e.ic||'').replace(/[\s-]/g,''))||'000000000000'; var children=e.numChildren||0;
+      return [ String(e.name||'').slice(0,60), e.taxNo?String(e.taxNo).replace(/\D/g,''):'', ic.slice(0,12), hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, children, hrIntNoSen(children*2000), hrIntNoSen(t.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen(t.socsoEe) ].join('|'); });
+    hrDownload('P'+eno+'_'+year+'.txt',lines.join('\r\n')+'\r\n'); toast('CP8D TXT generated');
+  } else {
+    var head=['No','Name','TIN','IC/Passport','Category','Status','End date','Tax borne','Children','Child relief','Gross remuneration','BIK','VOLA','ESOS','Exempt','TP1','Zakat (TP1)','EPF','Zakat (salary)','MTD','CP38','Medical ins.','SOCSO'];
+    var body=list.map(function(o,i){ var e=o.emp,t=o.tot; return [ i+1, e.name, e.taxNo||'', (String(e.ic||'').replace(/[\s-]/g,''))||'000000000000', hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, e.numChildren||0, hrIntNoSen((e.numChildren||0)*2000), hrIntNoSen(t.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen(t.socsoEe) ]; });
+    hrDownload('CP8D_YA'+year+'.csv',hrCsv([head].concat(body))); toast('CP8D CSV generated');
+  }
 }
 
 // ===== Sales Reconciliation → Xero Sales Import (Order Form + multi-gateway Sales file) =====
