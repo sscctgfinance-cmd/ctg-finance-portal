@@ -3237,7 +3237,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_leave_decide") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const id=Number(b.id), status=String(b.status||"");
+      const id=String(b.id), status=String(b.status||"");
       const { data:req } = await sb.from("hr_leave_requests").select("*").eq("id",id).single();
       if (!req) return j({ ok:false, error:"not found" });
       await sb.from("hr_leave_requests").update({ status }).eq("id",id);
@@ -3254,7 +3254,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_claim_decide") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",Number(b.id));
+      const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",String(b.id));
       if (error) return j({ ok:false, error:error.message });
       await logAudit(me,"hr_claim_decide",String(b.id),{ status:b.status });
       return j({ ok:true });
@@ -3275,14 +3275,14 @@ Deno.serve(async (req)=>{
     if (api === "hr_adj_add") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const a=b.adj||{};
-      const { error } = await sb.from("hr_payroll_adjustments").insert({ employee_id:Number(a.employeeId), period_month:Number(a.month), period_year:Number(a.year), kind:a.kind, label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epfSubject!==false });
+      const { error } = await sb.from("hr_payroll_adjustments").insert({ employee_id:String(a.employeeId), period_month:Number(a.month), period_year:Number(a.year), kind:a.kind, label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epfSubject!==false });
       if (error) return j({ ok:false, error:error.message });
       await logAudit(me,"hr_adj_add",String(a.employeeId),{ kind:a.kind, amount:a.amount });
       return j({ ok:true });
     }
     if (api === "hr_adj_del") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { error } = await sb.from("hr_payroll_adjustments").delete().eq("id",Number(b.id));
+      const { error } = await sb.from("hr_payroll_adjustments").delete().eq("id",String(b.id));
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true });
     }
@@ -3296,6 +3296,20 @@ Deno.serve(async (req)=>{
       if (payload.length){ const { error:e2 } = await sb.from("hr_payslips").insert(payload); if (e2) return j({ ok:false, error:e2.message }); }
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
+    }
+    if (api === "hr_payroll_grid_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[];
+      // Bulk-replace the whole month's variable entries in one shot (delete then insert).
+      const { error:eDel } = await sb.from("hr_payroll_adjustments").delete().eq("period_month",mo).eq("period_year",yr);
+      if (eDel) return j({ ok:false, error:eDel.message });
+      if (items.length){
+        const rows = items.map((a:any)=>({ employee_id:String(a.employee_id), period_month:mo, period_year:yr, kind:String(a.kind), label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epf_subject!==false }));
+        const { error:eIns } = await sb.from("hr_payroll_adjustments").insert(rows);
+        if (eIns) return j({ ok:false, error:eIns.message });
+      }
+      await logAudit(me,"hr_payroll_grid_save",String(mo)+"/"+String(yr),{ n:items.length });
+      return j({ ok:true, n:items.length });
     }
     if (api === "hr_annual") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3318,7 +3332,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_post_xero") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const runId = Number(b.runId); if (!runId) return j({ ok:false, error:"missing runId" });
+      const runId = String(b.runId||""); if (!runId) return j({ ok:false, error:"missing runId" });
       const tenantId = String(b.tenantId||"99911869-9e91-4572-b7dc-4db51b45b6a9");
       // Safety: portal only ever posts payroll journals as DRAFT (never auto-POSTED), mirroring the
       // "Xero stops at SUBMITTED / human authorises" rule for AP bills.
@@ -3354,6 +3368,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v79 + HR (employees/leave/claims/payroll/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v80 + HR (employees/leave/claims/payroll-grid/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
