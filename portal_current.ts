@@ -3200,14 +3200,22 @@ Deno.serve(async (req)=>{
       return j(data);
     }
     // ===== HR / Payroll (Wave 1: employees, leave, claims) — reads hr_* via service role, gated by portal admin =====
+    if (api === "hr_companies") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
+      return j({ ok:true, companies:(data||[]).map((c:any)=>({ tenant_id:c.tenant_id, tenant_name:String(c.tenant_name||"").replace(/[^\x20-\x7E]/g,"").trim() })) });
+    }
     if (api === "hr_bootstrap") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const [emp, lt, lv, cl, ei] = await Promise.all([
-        sb.from("hr_employees").select("*").order("emp_no"),
+      const tenant = String(b.tenant||"");
+      if (!tenant) return j({ ok:true, employees:[], leaveTypes:[], leaves:[], claims:[], employer:null });
+      const emp = await sb.from("hr_employees").select("*").eq("tenant_id",tenant).order("emp_no");
+      const empIds = (emp.data||[]).map((e:any)=>e.id);
+      const [lt, lv, cl, ei] = await Promise.all([
         sb.from("hr_leave_types").select("*").eq("active",true).order("code"),
-        sb.from("hr_leave_requests").select("*, employee:hr_employees(name,dept)").order("date_from",{ascending:false}),
-        sb.from("hr_claims").select("*, employee:hr_employees(name,dept)").order("claim_date",{ascending:false}),
-        sb.from("hr_employer_info").select("*").eq("id",1).maybeSingle(),
+        empIds.length? sb.from("hr_leave_requests").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("date_from",{ascending:false}) : Promise.resolve({data:[]} as any),
+        empIds.length? sb.from("hr_claims").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("claim_date",{ascending:false}) : Promise.resolve({data:[]} as any),
+        sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle(),
       ]);
       return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null });
     }
@@ -3229,9 +3237,11 @@ Deno.serve(async (req)=>{
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
       else {
+        const tenant = String(b.tenant||f.tenant||"");
+        if (!tenant) return j({ ok:false, error:"no company selected" });
         const { data:last } = await sb.from("hr_employees").select("emp_no").order("emp_no",{ascending:false}).limit(1);
         const n = (last&&last[0]&&last[0].emp_no)? parseInt(String(last[0].emp_no).slice(1))+1 : 1;
-        patch.emp_no = "E"+String(n).padStart(3,"0"); patch.status="active";
+        patch.emp_no = "E"+String(n).padStart(3,"0"); patch.status="active"; patch.tenant_id=tenant;
         res = await sb.from("hr_employees").insert(patch).select().single();
       }
       if (res.error) return j({ ok:false, error:res.error.message });
@@ -3264,12 +3274,14 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_payroll_data") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const mo=Number(b.month), yr=Number(b.year);
-      const [emp, rt, adj, run] = await Promise.all([
-        sb.from("hr_employees").select("*").eq("status","active").order("emp_no"),
+      const mo=Number(b.month), yr=Number(b.year); const tenant=String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
+      const emp = await sb.from("hr_employees").select("*").eq("status","active").eq("tenant_id",tenant).order("emp_no");
+      const empIds = (emp.data||[]).map((e:any)=>e.id);
+      const [rt, adj, run] = await Promise.all([
         sb.from("hr_statutory_rates").select("rates").eq("id",1).single(),
-        sb.from("hr_payroll_adjustments").select("*").eq("period_month",mo).eq("period_year",yr).order("created_at"),
-        sb.from("hr_payroll_runs").select("*").eq("period_month",mo).eq("period_year",yr).maybeSingle(),
+        empIds.length? sb.from("hr_payroll_adjustments").select("*").eq("period_month",mo).eq("period_year",yr).in("employee_id",empIds).order("created_at") : Promise.resolve({data:[]} as any),
+        sb.from("hr_payroll_runs").select("*").eq("tenant_id",tenant).eq("period_month",mo).eq("period_year",yr).maybeSingle(),
       ]);
       let payslips:any[]=[];
       if (run.data){ const ps=await sb.from("hr_payslips").select("*").eq("run_id",run.data.id); payslips=ps.data||[]; }
@@ -3291,8 +3303,9 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_payroll_finalise") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[];
-      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"period_month,period_year" }).select().single();
+      const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[]; const tenant=String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
+      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
       const payload = rows.map((r:any)=>({ run_id:run.id, employee_id:r.employeeId, gross:r.gross, epf_ee:r.epfEe, epf_er:r.epfEr, socso_ee:r.socsoEe, socso_er:r.socsoEr, eis_ee:r.eisEe, eis_er:r.eisEr, pcb:r.pcb, net:r.net, employer_cost:r.employerCost }));
@@ -3310,10 +3323,15 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_payroll_grid_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[];
-      // Bulk-replace the whole month's variable entries in one shot (delete then insert).
-      const { error:eDel } = await sb.from("hr_payroll_adjustments").delete().eq("period_month",mo).eq("period_year",yr);
-      if (eDel) return j({ ok:false, error:eDel.message });
+      const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[]; const tenant=String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
+      // Bulk-replace THIS company's month entries only (scope delete to the tenant's employees).
+      const empT = await sb.from("hr_employees").select("id").eq("tenant_id",tenant);
+      const empTIds = (empT.data||[]).map((e:any)=>e.id);
+      if (empTIds.length){
+        const { error:eDel } = await sb.from("hr_payroll_adjustments").delete().eq("period_month",mo).eq("period_year",yr).in("employee_id",empTIds);
+        if (eDel) return j({ ok:false, error:eDel.message });
+      }
       if (items.length){
         const rows = items.map((a:any)=>({ employee_id:String(a.employee_id), period_month:mo, period_year:yr, kind:String(a.kind), label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epf_subject!==false }));
         const { error:eIns } = await sb.from("hr_payroll_adjustments").insert(rows);
@@ -3324,14 +3342,15 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_annual") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const yr = Number(b.year);
+      const yr = Number(b.year); const tenant=String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
       const [ps, ei] = await Promise.all([
-        sb.from("hr_payslips").select("*, run:hr_payroll_runs(period_year)"),
-        sb.from("hr_employer_info").select("*").eq("id",1).maybeSingle(),
+        sb.from("hr_payslips").select("*, run:hr_payroll_runs(period_year,tenant_id)"),
+        sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle(),
       ]);
       const map:any = {};
       (ps.data||[]).forEach((s:any)=>{
-        if (!s.run || Number(s.run.period_year)!==yr) return;
+        if (!s.run || Number(s.run.period_year)!==yr || String(s.run.tenant_id)!==tenant) return;
         const k = s.employee_id;
         const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, pcb:0, net:0, months:0 });
         t.gross+=Number(s.gross); t.epfEe+=Number(s.epf_ee); t.epfEr+=Number(s.epf_er);
@@ -3379,6 +3398,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v81 + HR (employees/leave/claims/payroll-grid+statutory/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v82 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

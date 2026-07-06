@@ -811,6 +811,7 @@ table[data-list] tbody tr:hover input[type=text]{
       <div><div style="font-weight:700;font-size:16px;letter-spacing:-.01em">HR OS</div><div style="color:var(--muted);font-size:11px;margin-top:-1px">CTG Human Resource &amp; Payroll</div></div>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
+      <select id="hr_company" onchange="hrPickCompany(this.value)" title="Xero company" style="padding:8px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;max-width:260px"></select>
       <button class="btn" onclick="location.href='app.html'" title="Back to Finance OS (same login)" style="padding:7px 14px;color:#F08570;box-shadow:0 0 0 1px rgba(232,93,60,.32) inset">← Finance OS</button>
       <button class="btn" onclick="logout()" style="padding:7px 14px">Sign out</button>
     </div>
@@ -971,10 +972,36 @@ function logout(){storageRemove('ctg_portal_token');location.reload();}
 function enterApp(){
   var l=document.getElementById('login'); if(l) l.classList.add('hide');
   var a=document.getElementById('app'); if(a) a.classList.remove('hide');
-  renderHR();
+  hrBootCompanies();
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
-var HR={ data:null, view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
+var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
+var HR_PROCARE_TENANT='99911869-9e91-4572-b7dc-4db51b45b6a9';
+// Load the Xero companies, populate the header picker, default the tenant, then render.
+async function hrBootCompanies(){
+  var el=document.getElementById('hr'); if(el) el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading companies…</div></div>';
+  try{
+    var r=await call({api:'hr_companies'});
+    HR.companies=(r&&r.ok&&r.companies)?r.companies:[];
+  }catch(e){ HR.companies=[]; }
+  if(!HR.companies.length){ HR.companies=[{tenant_id:HR_PROCARE_TENANT,tenant_name:'I PROCARE MALAYSIA SDN BHD'}]; }
+  // default: remember last choice, else I PROCARE, else first
+  var saved=storageGet('hr_tenant');
+  var pick=HR.companies.find(function(c){return c.tenant_id===saved;}) || HR.companies.find(function(c){return c.tenant_id===HR_PROCARE_TENANT;}) || HR.companies[0];
+  HR.tenant=pick.tenant_id;
+  var sel=document.getElementById('hr_company');
+  if(sel){ sel.innerHTML=HR.companies.map(function(c){return '<option value="'+esc(c.tenant_id)+'"'+(c.tenant_id===HR.tenant?' selected':'')+'>'+esc(c.tenant_name)+'</option>';}).join(''); }
+  renderHR();
+}
+function hrPickCompany(tid){
+  if(!tid || tid===HR.tenant) return;
+  HR.tenant=tid; storageSet('hr_tenant',tid);
+  // reset all per-company state so nothing leaks across companies
+  HR.data=null; HR.view='dashboard'; HR.editEmp=null;
+  HR.pay={ month:0, year:0, data:null, loading:false, adjEmp:null, dedEmp:null, _rows:[], grid:null };
+  if(typeof HR_YE!=='undefined'){ HR_YE.annual=null; HR_YE.year=0; }
+  renderHR();
+}
 var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
 var HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
 function hrRoundUp(n){ return Math.ceil(n-1e-9); }
@@ -1034,9 +1061,9 @@ async function renderHR(){
   var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
   try{
-    var r=await call({api:'hr_bootstrap'});
+    var r=await call({api:'hr_bootstrap',tenant:HR.tenant});
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc((r&&r.error)||'Failed to load HR')+'</div></div></div>'; return; }
-    HR.data=r; HR.view=HR.view||'dashboard'; HR.editEmp=null; hrRender();
+    HR.data=r; HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
@@ -1044,7 +1071,7 @@ function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
   var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['payroll','💰 Payroll'],['yearend','📅 Year-end'],['leave','🌴 Leave'],['claims','🧾 Claims']];
   var nav='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+tabs.map(function(t){return '<button class="btn sm'+(HR.view===t[0]?' p':'')+'" onclick="hrNav(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
-  var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc((HR.data.employer&&HR.data.employer.name)||'I PROCARE MALAYSIA SDN BHD')+'</div></div>';
+  var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc(hrCompanyName())+'</div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
@@ -1111,7 +1138,7 @@ async function hrSaveEmp(){
     basic:v('basic'), allowance:v('allowance'), bankName:v('bankName'), bankAccount:v('bankAccount'), epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
-  var r=await call({api:'hr_emp_save',emp:emp});
+  var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
   if(r&&r.ok){ toast('Employee saved'); HR.editEmp=null; renderHR(); } else toast((r&&r.error)||'Save failed',true);
 }
 function hrLeave(){
@@ -1304,20 +1331,20 @@ async function hrGridSave(){
     (g.deductions||[]).forEach(function(x){ if(Number(x.amount)) out.push({employee_id:e.id,kind:'deduction',label:(x.label||'Other deduction'),amount:Number(x.amount),epf_subject:false}); });
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
   });
-  var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out});
+  var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
   if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }
 function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; hrRender(); }
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
-  try{ var r=await call({api:'hr_payroll_data',month:HR.pay.month,year:HR.pay.year}); HR.pay.loading=false; if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true); }
+  try{ var r=await call({api:'hr_payroll_data',month:HR.pay.month,year:HR.pay.year,tenant:HR.tenant}); HR.pay.loading=false; if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true); }
   catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
 }
 async function hrFinalise(){
   var rows=(HR.pay._rows||[]).map(function(r){ var q=r.p; return { employeeId:r.e.id, gross:q.gross, epfEe:q.epfEe, epfEr:q.epfEr, socsoEe:q.socsoEe, socsoEr:q.socsoEr, eisEe:q.eisEe, eisEr:q.eisEr, pcb:q.pcb, net:q.net, employerCost:q.employerCost }; });
   if(!rows.length){ toast('No active employees',true); return; }
   if(!confirm('Finalise payroll for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' ('+rows.length+' employees)? Saves payslips for the period.')) return;
-  var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows});
+  var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows,tenant:HR.tenant});
   if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
 }
 function hrAdjOpen(id){ HR.pay.adjEmp=(HR.pay.adjEmp===id?null:id); hrRender(); if(HR.pay.adjEmp){ setTimeout(function(){var el=document.getElementById('hr_adjpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});},50); } }
@@ -1355,6 +1382,7 @@ function hrCurRows(){ return (HR.pay._rows||[]).map(function(r){ return { e:hrEm
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
 var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
+function hrCompanyName(){ var e=HR.data&&HR.data.employer; if(e&&e.name) return e.name; var c=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); return c?c.tenant_name:'I PROCARE MALAYSIA SDN BHD'; }
 var HR_INK=[18,33,27],HR_GREEN=[11,107,79],HR_MUTED=[94,110,103],HR_LINE=[227,232,228],HR_RED=[176,69,59],HR_NETBG=[231,241,236],HR_GREEN2=[77,191,148];
 function hrDrawPayslip(doc,e,p,period,d){
   d=d||{}; var W=210,m=18;
@@ -1445,7 +1473,7 @@ function hrEmailAll(){
 async function hrPostXero(runId){
   if(!confirm('Post this payroll to Xero as a DRAFT manual journal? It will NOT be approved automatically — review and post it inside Xero.')) return;
   toast('Posting draft journal to Xero…');
-  var r=await call({api:'hr_post_xero',runId:runId});
+  var r=await call({api:'hr_post_xero',runId:runId,tenantId:HR.tenant});
   if(r&&r.ok){ toast('Xero draft journal created ✓ — review it in Xero.'); }
   else toast((r&&r.error)||'Xero posting failed',true);
 }
@@ -1480,7 +1508,7 @@ function hrYearend(){
 function hrYePick(){ HR_YE.year=Number(document.getElementById('hr_yey').value); HR_YE.annual=null; hrRender(); }
 async function hrYeLoad(){
   if(HR_YE.loading) return; HR_YE.loading=true;
-  try{ var r=await call({api:'hr_annual',year:HR_YE.year}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
+  try{ var r=await call({api:'hr_annual',year:HR_YE.year,tenant:HR.tenant}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
   catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
 }
 var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,pcb:0,net:0,months:0 };
