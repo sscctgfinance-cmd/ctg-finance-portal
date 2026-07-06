@@ -3222,6 +3222,9 @@ Deno.serve(async (req)=>{
         phone:f.phone||null, address:f.address||null, resident:f.resident!==false,
         epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
         marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
+        date_of_birth:f.dob||null,
+        epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
+        socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
       };
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
@@ -3297,6 +3300,14 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
     }
+    if (api === "hr_rates_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const rates = b.rates||{};
+      const { error } = await sb.from("hr_statutory_rates").upsert({ id:1, rates }, { onConflict:"id" });
+      if (error) return j({ ok:false, error:error.message });
+      await logAudit(me,"hr_rates_save","1",{});
+      return j({ ok:true });
+    }
     if (api === "hr_payroll_grid_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[];
@@ -3368,6 +3379,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v80 + HR (employees/leave/claims/payroll-grid/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v81 + HR (employees/leave/claims/payroll-grid+statutory/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
