@@ -1260,16 +1260,24 @@ function hrPayroll(){
     '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt">PCB</th><th class="amt">Net</th></tr></thead><tbody>'+trs+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
-  var exp='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:14px"><span class="muted" style="font-size:11px">Export:</span>'+
-    '<button class="btn xs p" onclick="hrExpSummary()">📊 Payroll Summary (Excel)</button>'+
-    '<button class="btn xs" onclick="hrExpPayslips()">📄 Payslips PDF</button>'+
-    '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF CSV</button>'+
-    '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO CSV</button>'+
-    '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS CSV</button>'+
-    '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB/CP39 CSV</button>'+
-    '<button class="btn xs" onclick="hrExpGiro()">🏦 Bank giro CSV</button>'+
-    '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
-    (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>')+
+  var grp=function(label,btns){ return '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"><span class="muted" style="font-size:11px;min-width:78px;font-weight:600">'+label+'</span>'+btns+'</div>'; };
+  var exp='<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:8px">'+
+    grp('📄 Documents',
+      '<button class="btn xs p" onclick="hrExpSummary()">Payroll Summary (Excel)</button>'+
+      '<button class="btn xs" onclick="hrExpPayslips()">Payslips PDF</button>')+
+    grp('💸 Salary pay',
+      '<button class="btn xs" onclick="hrExpBank(\'maybank\')">🏦 Maybank M2E file</button>'+
+      '<button class="btn xs" onclick="hrExpBank(\'uob\')">🏦 UOB BIBPlus file</button>'+
+      '<button class="btn xs" onclick="hrExpGiro()">Generic IBG/giro CSV</button>')+
+    grp('🏛️ Statutory',
+      '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF (KWSP)</button>'+
+      '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO</button>'+
+      '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS</button>'+
+      '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB (LHDN)</button>')+
+    grp('📤 Send / post',
+      '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
+      (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>'))+
+    '<div class="muted" style="font-size:10.5px;margin-top:8px;line-height:1.5">Salary files use each employee\'s net pay + bank details — confirm the column order in your Maybank M2E / UOB BIBPlus uploader on first use. Statutory files carry EPF/SOCSO/EIS/PCB figures for KWSP i-Akaun / PERKESO ASSIST / LHDN e-PCB.</div>'+
     '</div>';
   var dedPanel = p.dedEmp ? hrDedPanel(p.dedEmp) : '';
   return picker+ratesPanel+table+exp+sum+dedPanel;
@@ -1445,6 +1453,30 @@ function hrExpGiro(){
   var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.name,e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   var total=rows.reduce(function(s,x){return s+x.p.net;},0); body.push(['','','','','','TOTAL',f2(total),'','']);
   hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
+}
+// ---- Bank-specific salary bulk-payment files (net pay). Confirm exact column order in your bank's uploader on first use. ----
+function hrExpBank(bank){
+  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+  var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
+  var refBase=('SAL'+per.label.replace(/[^A-Za-z0-9]/g,'').toUpperCase()).slice(0,14);
+  var pay=rows.filter(function(x){ return x.p.net>0; });
+  if(!pay.length){ toast('No positive net pay to disburse',true); return; }
+  var noAcct=pay.filter(function(x){ return !x.e.bankAccount; }).length;
+  var total=pay.reduce(function(s,x){ return s+x.p.net; },0);
+  var head,body,name;
+  if(bank==='maybank'){
+    name='Maybank_M2E_Salary_'+tag+'.csv';
+    head=['Payment Mode','Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Amount (RM)','Recipient Reference','Payment Description','Beneficiary ID (New IC)','Beneficiary Email'];
+    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',e.name,e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
+    body.push(['','','','','TOTAL',f2(total),'','','','']);
+  } else {
+    name='UOB_BIBPlus_Salary_'+tag+'.csv';
+    head=['Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Payment Type','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Beneficiary Email'];
+    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [e.name,e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),own?'Internal':'IBG',f2(x.p.net),'Salary '+per.label+' '+(e.empNo||''),e.ic||'',e.email||'']; });
+    body.push(['','','','','TOTAL',f2(total),'','','']);
+  }
+  hrDownload(name,hrCsv([head].concat(body)));
+  toast((bank==='maybank'?'Maybank':'UOB')+' salary file — '+pay.length+' staff, '+M(total)+(noAcct?(' · ⚠ '+noAcct+' missing bank a/c'):''), noAcct>0);
 }
 // ---- Payroll Summary (styled .xls that opens formatted in Excel) ----
 var HR_HRDF_RATE=0.01; // HRD Corp levy = 1% of basic (only for HRDF-registered employers)
