@@ -3053,7 +3053,14 @@ function hrPayroll(){
   var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
   var sum='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('')+'</div>';
   var adjPanel = p.adjEmp? hrAdjPanel(p.adjEmp) : '';
-  return picker+table+sum+adjPanel;
+  var exp='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:14px"><span class="muted" style="font-size:11px">Export:</span>'+
+    '<button class="btn xs" onclick="hrExpPayslips()">📄 Payslips PDF</button>'+
+    '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF CSV</button>'+
+    '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO CSV</button>'+
+    '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS CSV</button>'+
+    '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB/CP39 CSV</button>'+
+    '<button class="btn xs" onclick="hrExpGiro()">🏦 Bank giro CSV</button></div>';
+  return picker+table+exp+sum+adjPanel;
 }
 function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.adjEmp=null; hrRender(); }
 async function hrLoadPayroll(){
@@ -3088,6 +3095,68 @@ async function hrAddAdj(empId){
   if(r&&r.ok){ HR.pay.data=null; hrRender(); toast('Adjustment added'); } else toast((r&&r.error)||'Failed',true);
 }
 async function hrDelAdj(id){ var r=await call({api:'hr_adj_del',id:id}); if(r&&r.ok){ HR.pay.data=null; hrRender(); toast('Removed'); } else toast((r&&r.error)||'Failed',true); }
+// ---- Payroll exports (Wave 3a): jsPDF payslips + statutory CSV + bank giro (all client-side) ----
+function hrLoadJsPDF(cb){
+  if(window.jspdf&&window.jspdf.jsPDF) return cb();
+  if(HR._pdfLoading){ HR._pdfLoading.push(cb); return; }
+  HR._pdfLoading=[cb];
+  var s=document.createElement('script'); s.src='jspdf.umd.min.js';
+  s.onload=function(){ var q=HR._pdfLoading; HR._pdfLoading=null; q.forEach(function(f){try{f();}catch(_e){}}); };
+  s.onerror=function(){ HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); };
+  document.head.appendChild(s);
+}
+function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
+function hrCurRows(){ return (HR.pay._rows||[]).map(function(r){ return { e:hrEmpView(r.e), p:r.p }; }); }
+function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
+var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
+var HR_INK=[18,33,27],HR_GREEN=[11,107,79],HR_MUTED=[94,110,103],HR_LINE=[227,232,228],HR_RED=[176,69,59],HR_NETBG=[231,241,236],HR_GREEN2=[77,191,148];
+function hrDrawPayslip(doc,e,p,period){
+  var W=210,m=18;
+  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,32,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(HR_COMPANY,m,15);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(184,204,194); doc.text('Payslip  ·  Confidential',m,21);
+  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(period.label,W-m,15,{align:'right'});
+  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: 31 '+period.label,W-m,21,{align:'right'});
+  var y=44;
+  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(e.name,m,y);
+  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  y+=5.5; doc.text((e.empNo||'')+'  ·  '+(e.position||'—')+'  ·  '+(e.dept||'—'),m,y);
+  y+=5; doc.text('IC: '+(e.ic||'—')+'    Bank: '+(e.bank||'—'),m,y); y+=9;
+  var section=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.setLineWidth(0.3); doc.line(m,y+2,W-m,y+2); y+=7; };
+  var row=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(o.bold?9.5:9); var c1=o.color||(o.bold?HR_INK:HR_MUTED); doc.setTextColor(c1[0],c1[1],c1[2]); doc.text(label,m,y); var c2=o.color||HR_INK; doc.setTextColor(c2[0],c2[1],c2[2]); doc.text((o.neg?'-':'')+'RM '+HR_money2(val),W-m,y,{align:'right'}); y+=6; };
+  section('Earnings'); row('Basic salary',e.basic); if(e.allowance) row('Fixed allowance',e.allowance); row('Gross pay',p.gross,{bold:true}); y+=3;
+  section('Deductions (employee)');
+  row('EPF (KWSP) 11%',p.epfEe,{neg:true,color:HR_RED}); row('SOCSO (PERKESO)',p.socsoEe,{neg:true,color:HR_RED}); row('EIS (SIP)',p.eisEe,{neg:true,color:HR_RED}); row('PCB / MTD (estimate)',p.pcb,{neg:true,color:HR_RED}); y+=2;
+  doc.setFillColor(HR_NETBG[0],HR_NETBG[1],HR_NETBG[2]); doc.roundedRect(m,y-5,W-2*m,11,2,2,'F');
+  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('NET PAY',m+4,y+1.5); doc.setFontSize(14); doc.text('RM '+HR_money2(p.net),W-m-4,y+2,{align:'right'}); y+=16;
+  section('Employer contributions'); row('EPF (KWSP) 12-13%',p.epfEr); row('SOCSO (PERKESO)',p.socsoEr); row('EIS (SIP)',p.eisEr); row('Total employer cost',p.employerCost,{bold:true});
+  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,275,W-m,275);
+  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+  doc.text('This is a computer-generated payslip and does not require a signature.',m,280);
+  doc.text('PCB shown is an estimate - verify against the LHDN MTD schedule before filing.',m,284);
+}
+function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var per=hrPeriod(); rows.forEach(function(r,i){ if(i>0)doc.addPage(); hrDrawPayslip(doc,r.e,r.p,per); }); doc.save('Payslips_'+per.label.replace(' ','')+'.pdf'); toast('Payslips PDF generated'); }); }
+function hrDownload(name,text,mime){ var blob=new Blob([text],{type:mime||'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},1500); }
+function hrCsv(arr){ return arr.map(function(r){ return r.map(function(c){ return /[",\n]/.test(String(c))?('"'+String(c).replace(/"/g,'""')+'"'):c; }).join(','); }).join('\n'); }
+function hrExpStatutory(kind){
+  var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
+  var head,body=[],totals,name;
+  if(kind==='epf'){ name='EPF_KWSP_'+tag+'.csv'; head=['No','EPF Member No','IC (New)','Name','EPF Wages (RM)','Employee 11% (RM)','Employer 12-13% (RM)','Total (RM)']; var a1=0,a2=0,a3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.epfEe+p.epfEr; a1+=p.epfEe;a2+=p.epfEr;a3+=t; body.push([i+1,e.epfNo||'',e.ic||'',e.name,f2(p.gross),f2(p.epfEe),f2(p.epfEr),f2(t)]); }); totals=['','','','TOTAL','',f2(a1),f2(a2),f2(a3)]; }
+  else if(kind==='socso'){ name='SOCSO_PERKESO_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.5% (RM)','Employer 1.75% (RM)','Total (RM)']; var b1=0,b2=0,b3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.socsoEe+p.socsoEr; b1+=p.socsoEe;b2+=p.socsoEr;b3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.socsoEe),f2(p.socsoEr),f2(t)]); }); totals=['','','','TOTAL','',f2(b1),f2(b2),f2(b3)]; }
+  else if(kind==='eis'){ name='EIS_SIP_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.2% (RM)','Employer 0.2% (RM)','Total (RM)']; var c1=0,c2=0,c3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.eisEe+p.eisEr; c1+=p.eisEe;c2+=p.eisEr;c3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.eisEe),f2(p.eisEr),f2(t)]); }); totals=['','','','TOTAL','',f2(c1),f2(c2),f2(c3)]; }
+  else { name='PCB_CP39_'+tag+'.csv'; head=['No','IC (New)','TIN (Income Tax No)','Name','Country','Remuneration (RM)','PCB/MTD (RM)','CP38 (RM)']; var d1=0; rows.forEach(function(x,i){ var e=x.e,p=x.p; d1+=p.pcb; body.push([i+1,e.ic||'',e.taxNo||'',e.name,'MY',f2(p.gross),f2(p.pcb),'0.00']); }); totals=['','','','TOTAL','','',f2(d1),'0.00']; }
+  hrDownload(name,hrCsv([head].concat(body,[totals]))); toast(kind.toUpperCase()+' CSV downloaded');
+}
+var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL'};
+function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
+function hrExpGiro(){
+  var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
+  var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.name,e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
+  var total=rows.reduce(function(s,x){return s+x.p.net;},0); body.push(['','','','','','TOTAL',f2(total),'','']);
+  hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
+}
 
 // ===== Sales Reconciliation → Xero Sales Import (Order Form + multi-gateway Sales file) =====
 var SR={ of:null, sf:null, out:[], rendered:false };
