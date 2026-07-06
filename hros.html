@@ -804,19 +804,22 @@ table[data-list] tbody tr:hover input[type=text]{
   </form>
 </div>
 
-<div id="app" class="hide">
-  <header class="bar" style="display:flex;align-items:center;justify-content:space-between;padding:12px 22px;position:sticky;top:0;z-index:20;border-bottom:1px solid var(--border)">
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:20px">👥</span>
-      <div><div style="font-weight:700;font-size:16px;letter-spacing:-.01em">HR OS</div><div style="color:var(--muted);font-size:11px;margin-top:-1px">CTG Human Resource &amp; Payroll</div></div>
+<div id="app" class="hide" style="display:flex;min-height:100vh;align-items:stretch">
+  <aside id="hr_side" style="width:238px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh">
+    <div style="padding:18px 18px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+      <span style="font-size:24px">👥</span>
+      <div><div style="font-weight:800;font-size:17px;letter-spacing:-.02em">HR OS</div><div style="color:var(--muted);font-size:10.5px;margin-top:-1px;letter-spacing:.02em">CTG PAYROLL</div></div>
     </div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <select id="hr_company" onchange="hrPickCompany(this.value)" title="Xero company" style="padding:8px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;max-width:260px"></select>
-      <button class="btn" onclick="location.href='app.html'" title="Back to Finance OS (same login)" style="padding:7px 14px;color:#F08570;box-shadow:0 0 0 1px rgba(232,93,60,.32) inset">← Finance OS</button>
-      <button class="btn" onclick="logout()" style="padding:7px 14px">Sign out</button>
+    <div style="padding:13px 13px 4px"><label class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding-left:2px">Company</label>
+      <select id="hr_company" onchange="hrPickCompany(this.value)" title="Xero company" style="width:100%;margin-top:4px;padding:9px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:12px;font-weight:600"></select>
     </div>
-  </header>
-  <main style="max-width:1200px;margin:0 auto;padding:22px 22px 60px">
+    <nav id="hr_nav" style="flex:1;padding:10px 12px;display:flex;flex-direction:column;gap:3px;overflow:auto"></nav>
+    <div style="padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+      <button class="btn" onclick="location.href='app.html'" title="Back to Finance OS (same login)" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;color:#F08570;box-shadow:0 0 0 1px rgba(232,93,60,.28) inset">← Finance OS</button>
+      <button class="btn" onclick="logout()" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px">Sign out</button>
+    </div>
+  </aside>
+  <main style="flex:1;min-width:0;padding:26px 30px 60px;max-width:1300px">
     <div id="hr"></div>
   </main>
 </div>
@@ -1067,11 +1070,18 @@ async function renderHR(){
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
+var HR_NAV=[['dashboard','📊','Dashboard'],['employees','👤','Employees'],['payroll','💰','Payroll'],['yearend','📅','Year-end'],['leave','🌴','Leave'],['claims','🧾','Claims']];
+function hrSidebar(){
+  var nav=document.getElementById('hr_nav'); if(!nav) return;
+  nav.innerHTML=HR_NAV.map(function(t){ var on=HR.view===t[0];
+    return '<button onclick="hrNav(\''+t[0]+'\')" style="display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:10px 12px;border:none;border-radius:9px;cursor:pointer;font:600 13px Inter,-apple-system,sans-serif;transition:background .12s,color .12s;'+(on?'background:linear-gradient(180deg,rgba(232,93,60,.24),rgba(232,93,60,.10));color:#fff;box-shadow:0 0 0 1px rgba(232,93,60,.34) inset':'background:transparent;color:var(--text-soft)')+'" onmouseover="if(!'+on+')this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="if(!'+on+')this.style.background=\'transparent\'"><span style="font-size:15px;width:18px;text-align:center">'+t[1]+'</span>'+t[2]+'</button>';
+  }).join('');
+}
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  var tabs=[['dashboard','📊 Dashboard'],['employees','👤 Employees'],['payroll','💰 Payroll'],['yearend','📅 Year-end'],['leave','🌴 Leave'],['claims','🧾 Claims']];
-  var nav='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+tabs.map(function(t){return '<button class="btn sm'+(HR.view===t[0]?' p':'')+'" onclick="hrNav(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
-  var head='<div style="margin-bottom:12px"><h2 style="margin:0;font-size:19px">👥 HR / Payroll</h2><div class="muted" style="font-size:12px">'+esc(hrCompanyName())+'</div></div>';
+  hrSidebar();
+  var cur=(HR_NAV.find(function(t){return t[0]===HR.view;})||['','','HR']);
+  var head='<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:20px;flex-wrap:wrap"><div><h2 style="margin:0;font-size:23px;font-weight:700;letter-spacing:-.02em">'+cur[1]+' '+cur[2]+'</h2><div class="muted" style="font-size:12.5px;margin-top:3px">'+esc(hrCompanyName())+'</div></div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
@@ -1079,7 +1089,7 @@ function hrRender(){
   else if(HR.view==='yearend') body=hrYearend();
   else if(HR.view==='leave') body=hrLeave();
   else if(HR.view==='claims') body=hrClaims();
-  el.innerHTML=head+nav+body;
+  el.innerHTML=head+body;
 }
 function hrDashboard(){
   var e=HR.data.employees||[], lv=HR.data.leaves||[], cl=HR.data.claims||[];
