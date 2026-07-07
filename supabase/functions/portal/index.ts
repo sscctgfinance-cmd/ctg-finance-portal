@@ -3314,6 +3314,30 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
     }
+    if (api === "hr_dashboard") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
+      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:String(b.tenant||""), p_month:mo, p_year:yr });
+      if (error) return j({ ok:false, error:error.message });
+      return j({ ok:true, data, month:mo, year:yr });
+    }
+    if (api === "hr_dash_refresh") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
+      const tenant = String(b.tenant||"");
+      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:tenant, p_month:mo, p_year:yr });
+      if (error) return j({ ok:false, error:error.message });
+      await sb.from("hr_dashboard_snapshots").insert({ tenant_id:tenant, period_month:mo, period_year:yr, payload:data });
+      await sb.from("hr_dashboard_insights").delete().eq("tenant_id",tenant).eq("period_month",mo).eq("period_year",yr);
+      const ins = (data && (data as any).insights) || [];
+      if (ins.length) {
+        await sb.from("hr_dashboard_insights").insert(ins.map((x:any)=>({ tenant_id:tenant, period_month:mo, period_year:yr,
+          insight_type:x.insight_type, title:x.title, description:x.description, metric_value:x.metric_value,
+          comparison_value:x.comparison_value, severity:x.severity, suggested_action:x.suggested_action })));
+      }
+      await logAudit(me,"hr_dash_refresh",tenant,{ month:mo, year:yr, insights:ins.length });
+      return j({ ok:true, data, insights:ins.length, refreshedAt:new Date().toISOString() });
+    }
     if (api === "hr_calc_log") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (b.overridden && !String(b.reason||"").trim()) return j({ ok:false, error:"a reason is required for an override" });
@@ -3418,6 +3442,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v83 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v84 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
