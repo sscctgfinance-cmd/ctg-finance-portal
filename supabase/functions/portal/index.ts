@@ -3211,13 +3211,14 @@ Deno.serve(async (req)=>{
       if (!tenant) return j({ ok:true, employees:[], leaveTypes:[], leaves:[], claims:[], employer:null });
       const emp = await sb.from("hr_employees").select("*").eq("tenant_id",tenant).order("emp_no");
       const empIds = (emp.data||[]).map((e:any)=>e.id);
-      const [lt, lv, cl, ei] = await Promise.all([
+      const [lt, lv, cl, ei, rt] = await Promise.all([
         sb.from("hr_leave_types").select("*").eq("active",true).order("code"),
         empIds.length? sb.from("hr_leave_requests").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("date_from",{ascending:false}) : Promise.resolve({data:[]} as any),
         empIds.length? sb.from("hr_claims").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("claim_date",{ascending:false}) : Promise.resolve({data:[]} as any),
         sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle(),
+        sb.from("hr_statutory_rates").select("rates").eq("id",1).single(),
       ]);
-      return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null });
+      return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null, rates:(rt.data&&rt.data.rates)||null });
     }
     if (api === "hr_emp_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3313,6 +3314,25 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
     }
+    if (api === "hr_calc_log") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if (b.overridden && !String(b.reason||"").trim()) return j({ ok:false, error:"a reason is required for an override" });
+      const row = {
+        tenant_id:String(b.tenant||""), employee_id:b.employeeId?String(b.employeeId):null, employee_name:b.employeeName||null,
+        period:b.period||null, inputs:b.inputs||{}, flags:b.flags||{}, settings:b.settings||{}, result:b.result||{},
+        overridden:!!b.overridden, override:b.override||null, reason:b.reason||null, created_by:(me.user&&me.user.email)||null,
+      };
+      const { data, error } = await sb.from("hr_calc_audit").insert(row).select("id").single();
+      if (error) return j({ ok:false, error:error.message });
+      await logAudit(me,"hr_calc_log",String(data&&data.id),{ tenant:b.tenant, employee:b.employeeName, net:(b.result&&b.result.net), overridden:!!b.overridden });
+      return j({ ok:true, id:data&&data.id });
+    }
+    if (api === "hr_calc_history") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data, error } = await sb.from("hr_calc_audit").select("*").eq("tenant_id",String(b.tenant||"")).order("created_at",{ascending:false}).limit(60);
+      if (error) return j({ ok:false, error:error.message });
+      return j({ ok:true, rows:data||[] });
+    }
     if (api === "hr_rates_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const rates = b.rates||{};
@@ -3398,6 +3418,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v82 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v83 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

@@ -1070,7 +1070,7 @@ async function renderHR(){
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
-var HR_NAV=[['dashboard','📊','Dashboard'],['employees','👤','Employees'],['payroll','💰','Payroll'],['yearend','📅','Year-end'],['leave','🌴','Leave'],['claims','🧾','Claims']];
+var HR_NAV=[['dashboard','📊','Dashboard'],['employees','👤','Employees'],['payroll','💰','Payroll'],['calculator','🧮','Calculator'],['yearend','📅','Year-end'],['leave','🌴','Leave'],['claims','🧾','Claims']];
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   nav.innerHTML=HR_NAV.map(function(t){ var on=HR.view===t[0];
@@ -1086,6 +1086,7 @@ function hrRender(){
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
   else if(HR.view==='payroll') body=hrPayroll();
+  else if(HR.view==='calculator') body=hrCalculator();
   else if(HR.view==='yearend') body=hrYearend();
   else if(HR.view==='leave') body=hrLeave();
   else if(HR.view==='claims') body=hrClaims();
@@ -1608,6 +1609,123 @@ async function hrPostXero(runId){
   var r=await call({api:'hr_post_xero',runId:runId,tenantId:HR.tenant});
   if(r&&r.ok){ toast('Xero draft journal created ✓ — review it in Xero.'); }
   else toast((r&&r.error)||'Xero posting failed',true);
+}
+
+// ===== 🧮 Malaysia Payroll Calculator — configurable per-item statutory flags + override + audit =====
+var HR_CALC={ empId:'', inp:{basic:'',allowance:'',claim:'',bonus:'',deduction:''},
+  flags:{ allowance:{taxable:true,epf:true,socso:true,eis:true,pcb:true}, bonus:{taxable:true,epf:true,socso:true,eis:true,pcb:true}, claim:{taxable:false,epf:false,socso:false,eis:false,pcb:false} },
+  settings:{ epfEeRate:'', socsoCat:'', resident:true, married:false, spouseWorking:false, children:0, senior:false, epfOn:true, socsoOn:true, eisOn:true },
+  ov:{ on:false, epfEe:'',epfEr:'',socsoEe:'',socsoEr:'',eisEe:'',eisEr:'',pcb:'', reason:'' }, result:null };
+function hrCalcNum(v){ v=Number(v); return isNaN(v)?0:v; }
+function hrCalcCompute(){
+  var C=HR_CALC, inp=C.inp, fl=C.flags, s=C.settings;
+  var cfg=(HR.data&&HR.data.rates)||(HR.pay&&HR.pay.data&&HR.pay.data.rates)||null; if(!cfg) return null;
+  var basic=hrCalcNum(inp.basic), allow=hrCalcNum(inp.allowance), claim=hrCalcNum(inp.claim), bonus=hrCalcNum(inp.bonus), ded=hrCalcNum(inp.deduction);
+  var items=[ {a:basic,f:{taxable:1,epf:1,socso:1,eis:1,pcb:1}}, {a:allow,f:fl.allowance}, {a:bonus,f:fl.bonus}, {a:claim,f:fl.claim} ];
+  var baseFor=function(k){ var t=0; items.forEach(function(it){ if(it.f&&it.f[k]) t+=it.a; }); return t; };
+  var epfWage=baseFor('epf'), socsoWage=baseFor('socso'), eisWage=baseFor('eis'), taxWage=baseFor('pcb'), grossPay=basic+allow+bonus, senior=!!s.senior;
+  var eeRate=(s.epfEeRate!==''&&s.epfEeRate!=null)?Number(s.epfEeRate):(senior?(cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0):cfg.epf.eeRate);
+  var erRate=senior?(cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04):(epfWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
+  var ep=(s.epfOn!==false)?hrEpfParts(epfWage,eeRate,erRate):{ee:0,er:0};
+  var scat=(s.socsoCat!==''&&s.socsoCat!=null)?Number(s.socsoCat):(senior?2:1);
+  var sEe=scat===2?0:cfg.socso.eeRate, sEr=scat===2?(cfg.socso.erRate2!=null?cfg.socso.erRate2:0.0125):cfg.socso.erRate;
+  var sp=(s.socsoOn!==false)?hrTableParts(socsoWage,cfg.socso.ceiling,sEe,sEr):{ee:0,er:0};
+  var ip=(s.eisOn!==false&&!senior)?hrTableParts(eisWage,cfg.eis.ceiling,cfg.eis.eeRate,cfg.eis.erRate):{ee:0,er:0};
+  var pcb;
+  if(s.resident===false){ pcb=hrRound2(taxWage*0.30); }
+  else{
+    var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
+    var cat2=!!s.married && s.spouseWorking===false, kids=hrCalcNum(s.children);
+    var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf);
+    var chargeable=Math.max(0, taxWage*12-reliefs), tax=hrProgTax(chargeable), rebate=chargeable<=35000?(400+(cat2?400:0)):0;
+    pcb=hrRound2(Math.max(0,(tax-rebate)/12));
+  }
+  var res={ epfEe:ep.ee, epfEr:ep.er, socsoEe:sp.ee, socsoEr:sp.er, eisEe:ip.ee, eisEr:ip.er, pcb:pcb, gross:hrRound2(grossPay),
+    epfWage:hrRound2(epfWage), socsoWage:hrRound2(socsoWage), eisWage:hrRound2(eisWage), taxWage:hrRound2(taxWage), _eeRate:eeRate, _erRate:erRate, _scat:scat };
+  var ov=C.ov; res.overridden=false;
+  if(ov.on){ ['epfEe','epfEr','socsoEe','socsoEr','eisEe','eisEr','pcb'].forEach(function(k){ var v=ov[k]; if(v!==''&&v!=null&&!isNaN(Number(v))){ res[k]=Number(v); res.overridden=true; } }); }
+  res.net=hrRound2(res.gross-res.epfEe-res.socsoEe-res.eisEe-res.pcb-ded+claim);
+  res.employerCost=hrRound2(res.gross+res.epfEr+res.socsoEr+res.eisEr);
+  res.deduction=ded; res.claim=claim; return res;
+}
+function hrCalcOutHtml(res){
+  if(!res) return '<div class="muted" style="padding:16px;font-size:12.5px">Enter a Basic Salary to calculate. (If nothing shows, open 💰 Payroll once so the statutory rates load.)</div>';
+  var ln=function(label,val,o){ o=o||{}; return '<div style="display:flex;justify-content:space-between;padding:5px 0;'+(o.b?'font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:8px':'')+'"><span style="font-size:'+(o.b?'13.5px':'12.5px')+'"'+(o.mut?' class="muted"':'')+'>'+label+'</span><span style="font-size:'+(o.b?'15px':'13px')+'"'+(o.col?' style="color:'+o.col+';font-size:'+(o.b?'15px':'13px')+'"':'')+'>'+((o.neg?'-':'')+M(val))+'</span></div>'; };
+  return '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--coral);font-weight:700;margin-bottom:2px">Employee deductions</div>'+
+    ln('EPF (KWSP) '+(Math.round(res._eeRate*1000)/10)+'%',res.epfEe,{neg:true,col:'var(--coral-soft)'})+
+    ln('SOCSO (PERKESO) · Cat '+res._scat,res.socsoEe,{neg:true,col:'var(--coral-soft)'})+
+    ln('EIS (SIP)',res.eisEe,{neg:true,col:'var(--coral-soft)'})+
+    ln('PCB / MTD (estimate)',res.pcb,{neg:true,col:'var(--coral-soft)'})+
+    (res.deduction?ln('Other deduction',res.deduction,{neg:true,col:'var(--coral-soft)'}):'')+
+    (res.claim?ln('Claim / reimbursement',res.claim,{col:'var(--green-soft)'}):'')+
+    ln('Gross salary',res.gross,{b:true})+
+    ln('NET PAY',res.net,{b:true,col:'var(--green-soft)'})+
+    '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--sky-soft);font-weight:700;margin:14px 0 2px">Employer contributions</div>'+
+    ln('EPF (KWSP)',res.epfEr)+ln('SOCSO (PERKESO)',res.socsoEr)+ln('EIS (SIP)',res.eisEr)+ln('Employer total cost',res.employerCost,{b:true})+
+    (res.overridden?'<div style="margin-top:8px;font-size:11px;color:var(--amber)">⚠ Some values were manually overridden.</div>':'')+
+    '<div class="muted" style="font-size:10px;margin-top:10px;line-height:1.5">Statutory bases → EPF '+M(res.epfWage)+' · SOCSO '+M(res.socsoWage)+' · EIS '+M(res.eisWage)+' · Taxable(PCB) '+M(res.taxWage)+'. PCB is an LHDN MTD estimate — verify before filing.</div>';
+}
+function hrCalcRecalc(){ var res=hrCalcCompute(); HR_CALC.result=res; var el=document.getElementById('hrcalc_out'); if(el) el.innerHTML=hrCalcOutHtml(res); }
+function hrCI(k,v){ HR_CALC.inp[k]=v; hrCalcRecalc(); }
+function hrCS(k,v){ HR_CALC.settings[k]=v; hrCalcRecalc(); }
+function hrCO(k,v){ HR_CALC.ov[k]=v; if(k!=='reason') hrCalcRecalc(); }
+function hrCF(item,flag,on){ HR_CALC.flags[item][flag]=!!on; hrCalcRecalc(); }
+function hrCalcOvToggle(){ HR_CALC.ov.on=!HR_CALC.ov.on; hrRender(); }
+function hrCalcPickEmp(id){
+  HR_CALC.empId=id; var e=id?((HR.data.employees||[]).find(function(x){return x.id===id;})):null;
+  if(e){ HR_CALC.inp.basic=Number(e.basic_salary)||''; HR_CALC.inp.allowance=Number(e.fixed_allowance)||'';
+    var age=hrAge(e.date_of_birth);
+    HR_CALC.settings={ epfEeRate:(e.epf_ee_rate!=null?String(e.epf_ee_rate):''), socsoCat:(e.socso_category!=null?String(e.socso_category):''),
+      resident:e.resident!==false, married:String(e.marital_status||'')==='married', spouseWorking:!!e.spouse_working, children:Number(e.num_children)||0,
+      senior:(age!=null&&age>=60), epfOn:e.epf_eligible!==false, socsoOn:e.socso_eligible!==false, eisOn:e.eis_eligible!==false }; }
+  hrRender();
+}
+function hrCalculator(){
+  var C=HR_CALC; var res=hrCalcCompute(); C.result=res; var emps=(HR.data&&HR.data.employees)||[];
+  var money=function(k,ph){ return '<input type="number" step="0.01" value="'+(C.inp[k]===''?'':C.inp[k])+'" oninput="hrCI(\''+k+'\',this.value)" onfocus="this.select()" placeholder="'+(ph||'0.00')+'" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">'; };
+  var g=function(lbl,el,hint){ return '<div style="margin-bottom:10px"><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+(hint?'<div class="muted" style="font-size:10px;margin-top:2px">'+hint+'</div>':'')+'</div>'; };
+  var empSel='<select onchange="hrCalcPickEmp(this.value)" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"><option value="">— Ad-hoc / manual —</option>'+emps.map(function(e){return '<option value="'+e.id+'"'+(e.id===C.empId?' selected':'')+'>'+esc(e.emp_no+' · '+e.name)+'</option>';}).join('')+'</select>';
+  var fRow=function(item,label){ var f=C.flags[item]; var cell=function(k){ return '<td style="text-align:center;padding:3px"><input type="checkbox" '+(f[k]?'checked':'')+' onchange="hrCF(\''+item+'\',\''+k+'\',this.checked)" style="accent-color:var(--coral)"></td>'; }; return '<tr><td style="padding:5px 8px;font-size:12px">'+label+'</td>'+cell('taxable')+cell('epf')+cell('socso')+cell('eis')+cell('pcb')+'</tr>'; };
+  var flagTbl='<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;font-size:10.5px" class="muted">ITEM</th><th class="muted" style="font-size:10.5px">Taxable</th><th class="muted" style="font-size:10.5px">EPF</th><th class="muted" style="font-size:10.5px">SOCSO</th><th class="muted" style="font-size:10.5px">EIS</th><th class="muted" style="font-size:10.5px">PCB</th></tr></thead><tbody>'+fRow('allowance','Allowance')+fRow('bonus','Bonus / Commission')+fRow('claim','Claim / reimbursement')+'</tbody></table><div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5">Basic salary is always fully statutory. Deduction reduces net only. Toggle a box to include/exclude that item from a statutory base — e.g. a travel claim can be excluded from EPF/SOCSO/EIS/PCB.</div>';
+  var ck=function(k,lbl){ return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0"><input type="checkbox" '+(C.settings[k]?'checked':'')+' onchange="hrCS(\''+k+'\',this.checked)" style="accent-color:var(--coral)">'+lbl+'</label>'; };
+  var sel=function(k,opts){ return '<select onchange="hrCS(\''+k+'\',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(C.settings[k])===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'; };
+  var settings='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:8px"><span class="muted">EPF EE</span>'+sel('epfEeRate',[['','Default'],['0.11','11%'],['0.09','9%'],['0.08','8%'],['0.07','7%'],['0.055','5.5%'],['0','0%']])+'<span class="muted">SOCSO cat</span>'+sel('socsoCat',[['','Auto'],['1','Cat 1'],['2','Cat 2']])+'<span class="muted">Children</span><input type="number" min="0" value="'+(C.settings.children||0)+'" oninput="hrCS(\'children\',this.value)" style="width:54px;padding:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px"></div><div>'+ck('resident','Tax resident')+ck('married','Married')+ck('spouseWorking','Spouse working')+ck('senior','Age 60+')+ck('epfOn','EPF')+ck('socsoOn','SOCSO')+ck('eisOn','EIS')+'</div>';
+  var ov=C.ov;
+  var ovIn=function(k,lbl){ return '<div><label class="muted" style="font-size:10px">'+lbl+'</label><input type="number" step="0.01" value="'+(ov[k]===''?'':ov[k])+'" oninput="hrCO(\''+k+'\',this.value)" placeholder="auto" style="width:100%;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right"></div>'; };
+  var ovPanel = ov.on ? ('<div class="panel" style="margin-top:12px;border-color:var(--amber)"><div class="panel-hd"><h3>✏️ Manual override</h3><button class="btn sm" onclick="hrCalcOvToggle()">✕ Close</button></div><div class="muted" style="font-size:11px;padding:0 2px 8px">Blank = keep the computed value. A <b>reason is required</b> to save an overridden calculation (stored in the audit log).</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'+ovIn('epfEe','EPF EE')+ovIn('epfEr','EPF ER')+ovIn('socsoEe','SOCSO EE')+ovIn('socsoEr','SOCSO ER')+ovIn('eisEe','EIS EE')+ovIn('eisEr','EIS ER')+ovIn('pcb','PCB')+'</div><div style="margin-top:10px"><label class="muted" style="font-size:11px">Reason for override *</label><input value="'+esc(ov.reason||'')+'" oninput="hrCO(\'reason\',this.value)" placeholder="e.g. LHDN CP38 directive, arrears adjustment…" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></div></div>') : '';
+  return '<div style="display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:16px;align-items:start">'+
+    '<div><div class="panel"><div class="panel-hd"><h3>🧮 Payroll inputs</h3></div>'+g('Prefill from employee (optional)',empSel)+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+g('Basic salary (RM) *',money('basic'))+g('Allowance (RM)',money('allowance'))+g('Bonus / Commission (RM)',money('bonus'))+g('Claim / reimbursement (RM)',money('claim'),'Excluded from statutory by default')+g('Deduction (RM)',money('deduction'),'Reduces net only')+'</div></div>'+
+      '<div class="panel"><div class="panel-hd"><h3>⚙️ Statutory flags per item</h3></div>'+flagTbl+'</div>'+
+      '<div class="panel"><div class="panel-hd"><h3>🧾 Statutory settings</h3></div>'+settings+'</div></div>'+
+    '<div><div class="panel"><div class="panel-hd"><h3>💵 Result</h3><span style="display:flex;gap:6px"><button class="btn xs" onclick="hrCalcOvToggle()">✏️ Override</button><button class="btn xs" onclick="hrCalcPayslip()">📄 Payslip</button><button class="btn xs p" onclick="hrCalcSave()">💾 Save</button></span></div><div id="hrcalc_out">'+hrCalcOutHtml(res)+'</div></div>'+ovPanel+'<div style="margin-top:12px"><button class="btn sm" onclick="hrCalcHistory()">🕓 Calculation audit log</button><div id="hrcalc_hist" style="margin-top:10px"></div></div></div>'+
+  '</div>';
+}
+function hrCalcPayslip(){
+  var res=hrCalcCompute(); if(!res){ toast('Enter figures first',true); return; }
+  hrLoadJsPDF(function(){
+    var C=HR_CALC, emp=C.empId?(HR.data.employees||[]).find(function(x){return x.id===C.empId;}):null;
+    var e={ empNo:emp?emp.emp_no:'CALC', name:emp?emp.name:'Payroll Calculation', ic:emp?emp.ic_no:'', position:emp?emp.position:'', dept:emp?emp.dept:'', basic:hrCalcNum(C.inp.basic), allowance:hrCalcNum(C.inp.allowance), bank:'', resident:C.settings.resident };
+    var p={ gross:hrRound2(res.gross+res.claim), epfEe:res.epfEe, epfEr:res.epfEr, socsoEe:res.socsoEe, socsoEr:res.socsoEr, eisEe:res.eisEe, eisEr:res.eisEr, pcb:res.pcb, net:res.net, employerCost:res.employerCost, _meta:{epfEeRate:res._eeRate,epfErRate:res._erRate,socsoCat:res._scat,pcbCat:(C.settings.resident===false?0:1),senior:C.settings.senior} };
+    var d={ bonus:hrCalcNum(C.inp.bonus), ot:0, allowance:hrCalcNum(C.inp.claim), deductions:(hrCalcNum(C.inp.deduction)?[{label:'Deduction',amount:hrCalcNum(C.inp.deduction)}]:[]), unpaid:0 };
+    var now=new Date(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    hrDrawPayslip(doc,e,p,{month:now.getMonth()+1,year:now.getFullYear(),label:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear()},d);
+    doc.save('Payroll_Calc_'+(emp?emp.emp_no:'adhoc')+'.pdf'); toast('Payslip generated');
+  });
+}
+async function hrCalcSave(){
+  var res=hrCalcCompute(); if(!res){ toast('Enter figures first',true); return; }
+  var C=HR_CALC, e=C.empId?(HR.data.employees||[]).find(function(x){return x.id===C.empId;}):null;
+  if(res.overridden && !String(C.ov.reason||'').trim()){ toast('A reason is required to save an override',true); return; }
+  var now=new Date();
+  var r=await call(Object.assign({api:'hr_calc_log',tenant:HR.tenant,employeeId:C.empId||null,employeeName:e?e.name:'Ad-hoc',period:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear(),inputs:C.inp,flags:C.flags,settings:C.settings,result:res,overridden:res.overridden,override:(res.overridden?C.ov:null),reason:(res.overridden?C.ov.reason:null)}));
+  if(r&&r.ok){ toast('Calculation saved to audit log ✓'); hrCalcHistory(); } else toast((r&&r.error)||'Save failed',true);
+}
+async function hrCalcHistory(){
+  var el=document.getElementById('hrcalc_hist'); if(el) el.innerHTML='<div class="muted" style="font-size:12px"><span class="spin"></span> Loading…</div>';
+  var r=await call({api:'hr_calc_history',tenant:HR.tenant}); if(!el) return;
+  if(!r||!r.ok){ el.innerHTML='<div class="muted" style="font-size:12px">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+  var rows=r.rows||[]; if(!rows.length){ el.innerHTML='<div class="muted" style="font-size:12px">No saved calculations yet.</div>'; return; }
+  el.innerHTML='<div class="panel" style="margin:0;padding:0"><div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="bigtable" style="font-size:11.5px"><thead><tr><th>When</th><th>Employee</th><th class="amt">Net</th><th>By</th><th>Override</th></tr></thead><tbody>'+rows.map(function(x){ var rs=x.result||{}; return '<tr><td class="muted">'+esc(String(x.created_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc(x.employee_name||'—')+'</td><td class="amt">'+M(rs.net||0)+'</td><td class="muted" style="font-size:10.5px">'+esc(x.created_by||'')+'</td><td>'+(x.overridden?('<span title="'+esc(x.reason||'')+'" style="color:var(--amber)">⚠ '+esc(String(x.reason||'').slice(0,28))+'</span>'):'<span class="muted">—</span>')+'</td></tr>'; }).join('')+'</tbody></table></div></div>';
 }
 
 // ===== HR Wave 3b: Year-end (Borang EA / Form E / CP8D) =====
