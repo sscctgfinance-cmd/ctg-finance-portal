@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HR OS · CTG</title><!-- build:v84-pro-ui -->
+<title>HR OS · CTG</title><!-- build:v84-cards-trends -->
 <style>
 /* ════════════════════════════════════════════
    CTG Finance Portal · v6 — CTG Brand Dark Theme
@@ -239,6 +239,20 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
 .page-meta{display:flex;align-items:center;gap:9px;flex-shrink:0}
 .page-chip{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:var(--text-soft);background:rgba(255,255,255,.03);border:1px solid var(--border-strong);border-radius:999px;padding:7px 13px;white-space:nowrap}
 .page-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);box-shadow:0 0 8px rgba(61,220,151,.7)}
+
+/* ══ Employee card list ══ */
+.emp-list{display:flex;flex-direction:column;gap:9px}
+.emp-card{display:flex;align-items:center;gap:14px;padding:13px 16px;background:linear-gradient(180deg,rgba(19,28,45,.7),rgba(12,20,33,.6));border:1px solid var(--border-strong);border-radius:13px;transition:transform .15s,border-color .15s}
+.emp-card:hover{border-color:rgba(232,93,60,.32);transform:translateY(-1px)}
+.emp-av{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;letter-spacing:.02em;text-transform:uppercase}
+.emp-main{flex:1;min-width:0}
+.emp-name{font-weight:700;font-size:14px;color:#fff;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.emp-no{font-size:10px;color:var(--text-soft);font-weight:600;background:rgba(255,255,255,.05);padding:1px 8px;border-radius:999px;letter-spacing:.02em}
+.emp-meta{font-size:12px;color:var(--text-soft);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emp-sal{text-align:right;flex-shrink:0;min-width:96px}
+.emp-sal .v{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.emp-sal .l{font-size:9.5px;color:var(--muted);margin-top:1px}
+@media(max-width:640px){ .emp-card{flex-wrap:wrap;gap:9px 12px} .emp-sal{text-align:left;min-width:0} }
 
 /* ── Responsive ── */
 @media(max-width:860px){ .side{width:210px} .side-brand-sub{display:none} }
@@ -1148,7 +1162,15 @@ function hrRender(){
 // ===== 📊 HR OS Analytics Dashboard (Overview / Headcount / Payroll / Attendance / Cost) =====
 var HR_DASH={ month:0, year:0, page:'overview', data:null, loading:false, steps:0, tenant:'' };
 function hrKfmt(v){ v=Number(v)||0; var a=Math.abs(v); if(a>=1000000) return (v/1000000).toFixed(1)+'M'; if(a>=1000) return (v/1000).toFixed(0)+'k'; return (Math.round(v*10)/10).toString(); }
-function hrDCard(label,value,opt){ opt=opt||{}; return '<div class="panel" style="padding:12px 13px;margin:0"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em">'+label+'</div><div style="font-size:19px;font-weight:700;margin-top:3px;color:'+(opt.color||'var(--text)')+'">'+value+'</div>'+(opt.sub?'<div class="muted" style="font-size:10px;margin-top:1px">'+opt.sub+'</div>':'')+'</div>'; }
+function hrInitials(n){ var p=String(n||'').trim().split(/\s+/); return (((p[0]||'')[0]||'')+((p.length>1?p[p.length-1]:'')[0]||''))||'?'; }
+function hrAvatarHue(n){ var h=0,s=String(n||''); for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360; return h; }
+function hrTrendDelta(trend,key,goodUp){ if(!trend||trend.length<2) return null; var a=Number(trend[trend.length-1][key])||0, b=Number(trend[trend.length-2][key])||0; if(!b) return null; return { pct:Math.round((a-b)/b*1000)/10, goodUp:goodUp }; }
+function hrDCard(label,value,opt){ opt=opt||{};
+  var ico=opt.icon?'<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">'+opt.icon+'</span>':'';
+  var tr='';
+  if(opt.delta){ var dd=opt.delta, up=dd.pct>=0, good=(dd.goodUp==null)?null:(up===!!dd.goodUp), col=(good==null)?'var(--text-soft)':(good?'var(--green-soft)':'var(--coral-soft)');
+    tr='<span style="font-size:10.5px;font-weight:700;color:'+col+';white-space:nowrap">'+(up?'▲':'▼')+' '+Math.abs(dd.pct)+'%</span>'; }
+  return '<div class="panel" style="padding:13px 14px;margin:0"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">'+label+'</div>'+ico+'</div><div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap"><span style="font-size:19px;font-weight:700;color:'+(opt.color||'var(--text)')+'">'+value+'</span>'+tr+'</div>'+(opt.sub?'<div class="muted" style="font-size:10px;margin-top:2px">'+opt.sub+'</div>':'')+'</div>'; }
 function hrCardGrid(cards){ return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:15px">'+cards.join('')+'</div>'; }
 function hrPanel(title,inner,right){ return '<div class="panel"><div class="panel-hd"><h3>'+title+'</h3>'+(right||'')+'</div>'+inner+'</div>'; }
 function hrDashBars(items,opt){ opt=opt||{}; if(!items||!items.length) return '<div class="muted" style="padding:14px;font-size:12px;text-align:center">No data</div>';
@@ -1180,24 +1202,28 @@ function hrDashValTable(list,hd){ if(!list||!list.length) return '<div class="mu
   return '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th class="amt">'+hd+'</th></tr></thead><tbody>'+list.map(function(x){return '<tr><td>'+esc(x.label)+'</td><td class="amt">'+M(x.value)+'</td></tr>';}).join('')+'</tbody></table></div>'; }
 function hrDashRankTable(list,hd){ if(!list||!list.length) return '<div class="muted" style="padding:14px;font-size:12px">None 🎉</div>';
   return '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>#</th><th>Employee</th><th class="amt">'+hd+'</th></tr></thead><tbody>'+list.map(function(x,i){return '<tr><td class="muted">'+(i+1)+'</td><td>'+esc(x.label)+'</td><td class="amt">'+x.value+'</td></tr>';}).join('')+'</tbody></table></div>'; }
-function hrDashOverview(d){ var o=d.overview; return hrCardGrid([
-    hrDCard('Total Employees',o.total_employees,{color:'var(--sky-soft)'}),hrDCard('Active Employees',o.active_employees,{color:'var(--green-soft)'}),
-    hrDCard('New Hires (mo)',o.new_hires),hrDCard('Resigned (mo)',o.resigned,{color:o.resigned>0?'var(--coral)':'var(--text)'}),
-    hrDCard('Monthly Gross',M(o.gross),{color:'var(--sky-soft)'}),hrDCard('Monthly Net',M(o.net),{color:'var(--green-soft)'}),
-    hrDCard('Employer Statutory',M(o.employer_statutory)),hrDCard('Total HR Cost',M(o.total_hr_cost),{color:'var(--coral-soft)'}),
-    hrDCard('Attendance Rate',o.attendance_rate+'%',{color:'var(--green-soft)'}),hrDCard('Late Rate',o.late_rate+'%',{color:o.late_rate>15?'var(--amber)':'var(--text)'}),
-    hrDCard('Absenteeism',o.absenteeism_rate+'%',{color:o.absenteeism_rate>10?'var(--coral)':'var(--text)'}),hrDCard('OT Cost',M(o.ot_cost)) ])+
+function hrDashOverview(d){ var o=d.overview;
+  var gD=hrTrendDelta(d.payroll.trend,'gross',null), nD=hrTrendDelta(d.payroll.trend,'net',null), cD=hrTrendDelta(d.cost.trend,'value',false), aD=hrTrendDelta(d.attendance.trend,'value',true);
+  return hrCardGrid([
+    hrDCard('Total Employees',o.total_employees,{color:'var(--sky-soft)',icon:'👥'}),hrDCard('Active Employees',o.active_employees,{color:'var(--green-soft)',icon:'✅'}),
+    hrDCard('New Hires (mo)',o.new_hires,{icon:'➕'}),hrDCard('Resigned (mo)',o.resigned,{color:o.resigned>0?'var(--coral)':'var(--text)',icon:'🚪'}),
+    hrDCard('Monthly Gross',M(o.gross),{color:'var(--sky-soft)',icon:'💵',delta:gD}),hrDCard('Monthly Net',M(o.net),{color:'var(--green-soft)',icon:'💰',delta:nD}),
+    hrDCard('Employer Statutory',M(o.employer_statutory),{icon:'🏛️'}),hrDCard('Total HR Cost',M(o.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),
+    hrDCard('Attendance Rate',o.attendance_rate+'%',{color:'var(--green-soft)',icon:'🕐',delta:aD}),hrDCard('Late Rate',o.late_rate+'%',{color:o.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),
+    hrDCard('Absenteeism',o.absenteeism_rate+'%',{color:o.absenteeism_rate>10?'var(--coral)':'var(--text)',icon:'🚫'}),hrDCard('OT Cost',M(o.ot_cost),{icon:'⏱️'}) ])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('📈 Payroll trend (6 mo)',hrDashLine(d.payroll.trend,[{k:'gross',color:'var(--sky-soft)',name:'Gross'},{k:'net',color:'var(--green-soft)',name:'Net'}]))+hrPanel('🏢 Headcount by department',hrDashBars(d.headcount.by_dept,{color:'var(--coral)'}))+'</div>'+hrDashInsights(d.insights); }
-function hrDashHeadcount(d){ var h=d.headcount; return hrCardGrid([hrDCard('Total',h.total),hrDCard('Active',h.active,{color:'var(--green-soft)'}),hrDCard('Inactive',h.inactive),hrDCard('New Hires',h.new_hires),hrDCard('Resigned',h.resigned,{color:h.resigned>0?'var(--coral)':'var(--text)'})])+
+function hrDashHeadcount(d){ var h=d.headcount; return hrCardGrid([hrDCard('Total',h.total,{icon:'👥'}),hrDCard('Active',h.active,{color:'var(--green-soft)',icon:'✅'}),hrDCard('Inactive',h.inactive,{icon:'💤'}),hrDCard('New Hires',h.new_hires,{icon:'➕'}),hrDCard('Resigned',h.resigned,{color:h.resigned>0?'var(--coral)':'var(--text)',icon:'🚪'})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly headcount trend',hrDashLine(h.trend,[{k:'value',color:'var(--sky-soft)',name:'Headcount'}]))+hrPanel('By department',hrDashBars(h.by_dept,{color:'var(--coral)'}))+hrPanel('By position',hrDashBars(h.by_position,{color:'var(--sky-soft)'}))+hrPanel('By employment type',hrDashBars(h.by_type,{color:'var(--green-soft)'}))+'</div>'+hrPanel('Employees',hrDashEmpTable())+hrDashInsights(d.insights); }
-function hrDashPayroll(d){ var p=d.payroll,vp=p.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; return hrCardGrid([
-    hrDCard('Gross',M(p.gross),{color:'var(--sky-soft)'}),hrDCard('Net',M(p.net),{color:'var(--green-soft)'}),hrDCard('Basic',M(p.basic)),hrDCard('Allowance',M(p.allowance)),hrDCard('Claim',M(p.claim)),hrDCard('Bonus / Comm',M(p.bonus)),
-    hrDCard('EPF EE',M(p.epf_ee)),hrDCard('EPF ER',M(p.epf_er)),hrDCard('SOCSO EE',M(p.socso_ee)),hrDCard('SOCSO ER',M(p.socso_er)),hrDCard('EIS EE',M(p.eis_ee)),hrDCard('EIS ER',M(p.eis_er)),hrDCard('PCB',M(p.pcb)),
-    hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,sub:'Δ '+M(p.variance.delta)}) ])+
+function hrDashPayroll(d){ var p=d.payroll,vp=p.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)';
+  var gD=hrTrendDelta(p.trend,'gross',null), nD=hrTrendDelta(p.trend,'net',null);
+  return hrCardGrid([
+    hrDCard('Gross',M(p.gross),{color:'var(--sky-soft)',icon:'💵',delta:gD}),hrDCard('Net',M(p.net),{color:'var(--green-soft)',icon:'💰',delta:nD}),hrDCard('Basic',M(p.basic),{icon:'🧾'}),hrDCard('Allowance',M(p.allowance),{icon:'➕'}),hrDCard('Claim',M(p.claim),{icon:'🧾'}),hrDCard('Bonus / Comm',M(p.bonus),{icon:'🎁'}),
+    hrDCard('EPF EE',M(p.epf_ee),{icon:'🏦'}),hrDCard('EPF ER',M(p.epf_er),{icon:'🏦'}),hrDCard('SOCSO EE',M(p.socso_ee),{icon:'🛡️'}),hrDCard('SOCSO ER',M(p.socso_er),{icon:'🛡️'}),hrDCard('EIS EE',M(p.eis_ee),{icon:'🧯'}),hrDCard('EIS ER',M(p.eis_er),{icon:'🧯'}),hrDCard('PCB',M(p.pcb),{icon:'🧮'}),
+    hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(p.variance.delta)}) ])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Payroll trend (Gross vs Net)',hrDashLine(p.trend,[{k:'gross',color:'var(--sky-soft)',name:'Gross'},{k:'net',color:'var(--green-soft)',name:'Net'}]))+hrPanel('Payroll cost by department',hrDashBars(p.by_dept.map(function(x){return {label:x.label,value:x.cost};}),{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Payroll by employee',hrDashPayEmpTable(p.by_employee))+hrDashInsights(d.insights); }
-function hrDashAttendance(d){ var a=d.attendance; return hrCardGrid([hrDCard('Attendance Rate',a.attendance_rate+'%',{color:'var(--green-soft)'}),hrDCard('Late Rate',a.late_rate+'%',{color:a.late_rate>15?'var(--amber)':'var(--text)'}),hrDCard('Absenteeism',a.absenteeism_rate+'%',{color:a.absenteeism_rate>10?'var(--coral)':'var(--text)'}),hrDCard('Missing Clock In/Out',a.missing_clock),hrDCard('Total OT Hours',a.ot_hours),hrDCard('OT Cost',M(a.ot_cost))])+
+function hrDashAttendance(d){ var a=d.attendance; var aD=hrTrendDelta(a.trend,'value',true); return hrCardGrid([hrDCard('Attendance Rate',a.attendance_rate+'%',{color:'var(--green-soft)',icon:'🕐',delta:aD}),hrDCard('Late Rate',a.late_rate+'%',{color:a.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),hrDCard('Absenteeism',a.absenteeism_rate+'%',{color:a.absenteeism_rate>10?'var(--coral)':'var(--text)',icon:'🚫'}),hrDCard('Missing Clock In/Out',a.missing_clock,{icon:'❓'}),hrDCard('Total OT Hours',a.ot_hours,{icon:'⏱️'}),hrDCard('OT Cost',M(a.ot_cost),{icon:'💸'})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly attendance trend',hrDashLine(a.trend,[{k:'value',color:'var(--green-soft)',name:'Attendance %'}]))+hrPanel('Department attendance rate',hrDashBars(a.by_dept,{color:'var(--sky-soft)',fmt:function(v){return v+'%';}}))+hrPanel('Late ranking',hrDashRankTable(a.late_rank,'Late days'))+hrPanel('Absence ranking',hrDashRankTable(a.absence_rank,'Absent days'))+'</div>'+hrDashInsights(d.insights); }
-function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{color:'var(--coral-soft)'}),hrDCard('Salary Cost',M(c.salary_cost)),hrDCard('Employer EPF',M(c.epf_er)),hrDCard('Employer SOCSO',M(c.socso_er)),hrDCard('Employer EIS',M(c.eis_er)),hrDCard('Claim Cost',M(c.claim_cost)),hrDCard('OT Cost',M(c.ot_cost)),hrDCard('Cost / Employee',M(c.cost_per_employee),{color:'var(--sky-soft)'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,sub:'Δ '+M(c.variance.delta)})])+
+function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; var cD=hrTrendDelta(c.trend,'value',false); return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),hrDCard('Salary Cost',M(c.salary_cost),{icon:'💵'}),hrDCard('Employer EPF',M(c.epf_er),{icon:'🏦'}),hrDCard('Employer SOCSO',M(c.socso_er),{icon:'🛡️'}),hrDCard('Employer EIS',M(c.eis_er),{icon:'🧯'}),hrDCard('Claim Cost',M(c.claim_cost),{icon:'🧾'}),hrDCard('OT Cost',M(c.ot_cost),{icon:'⏱️'}),hrDCard('Cost / Employee',M(c.cost_per_employee),{color:'var(--sky-soft)',icon:'👤'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(c.variance.delta)})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly cost trend',hrDashLine(c.trend,[{k:'value',color:'var(--coral)',name:'Employer cost'}]))+hrPanel('Cost by department',hrDashBars(c.by_dept,{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Cost by employee',hrDashValTable(c.by_employee,'Employer cost'))+hrDashInsights(d.insights); }
 function hrDashboard(){
   if(!HR_DASH.year){ var dd=new Date(); HR_DASH.month=dd.getMonth()+1; HR_DASH.year=dd.getFullYear(); }
@@ -1242,8 +1268,21 @@ function hrDashExportCsv(){
 }
 function hrEmployees(){
   var e=(HR.data.employees||[]).slice().sort(function(a,b){return String(a.emp_no).localeCompare(String(b.emp_no));});
-  var rows=e.map(function(x){return '<tr><td><b>'+esc(x.emp_no||'')+'</b></td><td>'+esc(x.name||'')+'</td><td class="muted">'+esc(x.dept||'')+'</td><td class="muted">'+esc(x.position||'')+'</td><td class="amt">'+M(x.basic_salary)+'</td><td class="amt">'+M(x.fixed_allowance)+'</td><td class="muted" style="font-size:11px">'+esc(x.bank_name||'')+' '+esc(x.bank_account||'')+'</td><td><span class="pill" style="font-size:10px">'+esc(x.status||'')+'</span></td><td><button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button></td></tr>';}).join('')||'<tr><td colspan="9" class="muted" style="text-align:center;padding:20px">No employees yet</td></tr>';
-  return '<div class="panel"><div class="panel-hd"><h3>Employees ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>No</th><th>Name</th><th>Dept</th><th>Position</th><th class="amt">Basic</th><th class="amt">Allowance</th><th>Bank</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  var typePill=function(t){ t=t||'Full-time'; var m={'Full-time':'pill-green','Contract':'pill-blue','Part-time':'pill-coral'}; return '<span class="pill '+(m[t]||'pill-draft')+'">'+esc(t)+'</span>'; };
+  var statusPill=function(s){ return '<span class="pill '+(s==='active'?'pill-green':'pill-draft')+'">'+esc(s||'—')+'</span>'; };
+  var cards=e.map(function(x){ var h=hrAvatarHue(x.name||x.emp_no);
+    return '<div class="emp-card">'+
+      '<div class="emp-av" style="background:hsl('+h+',42%,26%);color:hsl('+h+',72%,78%)">'+esc(hrInitials(x.name))+'</div>'+
+      '<div class="emp-main"><div class="emp-name">'+esc(x.name||'—')+' <span class="emp-no">'+esc(x.emp_no||'—')+'</span></div>'+
+        '<div class="emp-meta">'+esc(x.position||'—')+' · '+esc(x.dept||'—')+(x.bank_name?' · '+esc(x.bank_name):'')+'</div></div>'+
+      typePill(x.employment_type)+
+      '<div class="emp-sal"><div class="v">'+M(x.basic_salary)+'</div><div class="l">+ '+M(x.fixed_allowance)+' allow</div></div>'+
+      statusPill(x.status)+
+      '<button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button>'+
+    '</div>';
+  }).join('');
+  var body=e.length?'<div class="emp-list">'+cards+'</div>':'<div class="empty"><div class="empty-ico">👤</div>No employees yet — add your first team member.</div>';
+  return '<div class="panel"><div class="panel-hd"><h3>Workforce ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div>'+body+'</div>';
 }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
 function hrEmpForm(){
