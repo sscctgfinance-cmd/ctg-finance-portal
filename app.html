@@ -3223,6 +3223,7 @@ function gwHandleFiles(list){
 function gwConvert(){
   var fmt=document.getElementById('gw-datefmt').value, refField=document.getElementById('gw-ref').value;
   var wantPayout=document.getElementById('gw-payout').checked, wantFee=document.getElementById('gw-fee').checked;
+  GW.audit={txnRead:0,txnConv:0,txnNoDate:0,txnZero:0,poRead:0,poConv:0,poNoDate:0,reconOk:0,reconTot:0,reconMax:0};
   var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):GW.provider==='atome'?gwConvertAtome(fmt,refField,wantPayout,wantFee):gwConvertHitpay(fmt,refField,wantPayout,wantFee);
   rows.sort(function(a,b){return a.d-b.d;}); GW.out=rows; gwRenderResult();
 }
@@ -3230,65 +3231,78 @@ function gwConvert(){
 // fees are per-transaction (All Inclusive Fee, incl. Stripe) — aggregated to one line per day;
 // payouts = Net Payout Amount from the payout file.
 function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.hitpay;
+  var rows=[], f=GW.hitpay, A=GW.audit;
   if(f.txn){
     var feeByDate={};
     f.txn.rows.forEach(function(r){
-      var d=gwParseDate(gwPick(r,'Completed Date')); if(!d) return;
+      A.txnRead++;
+      var d=gwParseDate(gwPick(r,'Completed Date')); if(!d){A.txnNoDate++; return;}
       var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
       var fee=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
+      if(gross===0 && !fee){A.txnZero++; return;}
       var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
       var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
       var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
-      if(gross!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'});
+      if(gross!==0){ A.txnConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'}); }
       if(fee){ var k=gwFmtDate(d,'ymd'); (feeByDate[k]=feeByDate[k]||{d:d,fee:0,n:0}); feeByDate[k].fee+=fee; feeByDate[k].n++; }
     });
     if(wantFee) Object.keys(feeByDate).forEach(function(k){ var b=feeByDate[k]; var fee=Math.round(b.fee*100)/100;
       if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay processing fees ('+b.n+' txn, incl. Stripe)',ref:'HITPAY-FEE-'+k,kind:'fee'}); });
   }
   if(f.payout && wantPayout) f.payout.rows.forEach(function(r){
-    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
+    A.poRead++;
+    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
     var amt=gwNum(gwPick(r,'Net Payout Amount'));
     var pid=String(gwPick(r,'Payout ID')||'').trim();
-    if(amt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:-amt,payee:'HitPay Payout',desc:'Payout to bank',ref:pid||('HITPAY-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'});
+    if(amt){ A.poConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:-amt,payee:'HitPay Payout',desc:'Payout to bank',ref:pid||('HITPAY-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'}); }
   });
   return rows;
 }
 function gwConvertPayex(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.payex;
+  var rows=[], f=GW.payex, A=GW.audit;
   if(f.txn) f.txn.rows.forEach(function(r){
-    var d=gwParseDate(gwPick(r,'Date')); if(!d) return;
+    A.txnRead++;
+    var d=gwParseDate(gwPick(r,'Date')); if(!d){A.txnNoDate++; return;}
     var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
+    if(net===0){A.txnZero++; return;}
+    A.txnConv++;
     var txid=String(gwPick(r,'TransactionId')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
-    if(net!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:'SHOPIFY',desc:txid,ref:ref,kind:net<0?'out':'in'});
+    rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:'SHOPIFY',desc:txid,ref:ref,kind:net<0?'out':'in'});
   });
   if(f.set){
     var byDate={};
-    f.set.rows.forEach(function(r){ var d=gwParseDate(gwPick(r,'SettlementDate')); if(!d) return; var k=gwFmtDate(d,'ymd');
+    f.set.rows.forEach(function(r){ A.poRead++; var d=gwParseDate(gwPick(r,'SettlementDate')); if(!d){A.poNoDate++; return;} var k=gwFmtDate(d,'ymd');
       if(!byDate[k]) byDate[k]={d:d,mdr:0,npx:0,noth:0};
       byDate[k].mdr+=gwNum(gwPick(r,'MDR')); byDate[k].npx+=gwNum(gwPick(r,'NetPayex')); byDate[k].noth+=gwNum(gwPick(r,'NetOthers')); });
     Object.keys(byDate).forEach(function(k){ var b=byDate[k], netPay=b.npx+b.noth;
-      if(wantPayout && netPay) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-netPay,payee:'Payex Settlement',desc:'Settlement payout to bank (Payex '+b.npx.toFixed(2)+' + Others '+b.noth.toFixed(2)+')',ref:'PAYEX-SETTLE-'+k,kind:'out'});
+      if(wantPayout && netPay){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-netPay,payee:'Payex Settlement',desc:'Settlement payout to bank (Payex '+b.npx.toFixed(2)+' + Others '+b.noth.toFixed(2)+')',ref:'PAYEX-SETTLE-'+k,kind:'out'}); }
       if(wantFee && b.mdr) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-b.mdr,payee:'Payex',desc:'MDR merchant fees',ref:'PAYEX-MDR-'+k,kind:'fee'}); });
   }
   return rows;
 }
 function gwConvertAtome(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.atome;
+  var rows=[], f=GW.atome, A=GW.audit;
   if(f.txn) f.txn.rows.forEach(function(r){
-    var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d) return;
+    A.txnRead++;
+    var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d){A.txnNoDate++; return;}
     var amt=gwNum(gwPick(r,'Transaction Amount'));
+    if(amt===0){A.txnZero++; return;}
+    A.txnConv++;
     var oid=String(gwPick(r,'Atome Order ID')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
-    if(amt!==0) rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:oid,ref:ref,kind:amt<0?'out':'in'});
+    rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:oid,ref:ref,kind:amt<0?'out':'in'});
   });
   if(f.payout) f.payout.rows.forEach(function(r){
-    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d) return;
+    A.poRead++;
+    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
     var payoutAmt=gwNum(gwPick(r,'Payout Amount')), totalSales=gwNum(gwPick(r,'Total Sales'));
+    // self-check: Total Sales + all fees/SST/rebates must equal Payout Amount
+    var expect=totalSales+gwNum(gwPick(r,'All Atome Fees'))+gwNum(gwPick(r,'All Atome Fees SST'))+gwNum(gwPick(r,'All Rebates'))+gwNum(gwPick(r,'All Rebates SST'));
+    A.reconTot++; var diff=Math.abs(expect-payoutAmt); if(diff>A.reconMax)A.reconMax=diff; if(diff<=0.02)A.reconOk++;
     var pid=String(gwPick(r,'Payout ID')||'').trim();
     var feeAmt=Math.round((payoutAmt-totalSales)*100)/100;
-    if(wantPayout && payoutAmt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:-payoutAmt,payee:'Atome Payout',desc:'Payout to bank',ref:pid||('ATOME-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'});
+    if(wantPayout && payoutAmt){ A.poConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:-payoutAmt,payee:'Atome Payout',desc:'Payout to bank',ref:pid||('ATOME-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'}); }
     if(wantFee && feeAmt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:feeAmt,payee:'Atome',desc:'Atome fees & charges (MDR+SST'+(gwNum(gwPick(r,'All Rebates'))?'+rebates':'')+')',ref:(pid||('ATOME-'+gwFmtDate(d,'ymd')))+'-FEE',kind:'fee'});
   });
   return rows;
@@ -3303,7 +3317,14 @@ function gwRenderResult(){
   var f=GW[GW.provider], hasTxn=f.txn, hasOut=GW.provider==='payex'?f.set:f.payout, warn='';
   if(!hasTxn) warn='Only the settlement/payout file is loaded — money-in'+(GW.provider==='hitpay'?' + fee':'')+' lines need the Transaction file.';
   else if(!hasOut) warn='Only the Transaction file is loaded — '+(GW.provider==='hitpay'?'payout lines':'payout + fee lines')+' need the '+(GW.provider==='payex'?'settlement':'payout')+' file.';
-  document.getElementById('gw-balbox').innerHTML=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
+  var A=GW.audit||{}, chk=[], txnSkip=(A.txnNoDate||0)+(A.txnZero||0);
+  chk.push('Transactions: read '+(A.txnRead||0)+' → converted '+(A.txnConv||0)+(txnSkip?(' · skipped '+txnSkip+' ('+(A.txnNoDate||0)+' no date, '+(A.txnZero||0)+' zero amount)'):' · none skipped'));
+  if(A.poRead) chk.push((GW.provider==='payex'?'Settlement rows':'Payout rows')+': read '+A.poRead+' → '+(A.poConv||0)+' payout line(s)'+(A.poNoDate?(' · '+A.poNoDate+' skipped (no date)'):''));
+  if(A.reconTot) chk.push('Atome payout self-check (Total Sales + fees = Payout): '+(A.reconOk||0)+'/'+A.reconTot+(A.reconOk===A.reconTot?' reconcile ✓':(' — worst gap RM'+(A.reconMax||0).toFixed(2))));
+  var allOk = txnSkip===0 && !A.poNoDate && (A.reconTot? A.reconOk===A.reconTot : true);
+  var chkHtml='<div style="background:'+(allOk?'rgba(61,220,151,.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(61,220,151,.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'✓ Data check passed — every input row accounted for':'⚠ Data check — please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
+  var warnHtml=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
+  document.getElementById('gw-balbox').innerHTML=chkHtml+warnHtml;
   var show=rows.slice(0,200);
   document.getElementById('gw-tbody').innerHTML=show.map(function(r){ var col=r.kind==='in'?'var(--green-soft)':(r.kind==='fee'?'var(--amber)':'var(--coral-soft)');
     return '<tr><td>'+r.date+'</td><td><span class="pill" style="font-size:10px;text-transform:uppercase;color:'+col+'">'+r.kind+'</span></td><td>'+esc(r.payee)+'</td><td class="muted">'+esc(r.desc)+'</td><td class="muted">'+esc(r.ref)+'</td><td class="amt" style="text-align:right;font-weight:600;color:'+col+'">'+r.amount.toFixed(2)+'</td></tr>'; }).join('');
