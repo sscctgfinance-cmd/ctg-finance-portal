@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HR OS · CTG</title><!-- build:v82-multicompany -->
+<title>HR OS · CTG</title><!-- build:v84-pro-ui -->
 <style>
 /* ════════════════════════════════════════════
    CTG Finance Portal · v6 — CTG Brand Dark Theme
@@ -17,6 +17,8 @@
   --surface2:#0F1827;
   --border:#1E2A40;
   --border-strong:#2A3A56;
+  --panel:#141E30;
+  --panel-2:#0E1826;
   --text:#E8EEF7;
   --text-soft:#A8B5CC;
   --muted:#6B7A93;
@@ -72,6 +74,7 @@ h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.3px;color:#fff}
 .btn.d:hover{background:rgba(239,68,68,.12);color:#fff;border-color:rgba(239,68,68,.5)}
 .btn:disabled{opacity:.5;cursor:default;transform:none}
 .btn.sm{padding:6px 12px;font-size:12px}
+.btn.xs{padding:5px 11px;font-size:11.5px;border-radius:8px}
 
 /* ── Toolbar ── */
 .bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:16px 0;padding:12px 16px;background:linear-gradient(180deg,rgba(19,28,45,.7),rgba(12,20,33,.6));border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(10px)}
@@ -201,7 +204,45 @@ input[type=file]{color:var(--text-soft);font-size:12.5px;padding:8px 0}
 input[type=file]::file-selector-button{background:rgba(255,255,255,.05);color:var(--text-soft);border:1px solid var(--border-strong);border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;margin-right:11px;font-family:inherit;transition:.15s}
 input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);color:#fff;border-color:rgba(232,93,60,.4)}
 
+/* ══ Sidebar (professional) ══ */
+.side{width:248px;flex-shrink:0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
+  background:linear-gradient(180deg,var(--surface),var(--surface2));border-right:1px solid var(--border)}
+.side-brand{display:flex;align-items:center;gap:11px;padding:19px 18px 15px;border-bottom:1px solid var(--border)}
+.side-brand-mark{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:19px;
+  background:linear-gradient(135deg,var(--coral),var(--coral-deep));box-shadow:0 5px 15px rgba(232,93,60,.34),inset 0 1px 0 rgba(255,255,255,.18)}
+.side-brand-name{font-weight:800;font-size:15.5px;letter-spacing:-.01em;color:#fff;line-height:1.1}
+.side-brand-sub{color:var(--muted);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;margin-top:3px;font-weight:600}
+.side-company{padding:14px 15px 10px}
+.side-company label{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 5px 2px;font-weight:700}
+.side-company select{width:100%;padding:9px 11px;font-size:12.5px;font-weight:600;border-radius:10px;background:var(--panel-2);border:1px solid var(--border-strong);color:var(--text)}
+.side-nav{flex:1;padding:4px 12px 12px;overflow:auto;display:flex;flex-direction:column;gap:1px}
+.side-group{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;padding:15px 10px 6px;opacity:.75}
+.side-link{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border:none;border-radius:10px;cursor:pointer;
+  font:600 13px Inter,-apple-system,sans-serif;color:var(--text-soft);background:transparent;transition:background .14s,color .14s;position:relative}
+.side-link:hover{background:rgba(255,255,255,.045);color:var(--text)}
+.side-link .ic{width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:15px;opacity:.85;transition:opacity .14s}
+.side-link.on{background:linear-gradient(90deg,rgba(232,93,60,.17),rgba(232,93,60,.045));color:#fff}
+.side-link.on .ic{opacity:1}
+.side-link.on::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:19px;border-radius:0 3px 3px 0;background:var(--coral);box-shadow:0 0 10px rgba(232,93,60,.6)}
+.side-foot{padding:11px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+.side-foot-btn{text-align:left;padding:9px 12px;font:600 12.5px Inter,sans-serif;border-radius:9px;border:1px solid var(--border-strong);
+  background:rgba(255,255,255,.02);color:var(--text-soft);cursor:pointer;transition:.14s}
+.side-foot-btn:hover{background:rgba(255,255,255,.06);color:#fff}
+.side-foot-btn.accent{color:var(--coral-soft);border-color:rgba(232,93,60,.3)}
+.side-foot-btn.accent:hover{background:rgba(232,93,60,.12);color:#fff;border-color:rgba(232,93,60,.5)}
+
+/* ══ Page header (professional) ══ */
+.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:22px;padding-bottom:17px;border-bottom:1px solid var(--border)}
+.page-eyebrow{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--coral-soft);margin-bottom:6px}
+.page-title{margin:0;font-size:23px;font-weight:750;letter-spacing:-.02em;color:#fff;line-height:1.1}
+.page-sub{color:var(--text-soft);font-size:12.5px;margin-top:6px;max-width:600px;line-height:1.5}
+.page-meta{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.page-chip{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:var(--text-soft);background:rgba(255,255,255,.03);border:1px solid var(--border-strong);border-radius:999px;padding:7px 13px;white-space:nowrap}
+.page-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);box-shadow:0 0 8px rgba(61,220,151,.7)}
+
 /* ── Responsive ── */
+@media(max-width:860px){ .side{width:210px} .side-brand-sub{display:none} }
+@media(max-width:640px){ #app{flex-direction:column} .side{width:100%;height:auto;position:relative;flex-direction:column} .side-nav{flex-direction:row;flex-wrap:wrap;padding:8px} .side-group{display:none} .side-link{width:auto} .side-company{padding:10px 15px} }
 @media(max-width:760px){
   .cards{grid-template-columns:repeat(2,1fr)}
   .bar{flex-direction:column;align-items:stretch}
@@ -805,21 +846,21 @@ table[data-list] tbody tr:hover input[type=text]{
 </div>
 
 <div id="app" class="hide" style="display:flex;min-height:100vh;align-items:stretch">
-  <aside id="hr_side" style="width:238px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh">
-    <div style="padding:18px 18px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
-      <span style="font-size:24px">👥</span>
-      <div><div style="font-weight:800;font-size:17px;letter-spacing:-.02em">HR OS</div><div style="color:var(--muted);font-size:10.5px;margin-top:-1px;letter-spacing:.02em">CTG PAYROLL</div></div>
+  <aside id="hr_side" class="side">
+    <div class="side-brand">
+      <div class="side-brand-mark">👥</div>
+      <div><div class="side-brand-name">HR OS</div><div class="side-brand-sub">CTG Payroll Suite</div></div>
     </div>
-    <div style="padding:13px 13px 4px"><label class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding-left:2px">Company</label>
-      <select id="hr_company" onchange="hrPickCompany(this.value)" title="Xero company" style="width:100%;margin-top:4px;padding:9px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:12px;font-weight:600"></select>
+    <div class="side-company"><label>Company</label>
+      <select id="hr_company" onchange="hrPickCompany(this.value)" title="Xero company"></select>
     </div>
-    <nav id="hr_nav" style="flex:1;padding:10px 12px;display:flex;flex-direction:column;gap:3px;overflow:auto"></nav>
-    <div style="padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
-      <button class="btn" onclick="location.href='app.html'" title="Back to Finance OS (same login)" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;color:#F08570;box-shadow:0 0 0 1px rgba(232,93,60,.28) inset">← Finance OS</button>
-      <button class="btn" onclick="logout()" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px">Sign out</button>
+    <nav id="hr_nav" class="side-nav"></nav>
+    <div class="side-foot">
+      <button class="side-foot-btn accent" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← Finance OS</button>
+      <button class="side-foot-btn" onclick="logout()">Sign out</button>
     </div>
   </aside>
-  <main style="flex:1;min-width:0;padding:26px 30px 60px">
+  <main style="flex:1;min-width:0;padding:28px 34px 64px">
     <div id="hr"></div>
   </main>
 </div>
@@ -1070,18 +1111,30 @@ async function renderHR(){
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
-var HR_NAV=[['dashboard','📊','Dashboard'],['employees','👤','Employees'],['payroll','💰','Payroll'],['calculator','🧮','Calculator'],['yearend','📅','Year-end'],['leave','🌴','Leave'],['claims','🧾','Claims']];
+var HR_NAV=[
+  ['dashboard','📊','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
+  ['employees','👤','Employees','People','Your workforce master — profiles, pay & statutory setup'],
+  ['leave','🌴','Leave','People','Review and approve leave requests'],
+  ['claims','🧾','Claims','People','Review and approve expense claims'],
+  ['payroll','💰','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
+  ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
+  ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
+];
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
-  nav.innerHTML=HR_NAV.map(function(t){ var on=HR.view===t[0];
-    return '<button onclick="hrNav(\''+t[0]+'\')" style="display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:10px 12px;border:none;border-radius:9px;cursor:pointer;font:600 13px Inter,-apple-system,sans-serif;transition:background .12s,color .12s;'+(on?'background:linear-gradient(180deg,rgba(232,93,60,.24),rgba(232,93,60,.10));color:#fff;box-shadow:0 0 0 1px rgba(232,93,60,.34) inset':'background:transparent;color:var(--text-soft)')+'" onmouseover="if(!'+on+')this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="if(!'+on+')this.style.background=\'transparent\'"><span style="font-size:15px;width:18px;text-align:center">'+t[1]+'</span>'+t[2]+'</button>';
-  }).join('');
+  var html='', lastG=null;
+  HR_NAV.forEach(function(t){
+    if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
+    var on=HR.view===t[0];
+    html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')"><span class="ic">'+t[1]+'</span>'+t[2]+'</button>';
+  });
+  nav.innerHTML=html;
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
   hrSidebar();
-  var cur=(HR_NAV.find(function(t){return t[0]===HR.view;})||['','','HR']);
-  var head='<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:20px;flex-wrap:wrap"><div><h2 style="margin:0;font-size:23px;font-weight:700;letter-spacing:-.02em">'+cur[1]+' '+cur[2]+'</h2><div class="muted" style="font-size:12.5px;margin-top:3px">'+esc(hrCompanyName())+'</div></div></div>';
+  var cur=(HR_NAV.find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
+  var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
