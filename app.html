@@ -3223,7 +3223,7 @@ function gwHandleFiles(list){
 function gwConvert(){
   var fmt=document.getElementById('gw-datefmt').value, refField=document.getElementById('gw-ref').value;
   var wantPayout=document.getElementById('gw-payout').checked, wantFee=document.getElementById('gw-fee').checked;
-  GW.audit={txnRead:0,txnConv:0,txnNoDate:0,txnZero:0,poRead:0,poConv:0,poNoDate:0,reconOk:0,reconTot:0,reconMax:0};
+  GW.audit={txnRead:0,txnConv:0,txnNoDate:0,txnZero:0,poRead:0,poConv:0,poNoDate:0,reconOk:0,reconTot:0,reconMax:0,pxSettled:0,pxUnsettled:0,pxUnsettledAmt:0};
   var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):GW.provider==='atome'?gwConvertAtome(fmt,refField,wantPayout,wantFee):gwConvertHitpay(fmt,refField,wantPayout,wantFee);
   rows.sort(function(a,b){return a.d-b.d;}); GW.out=rows; gwRenderResult();
 }
@@ -3266,6 +3266,7 @@ function gwConvertPayex(fmt,refField,wantPayout,wantFee){
     var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
     if(net===0){A.txnZero++; return;}
     A.txnConv++;
+    if(String(gwPick(r,'SettlementDate')||'').trim()) A.pxSettled++; else { A.pxUnsettled++; A.pxUnsettledAmt+=net; }
     var txid=String(gwPick(r,'TransactionId')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
     rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:'SHOPIFY',desc:txid,ref:ref,kind:net<0?'out':'in'});
@@ -3321,6 +3322,7 @@ function gwRenderResult(){
   chk.push('Transactions: read '+(A.txnRead||0)+' → converted '+(A.txnConv||0)+(txnSkip?(' · skipped '+txnSkip+' ('+(A.txnNoDate||0)+' no date, '+(A.txnZero||0)+' zero amount)'):' · none skipped'));
   if(A.poRead) chk.push((GW.provider==='payex'?'Settlement rows':'Payout rows')+': read '+A.poRead+' → '+(A.poConv||0)+' payout line(s)'+(A.poNoDate?(' · '+A.poNoDate+' skipped (no date)'):''));
   if(A.reconTot) chk.push('Atome payout self-check (Total Sales + fees = Payout): '+(A.reconOk||0)+'/'+A.reconTot+(A.reconOk===A.reconTot?' reconcile ✓':(' — worst gap RM'+(A.reconMax||0).toFixed(2))));
+  if(GW.provider==='payex' && (A.pxSettled||A.pxUnsettled)) chk.push('Settlement status: '+(A.pxSettled||0)+' settled + '+(A.pxUnsettled||0)+' not yet settled (RM'+(A.pxUnsettledAmt||0).toFixed(2)+' unsettled float — normal for Payex; clears in a later export)');
   var allOk = txnSkip===0 && !A.poNoDate && (A.reconTot? A.reconOk===A.reconTot : true);
   var chkHtml='<div style="background:'+(allOk?'rgba(61,220,151,.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(61,220,151,.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'✓ Data check passed — every input row accounted for':'⚠ Data check — please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
   var warnHtml=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
