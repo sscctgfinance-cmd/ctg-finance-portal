@@ -2967,7 +2967,7 @@ function renderSalesRecon(){
         '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
       '</div>'+
       '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b>, Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · DueDate = InvoiceDate.</div></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b>, Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date</b> · DueDate = InvoiceDate.</div></div>'+
     '<div class="panel hide" id="sr-result">'+
       '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
@@ -3022,7 +3022,7 @@ function srBuild(){
       var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
       var pdate=srFixDate(o[cfg.date], sn);
       var inv,acc,pkg,ch,idate,matched;
-      if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=od.odate||pdate; matched=true; }
+      if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=pdate||od.odate; matched=true; }
       else { var per=srPer(pdate); seq[per]=(seq[per]||0)+1; inv='YRDZ_'+per+'_'+('000'+seq[per]).slice(-4); acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
       var ds=srDmy(idate);
       lines.push({contact:'DATABEES',inv:inv,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
