@@ -1367,8 +1367,7 @@ function hrRCForm(){
   return '<div class="panel" style="max-width:900px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Department',inp('dept','',f.department))+g('Project',inp('project','',f.project))+'</div>'+
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
-    '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 6px"><div style="font-weight:700;font-size:13px">Expense lines</div><div><input type="file" id="rc_scan" accept="image/*,.pdf" capture="environment" style="display:none" onchange="hrRCScanFile(this.files&&this.files[0])"><button class="btn sm" onclick="document.getElementById(\'rc_scan\').click()">📷 Scan receipt → auto-fill</button></div></div>'+
-    '<div class="muted" style="font-size:11px;margin:-2px 0 6px">Snap or upload a receipt — it reads the amount, date & merchant and picks the category. Always double-check the amount.</div>'+
+    '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines</div>'+
     '<div>'+rows+'</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
