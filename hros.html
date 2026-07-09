@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HR OS · CTG</title><!-- build:v84-cards-trends -->
+<title>HR OS · CTG</title><!-- build:v85-reimbursement -->
 <style>
 /* ════════════════════════════════════════════
    CTG Finance Portal · v6 — CTG Brand Dark Theme
@@ -1130,6 +1130,7 @@ var HR_NAV=[
   ['employees','👤','Employees','People','Your workforce master — profiles, pay & statutory setup'],
   ['leave','🌴','Leave','People','Review and approve leave requests'],
   ['claims','🧾','Claims','People','Review and approve expense claims'],
+  ['expenses','💳','Reimbursement','People','Employee expense claims, receipts & multi-level approval'],
   ['payroll','💰','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
   ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
   ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
@@ -1157,6 +1158,7 @@ function hrRender(){
   else if(HR.view==='yearend') body=hrYearend();
   else if(HR.view==='leave') body=hrLeave();
   else if(HR.view==='claims') body=hrClaims();
+  else if(HR.view==='expenses') body=hrRC();
   el.innerHTML=head+body;
 }
 // ===== 📊 HR OS Analytics Dashboard (Overview / Headcount / Payroll / Attendance / Cost) =====
@@ -1266,6 +1268,147 @@ function hrDashExportCsv(){
   else if(page==='cost'){ var c=d.cost; push(['Metric','Value']); ['total_hr_cost','salary_cost','epf_er','socso_er','eis_er','claim_cost','ot_cost','cost_per_employee'].forEach(function(k){push([k,c[k]]);}); push([]); push(['Employee','Employer cost']); c.by_employee.forEach(function(x){push([x.label,x.value]);}); }
   var blob=new Blob([rows.join('\n')],{type:'text/csv'}), url=URL.createObjectURL(blob), a2=document.createElement('a'); a2.href=url; a2.download='HR_Dashboard_'+page+'_'+String(per).replace(/\s/g,'_')+'.csv'; a2.click(); URL.revokeObjectURL(url); toast('CSV exported');
 }
+// ===== 💳 Reimbursement / Claim module =====
+var RC={ page:'list', scope:'pending', tenant:'', cfg:null, list:[], detail:null, form:null, dash:null, setTab:'types', loading:false };
+function rcHash(s){ var h=0; for(var i=0;i<s.length;i+=101){ h=(h*31+s.charCodeAt(i))|0; } return 'h'+(h>>>0).toString(16)+'_'+s.length; }
+function rcStatusPill(s){ var m={'Draft':['#95a3ba','rgba(107,122,147,.18)'],'Submitted':['var(--sky-soft)','rgba(91,155,213,.16)'],'Pending Manager Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending HR Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending Finance Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending Director Approval':['var(--amber)','rgba(245,158,11,.16)'],'Approved':['var(--green-soft)','rgba(22,185,122,.16)'],'Paid':['var(--green-soft)','rgba(22,185,122,.24)'],'Rejected':['var(--coral-soft)','rgba(232,93,60,.16)'],'Need More Info':['var(--sky-soft)','rgba(91,155,213,.18)'],'Cancelled':['var(--muted)','rgba(107,122,147,.14)']}; var c=m[s]||['var(--muted)','rgba(255,255,255,.06)']; return '<span class="pill" style="color:'+c[0]+';background:'+c[1]+'">'+esc(s)+'</span>'; }
+var RC_SEL='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+function hrRC(){
+  if((!RC.cfg || RC.tenant!==HR.tenant) && !RC.loading){ RC.tenant=HR.tenant; RC.loading=true; setTimeout(hrRCBoot,0); }
+  var sub=[['list','📋 Claims'],['form','➕ Submit'],['dashboard','📊 Dashboard'],['settings','⚙ Settings']];
+  var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">'+sub.map(function(s){var on=RC.page===s[0]||(s[0]==='list'&&RC.page==='detail');return '<button class="btn '+(on?'p ':'')+'sm" onclick="hrRCNav(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div>';
+  var body;
+  if(RC.loading && !RC.cfg) body='<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  else if(RC.page==='detail') body=hrRCDetail();
+  else if(RC.page==='form') body=hrRCForm();
+  else if(RC.page==='dashboard') body=hrRCDash();
+  else if(RC.page==='settings') body=hrRCSettings();
+  else body=hrRCList();
+  return tabs+body;
+}
+async function hrRCBoot(){ var r=await call({api:'hr_rc_config',tenant:HR.tenant}); if(r&&r.ok){ RC.cfg=r; } else toast((r&&r.error)||'Failed to load claim config',true); var l=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(l&&l.ok) RC.list=l.claims; RC.loading=false; if(HR.view==='expenses') hrRender(); }
+function hrRCNav(p){ if(p==='form'){ RC.form={}; } RC.page=p; if(p==='list') hrRCLoadList(); if(p==='dashboard') hrRCLoadDash(); hrRender(); }
+function hrRCScope(s){ RC.scope=s; hrRCLoadList(); }
+async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(r&&r.ok){ RC.list=r.claims; if(HR.view==='expenses') hrRender(); } }
+function hrRCList(){
+  var scopes=[['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
+  var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopes.map(function(s){var on=RC.scope===s[0];return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCScope(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div>';
+  var rows=(RC.list||[]).map(function(c){ var typ=(c.hr_claim_types&&c.hr_claim_types.name)||'—'; var emp=(c.hr_employees&&c.hr_employees.name)||'—';
+    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer"><td><b>'+esc(c.claim_no||'')+'</b></td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td></tr>';
+  }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>';
+  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+function hrRCForm(){
+  var f=RC.form||{}; var cfg=RC.cfg||{};
+  var typeOpts='<option value="">— select —</option>'+(cfg.claim_types||[]).filter(function(t){return t.active;}).map(function(t){return '<option value="'+t.id+'"'+(f.claim_type_id===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
+  var empOpts='<option value="">— select —</option>'+(cfg.employees||[]).map(function(e){return '<option value="'+e.id+'"'+(f.employee_id===e.id?' selected':'')+'>'+esc(e.emp_no+' — '+e.name)+'</option>';}).join('');
+  var curType=(cfg.claim_types||[]).find(function(t){return t.id===f.claim_type_id;});
+  var isMile=curType&&curType.is_mileage;
+  var rateOpts=(cfg.mileage_rates||[]).filter(function(r){return r.active;}).map(function(r){return '<option value="'+r.rate+'"'+((f.mileage&&Number(f.mileage.mileage_rate)===Number(r.rate))?' selected':'')+'>'+esc(r.label||('RM'+r.rate+'/km'))+'</option>';}).join('');
+  var inp=function(id,ph,val,extra){return '<input id="rc_'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="'+RC_SEL+'">';};
+  var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  var mileBlock=isMile?'<div class="panel" style="background:var(--panel-2);margin:0 0 12px;padding:14px"><div style="font-weight:600;font-size:12.5px;margin-bottom:9px">🚗 Mileage</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+g('Start location',inp('start','From',f.mileage&&f.mileage.start_location))+g('End location',inp('end','To',f.mileage&&f.mileage.end_location))+g('Total km',inp('km','0',f.mileage&&f.mileage.total_km,'type="number" step="0.1" oninput="hrRCMileCalc()"'))+g('Rate','<select id="rc_rate" onchange="hrRCMileCalc()" style="'+RC_SEL+'">'+rateOpts+'</select>')+'</div><div style="margin-top:9px;font-size:13px">Calculated: <b id="rc_mileamt" style="color:var(--green-soft)">'+M((Number(f.mileage&&f.mileage.total_km)||0)*(Number(f.mileage&&f.mileage.mileage_rate)||0))+'</b></div></div>':'';
+  var receiptHint=(curType&&curType.requires_receipt)?'<span style="color:var(--amber)"> · receipt required</span>':'';
+  return '<div class="panel" style="max-width:840px"><div class="panel-hd"><h3>'+(f.id?'Edit claim':'New claim')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Claim type *','<select id="rc_type" onchange="hrRCTypeChange()" style="'+RC_SEL+'">'+typeOpts+'</select>')+g('Claim date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Department',inp('dept','',f.department))+'</div>'+
+    mileBlock+
+    (isMile?'':'<div style="margin-bottom:12px;max-width:300px">'+g('Amount (RM) *',inp('amount','0.00',f.amount,'type="number" step="0.01"'))+'</div>')+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+g('Project',inp('project','',f.project))+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
+    g('Description',inp('desc','What is this claim for?',f.description))+
+    '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipt'+receiptHint+'</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)"></div>'+
+    '<div style="display:flex;gap:8px;margin-top:6px"><button class="btn sm" onclick="hrRCSave(false)">Save draft</button><button class="btn p sm" onclick="hrRCSave(true)">Submit claim →</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:10px">On submit: validates (receipt / duplicate / limits / mileage / age) → routes to the matching approval workflow → notifies the first approver.</div></div>';
+}
+function hrRCMileCalc(){ var km=Number((document.getElementById('rc_km')||{}).value)||0; var rate=Number((document.getElementById('rc_rate')||{}).value)||0; var el=document.getElementById('rc_mileamt'); if(el) el.textContent=M(km*rate); }
+function hrRCTypeChange(){ var v=function(id){var e=document.getElementById('rc_'+id);return e?e.value:undefined;}; if(!RC.form)RC.form={}; RC.form.employee_id=v('emp'); RC.form.claim_type_id=v('type'); RC.form.claim_date=v('date'); RC.form.department=v('dept'); RC.form.project=v('project'); RC.form.remarks=v('remarks'); RC.form.description=v('desc'); if(v('amount')!=null)RC.form.amount=v('amount'); hrRender(); }
+async function hrRCSave(submit){
+  var v=function(id){var e=document.getElementById('rc_'+id);return e?e.value:'';};
+  var cfg=RC.cfg||{}; var typeId=v('type'); var curType=(cfg.claim_types||[]).find(function(t){return t.id===typeId;});
+  if(!v('emp')){ toast('Select an employee',true); return; } if(!typeId){ toast('Select a claim type',true); return; }
+  var claim={ id:(RC.form&&RC.form.id)||undefined, employee_id:v('emp'), claim_type_id:typeId, claim_date:v('date'), department:v('dept'), project:v('project'), remarks:v('remarks'), description:v('desc') };
+  if(curType&&curType.is_mileage){ claim.mileage={ start_location:v('start'), end_location:v('end'), total_km:Number(v('km'))||0, mileage_rate:Number(v('rate'))||0 }; }
+  else { claim.amount=Number(v('amount'))||0; }
+  var r=await call({api:'hr_rc_save',tenant:HR.tenant,claim:claim});
+  if(!r||!r.ok){ toast((r&&r.error)||'Save failed',true); return; }
+  var cid=r.id; RC.form.id=cid;
+  var fi=document.getElementById('rc_file');
+  if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, fi.files[i]); } }
+  if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
+  else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
+  hrRender();
+}
+function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:file.name,file_type:file.type,file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
+async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender(); var r=await call({api:'hr_rc_get',id:id}); RC.loading=false; if(r&&r.ok){ RC.detail=r; RC.page='detail'; } else toast((r&&r.error)||'Load failed',true); hrRender(); }
+function hrRCDetail(){
+  var d=RC.detail; if(!d||!d.claim) return '<div class="muted" style="padding:16px">Not found</div>';
+  var c=d.claim; var emp=c.hr_employees; var typ=c.hr_claim_types;
+  var pending=['Pending Manager Approval','Pending HR Approval','Pending Finance Approval','Pending Director Approval','Submitted'].indexOf(c.status)>=0;
+  var head='<div class="panel"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px"><div><div style="font-size:18px;font-weight:750">'+esc(c.claim_no)+' '+rcStatusPill(c.status)+'</div><div class="muted" style="font-size:12.5px;margin-top:4px">'+esc((emp&&emp.name)||'—')+' · '+esc((typ&&typ.name)||'—')+' · '+esc(c.claim_date||'')+'</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</div>'+(c.override_amount!=null?'<div class="muted" style="font-size:10.5px">overridden: '+esc(c.override_reason||'')+'</div>':'')+'</div></div><div style="margin-top:9px;font-size:13px">'+esc(c.description||'')+(c.department?' · <span class="muted">'+esc(c.department)+'</span>':'')+(c.project?' · <span class="muted">'+esc(c.project)+'</span>':'')+'</div><button class="btn sm" onclick="hrRCNav(\'list\')" style="margin-top:10px">← Back to claims</button></div>';
+  var warns=(c.warnings&&c.warnings.length)?'<div class="panel" style="border-color:rgba(245,158,11,.4)"><div style="font-weight:700;color:var(--amber);font-size:13px;margin-bottom:6px">⚠ Validation warnings</div>'+c.warnings.map(function(w){return '<div style="font-size:12.5px;color:var(--text-soft)">• '+esc(w)+'</div>';}).join('')+'</div>':'';
+  var mile=d.mileage?'<div class="panel"><div class="panel-hd"><h3>🚗 Mileage</h3></div><div style="font-size:13px">'+esc(d.mileage.start_location||'')+' → '+esc(d.mileage.end_location||'')+' · '+d.mileage.total_km+' km × RM'+d.mileage.mileage_rate+' = <b>'+M(d.mileage.calculated_amount)+'</b></div></div>':'';
+  var steps=(d.steps||[]).map(function(s){ var col=s.status==='Approved'?'var(--green-soft)':s.status==='Rejected'?'var(--coral-soft)':s.status==='Info Requested'?'var(--sky-soft)':s.status==='Pending'?'var(--amber)':'var(--muted)'; var cur=(c.current_step===s.step_order&&pending);
+    return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:22px;height:22px;border-radius:50%;background:'+col+'22;color:'+col+';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+s.step_order+'</div><div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(s.name||s.approver_role)+' <span style="font-weight:400;color:'+col+';font-size:11.5px">· '+esc(s.status)+(cur?' ← now':'')+'</span></div>'+(s.comment?'<div class="muted" style="font-size:11.5px;margin-top:2px">“'+esc(s.comment)+'”</div>':'')+(s.acted_at?'<div class="muted" style="font-size:10.5px;margin-top:1px">'+esc(String(s.acted_at).slice(0,16).replace('T',' '))+'</div>':'')+'</div></div>';
+  }).join('')||'<div class="muted" style="font-size:12px;padding:6px 0">Not yet submitted</div>';
+  var timeline='<div class="panel"><div class="panel-hd"><h3>Approval timeline</h3></div>'+steps+'</div>';
+  var recs=(d.attachments&&d.attachments.length)?'<div class="panel"><div class="panel-hd"><h3>Receipts ('+d.attachments.length+')</h3></div>'+d.attachments.map(function(a){return '<div style="font-size:12.5px;padding:4px 0">📎 '+(a.url?('<a href="'+esc(a.url)+'" target="_blank" style="color:var(--sky-soft)">'+esc(a.file_name)+'</a>'):esc(a.file_name))+'</div>';}).join('')+'</div>':'';
+  var coms=(d.comments&&d.comments.length)?'<div class="panel"><div class="panel-hd"><h3>Comments</h3></div>'+d.comments.map(function(x){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px"><b>'+esc(x.author_name||'—')+'</b> <span class="muted" style="font-size:10.5px">'+esc(String(x.created_at).slice(0,16).replace('T',' '))+'</span><div style="margin-top:2px">'+esc(x.comment)+'</div></div>';}).join('')+'</div>':'';
+  var actions='';
+  if(pending){ actions='<div class="panel"><div class="panel-hd"><h3>Approver actions</h3></div><textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn p sm" onclick="hrRCDecide(\'approve\')">✓ Approve</button><button class="btn sm d" onclick="hrRCDecide(\'reject\')">✕ Reject</button><button class="btn sm" onclick="hrRCDecide(\'request_info\')">↩ Request info</button><button class="btn xs" onclick="hrRCOverride()">Override amount</button></div></div>'; }
+  else if(c.status==='Approved'){ actions='<div class="panel"><div class="panel-hd"><h3>💵 Finance — mark as paid</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px"><div><label class="muted" style="font-size:11px">Method</label><input id="rc_pm" placeholder="Bank Transfer" style="'+RC_SEL+'"></div><div><label class="muted" style="font-size:11px">Reference</label><input id="rc_pr" placeholder="TT / cheque ref" style="'+RC_SEL+'"></div></div><button class="btn p sm" onclick="hrRCMarkPaid()">Mark as Paid</button></div>'; }
+  else if(c.status==='Paid'&&d.payment){ actions='<div class="panel"><div style="font-size:13px;color:var(--green-soft)">✓ Paid '+esc(d.payment.paid_date||'')+(d.payment.payment_method?(' · '+esc(d.payment.payment_method)):'')+(d.payment.payment_reference?(' · '+esc(d.payment.payment_reference)):'')+'</div></div>'; }
+  var editRow='';
+  if(['Draft','Need More Info'].indexOf(c.status)>=0) editRow+='<button class="btn sm" onclick="hrRCEdit()">Edit</button> <button class="btn p sm" onclick="hrRCResubmit()">'+(c.status==='Need More Info'?'Resubmit →':'Submit →')+'</button> ';
+  if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
+  return head+warns+mile+timeline+recs+coms+actions+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
+}
+async function hrRCDecide(dec){ var com=(document.getElementById('rc_com')||{}).value||''; if((dec==='reject'||dec==='request_info')&&!com.trim()){ toast('Please enter a reason / message',true); return; } var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:dec,comment:com}); if(r&&r.ok){ toast('Done → '+(r.status||'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCMarkPaid(){ var pm=(document.getElementById('rc_pm')||{}).value||''; var pr=(document.getElementById('rc_pr')||{}).value||''; var r=await call({api:'hr_rc_mark_paid',id:RC.detail.claim.id,payment_method:pm,payment_reference:pr}); if(r&&r.ok){ toast('Marked paid ✓'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCCancel(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+function hrRCEdit(){ var c=RC.detail.claim; RC.form={ id:c.id, employee_id:c.employee_id, claim_type_id:c.claim_type_id, claim_date:c.claim_date?String(c.claim_date).slice(0,10):'', department:c.department, project:c.project, remarks:c.remarks, description:c.description, amount:c.amount, mileage: RC.detail.mileage?{ start_location:RC.detail.mileage.start_location, end_location:RC.detail.mileage.end_location, total_km:RC.detail.mileage.total_km, mileage_rate:RC.detail.mileage.mileage_rate }:null }; RC.page='form'; hrRender(); }
+async function hrRCResubmit(){ var r=await call({api:'hr_rc_submit',tenant:HR.tenant,id:RC.detail.claim.id}); if(r&&r.ok){ toast('Submitted → '+r.status); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCLoadDash(){ var r=await call({api:'hr_rc_dashboard',tenant:HR.tenant}); if(r&&r.ok){ RC.dash=r.data; if(HR.view==='expenses') hrRender(); } }
+function hrRCDash(){
+  var d=RC.dash; if(!d) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  var cards=hrCardGrid([ hrDCard('Total Claims',d.total_claims,{icon:'🧾'}), hrDCard('Total Amount',M(d.total_amount),{color:'var(--sky-soft)',icon:'💰'}), hrDCard('Pending',d.pending,{color:d.pending>0?'var(--amber)':'var(--text)',icon:'⏳'}), hrDCard('Approved',d.approved,{color:'var(--green-soft)',icon:'✅'}), hrDCard('Rejected',d.rejected,{color:d.rejected>0?'var(--coral)':'var(--text)',icon:'✖'}), hrDCard('Paid',d.paid,{color:'var(--green-soft)',icon:'💵',sub:M(d.paid_amount)}) ]);
+  var charts='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly claim trend',hrDashLine(d.trend||[],[{k:'value',color:'var(--coral)',name:'Claim RM'}]))+hrPanel('By claim type',hrDashBars(d.by_type||[],{color:'var(--sky-soft)',fmt:M}))+hrPanel('By department',hrDashBars(d.by_department||[],{color:'var(--coral)',fmt:M}))+hrPanel('By employee',hrDashBars((d.by_employee||[]).slice(0,10),{color:'var(--green-soft)',fmt:M}))+'</div>';
+  var alerts=(d.alerts&&d.alerts.length)?hrPanel('⚠ Abnormal claim alerts ('+d.alerts.length+')',d.alerts.map(function(a){return '<div style="border-left:3px solid var(--amber);background:var(--panel-2);border-radius:0 8px 8px 0;padding:8px 12px;margin-bottom:8px"><div style="font-weight:700;font-size:12.5px">'+esc(a.claim_no)+' · '+esc(a.name||'')+' · '+M(a.amount)+'</div>'+(a.warnings||[]).map(function(w){return '<div class="muted" style="font-size:11.5px">• '+esc(w)+'</div>';}).join('')+'</div>';}).join('')):hrPanel('⚠ Abnormal claim alerts','<div class="muted" style="padding:12px;font-size:12.5px">No anomalies flagged ✓</div>');
+  return cards+charts+alerts;
+}
+function hrRCSetTab(t){ RC.setTab=t; hrRender(); }
+function hrRCSettings(){
+  var cfg=RC.cfg||{}; var tab=RC.setTab||'types';
+  var tabs='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+[['types','Claim Types'],['rates','Mileage Rates'],['workflows','Approval Workflows'],['approvers','Role Approvers']].map(function(t){var on=tab===t[0];return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCSetTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
+  var body='';
+  if(tab==='types'){
+    var rows=(cfg.claim_types||[]).map(function(t){return '<tr><td><b>'+esc(t.name)+'</b>'+(t.is_mileage?' 🚗':'')+'</td><td>'+(t.requires_receipt?'Yes':'—')+'</td><td class="amt">'+(t.max_amount_per_claim!=null?M(t.max_amount_per_claim):'—')+'</td><td class="amt">'+(t.max_amount_per_month!=null?M(t.max_amount_per_month):'—')+'</td><td>'+(t.taxable?'Taxable':'—')+'</td><td>'+(t.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td><td><button class="btn xs" onclick="hrRCEditType(\''+t.id+'\')">Edit</button></td></tr>';}).join('');
+    body='<div class="panel"><div class="panel-hd"><h3>Claim Types</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Receipt</th><th class="amt">Per-claim cap</th><th class="amt">Monthly cap</th><th>Tax</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">All types are reimbursement-only and do NOT affect EPF / SOCSO / EIS / PCB.</div></div>';
+  } else if(tab==='rates'){
+    var rows=(cfg.mileage_rates||[]).map(function(r){return '<tr><td><b>RM'+r.rate+' / km</b>'+(r.is_default?' <span class="pill pill-blue">default</span>':'')+'</td><td class="muted">'+esc(r.label||'')+'</td><td>'+(r.active?'active':'off')+'</td></tr>';}).join('');
+    body='<div class="panel"><div class="panel-hd"><h3>Mileage Rates</h3><button class="btn p sm" onclick="hrRCAddRate()">+ Add rate</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Rate</th><th>Label</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  } else if(tab==='workflows'){
+    var stepsByWf={}; (cfg.workflow_steps||[]).forEach(function(s){ (stepsByWf[s.workflow_id]=stepsByWf[s.workflow_id]||[]).push(s); });
+    var rows=(cfg.workflows||[]).map(function(w){ var st=(stepsByWf[w.id]||[]).sort(function(a,b){return a.step_order-b.step_order;}); var chain=st.map(function(s){return s.name||s.approver_role;}).join(' → ')||'—'; var rng='RM'+(w.min_amount||0)+(w.max_amount!=null?('–'+w.max_amount):'+'); return '<tr><td><b>'+esc(w.name)+'</b></td><td class="muted">'+esc(rng)+'</td><td style="font-size:12px">'+esc(chain)+'</td><td>'+(w.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td></tr>';}).join('');
+    body='<div class="panel"><div class="panel-hd"><h3>Approval Workflows</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Workflow</th><th>Amount range</th><th>Approval chain</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">A claim is routed to the highest-priority active workflow whose amount range (and optional dept/type/project filters) match. Manager step resolves to the employee’s direct manager.</div></div>';
+  } else if(tab==='approvers'){
+    var byRole={}; (cfg.role_approvers||[]).forEach(function(a){ (byRole[a.role]=byRole[a.role]||[]).push(a); });
+    var empName=function(id){ var e=(cfg.employees||[]).find(function(x){return x.id===id;}); return e?e.name:id; };
+    var roles=[['manager','Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+    body='<div class="panel"><div class="panel-hd"><h3>Role Approvers</h3></div><div class="muted" style="font-size:11.5px;margin-bottom:10px">Assign who approves at each role level. (Until assigned, an admin can approve any step.)</div>'+roles.map(function(r){ var list=(byRole[r[0]]||[]).map(function(a){return '<span class="pill pill-coral" style="margin-right:4px">'+esc(empName(a.employee_id))+' <a onclick="hrRCDelApprover(\''+a.id+'\')" style="cursor:pointer">✕</a></span>';}).join('')||'<span class="muted" style="font-size:12px">none</span>'; return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:120px;font-weight:600;font-size:13px">'+r[1]+'</div><div style="flex:1">'+list+'</div><button class="btn xs" onclick="hrRCAddApprover(\''+r[0]+'\')">+ add</button></div>';}).join('')+'</div>';
+  }
+  return tabs+body;
+}
+function hrRCEditType(id){ var t=(RC.cfg.claim_types||[]).find(function(x){return x.id===id;}); if(!t)return;
+  var pc=prompt('Max amount per claim (RM, blank = no limit):', t.max_amount_per_claim==null?'':t.max_amount_per_claim); if(pc==null)return;
+  var pm=prompt('Max amount per month (RM, blank = no limit):', t.max_amount_per_month==null?'':t.max_amount_per_month); if(pm==null)return;
+  var rr=confirm('Require receipt for this type? OK = Yes, Cancel = No'); var ac=confirm('Active? OK = active, Cancel = disable');
+  var row={ id:id, requires_receipt:rr, active:ac, max_amount_per_claim: pc===''?null:Number(pc), max_amount_per_month: pm===''?null:Number(pm) };
+  call({api:'hr_rc_admin_save',kind:'claim_type',row:row}).then(function(r){ if(r&&r.ok){ toast('Saved'); hrRCReload(); } else toast((r&&r.error)||'Failed',true); });
+}
+function hrRCAddRate(){ var rate=prompt('Rate (RM per km), e.g. 0.70:'); if(!rate)return; var label=prompt('Label:','RM'+rate+'/km'); call({api:'hr_rc_admin_save',kind:'mileage_rate',row:{rate:Number(rate),label:label||('RM'+rate+'/km'),active:true}}).then(function(r){ if(r&&r.ok){ toast('Added'); hrRCReload(); } else toast('Failed',true); }); }
+function hrRCAddApprover(role){ var cfg=RC.cfg||{}; var opts=(cfg.employees||[]).map(function(e,i){return (i+1)+'. '+e.emp_no+' — '+e.name;}).join('\n'); var pick=prompt('Assign '+role+' approver — enter number:\n'+opts); if(!pick)return; var idx=Number(pick)-1; var e=(cfg.employees||[])[idx]; if(!e){ toast('Invalid',true); return; } call({api:'hr_rc_admin_save',kind:'role_approver',row:{role:role,employee_id:e.id,tenant_id:HR.tenant}}).then(function(r){ if(r&&r.ok){ toast('Assigned'); hrRCReload(); } else toast('Failed',true); }); }
+function hrRCDelApprover(id){ call({api:'hr_rc_admin_save',kind:'role_approver_del',row:{id:id}}).then(function(r){ if(r&&r.ok){ toast('Removed'); hrRCReload(); } else toast('Failed',true); }); }
+async function hrRCReload(){ var r=await call({api:'hr_rc_config',tenant:HR.tenant}); if(r&&r.ok){ RC.cfg=r; if(HR.view==='expenses') hrRender(); } }
 function hrEmployees(){
   var e=(HR.data.employees||[]).slice().sort(function(a,b){return String(a.emp_no).localeCompare(String(b.emp_no));});
   var typePill=function(t){ t=t||'Full-time'; var m={'Full-time':'pill-green','Contract':'pill-blue','Part-time':'pill-coral'}; return '<span class="pill '+(m[t]||'pill-draft')+'">'+esc(t)+'</span>'; };
