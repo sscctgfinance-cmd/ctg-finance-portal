@@ -3610,6 +3610,74 @@ Deno.serve(async (req)=>{
       await rcAuditLog(b.id,"mark_paid",me,"Approved","Paid",{method:b.payment_method,ref:b.payment_reference});
       return j({ ok:true, status:"Paid" });
     }
+    if (api === "hr_rc_post_xero") {
+      // Post an approved reimbursement to Xero as an ACCPAY bill (SUBMITTED, never AUTHORISED — payment stays a human click in Xero).
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can post claims to Xero." }, 403);
+      const id=b.id;
+      const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(name,emp_no)").eq("id",id).maybeSingle();
+      if(!c) return j({ ok:false, error:"claim not found" });
+      if(["Approved","Paid"].indexOf(c.status)<0) return j({ ok:false, error:"Post to Xero only after the claim is fully Approved." });
+      const tenant = c.tenant_id;
+      const empName = (c.hr_employees&&c.hr_employees.name) || "Employee";
+      // Build one Xero line per expense line, each coded to its claim type's GL account.
+      const { data: items } = await sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account,is_mileage)").eq("claim_id",id).order("item_date");
+      const missing:string[]=[]; const lines:any[]=[];
+      if(items && items.length){
+        for(const it of items){
+          const t:any=it.hr_claim_types||{}; const gl=String(t.gl_account||"").trim();
+          if(!gl){ const nm=t.name||"(unnamed type)"; if(missing.indexOf(nm)<0) missing.push(nm); continue; }
+          const km = t.is_mileage ? (" · "+(it.total_km||0)+"km × RM"+(it.mileage_rate||0)) : "";
+          lines.push({ Description:String((it.description||t.name||"Expense")+km).slice(0,4000), Quantity:1, UnitAmount:Number(it.amount)||0, AccountCode:gl });
+        }
+      } else {
+        const { data: t } = await sb.from("hr_claim_types").select("name,gl_account").eq("id",c.claim_type_id).maybeSingle();
+        const gl=String((t&&t.gl_account)||"").trim();
+        if(!gl) missing.push((t&&t.name)||"(claim type)");
+        else lines.push({ Description:String(c.description||"Reimbursement").slice(0,4000), Quantity:1, UnitAmount:Number(c.amount)||0, AccountCode:gl });
+      }
+      if(missing.length) return j({ ok:false, error:"No GL account set for claim type(s): "+missing.join(", ")+". Set it in Reimbursement → Settings → Claim Types, then post again." });
+      if(!lines.length) return j({ ok:false, error:"Nothing to post — no expense lines with an amount." });
+      let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
+      const reference = String(c.claim_no || ("RC-"+id)).slice(0,255);
+      const xh = { "Authorization":"Bearer "+access, "Xero-Tenant-Id": tenant, "Content-Type":"application/json", "Accept":"application/json" };
+      let billId = c.xero_bill_id || null;
+      if(billId){
+        // Already posted — refresh the Reference on the existing (editable) bill so it never goes blank.
+        try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, Reference: reference }] }) }); } catch(_e){}
+      } else {
+        const inv:any = { Type:"ACCPAY", Contact:{ Name:String(empName).slice(0,500) },
+          Reference: reference, Date: c.claim_date||undefined, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
+        const idem = "rc-"+id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
+        const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
+        const out = await r.json();
+        if (!r.ok){
+          let msg = ""; const el = (out.Elements||[])[0];
+          if (el && Array.isArray(el.ValidationErrors) && el.ValidationErrors.length) msg = el.ValidationErrors.map((e:any)=>e.Message).join(" · ");
+          else if (Array.isArray(out.ValidationErrors) && out.ValidationErrors.length) msg = out.ValidationErrors.map((e:any)=>e.Message).join(" · ");
+          else msg = out.Message || JSON.stringify(out);
+          return j({ ok:false, error:"Xero "+r.status+": "+String(msg).slice(0,400) });
+        }
+        const bill = (out.Invoices||[])[0]; billId = bill && bill.InvoiceID;
+        await sb.from("hr_claim_requests").update({ xero_bill_id: billId||null, xero_posted_at:new Date().toISOString(), xero_reference: reference }).eq("id", id);
+      }
+      // Attach receipts to the Xero bill (best-effort).
+      let attached=0;
+      if(billId){
+        const { data: atts } = await sb.from("hr_claim_attachments").select("*").eq("claim_id",id);
+        for(const a of (atts||[])){
+          try{
+            if(!a.file_path) continue;
+            const { data: fileData } = await sb.storage.from("hr-claim-receipts").download(a.file_path);
+            if(fileData){ const buf=await fileData.arrayBuffer(); const nm=String(a.file_name||"receipt").replace(/[^A-Za-z0-9._-]/g,"_").slice(0,116);
+              const dr=await fetch("https://api.xero.com/api.xro/2.0/Invoices/"+billId+"/Attachments/"+encodeURIComponent(nm), { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": tenant, "Content-Type": a.file_type||"application/octet-stream" }, body: buf });
+              if(dr.ok) attached++; }
+          }catch(_e){}
+        }
+      }
+      await rcAuditLog(id,"post_xero",me,c.status,c.status,{ xero_bill_id:billId, reference, attached });
+      return j({ ok:true, xero_bill_id:billId, reference, attached });
+    }
     if (api === "hr_rc_list") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); const scope=String(b.scope||"all");
@@ -3653,9 +3721,10 @@ Deno.serve(async (req)=>{
       }
       const curStep = allSteps.find((s:any)=>cl && s.step_order===cl.current_step);
       const canAct = rcCanActStep(who, curStep) && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
+      const canPost = (who.isAdmin || who.roles.indexOf("finance")>=0) && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
-      return j({ ok:true, claim:cl, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], can_act:canAct, is_admin:who.isAdmin });
+      return j({ ok:true, claim:cl, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], can_act:canAct, can_post:canPost, is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3826,6 +3895,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v88 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v89 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
