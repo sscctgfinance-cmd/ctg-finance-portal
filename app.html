@@ -1255,7 +1255,7 @@ async function showApp(){
     else if(t==='calendar') el.classList.remove('hide'); // Compliance Calendar: gated server-side
     else if(t==='cashflow') el.classList.remove('hide'); // Cashflow forecast: gated server-side
     else if(t==='ocr') el.classList.toggle('hide', true); // OCR HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
-    else if(t==='ap') el.classList.toggle('hide', !canManage);  // AP Inbox: admin-only (Claude API + sends emails)
+    else if(t==='ap') el.classList.toggle('hide', true);  // AP Inbox HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
     else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
     else if(t==='bankfeed') el.classList.toggle('hide', !canManage); // Bank Feed launcher (Fusioneta): admin-only
