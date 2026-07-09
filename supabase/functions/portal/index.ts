@@ -146,6 +146,28 @@ async function rcValidate(claim, type, empId){
   } catch(_e){}
   return warns;
 }
+async function rcMe(me){
+  const isAdmin = superAdmin(me); let employee:any=null, roles:string[]=[], is_manager=false;
+  const uid = me && me.user && me.user.id;
+  if(uid){ const { data:e } = await sb.from("hr_employees").select("*").eq("user_id",uid).maybeSingle(); employee=e||null; }
+  if(employee){
+    const { data:ra } = await sb.from("hr_claim_role_approvers").select("role").eq("employee_id",employee.id);
+    const set = new Set<string>(); (ra||[]).forEach((x:any)=>set.add(x.role)); if(employee.claim_role) set.add(employee.claim_role);
+    roles = Array.from(set);
+    const { count } = await sb.from("hr_employees").select("id",{count:"exact",head:true}).eq("manager_id",employee.id);
+    is_manager = !!count;
+  }
+  return { isAdmin, employee, roles, is_manager };
+}
+function rcCanActStep(who:any, step:any){ if(!step) return false; if(who.isAdmin) return true; if(!who.employee) return false; if(step.approver_employee_id && step.approver_employee_id===who.employee.id) return true; if(step.approver_role && who.roles.indexOf(step.approver_role)>=0) return true; return false; }
+async function rcApproverQueue(tenant:string, who:any){
+  const PEND=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
+  const { data:claims } = await sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).in("status",PEND).order("created_at",{ascending:false}).limit(500);
+  const ids=(claims||[]).map((c:any)=>c.id); if(!ids.length) return [];
+  const { data:steps } = await sb.from("hr_claim_approval_steps").select("claim_id,step_order,approver_role,approver_employee_id,status").in("claim_id",ids);
+  const byClaim:any={}; (steps||[]).forEach((s:any)=>{ (byClaim[s.claim_id]=byClaim[s.claim_id]||{})[s.step_order]=s; });
+  return (claims||[]).filter((c:any)=>{ const st=byClaim[c.id]&&byClaim[c.id][c.current_step]; return st && st.status==="Pending" && rcCanActStep(who, st); });
+}
 // â”€â”€ Xero GET with proper 429 rate-limit handling (Retry-After header). â”€â”€
 // Previous behaviour: silent fail on 429 â†’ break upstream loops â†’ cache silently stale.
 // New behaviour: honour Retry-After (cap at 90s), retry up to 3 times, then throw.
@@ -3277,6 +3299,8 @@ Deno.serve(async (req)=>{
         date_of_birth:f.dob||null,
         epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
+        manager_id:f.managerId||null,
+        claim_role:(f.claimRole===""||f.claimRole==null)?null:f.claimRole,
       };
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
@@ -3359,30 +3383,55 @@ Deno.serve(async (req)=>{
     }
     // ===== Reimbursement / Claim module (hr_rc_*) =====
     if (api === "hr_rc_config") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      if(!who.isAdmin && !who.employee) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet. Ask HR to enable your access." });
+      const meOut = { isAdmin:who.isAdmin, roles:who.roles, is_manager:who.is_manager, employee: who.employee?{ id:who.employee.id, emp_no:who.employee.emp_no, name:who.employee.name, dept:who.employee.dept, tenant_id:who.employee.tenant_id }:null };
+      if(who.isAdmin){
+        const tenant = String(b.tenant||"");
+        const [types, rates, wfs, steps, policy, roleApprovers, emps] = await Promise.all([
+          sb.from("hr_claim_types").select("*").order("sort_order"),
+          sb.from("hr_mileage_rates").select("*").order("rate"),
+          sb.from("hr_approval_workflows").select("*").order("priority",{ascending:false}),
+          sb.from("hr_approval_workflow_steps").select("*").order("step_order"),
+          sb.from("hr_claim_policy_rules").select("*"),
+          sb.from("hr_claim_role_approvers").select("*"),
+          sb.from("hr_employees").select("id,emp_no,name,dept,position,manager_id,claim_role,email,user_id").eq("tenant_id",tenant).eq("status","active").order("emp_no")
+        ]);
+        return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[] });
+      }
+      const [types, rates] = await Promise.all([ sb.from("hr_claim_types").select("*").eq("active",true).order("sort_order"), sb.from("hr_mileage_rates").select("*").eq("active",true).order("rate") ]);
+      return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
+    }
+    if (api === "hr_rc_enable_login") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const tenant = String(b.tenant||"");
-      const [types, rates, wfs, steps, policy, roleApprovers, emps] = await Promise.all([
-        sb.from("hr_claim_types").select("*").order("sort_order"),
-        sb.from("hr_mileage_rates").select("*").order("rate"),
-        sb.from("hr_approval_workflows").select("*").order("priority",{ascending:false}),
-        sb.from("hr_approval_workflow_steps").select("*").order("step_order"),
-        sb.from("hr_claim_policy_rules").select("*"),
-        sb.from("hr_claim_role_approvers").select("*"),
-        sb.from("hr_employees").select("id,emp_no,name,dept,position,manager_id,claim_role").eq("tenant_id",tenant).eq("status","active").order("emp_no")
-      ]);
-      return j({ ok:true, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[] });
+      const { data:e } = await sb.from("hr_employees").select("*").eq("id",b.employee_id).maybeSingle();
+      if(!e) return j({ ok:false, error:"employee not found" });
+      const email=String(b.email||e.email||"").trim().toLowerCase(); if(!email) return j({ ok:false, error:"This employee has no email — add one on their profile first." });
+      const pass = String(b.password||"").trim() || ("Ctg"+Math.random().toString(36).slice(2,7)+Math.floor(Math.random()*90+10)+"!");
+      const { data:uid, error } = await sb.rpc("portal_create_user", { p_email:email, p_name:e.name||email, p_pass:pass, p_role:"employee", p_tenants:[e.tenant_id] });
+      if(error) return j({ ok:false, error:error.message });
+      await sb.from("hr_employees").update({ user_id: uid, email: email }).eq("id", b.employee_id);
+      await logAudit(me, "hr_claim_enable_login", email, { employee_id:b.employee_id });
+      return j({ ok:true, email, temp_password:pass });
     }
     if (api === "hr_rc_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const c = b.claim||{}; const tenant = String(b.tenant||"");
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && !who.employee) return j({ ok:false, error:"no employee profile" });
+      const c = b.claim||{};
+      const empId = who.isAdmin ? (c.employee_id||null) : who.employee.id;
+      const tenant = who.isAdmin ? String(b.tenant||"") : who.employee.tenant_id;
       const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",c.claim_type_id).maybeSingle();
       const isMileage = !!(type&&type.is_mileage);
       let amount = Number(c.amount)||0;
       if(isMileage && c.mileage){ amount = Math.round((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)*100)/100; }
-      const row:any = { tenant_id:tenant, employee_id:c.employee_id||null, claim_type_id:c.claim_type_id||null, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:!!(type&&type.taxable), payroll_applicable:!!(type&&type.payroll_applicable), updated_at:new Date().toISOString() };
+      const row:any = { tenant_id:tenant, employee_id:empId, claim_type_id:c.claim_type_id||null, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:!!(type&&type.taxable), payroll_applicable:!!(type&&type.payroll_applicable), updated_at:new Date().toISOString() };
       let claimId=c.id;
       if(c.id){
-        const { data: ex } = await sb.from("hr_claim_requests").select("status").eq("id",c.id).maybeSingle();
+        const { data: ex } = await sb.from("hr_claim_requests").select("status,employee_id").eq("id",c.id).maybeSingle();
+        if(!ex) return j({ ok:false, error:"claim not found" });
+        if(!who.isAdmin && ex.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403);
+        if(!who.isAdmin) row.employee_id=ex.employee_id;
         if(ex && !["Draft","Need More Info"].includes(ex.status)) return j({ ok:false, error:"Claim can only be edited while Draft or Need More Info." });
         await sb.from("hr_claim_requests").update(row).eq("id",c.id);
       } else {
@@ -3399,18 +3448,23 @@ Deno.serve(async (req)=>{
       return j({ ok:true, id:claimId, amount });
     }
     if (api === "hr_rc_attach") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
       const claimId=b.claim_id; if(!claimId) return j({ ok:false, error:"claim_id required" });
+      if(!who.isAdmin){ const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",claimId).maybeSingle(); if(!oc || !who.employee || oc.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403); }
       const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null;
       if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error) path=null; }catch(_e){ path=null; } }
       await sb.from("hr_claim_attachments").insert({ claim_id:claimId, file_name:name, file_path:path, file_type:b.file_type||null, file_size:Number(b.file_size)||null, receipt_hash:b.receipt_hash||null, uploaded_by:(me.user&&me.user.id)||null });
       return j({ ok:true, stored:!!path });
     }
     if (api === "hr_rc_submit") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const id=b.id; const tenant=String(b.tenant||"");
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && !who.employee) return j({ ok:false, error:"no employee profile" });
+      const id=b.id;
       const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
       if(!claim) return j({ ok:false, error:"claim not found" });
+      if(!who.isAdmin && claim.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403);
+      const tenant = who.isAdmin ? String(b.tenant||"") : who.employee.tenant_id;
       if(!["Draft","Need More Info"].includes(claim.status)) return j({ ok:false, error:"Only Draft or Need More Info claims can be submitted." });
       const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",claim.claim_type_id).maybeSingle();
       if(type&&type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(); if(md){ const calc=Math.round((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)*100)/100; if(calc!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:calc}).eq("id",id); claim.amount=calc; } } }
@@ -3439,13 +3493,15 @@ Deno.serve(async (req)=>{
       return j({ ok:true, status:st, warnings, workflow: wf?wf.name:"Finance only" });
     }
     if (api === "hr_rc_decide") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
       const id=b.id; const decision=String(b.decision||""); const comment=String(b.comment||"");
       const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
       if(!claim) return j({ ok:false, error:"claim not found" });
       const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
       if(!inst) return j({ ok:false, error:"no approval in progress" });
       const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
+      if(!rcCanActStep(who, step)) return j({ ok:false, error:"You are not the approver for this step." }, 403);
       const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
       if(decision==="reject"){
         if(!comment.trim()) return j({ ok:false, error:"a rejection reason is required" });
@@ -3483,22 +3539,28 @@ Deno.serve(async (req)=>{
       return j({ ok:true, status:"Approved", final:true });
     }
     if (api === "hr_rc_comment") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
       if(!String(b.comment||"").trim()) return j({ ok:false, error:"empty comment" });
+      if(!who.isAdmin){ if(!who.employee) return j({ ok:false, error:"forbidden" }, 403); const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",b.id).maybeSingle(); const { data:st } = await sb.from("hr_claim_approval_steps").select("approver_role,approver_employee_id").eq("claim_id",b.id); const isAppr=(st||[]).some((s:any)=>s.approver_employee_id===who.employee.id||who.roles.indexOf(s.approver_role)>=0); if(!(oc&&oc.employee_id===who.employee.id)&&!isAppr) return j({ ok:false, error:"forbidden" }, 403); }
       await sb.from("hr_claim_comments").insert({claim_id:b.id,author_id:(me.user&&me.user.id)||null,author_name:(me.user&&me.user.email)||null,comment:b.comment,kind:"comment"});
       await rcAuditLog(b.id,"comment",me,null,null,{});
       return j({ ok:true });
     }
     if (api === "hr_rc_cancel") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const {data:c}=await sb.from("hr_claim_requests").select("status").eq("id",b.id).maybeSingle();
-      if(c&&c.status==="Paid") return j({ ok:false, error:"A paid claim cannot be cancelled." });
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      const {data:c}=await sb.from("hr_claim_requests").select("status,employee_id").eq("id",b.id).maybeSingle();
+      if(!c) return j({ ok:false, error:"not found" });
+      if(!who.isAdmin && (!who.employee || c.employee_id!==who.employee.id)) return j({ ok:false, error:"forbidden" }, 403);
+      if(c.status==="Paid") return j({ ok:false, error:"A paid claim cannot be cancelled." });
       await sb.from("hr_claim_requests").update({status:"Cancelled"}).eq("id",b.id);
       await rcAuditLog(b.id,"cancel",me,c&&c.status,"Cancelled",{});
       return j({ ok:true });
     }
     if (api === "hr_rc_mark_paid") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
       const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",b.id).maybeSingle();
       if(!c) return j({ ok:false, error:"not found" });
       if(c.status!=="Approved") return j({ ok:false, error:"Only Approved claims can be marked paid." });
@@ -3508,19 +3570,28 @@ Deno.serve(async (req)=>{
       return j({ ok:true, status:"Paid" });
     }
     if (api === "hr_rc_list") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const tenant=String(b.tenant||""); const scope=String(b.scope||"all");
-      let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); const scope=String(b.scope||"all");
       const pend=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
-      if(scope==="pending") q=q.in("status",pend);
-      else if(scope==="approved") q=q.eq("status","Approved");
-      else if(scope==="paid") q=q.eq("status","Paid");
-      else if(scope==="mine" && b.employee_id) q=q.eq("employee_id",b.employee_id);
-      const { data } = await q;
-      return j({ ok:true, claims:data||[] });
+      if(who.isAdmin){
+        const tenant=String(b.tenant||"");
+        let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
+        if(scope==="pending") q=q.in("status",pend);
+        else if(scope==="approved") q=q.eq("status","Approved");
+        else if(scope==="paid") q=q.eq("status","Paid");
+        else if(scope==="mine" && b.employee_id) q=q.eq("employee_id",b.employee_id);
+        const { data } = await q; return j({ ok:true, claims:data||[] });
+      }
+      if(!who.employee) return j({ ok:false, error:"no employee profile" });
+      const tenant=who.employee.tenant_id;
+      if(scope==="approvals"||scope==="pending"){ const claims=await rcApproverQueue(tenant, who); return j({ ok:true, claims }); }
+      let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).eq("employee_id",who.employee.id).order("created_at",{ascending:false}).limit(500);
+      if(scope==="approved") q=q.eq("status","Approved"); else if(scope==="paid") q=q.eq("status","Paid");
+      const { data } = await q; return j({ ok:true, claims:data||[] });
     }
     if (api === "hr_rc_get") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
       const id=b.id;
       const [claimR, mileage, atts, steps, comments, payment, audit] = await Promise.all([
         sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
@@ -3531,9 +3602,18 @@ Deno.serve(async (req)=>{
         sb.from("hr_claim_payments").select("*").eq("claim_id",id).maybeSingle(),
         sb.from("hr_claim_audit_logs").select("*").eq("claim_id",id).order("created_at")
       ]);
+      const cl:any=claimR.data; const allSteps:any[]=steps.data||[];
+      if(!who.isAdmin){
+        if(!who.employee) return j({ ok:false, error:"forbidden" }, 403);
+        const isOwner = cl && cl.employee_id===who.employee.id;
+        const isAppr = allSteps.some((s:any)=>s.approver_employee_id===who.employee.id||who.roles.indexOf(s.approver_role)>=0);
+        if(!isOwner && !isAppr) return j({ ok:false, error:"forbidden" }, 403);
+      }
+      const curStep = allSteps.find((s:any)=>cl && s.step_order===cl.current_step);
+      const canAct = rcCanActStep(who, curStep) && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
-      return j({ ok:true, claim:claimR.data, mileage:mileage.data, attachments:attsOut, steps:steps.data||[], comments:comments.data||[], payment:payment.data, audit:audit.data||[] });
+      return j({ ok:true, claim:cl, mileage:mileage.data, attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], can_act:canAct, is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3697,6 +3777,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v85 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v86 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
