@@ -103,6 +103,49 @@ function superAdmin(me){ return me && me.ok && me.user && me.user.role==="admin"
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return Array.isArray(data) ? data : []; } catch (_e) { return []; } }
 async function denyTenant(me, action, tenant){ await logAudit(me, "tenant_access_denied", String(tenant||""), { action }); return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
+
+// ===== Reimbursement / Claim engine helpers =====
+function rcStatusForRole(role){ return role==="manager"?"Pending Manager Approval":role==="hr"?"Pending HR Approval":role==="finance"?"Pending Finance Approval":role==="director"?"Pending Director Approval":"Submitted"; }
+async function rcAuditLog(claimId, action, me, fromS, toS, detail){ try{ await sb.from("hr_claim_audit_logs").insert({ claim_id:claimId, action, actor_id:(me&&me.user&&me.user.id)||null, actor_name:(me&&me.user&&me.user.email)||null, from_status:fromS||null, to_status:toS||null, details:detail||{} }); }catch(_e){} }
+async function rcMatchWorkflow(tenant, claim){
+  const { data: wfs } = await sb.from("hr_approval_workflows").select("*").eq("active",true).order("priority",{ascending:false});
+  const amt = Number(claim.amount)||0;
+  for(const w of (wfs||[])){
+    if(w.tenant_id!=null && w.tenant_id!==tenant) continue;
+    if(w.min_amount!=null && amt < Number(w.min_amount)) continue;
+    if(w.max_amount!=null && amt > Number(w.max_amount)) continue;
+    if(w.match_department && String(w.match_department)!==String(claim.department||"")) continue;
+    if(w.match_claim_type_id && String(w.match_claim_type_id)!==String(claim.claim_type_id||"")) continue;
+    if(w.match_project && String(w.match_project)!==String(claim.project||"")) continue;
+    return w;
+  }
+  return null;
+}
+async function rcValidate(claim, type, empId){
+  const warns=[]; const amt=Number(claim.amount)||0;
+  try {
+    if(type && type.requires_receipt){ const { count } = await sb.from("hr_claim_attachments").select("id",{count:"exact",head:true}).eq("claim_id",claim.id); if(!count) warns.push("Receipt required for "+type.name+" but none attached."); }
+    if(type && type.max_amount_per_claim!=null && amt > Number(type.max_amount_per_claim)) warns.push("Amount RM"+amt.toFixed(2)+" exceeds the per-claim limit RM"+Number(type.max_amount_per_claim).toFixed(2)+".");
+    if(type && type.max_amount_per_month!=null && claim.claim_date && empId){
+      const mo=String(claim.claim_date).slice(0,7);
+      const { data: same } = await sb.from("hr_claim_requests").select("amount,claim_date,id").eq("employee_id",empId).eq("claim_type_id",claim.claim_type_id).neq("status","Cancelled").neq("status","Rejected");
+      let s=0; (same||[]).forEach(r=>{ if(String(r.claim_date||"").slice(0,7)===mo && r.id!==claim.id) s+=Number(r.amount)||0; });
+      if(s+amt > Number(type.max_amount_per_month)) warns.push("Monthly total RM"+(s+amt).toFixed(2)+" would exceed the "+type.name+" monthly limit RM"+Number(type.max_amount_per_month).toFixed(2)+".");
+    }
+    if(empId && claim.claim_date){
+      const { data: dup } = await sb.from("hr_claim_requests").select("id,claim_no").eq("employee_id",empId).eq("claim_date",claim.claim_date).eq("amount",amt).neq("id",claim.id).neq("status","Cancelled").neq("status","Rejected").limit(1);
+      if(dup&&dup.length) warns.push("Possible duplicate: same date + amount as "+dup[0].claim_no+".");
+    }
+    const { data: att } = await sb.from("hr_claim_attachments").select("receipt_hash").eq("claim_id",claim.id);
+    const hashes=(att||[]).map(a=>a.receipt_hash).filter(Boolean);
+    if(hashes.length){ const { data: other } = await sb.from("hr_claim_attachments").select("claim_id").in("receipt_hash",hashes).neq("claim_id",claim.id).limit(1); if(other&&other.length) warns.push("Duplicate receipt — the same file is already attached to another claim."); }
+    if(type && type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",claim.id).maybeSingle(); if(md){ const calc=Math.round((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)*100)/100; if(Math.abs(calc-amt)>0.01) warns.push("Mileage amount RM"+amt.toFixed(2)+" ≠ "+md.total_km+"km × RM"+md.mileage_rate+" (= RM"+calc.toFixed(2)+")."); } }
+    const { data: pol } = await sb.from("hr_claim_policy_rules").select("num_value").eq("rule_type","max_age_days").eq("active",true).limit(1);
+    const maxAge=(pol&&pol[0]&&Number(pol[0].num_value))||90;
+    if(claim.claim_date){ const days=Math.floor((Date.now()-new Date(claim.claim_date).getTime())/86400000); if(days>maxAge) warns.push("Claim date is "+days+" days old (policy limit "+maxAge+" days)."); }
+  } catch(_e){}
+  return warns;
+}
 // â”€â”€ Xero GET with proper 429 rate-limit handling (Retry-After header). â”€â”€
 // Previous behaviour: silent fail on 429 â†’ break upstream loops â†’ cache silently stale.
 // New behaviour: honour Retry-After (cap at 90s), retry up to 3 times, then throw.
@@ -3314,6 +3357,218 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length });
       return j({ ok:true, runId:run.id });
     }
+    // ===== Reimbursement / Claim module (hr_rc_*) =====
+    if (api === "hr_rc_config") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||"");
+      const [types, rates, wfs, steps, policy, roleApprovers, emps] = await Promise.all([
+        sb.from("hr_claim_types").select("*").order("sort_order"),
+        sb.from("hr_mileage_rates").select("*").order("rate"),
+        sb.from("hr_approval_workflows").select("*").order("priority",{ascending:false}),
+        sb.from("hr_approval_workflow_steps").select("*").order("step_order"),
+        sb.from("hr_claim_policy_rules").select("*"),
+        sb.from("hr_claim_role_approvers").select("*"),
+        sb.from("hr_employees").select("id,emp_no,name,dept,position,manager_id,claim_role").eq("tenant_id",tenant).eq("status","active").order("emp_no")
+      ]);
+      return j({ ok:true, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[] });
+    }
+    if (api === "hr_rc_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const c = b.claim||{}; const tenant = String(b.tenant||"");
+      const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",c.claim_type_id).maybeSingle();
+      const isMileage = !!(type&&type.is_mileage);
+      let amount = Number(c.amount)||0;
+      if(isMileage && c.mileage){ amount = Math.round((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)*100)/100; }
+      const row:any = { tenant_id:tenant, employee_id:c.employee_id||null, claim_type_id:c.claim_type_id||null, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:!!(type&&type.taxable), payroll_applicable:!!(type&&type.payroll_applicable), updated_at:new Date().toISOString() };
+      let claimId=c.id;
+      if(c.id){
+        const { data: ex } = await sb.from("hr_claim_requests").select("status").eq("id",c.id).maybeSingle();
+        if(ex && !["Draft","Need More Info"].includes(ex.status)) return j({ ok:false, error:"Claim can only be edited while Draft or Need More Info." });
+        await sb.from("hr_claim_requests").update(row).eq("id",c.id);
+      } else {
+        row.status="Draft"; row.created_by=(me.user&&me.user.id)||null;
+        const now=new Date(); row.claim_no="CLM-"+now.getUTCFullYear()+String(now.getUTCMonth()+1).padStart(2,"0")+"-"+String(Date.now()).slice(-6);
+        const { data: ins, error } = await sb.from("hr_claim_requests").insert(row).select("id").single();
+        if(error) return j({ ok:false, error:error.message });
+        claimId=ins.id; await rcAuditLog(claimId,"create",me,null,"Draft",{});
+      }
+      if(isMileage && c.mileage){
+        await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
+        await sb.from("hr_mileage_claim_details").insert({ claim_id:claimId, start_location:c.mileage.start_location||"", end_location:c.mileage.end_location||"", total_km:Number(c.mileage.total_km)||0, mileage_rate:Number(c.mileage.mileage_rate)||0, calculated_amount:amount });
+      }
+      return j({ ok:true, id:claimId, amount });
+    }
+    if (api === "hr_rc_attach") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const claimId=b.claim_id; if(!claimId) return j({ ok:false, error:"claim_id required" });
+      const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null;
+      if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error) path=null; }catch(_e){ path=null; } }
+      await sb.from("hr_claim_attachments").insert({ claim_id:claimId, file_name:name, file_path:path, file_type:b.file_type||null, file_size:Number(b.file_size)||null, receipt_hash:b.receipt_hash||null, uploaded_by:(me.user&&me.user.id)||null });
+      return j({ ok:true, stored:!!path });
+    }
+    if (api === "hr_rc_submit") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const id=b.id; const tenant=String(b.tenant||"");
+      const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
+      if(!claim) return j({ ok:false, error:"claim not found" });
+      if(!["Draft","Need More Info"].includes(claim.status)) return j({ ok:false, error:"Only Draft or Need More Info claims can be submitted." });
+      const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",claim.claim_type_id).maybeSingle();
+      if(type&&type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(); if(md){ const calc=Math.round((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)*100)/100; if(calc!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:calc}).eq("id",id); claim.amount=calc; } } }
+      const warnings = await rcValidate(claim, type, claim.employee_id);
+      if(claim.status==="Need More Info"){
+        const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
+        if(inst){
+          const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
+          if(step) await sb.from("hr_claim_approval_steps").update({status:"Pending",decision:null,comment:null,acted_by:null,acted_at:null}).eq("id",step.id);
+          const st=rcStatusForRole(step&&step.approver_role);
+          await sb.from("hr_claim_requests").update({status:st, warnings, submitted_at:new Date().toISOString()}).eq("id",id);
+          await rcAuditLog(id,"resubmit",me,"Need More Info",st,{});
+          return j({ ok:true, status:st, warnings, resumed:true });
+        }
+      }
+      const wf = await rcMatchWorkflow(tenant, claim);
+      let steps:any[] = wf ? ((await sb.from("hr_approval_workflow_steps").select("*").eq("workflow_id",wf.id).order("step_order")).data||[]) : [];
+      if(!steps.length){ steps=[{step_order:1,name:"Finance",approver_role:"finance",approver_type:"role"}]; }
+      const emp=(await sb.from("hr_employees").select("manager_id").eq("id",claim.employee_id).maybeSingle()).data;
+      const { data: inst } = await sb.from("hr_claim_approval_instances").upsert({ claim_id:id, workflow_id:wf?wf.id:null, current_step:1, status:"in_progress" }, {onConflict:"claim_id"}).select("id").single();
+      await sb.from("hr_claim_approval_steps").delete().eq("instance_id",inst.id);
+      await sb.from("hr_claim_approval_steps").insert(steps.map((s:any)=>({ instance_id:inst.id, claim_id:id, step_order:s.step_order, name:s.name, approver_role:s.approver_role, approver_employee_id:(s.approver_type==="manager"?(emp&&emp.manager_id):(s.approver_type==="user"?s.approver_employee_id:null)), status:"Pending" })));
+      const st=rcStatusForRole(steps[0].approver_role);
+      await sb.from("hr_claim_requests").update({ status:st, current_step:1, workflow_id:wf?wf.id:null, warnings, submitted_at:new Date().toISOString() }).eq("id",id);
+      await rcAuditLog(id,"submit",me,claim.status,st,{ workflow: wf?wf.name:"(fallback Finance)", warnings });
+      return j({ ok:true, status:st, warnings, workflow: wf?wf.name:"Finance only" });
+    }
+    if (api === "hr_rc_decide") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const id=b.id; const decision=String(b.decision||""); const comment=String(b.comment||"");
+      const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
+      if(!claim) return j({ ok:false, error:"claim not found" });
+      const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
+      if(!inst) return j({ ok:false, error:"no approval in progress" });
+      const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
+      const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
+      if(decision==="reject"){
+        if(!comment.trim()) return j({ ok:false, error:"a rejection reason is required" });
+        if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+        await sb.from("hr_claim_approval_instances").update({status:"rejected"}).eq("id",inst.id);
+        await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
+        await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
+        await rcAuditLog(id,"reject",me,fromS,"Rejected",{comment});
+        return j({ ok:true, status:"Rejected" });
+      }
+      if(decision==="request_info"){
+        if(!comment.trim()) return j({ ok:false, error:"a message to the employee is required" });
+        if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+        await sb.from("hr_claim_requests").update({status:"Need More Info"}).eq("id",id);
+        await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"info_request"});
+        await rcAuditLog(id,"request_info",me,fromS,"Need More Info",{comment});
+        return j({ ok:true, status:"Need More Info" });
+      }
+      // approve (optional amount override)
+      const override = (b.override_amount!=null && b.override_amount!=="") ? Number(b.override_amount) : null;
+      if(override!=null){ if(!String(b.override_reason||"").trim()) return j({ ok:false, error:"a reason is required to override the amount" }); await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:b.override_reason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:b.override_reason}); }
+      if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+      const { data: allSteps } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).order("step_order");
+      const next=(allSteps||[]).find((s:any)=>s.step_order>inst.current_step);
+      if(next){
+        await sb.from("hr_claim_approval_instances").update({current_step:next.step_order}).eq("id",inst.id);
+        const st=rcStatusForRole(next.approver_role);
+        await sb.from("hr_claim_requests").update({status:st,current_step:next.step_order}).eq("id",id);
+        await rcAuditLog(id,"approve",me,fromS,st,{step:step&&step.name});
+        return j({ ok:true, status:st, advanced:true });
+      }
+      await sb.from("hr_claim_approval_instances").update({status:"approved"}).eq("id",inst.id);
+      await sb.from("hr_claim_requests").update({status:"Approved",decided_at:nowIso}).eq("id",id);
+      await rcAuditLog(id,"approve",me,fromS,"Approved",{step:step&&step.name});
+      return j({ ok:true, status:"Approved", final:true });
+    }
+    if (api === "hr_rc_comment") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      if(!String(b.comment||"").trim()) return j({ ok:false, error:"empty comment" });
+      await sb.from("hr_claim_comments").insert({claim_id:b.id,author_id:(me.user&&me.user.id)||null,author_name:(me.user&&me.user.email)||null,comment:b.comment,kind:"comment"});
+      await rcAuditLog(b.id,"comment",me,null,null,{});
+      return j({ ok:true });
+    }
+    if (api === "hr_rc_cancel") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const {data:c}=await sb.from("hr_claim_requests").select("status").eq("id",b.id).maybeSingle();
+      if(c&&c.status==="Paid") return j({ ok:false, error:"A paid claim cannot be cancelled." });
+      await sb.from("hr_claim_requests").update({status:"Cancelled"}).eq("id",b.id);
+      await rcAuditLog(b.id,"cancel",me,c&&c.status,"Cancelled",{});
+      return j({ ok:true });
+    }
+    if (api === "hr_rc_mark_paid") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",b.id).maybeSingle();
+      if(!c) return j({ ok:false, error:"not found" });
+      if(c.status!=="Approved") return j({ ok:false, error:"Only Approved claims can be marked paid." });
+      await sb.from("hr_claim_payments").upsert({ claim_id:b.id, paid_date:b.paid_date||new Date().toISOString().slice(0,10), amount:c.amount, payment_method:b.payment_method||"", payment_reference:b.payment_reference||"", paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
+      await sb.from("hr_claim_requests").update({status:"Paid"}).eq("id",b.id);
+      await rcAuditLog(b.id,"mark_paid",me,"Approved","Paid",{method:b.payment_method,ref:b.payment_reference});
+      return j({ ok:true, status:"Paid" });
+    }
+    if (api === "hr_rc_list") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant=String(b.tenant||""); const scope=String(b.scope||"all");
+      let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
+      const pend=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
+      if(scope==="pending") q=q.in("status",pend);
+      else if(scope==="approved") q=q.eq("status","Approved");
+      else if(scope==="paid") q=q.eq("status","Paid");
+      else if(scope==="mine" && b.employee_id) q=q.eq("employee_id",b.employee_id);
+      const { data } = await q;
+      return j({ ok:true, claims:data||[] });
+    }
+    if (api === "hr_rc_get") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const id=b.id;
+      const [claimR, mileage, atts, steps, comments, payment, audit] = await Promise.all([
+        sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
+        sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(),
+        sb.from("hr_claim_attachments").select("*").eq("claim_id",id),
+        sb.from("hr_claim_approval_steps").select("*").eq("claim_id",id).order("step_order"),
+        sb.from("hr_claim_comments").select("*").eq("claim_id",id).order("created_at"),
+        sb.from("hr_claim_payments").select("*").eq("claim_id",id).maybeSingle(),
+        sb.from("hr_claim_audit_logs").select("*").eq("claim_id",id).order("created_at")
+      ]);
+      const attsOut:any[]=[];
+      for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
+      return j({ ok:true, claim:claimR.data, mileage:mileage.data, attachments:attsOut, steps:steps.data||[], comments:comments.data||[], payment:payment.data, audit:audit.data||[] });
+    }
+    if (api === "hr_rc_admin_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const kind=String(b.kind||""); const row=b.row||{};
+      if(kind==="claim_type"){ if(row.id){ await sb.from("hr_claim_types").update({...row, updated_at:new Date().toISOString()}).eq("id",row.id);} else { await sb.from("hr_claim_types").insert(row);} }
+      else if(kind==="claim_type_del"){ await sb.from("hr_claim_types").update({active:false}).eq("id",row.id); }
+      else if(kind==="mileage_rate"){ if(row.id){ await sb.from("hr_mileage_rates").update(row).eq("id",row.id);} else { await sb.from("hr_mileage_rates").insert(row);} }
+      else if(kind==="mileage_rate_del"){ await sb.from("hr_mileage_rates").update({active:false}).eq("id",row.id); }
+      else if(kind==="policy"){ if(row.id){ await sb.from("hr_claim_policy_rules").update(row).eq("id",row.id);} else { await sb.from("hr_claim_policy_rules").insert(row);} }
+      else if(kind==="role_approver"){ await sb.from("hr_claim_role_approvers").insert({tenant_id:row.tenant_id||null, role:row.role, employee_id:row.employee_id}); }
+      else if(kind==="role_approver_del"){ await sb.from("hr_claim_role_approvers").delete().eq("id",row.id); }
+      else if(kind==="workflow"){
+        let wid=row.id;
+        const wfRow:any={ tenant_id:row.tenant_id||null, name:row.name, description:row.description||"", active:row.active!==false, priority:Number(row.priority)||0, min_amount:(row.min_amount===""||row.min_amount==null)?0:Number(row.min_amount), max_amount:(row.max_amount===""||row.max_amount==null)?null:Number(row.max_amount), match_department:row.match_department||null, match_claim_type_id:row.match_claim_type_id||null, match_role:row.match_role||null, match_project:row.match_project||null, updated_at:new Date().toISOString() };
+        if(wid){ await sb.from("hr_approval_workflows").update(wfRow).eq("id",wid);} else { const ins=await sb.from("hr_approval_workflows").insert(wfRow).select("id").single(); wid=ins.data&&ins.data.id; }
+        if(wid && Array.isArray(row.steps)){ await sb.from("hr_approval_workflow_steps").delete().eq("workflow_id",wid); await sb.from("hr_approval_workflow_steps").insert(row.steps.map((s:any,i:number)=>({workflow_id:wid,step_order:i+1,name:s.name,approver_type:s.approver_type||"role",approver_role:s.approver_role,approver_employee_id:s.approver_employee_id||null}))); }
+      }
+      else if(kind==="workflow_del"){ await sb.from("hr_approval_workflows").update({active:false}).eq("id",row.id); }
+      else return j({ ok:false, error:"unknown kind" });
+      return j({ ok:true });
+    }
+    if (api === "hr_rc_dashboard") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant=String(b.tenant||"");
+      const { data: all } = await sb.from("hr_claim_requests").select("id,claim_no,amount,status,claim_date,department,warnings, hr_claim_types(name), hr_employees(name,dept)").eq("tenant_id",tenant).neq("status","Draft").neq("status","Cancelled").limit(5000);
+      const rows:any[]=all||[];
+      const isPending=(s:string)=>["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"].includes(s);
+      const sumF=(f:any)=>Math.round(rows.filter(f).reduce((s,r)=>s+(Number(r.amount)||0),0)*100)/100;
+      const cntF=(f:any)=>rows.filter(f).length;
+      const byKey=(kf:any)=>{ const m:any={}; rows.forEach(r=>{ const k=kf(r)||"—"; m[k]=(m[k]||0)+(Number(r.amount)||0); }); return Object.keys(m).map(k=>({label:k,value:Math.round(m[k]*100)/100})).sort((a,b)=>b.value-a.value); };
+      const now=new Date(); const trend:any[]=[];
+      for(let i=5;i>=0;i--){ const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-i,1)); const ym=d.toISOString().slice(0,7); const lbl=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()]; const amt=rows.filter(r=>String(r.claim_date||"").slice(0,7)===ym).reduce((s,r)=>s+(Number(r.amount)||0),0); trend.push({label:lbl,value:Math.round(amt*100)/100}); }
+      const alerts=rows.filter(r=>Array.isArray(r.warnings)&&r.warnings.length).slice(0,20).map(r=>({claim_no:r.claim_no, amount:Number(r.amount)||0, warnings:r.warnings, name:r.hr_employees&&r.hr_employees.name}));
+      return j({ ok:true, data:{ total_claims:rows.length, total_amount:sumF(()=>true), pending:cntF((r:any)=>isPending(r.status)), approved:cntF((r:any)=>r.status==="Approved"), rejected:cntF((r:any)=>r.status==="Rejected"), paid:cntF((r:any)=>r.status==="Paid"), paid_amount:sumF((r:any)=>r.status==="Paid"), by_department:byKey((r:any)=>r.department||(r.hr_employees&&r.hr_employees.dept)), by_type:byKey((r:any)=>r.hr_claim_types&&r.hr_claim_types.name), by_employee:byKey((r:any)=>r.hr_employees&&r.hr_employees.name), trend, alerts } });
+    }
     if (api === "hr_dashboard") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
@@ -3442,6 +3697,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v84 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v85 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
