@@ -121,20 +121,43 @@ async function rcMatchWorkflow(tenant, claim){
   }
   return null;
 }
+// Validation engine (spec §10). Returns { errors, warnings }: errors BLOCK submission; warnings submit but surface to the approver.
 async function rcValidate(claim, type, empId){
-  const warns=[]; const amt=Number(claim.amount)||0;
+  const warns:string[]=[]; const errs:string[]=[]; const amt=Number(claim.amount)||0;
   try {
-    const { data: vItems } = await sb.from("hr_claim_items").select("amount,total_km,mileage_rate, hr_claim_types(name,is_mileage,requires_receipt,max_amount_per_claim)").eq("claim_id",claim.id);
+    const { data: vItems } = await sb.from("hr_claim_items").select("amount,total_km,mileage_rate,parking_amount,toll_amount,receipt_no,invoice_no,vendor_name,item_date,gl_account,cost_center, hr_claim_types(name,is_mileage,requires_receipt,max_amount_per_claim,gl_account)").eq("claim_id",claim.id);
     const { count: attCount } = await sb.from("hr_claim_attachments").select("id",{count:"exact",head:true}).eq("claim_id",claim.id);
     if(vItems && vItems.length){
-      let needReceipt=false;
+      let needReceipt=false; const missGL:string[]=[]; let missCC=false;
       for(const it of vItems){ const t:any=it.hr_claim_types||{}; if(t.requires_receipt) needReceipt=true;
-        const ia = t.is_mileage ? Math.round((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)*100)/100 : (Number(it.amount)||0);
+        const ia = t.is_mileage ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100 : (Number(it.amount)||0);
         if(t.max_amount_per_claim!=null && ia > Number(t.max_amount_per_claim)) warns.push((t.name||"Item")+" RM"+ia.toFixed(2)+" exceeds its per-claim limit RM"+Number(t.max_amount_per_claim).toFixed(2)+".");
+        if(!String(it.gl_account||t.gl_account||"").trim() && missGL.indexOf(t.name||"item")<0) missGL.push(t.name||"item");
+        if(!String(it.cost_center||claim.cost_center||"").trim()) missCC=true;
       }
-      if(needReceipt && !attCount) warns.push("A receipt is required for at least one line item, but none is attached.");
+      if(needReceipt && !attCount) errs.push("A receipt is required for at least one expense line — attach it before submitting.");
+      if(missGL.length) warns.push("No GL account set for: "+missGL.join(", ")+" (Finance must set it before posting to Xero).");
+      if(missCC) warns.push("Cost center is empty on some lines.");
+      // BLOCK on duplicate receipt_no / invoice_no already used by another active claim (spec §10).
+      const rnos=vItems.map((x:any)=>String(x.receipt_no||"").trim()).filter(Boolean);
+      const inos=vItems.map((x:any)=>String(x.invoice_no||"").trim()).filter(Boolean);
+      const dupNo=async(col:string,vals:string[])=>{
+        if(!vals.length) return null;
+        const { data: hits } = await sb.from("hr_claim_items").select(col+",claim_id, hr_claim_requests(claim_no,status)").in(col,vals).neq("claim_id",claim.id).limit(20);
+        const live=(hits||[]).find((h:any)=>h.hr_claim_requests && ["Cancelled","Rejected"].indexOf(h.hr_claim_requests.status)<0);
+        return live?{ no:live[col], claim_no:(live.hr_claim_requests&&live.hr_claim_requests.claim_no)||"another claim" }:null;
+      };
+      const dr=await dupNo("receipt_no",rnos); if(dr) errs.push("Receipt no. \""+dr.no+"\" was already claimed on "+dr.claim_no+".");
+      const di=await dupNo("invoice_no",inos); if(di) errs.push("Invoice no. \""+di.no+"\" was already claimed on "+di.claim_no+".");
+      // duplicate date+amount+vendor across other claims' items → warning
+      for(const it of vItems.slice(0,20)){
+        if(!it.vendor_name || !it.item_date) continue;
+        const { data: dv } = await sb.from("hr_claim_items").select("claim_id, hr_claim_requests(claim_no,status,employee_id)").eq("item_date",it.item_date).eq("amount",it.amount).eq("vendor_name",it.vendor_name).neq("claim_id",claim.id).limit(5);
+        const hit=(dv||[]).find((h:any)=>h.hr_claim_requests && ["Cancelled","Rejected"].indexOf(h.hr_claim_requests.status)<0 && h.hr_claim_requests.employee_id===empId);
+        if(hit){ warns.push("Possible duplicate line: same date + amount + vendor ("+it.vendor_name+") as "+((hit.hr_claim_requests&&hit.hr_claim_requests.claim_no)||"another claim")+"."); break; }
+      }
     } else {
-      if(type && type.requires_receipt && !attCount) warns.push("Receipt required for "+type.name+" but none attached.");
+      if(type && type.requires_receipt && !attCount) errs.push("Receipt required for "+type.name+" but none attached.");
       if(type && type.max_amount_per_claim!=null && amt > Number(type.max_amount_per_claim)) warns.push("Amount RM"+amt.toFixed(2)+" exceeds the per-claim limit RM"+Number(type.max_amount_per_claim).toFixed(2)+".");
     }
     if(type && type.max_amount_per_month!=null && claim.claim_date && empId){
@@ -150,12 +173,12 @@ async function rcValidate(claim, type, empId){
     const { data: att } = await sb.from("hr_claim_attachments").select("receipt_hash").eq("claim_id",claim.id);
     const hashes=(att||[]).map(a=>a.receipt_hash).filter(Boolean);
     if(hashes.length){ const { data: other } = await sb.from("hr_claim_attachments").select("claim_id").in("receipt_hash",hashes).neq("claim_id",claim.id).limit(1); if(other&&other.length) warns.push("Duplicate receipt — the same file is already attached to another claim."); }
-    if(type && type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",claim.id).maybeSingle(); if(md){ const calc=Math.round((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)*100)/100; if(Math.abs(calc-amt)>0.01) warns.push("Mileage amount RM"+amt.toFixed(2)+" ≠ "+md.total_km+"km × RM"+md.mileage_rate+" (= RM"+calc.toFixed(2)+")."); } }
+    if(type && type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",claim.id).maybeSingle(); if(md){ const calc=Math.round(((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)+(Number(md.parking_amount)||0)+(Number(md.toll_amount)||0))*100)/100; if(Math.abs(calc-amt)>0.01) warns.push("Mileage amount RM"+amt.toFixed(2)+" ≠ km×rate + parking + toll (= RM"+calc.toFixed(2)+")."); } }
     const { data: pol } = await sb.from("hr_claim_policy_rules").select("num_value").eq("rule_type","max_age_days").eq("active",true).limit(1);
     const maxAge=(pol&&pol[0]&&Number(pol[0].num_value))||90;
     if(claim.claim_date){ const days=Math.floor((Date.now()-new Date(claim.claim_date).getTime())/86400000); if(days>maxAge) warns.push("Claim date is "+days+" days old (policy limit "+maxAge+" days)."); }
   } catch(_e){}
-  return warns;
+  return { errors: errs, warnings: warns };
 }
 async function rcMe(me){
   const isAdmin = superAdmin(me); let employee:any=null, roles:string[]=[], is_manager=false;
@@ -3491,19 +3514,20 @@ Deno.serve(async (req)=>{
       const meOut = { isAdmin:who.isAdmin, roles:who.roles, is_manager:who.is_manager, employee: who.employee?{ id:who.employee.id, emp_no:who.employee.emp_no, name:who.employee.name, dept:who.employee.dept, tenant_id:who.employee.tenant_id }:null };
       if(who.isAdmin){
         const tenant = String(b.tenant||"");
-        const [types, rates, wfs, steps, policy, roleApprovers, emps] = await Promise.all([
+        const [types, rates, wfs, steps, policy, roleApprovers, emps, ccs] = await Promise.all([
           sb.from("hr_claim_types").select("*").order("sort_order"),
           sb.from("hr_mileage_rates").select("*").order("rate"),
           sb.from("hr_approval_workflows").select("*").order("priority",{ascending:false}),
           sb.from("hr_approval_workflow_steps").select("*").order("step_order"),
           sb.from("hr_claim_policy_rules").select("*"),
           sb.from("hr_claim_role_approvers").select("*"),
-          sb.from("hr_employees").select("id,emp_no,name,dept,position,manager_id,claim_role,email,user_id").eq("tenant_id",tenant).eq("status","active").order("emp_no")
+          sb.from("hr_employees").select("id,emp_no,name,dept,position,manager_id,claim_role,email,user_id").eq("tenant_id",tenant).eq("status","active").order("emp_no"),
+          sb.from("hr_cost_centers").select("*").order("sort_order")
         ]);
-        return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[] });
+        return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[], cost_centers:ccs.data||[] });
       }
-      const [types, rates] = await Promise.all([ sb.from("hr_claim_types").select("*").eq("active",true).order("sort_order"), sb.from("hr_mileage_rates").select("*").eq("active",true).order("rate") ]);
-      return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
+      const [types, rates, ccs] = await Promise.all([ sb.from("hr_claim_types").select("*").eq("active",true).order("sort_order"), sb.from("hr_mileage_rates").select("*").eq("active",true).order("rate"), sb.from("hr_cost_centers").select("*").eq("active",true).order("sort_order") ]);
+      return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], cost_centers:ccs.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
     }
     if (api === "hr_rc_enable_login") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3530,18 +3554,28 @@ Deno.serve(async (req)=>{
       if(items){
         for(const it of items){
           const t=typeMap[it.claim_type_id]||{};
-          const amt = t.is_mileage ? Math.round((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)*100)/100 : (Number(it.amount)||0);
+          // Mileage line (spec §4): final = km × rate + parking + toll. Other lines: entered amount.
+          const amt = t.is_mileage
+            ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100
+            : (Number(it.amount)||0);
           amount+=amt; if(t.taxable) anyTaxable=true;
-          normItems.push({ claim_type_id:it.claim_type_id||null, item_date:it.item_date||c.claim_date||null, amount:amt, description:it.description||"", start_location:t.is_mileage?(it.start_location||null):null, end_location:t.is_mileage?(it.end_location||null):null, total_km:t.is_mileage?(Number(it.total_km)||0):null, mileage_rate:t.is_mileage?(Number(it.mileage_rate)||0):null });
+          normItems.push({ claim_type_id:it.claim_type_id||null, item_date:it.item_date||c.claim_date||null, amount:amt, description:it.description||"",
+            vendor_name:it.vendor_name||null, receipt_no:(String(it.receipt_no||"").trim()||null), invoice_no:(String(it.invoice_no||"").trim()||null),
+            tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0, gl_account:(String(it.gl_account||"").trim()||null),
+            cost_center:(String(it.cost_center||"").trim()||null), project:it.project||null, remarks:it.remarks||null,
+            start_location:t.is_mileage?(it.start_location||null):null, end_location:t.is_mileage?(it.end_location||null):null,
+            total_km:t.is_mileage?(Number(it.total_km)||0):null, mileage_rate:t.is_mileage?(Number(it.mileage_rate)||0):null,
+            parking_amount:t.is_mileage?(Number(it.parking_amount)||0):0, toll_amount:t.is_mileage?(Number(it.toll_amount)||0):0, purpose:t.is_mileage?(it.purpose||null):null });
         }
         amount=Math.round(amount*100)/100;
         const distinct=Array.from(new Set(normItems.map((x:any)=>x.claim_type_id).filter(Boolean)));
         headerType = distinct.length===1 ? distinct[0] : null;
       } else {
         const t=typeMap[c.claim_type_id]||{}; headerType=c.claim_type_id||null; anyTaxable=!!t.taxable;
-        amount = (t.is_mileage && c.mileage) ? Math.round((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)*100)/100 : (Number(c.amount)||0);
+        amount = (t.is_mileage && c.mileage) ? Math.round(((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)+(Number(c.mileage.parking_amount)||0)+(Number(c.mileage.toll_amount)||0))*100)/100 : (Number(c.amount)||0);
       }
-      const row:any = { tenant_id:tenant, employee_id:empId, claim_type_id:headerType, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:anyTaxable, payroll_applicable:false, updated_at:new Date().toISOString() };
+      const row:any = { tenant_id:tenant, employee_id:empId, claim_type_id:headerType, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:anyTaxable, payroll_applicable:false,
+        claim_month:(String(c.claim_month||"").trim() || String(c.claim_date||"").slice(0,7) || null), cost_center:(String(c.cost_center||"").trim()||null), updated_at:new Date().toISOString() };
       let claimId=c.id;
       if(c.id){
         const { data: ex } = await sb.from("hr_claim_requests").select("status,employee_id").eq("id",c.id).maybeSingle();
@@ -3618,8 +3652,15 @@ Deno.serve(async (req)=>{
       if(sItems && sItems.length){
         let tot=0; for(const it of sItems){ const mile=it.hr_claim_types&&it.hr_claim_types.is_mileage; tot += mile ? Math.round((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)*100)/100 : (Number(it.amount)||0); }
         tot=Math.round(tot*100)/100; if(tot!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:tot}).eq("id",id); claim.amount=tot; }
-      } else if(type&&type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(); if(md){ const calc=Math.round((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)*100)/100; if(calc!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:calc}).eq("id",id); claim.amount=calc; } } }
-      const warnings = await rcValidate(claim, type, claim.employee_id);
+      } else if(type&&type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(); if(md){ const calc=Math.round(((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)+(Number(md.parking_amount)||0)+(Number(md.toll_amount)||0))*100)/100; if(calc!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:calc}).eq("id",id); claim.amount=calc; } } }
+      // Declaration gate (spec §6): all four statements must be ticked on EVERY submit/resubmit — no ticks, no submit.
+      const dec = b.declarations||{};
+      if(!(dec.business_purpose && dec.not_claimed_before && dec.receipts_valid && dec.understand_disciplinary))
+        return j({ ok:false, error:"You must tick all four declaration statements before submitting." });
+      const v = await rcValidate(claim, type, claim.employee_id);
+      const warnings = v.warnings;
+      if(v.errors && v.errors.length) return j({ ok:false, error:"Cannot submit:\n• "+v.errors.join("\n• "), errors:v.errors, warnings });
+      await sb.from("hr_claim_declarations").insert({ claim_id:id, business_purpose:true, not_claimed_before:true, receipts_valid:true, understand_disciplinary:true, declared_by:(me.user&&me.user.id)||null });
       if(claim.status==="Need More Info"){
         const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
         if(inst){
@@ -3663,6 +3704,57 @@ Deno.serve(async (req)=>{
       let done=0; const results:any[]=[];
       for(const id of ids){ const r=await rcDecideOne(who, me, id, decision, comment, null, ""); if(r.ok){ done++; try{ await rcNotifyDecision(r); }catch(_e){} } results.push({ id, ok:r.ok, status:r.status, error:r.error }); }
       return j({ ok:true, done, total:ids.length, results });
+    }
+    if (api === "hr_rc_set_gl") {
+      // Finance/admin change an expense line's GL account — reason REQUIRED, audited (spec §5/§9/§15).
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can change the GL account." }, 403);
+      const reason=String(b.reason||"").trim(); if(!reason) return j({ ok:false, error:"A reason is required to change the GL account." });
+      const gl=String(b.gl_account||"").trim(); if(!gl) return j({ ok:false, error:"gl_account required" });
+      const { data: c } = await sb.from("hr_claim_requests").select("id,claim_no,status,xero_bill_id").eq("id",b.id).maybeSingle();
+      if(!c) return j({ ok:false, error:"claim not found" });
+      if(c.xero_bill_id) return j({ ok:false, error:"Already posted to Xero — change the account on the Xero bill instead." });
+      let q:any = sb.from("hr_claim_items").select("id,gl_account, hr_claim_types(name)").eq("claim_id",b.id);
+      if(b.item_id) q=q.eq("id",b.item_id);
+      const { data: its } = await q;
+      if(!its || !its.length) return j({ ok:false, error:"no expense lines found" });
+      for(const it of its){ await sb.from("hr_claim_items").update({ gl_account: gl }).eq("id",it.id); }
+      const fromGls=Array.from(new Set(its.map((x:any)=>x.gl_account||((x.hr_claim_types&&x.hr_claim_types.gl_account)||"(type default)"))));
+      await rcAuditLog(b.id,"gl_change",me,c.status,c.status,{ item_id:b.item_id||"all", from:fromGls, to:gl, reason });
+      await sb.from("hr_claim_comments").insert({ claim_id:b.id, author_id:(me.user&&me.user.id)||null, author_name:(me.user&&me.user.email)||null, comment:"GL account changed to "+gl+(b.item_id?" (1 line)":" (all lines)")+" — "+reason, kind:"comment" });
+      return j({ ok:true, updated: its.length, gl_account: gl });
+    }
+    if (api === "hr_rc_export_accounting") {
+      // Finance accounting export (spec §5/§12): one row per expense LINE with GL / tax / SST / CC / payment — CSV-ready.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
+      const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
+      let q:any = sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,bank_name,bank_account), hr_claim_types(name)").eq("tenant_id",tenant).in("status",["Approved","Paid"]).order("claim_date").limit(2000);
+      if(month) q=q.gte("claim_date",month+"-01").lte("claim_date",month+"-31");
+      const { data: claims } = await q;
+      const ids=(claims||[]).map((x:any)=>x.id);
+      const [itemsR, paysR] = await Promise.all([
+        ids.length? sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account)").in("claim_id",ids) : Promise.resolve({data:[]} as any),
+        ids.length? sb.from("hr_claim_payments").select("*").in("claim_id",ids) : Promise.resolve({data:[]} as any)
+      ]);
+      const itemsBy:any={}; (itemsR.data||[]).forEach((it:any)=>{ (itemsBy[it.claim_id]=itemsBy[it.claim_id]||[]).push(it); });
+      const payBy:any={}; (paysR.data||[]).forEach((p:any)=>{ payBy[p.claim_id]=p; });
+      const rows:any[]=[];
+      for(const c of (claims||[])){
+        const emp=c.hr_employees||{}; const pay=payBy[c.id]||{};
+        const its=itemsBy[c.id]||[];
+        const base={ claim_no:c.claim_no, claim_month:c.claim_month||String(c.claim_date||"").slice(0,7), status:c.status,
+          emp_no:emp.emp_no||"", employee:emp.name||"", department:c.department||emp.dept||"",
+          payment_date:pay.paid_date||"", payment_method:pay.payment_method||"", payment_reference:pay.payment_reference||"",
+          xero_ref:c.xero_reference||(c.xero_bill_id?c.claim_no:""), bank:emp.bank_name||"", bank_account:emp.bank_account||"" };
+        if(its.length){ for(const it of its){ const t=it.hr_claim_types||{};
+          rows.push({ ...base, item_date:String(it.item_date||"").slice(0,10), expense_type:t.name||"", vendor_name:it.vendor_name||"", description:it.description||"",
+            receipt_no:it.receipt_no||"", invoice_no:it.invoice_no||"", gl_account:it.gl_account||t.gl_account||"", cost_center:it.cost_center||c.cost_center||"", project:it.project||c.project||"",
+            amount:Number(it.amount)||0, tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0 }); } }
+        else rows.push({ ...base, item_date:c.claim_date||"", expense_type:(c.hr_claim_types&&c.hr_claim_types.name)||"", vendor_name:"", description:c.description||"", receipt_no:"", invoice_no:"", gl_account:"", cost_center:c.cost_center||"", project:c.project||"", amount:Number(c.amount)||0, tax_amount:0, sst_amount:0 });
+      }
+      await logAudit(me, "hr_rc_export_accounting", tenant, { month, rows: rows.length });
+      return j({ ok:true, rows, count: rows.length });
     }
     if (api === "hr_rc_comment") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3731,9 +3823,9 @@ Deno.serve(async (req)=>{
       const missing:string[]=[]; const lines:any[]=[];
       if(items && items.length){
         for(const it of items){
-          const t:any=it.hr_claim_types||{}; const gl=String(t.gl_account||"").trim();
+          const t:any=it.hr_claim_types||{}; const gl=String(it.gl_account||t.gl_account||"").trim(); // per-line Finance override wins over the type default
           if(!gl){ const nm=t.name||"(unnamed type)"; if(missing.indexOf(nm)<0) missing.push(nm); continue; }
-          const km = t.is_mileage ? (" · "+(it.total_km||0)+"km × RM"+(it.mileage_rate||0)) : "";
+          const km = t.is_mileage ? (" · "+(it.total_km||0)+"km × RM"+(it.mileage_rate||0)+((Number(it.parking_amount)||0)||(Number(it.toll_amount)||0)?(" + parking/toll"):"")) : "";
           lines.push({ Description:String((it.description||t.name||"Expense")+km).slice(0,4000), Quantity:1, UnitAmount:Number(it.amount)||0, AccountCode:gl });
         }
       } else {
@@ -3808,15 +3900,16 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
       const id=b.id;
-      const [claimR, mileage, atts, steps, comments, payment, audit, itemsR] = await Promise.all([
-        sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
+      const [claimR, mileage, atts, steps, comments, payment, audit, itemsR, decR] = await Promise.all([
+        sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position,bank_name,bank_account), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
         sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(),
         sb.from("hr_claim_attachments").select("*").eq("claim_id",id),
         sb.from("hr_claim_approval_steps").select("*").eq("claim_id",id).order("step_order"),
         sb.from("hr_claim_comments").select("*").eq("claim_id",id).order("created_at"),
         sb.from("hr_claim_payments").select("*").eq("claim_id",id).maybeSingle(),
         sb.from("hr_claim_audit_logs").select("*").eq("claim_id",id).order("created_at"),
-        sb.from("hr_claim_items").select("*, hr_claim_types(name,code,is_mileage)").eq("claim_id",id).order("item_date")
+        sb.from("hr_claim_items").select("*, hr_claim_types(name,code,is_mileage,gl_account)").eq("claim_id",id).order("item_date"),
+        sb.from("hr_claim_declarations").select("*").eq("claim_id",id).order("declared_at",{ascending:false}).limit(1)
       ]);
       const cl:any=claimR.data; const allSteps:any[]=steps.data||[];
       if(!who.isAdmin){
@@ -3830,7 +3923,7 @@ Deno.serve(async (req)=>{
       const canPost = (who.isAdmin || who.roles.indexOf("finance")>=0) && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
-      return j({ ok:true, claim:cl, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], can_act:canAct, can_post:canPost, is_admin:who.isAdmin });
+      return j({ ok:true, claim:cl, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:(who.isAdmin||who.roles.indexOf("finance")>=0), is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3840,6 +3933,8 @@ Deno.serve(async (req)=>{
       else if(kind==="mileage_rate"){ if(row.id){ await sb.from("hr_mileage_rates").update(row).eq("id",row.id);} else { await sb.from("hr_mileage_rates").insert(row);} }
       else if(kind==="mileage_rate_del"){ await sb.from("hr_mileage_rates").update({active:false}).eq("id",row.id); }
       else if(kind==="policy"){ if(row.id){ await sb.from("hr_claim_policy_rules").update(row).eq("id",row.id);} else { await sb.from("hr_claim_policy_rules").insert(row);} }
+      else if(kind==="cost_center"){ if(row.id){ await sb.from("hr_cost_centers").update({code:row.code,name:row.name,active:row.active!==false,sort_order:Number(row.sort_order)||0}).eq("id",row.id);} else { await sb.from("hr_cost_centers").insert({tenant_id:row.tenant_id||null,code:row.code,name:row.name,active:true,sort_order:Number(row.sort_order)||0});} }
+      else if(kind==="cost_center_del"){ await sb.from("hr_cost_centers").update({active:false}).eq("id",row.id); }
       else if(kind==="role_approver"){ await sb.from("hr_claim_role_approvers").insert({tenant_id:row.tenant_id||null, role:row.role, employee_id:row.employee_id}); }
       else if(kind==="role_approver_del"){ await sb.from("hr_claim_role_approvers").delete().eq("id",row.id); }
       else if(kind==="workflow"){
@@ -4001,6 +4096,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v90 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+receipt-OCR-autofill+bulk-approve+pay-batch-bankfile+email-notify+voucher-csv/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v91 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+voucher-csv+pro-form(item-accounting-fields/cost-centers/declarations/blocking-validation/gl-change-audited/accounting-export)/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

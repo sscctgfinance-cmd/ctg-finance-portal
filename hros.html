@@ -1298,7 +1298,7 @@ function hrRCList(){
   var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance);
   var n=Object.keys(RC.sel).filter(function(k){return RC.sel[k];}).length;
   var scopeBtns=scopes.map(function(s){var on=RC.scope===s[0];var cnt=(on&&s[0]==='pending')?(' ('+list.length+')'):'';return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCScope(\''+s[0]+'\')">'+s[1]+cnt+'</button>';}).join('');
-  var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopeBtns+'</div><div style="display:flex;gap:6px"><button class="btn xs" onclick="hrRCExportCsv()" title="Export this list to CSV">⬇ CSV</button><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div></div>';
+  var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopeBtns+'</div><div style="display:flex;gap:6px">'+(canFinance?'<button class="btn xs" onclick="hrRCExportAcct()" title="Approved/Paid lines with GL · tax · SST · cost center — for accounting">📒 Accounting CSV</button>':'')+'<button class="btn xs" onclick="hrRCExportCsv()" title="Export this list to CSV">⬇ CSV</button><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div></div>';
   var bar='';
   if(selecting){
     var btns=(RC.scope==='pending')
@@ -1325,6 +1325,19 @@ async function hrRCBulkReject(){ var ids=hrRCSelIds(); if(!ids.length){toast('Se
 async function hrRCBulkInfo(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCBulkPay(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 function hrRCExportBank(){ var ids=hrRCSelIds(); var list=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!list.length){ toast('Select Approved claims first',true); return; } var head=['No','Payee Name','Bank','SWIFT/BIC','Account No','IC','Amount (RM)','Payment Ref','Email']; var body=list.map(function(c,i){ var e=c.hr_employees||{}; return [i+1,e.name||'',e.bank_name||'',hrBankCode(e.bank_name),e.bank_account||'',e.ic_no||'',(Number(c.amount)||0).toFixed(2),c.claim_no||'',e.email||'']; }); var total=list.reduce(function(s,c){return s+(Number(c.amount)||0);},0); body.push(['','TOTAL','','','','',total.toFixed(2),'','']); hrDownload('Reimbursement_Payments_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('Bank file: '+list.length+' claim(s) · RM'+total.toFixed(2)); }
+async function hrRCExportAcct(){
+  var month=prompt('Claim month to export (YYYY-MM), or leave blank for ALL Approved/Paid:',''); if(month==null)return;
+  toast('Building accounting export…');
+  var r=await call({api:'hr_rc_export_accounting',tenant:HR.tenant,month:(month||'').trim()});
+  if(!r||!r.ok){ toast((r&&r.error)||'Export failed',true); return; }
+  if(!r.rows||!r.rows.length){ toast('No Approved/Paid claims'+(month?(' in '+month):'')+' to export',true); return; }
+  var head=['Claim No','Month','Status','Emp No','Employee','Department','Item Date','Expense Type','Vendor','Description','Receipt No','Invoice No','GL Account','Cost Center','Project','Amount (RM)','Tax (RM)','SST (RM)','Payment Date','Payment Method','Payment Ref','Xero Ref','Bank','Bank Account'];
+  var body=r.rows.map(function(x){ return [x.claim_no,x.claim_month,x.status,x.emp_no,x.employee,x.department,x.item_date,x.expense_type,x.vendor_name,x.description,x.receipt_no,x.invoice_no,x.gl_account,x.cost_center,x.project,(Number(x.amount)||0).toFixed(2),(Number(x.tax_amount)||0).toFixed(2),(Number(x.sst_amount)||0).toFixed(2),x.payment_date,x.payment_method,x.payment_reference,x.xero_ref,x.bank,x.bank_account]; });
+  var total=r.rows.reduce(function(s,x){return s+(Number(x.amount)||0);},0);
+  body.push(['','','','','','','','','','','','','','','TOTAL',total.toFixed(2),'','','','','','','','']);
+  hrDownload('Reimbursement_Accounting_'+(month||'ALL')+'_'+hrToday()+'.csv',hrCsv([head].concat(body)));
+  toast('Accounting export: '+r.count+' line(s) · RM'+total.toFixed(2));
+}
 function hrRCExportCsv(){ var list=RC.list||[]; if(!list.length){ toast('Nothing to export',true); return; } var head=['Claim No','Employee','Type','Date','Amount (RM)','Status','Department','Project','In Xero']; var body=list.map(function(c){ var e=c.hr_employees||{}; var t=c.hr_claim_types||{}; return [c.claim_no||'',e.name||'',t.name||'',c.claim_date||'',(Number(c.amount)||0).toFixed(2),c.status||'',c.department||'',c.project||'',c.xero_bill_id?'Yes':'']; }); hrDownload('Reimbursements_'+RC.scope+'_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('CSV exported ('+list.length+' claim(s))'); }
 function hrRCVoucher(){ var d=RC.detail; if(!d||!d.claim){return;} var c=d.claim; var emp=c.hr_employees||{}; var items=d.items||[]; var pay=d.payment||{}; var TN=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); var tname=TN?(TN.tenant_name||TN.name||''):(typeof hrCompanyName==='function'?hrCompanyName():'');
   var rows=items.length?items.map(function(it){ var t=it.hr_claim_types||{}; return '<tr><td>'+esc(t.name||'')+'</td><td>'+esc(String(it.item_date||'').slice(0,10))+'</td><td>'+esc(it.description||'')+'</td><td style="text-align:right">'+(Number(it.amount)||0).toFixed(2)+'</td></tr>'; }).join(''):('<tr><td colspan="3">'+esc(c.description||'')+'</td><td style="text-align:right">'+(Number(c.amount)||0).toFixed(2)+'</td></tr>');
@@ -1342,6 +1355,9 @@ function hrRCVoucher(){ var d=RC.detail; if(!d||!d.claim){return;} var c=d.claim
 }
 var RC_TD='padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
 function hrRCDefRate(){ var r=(RC.cfg&&RC.cfg.mileage_rates||[]).find(function(x){return x.is_default;}); return r?r.rate:''; }
+function hrRCCcOpts(sel){ var cfg=RC.cfg||{}; return '<option value="">— cost center —</option>'+(cfg.cost_centers||[]).filter(function(c){return c.active;}).map(function(c){return '<option value="'+esc(c.code)+'"'+(String(sel||'')===String(c.code)?' selected':'')+'>'+esc(c.code+' — '+c.name)+'</option>';}).join(''); }
+function hrRCItemAmt(it,mile){ return mile ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100 : (Number(it.amount)||0); }
+function hrRCItemMore(i){ hrRCSyncItems(); RC.form.items[i]._open=!RC.form.items[i]._open; hrRender(); }
 function hrRCForm(){
   var f=RC.form||{}; var cfg=RC.cfg||{};
   if(!Array.isArray(f.items)||!f.items.length){ f.items=[{claim_type_id:'',item_date:(f.claim_date||new Date().toISOString().slice(0,10)),description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}]; RC.form=f; }
@@ -1350,59 +1366,84 @@ function hrRCForm(){
   var rateOptsFor=function(sel){ return (cfg.mileage_rates||[]).filter(function(r){return r.active;}).map(function(r){return '<option value="'+r.rate+'"'+(Number(sel)===Number(r.rate)?' selected':'')+'>'+esc('RM'+r.rate)+'</option>';}).join(''); };
   var inp=function(id,ph,val,extra){return '<input id="rc_'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="'+RC_SEL+'">';};
   var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  var di=function(i,k,ph,val,extra){return '<input id="rc_it_'+i+'_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;'+RC_TD+'">';};
+  var dg=function(lbl,el){return '<div><label class="muted" style="font-size:10px">'+lbl+'</label>'+el+'</div>';};
   var total=0;
   var rows=(f.items||[]).map(function(it,i){
     var t=(cfg.claim_types||[]).find(function(x){return x.id===it.claim_type_id;}); var mile=t&&t.is_mileage;
-    var amt=mile?(Number(it.total_km)||0)*(Number(it.mileage_rate)||0):(Number(it.amount)||0); total+=amt;
+    var amt=hrRCItemAmt(it,mile); total+=amt;
     var amtCell=mile
       ? '<input id="rc_it_'+i+'_km" type="number" step="0.1" placeholder="km" value="'+esc(it.total_km||'')+'" oninput="hrRCItemCalc()" style="width:62px;'+RC_TD+'"> <select id="rc_it_'+i+'_rate" onchange="hrRCItemCalc()" style="width:78px;'+RC_TD+'">'+rateOptsFor(it.mileage_rate)+'</select> <b style="width:82px;display:inline-block;text-align:right" id="rc_it_'+i+'_amtL">'+M(amt)+'</b>'
       : '<input id="rc_it_'+i+'_amt" type="number" step="0.01" placeholder="0.00" value="'+esc(it.amount||'')+'" oninput="hrRCItemCalc()" style="width:100px;text-align:right;'+RC_TD+'">';
+    var more='';
+    if(it._open){
+      var extra = mile
+        ? dg('From',di(i,'from','e.g. Office',it.start_location))+dg('To',di(i,'to','e.g. Client KL',it.end_location))+dg('Purpose',di(i,'pur','trip purpose',it.purpose))+dg('Parking (RM)',di(i,'park','0.00',it.parking_amount,'type="number" step="0.01" oninput="hrRCItemCalc()"'))+dg('Toll (RM)',di(i,'toll','0.00',it.toll_amount,'type="number" step="0.01" oninput="hrRCItemCalc()"'))
+        : dg('Vendor',di(i,'ven','shop / supplier',it.vendor_name))+dg('Receipt no.',di(i,'rno','',it.receipt_no))+dg('Invoice no.',di(i,'ino','',it.invoice_no))+dg('Tax (RM)',di(i,'tax','0.00',it.tax_amount,'type="number" step="0.01"'))+dg('SST (RM)',di(i,'sst','0.00',it.sst_amount,'type="number" step="0.01"'));
+      more='<div style="width:100%;display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:8px 0 4px 10px;border-left:2px solid var(--border);margin:2px 0 4px">'+extra+
+        dg('Cost center','<select id="rc_it_'+i+'_cc" style="width:100%;'+RC_TD+'">'+hrRCCcOpts(it.cost_center)+'</select>')+
+        dg('Line remarks',di(i,'rem','',it.remarks))+'</div>';
+    }
     return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border)">'+
       '<select id="rc_it_'+i+'_type" onchange="hrRCItemType('+i+')" style="width:158px;'+RC_TD+'">'+typeOptsFor(it.claim_type_id)+'</select>'+
       '<input id="rc_it_'+i+'_date" type="date" value="'+esc((it.item_date||f.claim_date||'').slice(0,10))+'" style="width:132px;'+RC_TD+'">'+
       '<input id="rc_it_'+i+'_desc" placeholder="Description" value="'+esc(it.description||'')+'" style="flex:1;min-width:130px;'+RC_TD+'">'+
       amtCell+
-      '<button class="btn xs d" title="remove" onclick="hrRCItemDel('+i+')">✕</button></div>';
+      '<button class="btn xs'+(it._open?' p':'')+'" title="'+(mile?'trip / parking / toll / cost center':'vendor / receipt no / tax / cost center')+'" onclick="hrRCItemMore('+i+')">⋯</button>'+
+      '<button class="btn xs d" title="remove" onclick="hrRCItemDel('+i+')">✕</button>'+more+'</div>';
   }).join('');
-  return '<div class="panel" style="max-width:900px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Department',inp('dept','',f.department))+g('Project',inp('project','',f.project))+'</div>'+
+  var decs=[['dec1','I confirm this claim is for business purpose.'],['dec2','I confirm this claim has not been claimed before.'],['dec3','I confirm all receipts / invoices attached are valid.'],['dec4','I understand false claims may result in disciplinary action.']];
+  var decHtml='<div style="margin:16px 0 4px;font-weight:700;font-size:13px">Declaration</div><div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">'+decs.map(function(d){return '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:3px 0;cursor:pointer"><input type="checkbox" id="rc_'+d[0]+'" style="margin-top:2px">'+d[1]+'</label>';}).join('')+'</div>';
+  return '<div class="panel" style="max-width:940px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Claim month',inp('month','',f.claim_month||String(f.claim_date||new Date().toISOString().slice(0,10)).slice(0,7),'type="month"'))+g('Department',inp('dept','',f.department))+g('Cost center','<select id="rc_cc" style="'+RC_SEL+'">'+hrRCCcOpts(f.cost_center)+'</select>')+g('Project',inp('project','',f.project))+'</div>'+
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
-    '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines</div>'+
+    '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
     '<div>'+rows+'</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
     '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipts (attach one or more)</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)"></div>'+
-    '<div style="display:flex;gap:8px;margin-top:6px"><button class="btn sm" onclick="hrRCSave(false)">Save draft</button><button class="btn p sm" onclick="hrRCSave(true)">Submit form →</button></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:10px">On submit: total = sum of all lines · validates (receipt / limits / mileage / age) → routes to the matching approval workflow.</div></div>';
+    decHtml+
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" onclick="hrRCSave(false)">Save draft</button><button class="btn p sm" onclick="hrRCSave(true)">Submit form →</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:10px">Submit requires all four declarations. Blocking checks: missing required receipt, duplicate receipt / invoice no. Warnings (limits, age, duplicates) go to the approver.</div></div>';
 }
 function hrRCSyncItems(){
   if(!RC.form) RC.form={}; if(!Array.isArray(RC.form.items)) RC.form.items=[];
   var h=function(id){var e=document.getElementById('rc_'+id);return e?e.value:undefined;};
-  if(h('emp')!=null)RC.form.employee_id=h('emp'); if(h('date')!=null)RC.form.claim_date=h('date'); if(h('dept')!=null)RC.form.department=h('dept'); if(h('project')!=null)RC.form.project=h('project'); if(h('remarks')!=null)RC.form.remarks=h('remarks'); if(h('desc')!=null)RC.form.description=h('desc');
+  if(h('emp')!=null)RC.form.employee_id=h('emp'); if(h('date')!=null)RC.form.claim_date=h('date'); if(h('month')!=null)RC.form.claim_month=h('month'); if(h('cc')!=null)RC.form.cost_center=h('cc'); if(h('dept')!=null)RC.form.department=h('dept'); if(h('project')!=null)RC.form.project=h('project'); if(h('remarks')!=null)RC.form.remarks=h('remarks'); if(h('desc')!=null)RC.form.description=h('desc');
   RC.form.items.forEach(function(it,i){
     var el=function(s){return document.getElementById('rc_it_'+i+'_'+s);};
     if(el('type'))it.claim_type_id=el('type').value; if(el('date'))it.item_date=el('date').value; if(el('desc'))it.description=el('desc').value;
     if(el('km'))it.total_km=el('km').value; if(el('rate'))it.mileage_rate=el('rate').value; if(el('amt'))it.amount=el('amt').value;
+    if(el('ven'))it.vendor_name=el('ven').value; if(el('rno'))it.receipt_no=el('rno').value; if(el('ino'))it.invoice_no=el('ino').value;
+    if(el('tax'))it.tax_amount=el('tax').value; if(el('sst'))it.sst_amount=el('sst').value; if(el('cc'))it.cost_center=el('cc').value;
+    if(el('rem'))it.remarks=el('rem').value; if(el('from'))it.start_location=el('from').value; if(el('to'))it.end_location=el('to').value;
+    if(el('pur'))it.purpose=el('pur').value; if(el('park'))it.parking_amount=el('park').value; if(el('toll'))it.toll_amount=el('toll').value;
   });
 }
 function hrRCItemAdd(){ hrRCSyncItems(); RC.form.items.push({claim_type_id:'',item_date:RC.form.claim_date||'',description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}); hrRender(); }
 function hrRCItemDel(i){ hrRCSyncItems(); RC.form.items.splice(i,1); if(!RC.form.items.length)RC.form.items.push({claim_type_id:'',item_date:'',description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}); hrRender(); }
 function hrRCItemType(i){ hrRCSyncItems(); hrRender(); }
-function hrRCItemCalc(){ hrRCSyncItems(); var cfg=RC.cfg||{}; var total=0; RC.form.items.forEach(function(it,i){ var t=(cfg.claim_types||[]).find(function(x){return x.id===it.claim_type_id;}); var mile=t&&t.is_mileage; var amt=mile?(Number(it.total_km)||0)*(Number(it.mileage_rate)||0):(Number(it.amount)||0); total+=amt; var lbl=document.getElementById('rc_it_'+i+'_amtL'); if(lbl&&mile)lbl.textContent=M(amt); }); var el=document.getElementById('rc_total'); if(el)el.textContent=M(total); }
+function hrRCItemCalc(){ hrRCSyncItems(); var cfg=RC.cfg||{}; var total=0; RC.form.items.forEach(function(it,i){ var t=(cfg.claim_types||[]).find(function(x){return x.id===it.claim_type_id;}); var mile=t&&t.is_mileage; var amt=hrRCItemAmt(it,mile); total+=amt; var lbl=document.getElementById('rc_it_'+i+'_amtL'); if(lbl&&mile)lbl.textContent=M(amt); }); var el=document.getElementById('rc_total'); if(el)el.textContent=M(total); }
+function hrRCDecs(){ var ck=function(id){var e=document.getElementById('rc_'+id);return e?e.checked:false;}; return { business_purpose:ck('dec1'), not_claimed_before:ck('dec2'), receipts_valid:ck('dec3'), understand_disciplinary:ck('dec4') }; }
 async function hrRCSave(submit){
   hrRCSyncItems(); var f=RC.form||{}; var isEmp=RC.me&&RC.me.isAdmin===false;
   if(!isEmp && !f.employee_id){ toast('Select an employee',true); return; }
   var items=(f.items||[]).filter(function(it){ return it.claim_type_id && ((Number(it.amount)||0)>0 || (Number(it.total_km)||0)>0); });
   if(!items.length){ toast('Add at least one expense line (type + amount)',true); return; }
-  var claim={ id:f.id||undefined, employee_id:f.employee_id, claim_date:f.claim_date, department:f.department, project:f.project, remarks:f.remarks, description:f.description,
-    items: items.map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date||f.claim_date, description:it.description, amount:Number(it.amount)||0, total_km:Number(it.total_km)||0, mileage_rate:Number(it.mileage_rate)||0 }; }) };
+  var dec=hrRCDecs();
+  if(submit && !(dec.business_purpose&&dec.not_claimed_before&&dec.receipts_valid&&dec.understand_disciplinary)){ toast('Please tick all four declaration statements before submitting.',true); return; }
+  var claim={ id:f.id||undefined, employee_id:f.employee_id, claim_date:f.claim_date, claim_month:f.claim_month, cost_center:f.cost_center, department:f.department, project:f.project, remarks:f.remarks, description:f.description,
+    items: items.map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date||f.claim_date, description:it.description, amount:Number(it.amount)||0, total_km:Number(it.total_km)||0, mileage_rate:Number(it.mileage_rate)||0,
+      vendor_name:it.vendor_name||'', receipt_no:it.receipt_no||'', invoice_no:it.invoice_no||'', tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0,
+      gl_account:it.gl_account||'', cost_center:it.cost_center||'', project:it.project||'', remarks:it.remarks||'',
+      start_location:it.start_location||'', end_location:it.end_location||'', purpose:it.purpose||'', parking_amount:Number(it.parking_amount)||0, toll_amount:Number(it.toll_amount)||0 }; }) };
   var r=await call({api:'hr_rc_save',tenant:HR.tenant,claim:claim});
   if(!r||!r.ok){ toast((r&&r.error)||'Save failed',true); return; }
   var cid=r.id; RC.form.id=cid;
   var fi=document.getElementById('rc_file');
   if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, fi.files[i]); } }
   if(RC.form._scanFiles&&RC.form._scanFiles.length){ for(var sj=0;sj<RC.form._scanFiles.length;sj++){ await hrRCUpload(cid, RC.form._scanFiles[sj]); } RC.form._scanFiles=[]; }
-  if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
+  if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid,declarations:dec}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
   else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
   hrRender();
 }
@@ -1428,12 +1469,17 @@ function hrRCDetail(){
   var d=RC.detail; if(!d||!d.claim) return '<div class="muted" style="padding:16px">Not found</div>';
   var c=d.claim; var emp=c.hr_employees; var typ=c.hr_claim_types;
   var pending=['Pending Manager Approval','Pending HR Approval','Pending Finance Approval','Pending Director Approval','Submitted'].indexOf(c.status)>=0;
-  var head='<div class="panel"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px"><div><div style="font-size:18px;font-weight:750">'+esc(c.claim_no)+' '+rcStatusPill(c.status)+'</div><div class="muted" style="font-size:12.5px;margin-top:4px">'+esc((emp&&emp.name)||'—')+' · '+esc((typ&&typ.name)||'—')+' · '+esc(c.claim_date||'')+'</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</div>'+(c.override_amount!=null?'<div class="muted" style="font-size:10.5px">overridden: '+esc(c.override_reason||'')+'</div>':'')+'</div></div><div style="margin-top:9px;font-size:13px">'+esc(c.description||'')+(c.department?' · <span class="muted">'+esc(c.department)+'</span>':'')+(c.project?' · <span class="muted">'+esc(c.project)+'</span>':'')+'</div><button class="btn sm" onclick="hrRCNav(\'list\')" style="margin-top:10px">← Back to claims</button></div>';
+  var head='<div class="panel"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px"><div><div style="font-size:18px;font-weight:750">'+esc(c.claim_no)+' '+rcStatusPill(c.status)+'</div><div class="muted" style="font-size:12.5px;margin-top:4px">'+esc((emp&&emp.name)||'—')+' · '+esc((typ&&typ.name)||'—')+' · '+esc(c.claim_date||'')+(c.claim_month?(' | month '+esc(c.claim_month)):'')+(c.cost_center?(' | CC '+esc(c.cost_center)):'')+((emp&&emp.bank_name)?(' | '+esc(emp.bank_name)+' '+esc(emp.bank_account||'')):'')+'</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</div>'+(c.override_amount!=null?'<div class="muted" style="font-size:10.5px">overridden: '+esc(c.override_reason||'')+'</div>':'')+'</div></div><div style="margin-top:9px;font-size:13px">'+esc(c.description||'')+(c.department?' · <span class="muted">'+esc(c.department)+'</span>':'')+(c.project?' · <span class="muted">'+esc(c.project)+'</span>':'')+'</div><button class="btn sm" onclick="hrRCNav(\'list\')" style="margin-top:10px">← Back to claims</button></div>';
   var warns=(c.warnings&&c.warnings.length)?'<div class="panel" style="border-color:rgba(245,158,11,.4)"><div style="font-weight:700;color:var(--amber);font-size:13px;margin-bottom:6px">⚠ Validation warnings</div>'+c.warnings.map(function(w){return '<div style="font-size:12.5px;color:var(--text-soft)">• '+esc(w)+'</div>';}).join('')+'</div>':'';
   var mile;
+  var canGl = d.can_finance && !c.xero_bill_id && ['Approved','Paid','Pending Finance Approval','Pending Director Approval'].indexOf(c.status)>=0;
   if(d.items && d.items.length){
-    var itRows=d.items.map(function(it){ var t=it.hr_claim_types||{}; var extra=t.is_mileage?(' · '+it.total_km+'km × RM'+it.mileage_rate+(it.start_location?(' · '+esc(it.start_location)+'→'+esc(it.end_location||'')):'')):''; return '<tr><td>'+esc(t.name||'—')+'</td><td class="muted">'+esc(String(it.item_date||'').slice(0,10))+'</td><td class="muted">'+esc(it.description||'')+extra+'</td><td class="amt">'+M(it.amount)+'</td></tr>'; }).join('');
-    mile='<div class="panel"><div class="panel-hd"><h3>Expense lines ('+d.items.length+')</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Date</th><th>Description</th><th class="amt">Amount</th></tr></thead><tbody>'+itRows+'<tr><td colspan="3" style="text-align:right;font-weight:700">Total</td><td class="amt" style="font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</td></tr></tbody></table></div></div>';
+    var itRows=d.items.map(function(it){ var t=it.hr_claim_types||{};
+      var extra=t.is_mileage?(' · '+it.total_km+'km × RM'+it.mileage_rate+((Number(it.parking_amount)||0)?(' + park '+M(it.parking_amount)):'')+((Number(it.toll_amount)||0)?(' + toll '+M(it.toll_amount)):'')+(it.start_location?(' · '+esc(it.start_location)+'→'+esc(it.end_location||'')):'')):'';
+      var gl=it.gl_account||t.gl_account||''; var glCell=(gl?esc(gl):'<span style="color:var(--amber)">—</span>')+(it.gl_account?' <span class="muted" title="changed by Finance" style="font-size:10px">✎</span>':'')+(canGl?' <a onclick="hrRCSetGl(\''+it.id+'\')" title="change GL (reason required)" style="cursor:pointer;font-size:11px;color:var(--sky-soft)">edit</a>':'');
+      var tax=(Number(it.tax_amount)||0)+(Number(it.sst_amount)||0);
+      return '<tr><td>'+esc(t.name||'—')+'</td><td class="muted">'+esc(String(it.item_date||'').slice(0,10))+'</td><td class="muted">'+esc(it.description||'')+extra+(it.remarks?('<div class="muted" style="font-size:10.5px">'+esc(it.remarks)+'</div>'):'')+'</td><td class="muted">'+esc(it.vendor_name||'—')+'</td><td class="muted">'+esc(it.receipt_no||it.invoice_no||'—')+'</td><td>'+glCell+'</td><td class="muted">'+esc(it.cost_center||c.cost_center||'—')+'</td><td class="amt">'+M(it.amount)+(tax?('<div class="muted" style="font-size:10px">incl tax '+M(tax)+'</div>'):'')+'</td></tr>'; }).join('');
+    mile='<div class="panel"><div class="panel-hd"><h3>Expense lines ('+d.items.length+')</h3>'+(canGl?'<button class="btn xs" onclick="hrRCSetGl(null)">✎ Change GL (all lines)</button>':'')+'</div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Date</th><th>Description</th><th>Vendor</th><th>Receipt/Inv #</th><th>GL</th><th>CC</th><th class="amt">Amount</th></tr></thead><tbody>'+itRows+'<tr><td colspan="7" style="text-align:right;font-weight:700">Total</td><td class="amt" style="font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</td></tr></tbody></table></div></div>';
   } else {
     mile=d.mileage?'<div class="panel"><div class="panel-hd"><h3>🚗 Mileage</h3></div><div style="font-size:13px">'+esc(d.mileage.start_location||'')+' → '+esc(d.mileage.end_location||'')+' · '+d.mileage.total_km+' km × RM'+d.mileage.mileage_rate+' = <b>'+M(d.mileage.calculated_amount)+'</b></div></div>':'';
   }
@@ -1450,22 +1496,35 @@ function hrRCDetail(){
   var xeroBlock='';
   if(c.xero_bill_id){ xeroBlock='<div class="panel"><div style="font-size:13px;color:var(--green-soft);font-weight:650">✓ Posted to Xero</div><div class="muted" style="font-size:11.5px;margin-top:3px">ACCPAY bill · SUBMITTED (awaiting your payment approval in Xero) · ref '+esc(c.xero_reference||c.claim_no||'')+(c.xero_posted_at?(' · '+esc(String(c.xero_posted_at).slice(0,16).replace('T',' '))):'')+'</div>'+(d.can_post?'<button class="btn xs" style="margin-top:8px" onclick="hrRCPostXero()">Re-sync reference</button>':'')+'</div>'; }
   else if(d.can_post){ xeroBlock='<div class="panel"><div class="panel-hd"><h3>📤 Post to Xero</h3></div><div class="muted" style="font-size:12px;margin-bottom:8px">Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.</div><button class="btn p sm" onclick="hrRCPostXero()">Post to Xero →</button></div>'; }
+  var decPanel='';
+  if(d.declaration){ var dd=d.declaration; decPanel='<div class="panel"><div class="panel-hd"><h3>Declaration</h3></div>'+[['business_purpose','Claim is for business purpose'],['not_claimed_before','Not claimed before'],['receipts_valid','Receipts / invoices are valid'],['understand_disciplinary','Understands false claims → disciplinary action']].map(function(x){ return '<div style="font-size:12px;padding:2px 0;color:'+(dd[x[0]]?'var(--green-soft)':'var(--coral-soft)')+'">'+(dd[x[0]]?'✓':'✗')+' <span style="color:var(--text-soft)">'+x[1]+'</span></div>'; }).join('')+'<div class="muted" style="font-size:10.5px;margin-top:4px">Declared '+esc(String(dd.declared_at||'').slice(0,16).replace('T',' '))+'</div></div>'; }
   var editRow='<button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
   if(['Draft','Need More Info'].indexOf(c.status)>=0) editRow+='<button class="btn sm" onclick="hrRCEdit()">Edit</button> <button class="btn p sm" onclick="hrRCResubmit()">'+(c.status==='Need More Info'?'Resubmit →':'Submit →')+'</button> ';
   if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
-  return head+warns+mile+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
+  return head+warns+mile+decPanel+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
 }
 async function hrRCDecide(dec){ var com=(document.getElementById('rc_com')||{}).value||''; if((dec==='reject'||dec==='request_info')&&!com.trim()){ toast('Please enter a reason / message',true); return; } var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:dec,comment:com}); if(r&&r.ok){ toast('Done → '+(r.status||'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCMarkPaid(){ var pm=(document.getElementById('rc_pm')||{}).value||''; var pr=(document.getElementById('rc_pr')||{}).value||''; var r=await call({api:'hr_rc_mark_paid',id:RC.detail.claim.id,payment_method:pm,payment_reference:pr}); if(r&&r.ok){ toast('Marked paid ✓'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCSetGl(itemId){
+  var gl=prompt('New GL account code (from this company’s Xero chart), e.g. 800-1000:'); if(gl==null||!gl.trim())return;
+  var reason=prompt('Reason for changing the GL account (required, audited):'); if(reason==null||!reason.trim()){ toast('A reason is required',true); return; }
+  var r=await call({api:'hr_rc_set_gl',id:RC.detail.claim.id,item_id:itemId||undefined,gl_account:gl.trim(),reason:reason.trim()});
+  if(r&&r.ok){ toast('GL updated ('+r.updated+' line'+(r.updated>1?'s':'')+') ✓'); await hrRCOpen(RC.detail.claim.id); } else toast((r&&r.error)||'Failed',true);
+}
 async function hrRCPostXero(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }
 async function hrRCCancel(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 function hrRCEdit(){ var c=RC.detail.claim;
-  var items=(RC.detail.items||[]).map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date?String(it.item_date).slice(0,10):'', description:it.description, amount:it.amount, total_km:it.total_km, mileage_rate:it.mileage_rate }; });
+  var items=(RC.detail.items||[]).map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date?String(it.item_date).slice(0,10):'', description:it.description, amount:it.amount, total_km:it.total_km, mileage_rate:it.mileage_rate,
+    vendor_name:it.vendor_name, receipt_no:it.receipt_no, invoice_no:it.invoice_no, tax_amount:it.tax_amount, sst_amount:it.sst_amount, gl_account:it.gl_account, cost_center:it.cost_center, project:it.project, remarks:it.remarks,
+    start_location:it.start_location, end_location:it.end_location, purpose:it.purpose, parking_amount:it.parking_amount, toll_amount:it.toll_amount }; });
   if(!items.length){ items=[{ claim_type_id:c.claim_type_id||'', item_date:c.claim_date?String(c.claim_date).slice(0,10):'', description:c.description, amount:c.amount, total_km:(RC.detail.mileage&&RC.detail.mileage.total_km)||'', mileage_rate:(RC.detail.mileage&&RC.detail.mileage.mileage_rate)||'' }]; }
-  RC.form={ id:c.id, employee_id:c.employee_id, claim_date:c.claim_date?String(c.claim_date).slice(0,10):'', department:c.department, project:c.project, remarks:c.remarks, description:c.description, items:items };
+  RC.form={ id:c.id, employee_id:c.employee_id, claim_date:c.claim_date?String(c.claim_date).slice(0,10):'', claim_month:c.claim_month||'', cost_center:c.cost_center||'', department:c.department, project:c.project, remarks:c.remarks, description:c.description, items:items };
   RC.page='form'; hrRender(); }
-async function hrRCResubmit(){ var r=await call({api:'hr_rc_submit',tenant:HR.tenant,id:RC.detail.claim.id}); if(r&&r.ok){ toast('Submitted → '+r.status); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCResubmit(){
+  if(!confirm('By resubmitting you re-confirm ALL of these:\n\n• This claim is for business purpose.\n• It has not been claimed before.\n• All receipts / invoices attached are valid.\n• False claims may result in disciplinary action.\n\nOK = I confirm all four.'))return;
+  var dec={business_purpose:true,not_claimed_before:true,receipts_valid:true,understand_disciplinary:true};
+  var r=await call({api:'hr_rc_submit',tenant:HR.tenant,id:RC.detail.claim.id,declarations:dec}); if(r&&r.ok){ toast('Submitted → '+r.status); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCLoadDash(){ var r=await call({api:'hr_rc_dashboard',tenant:HR.tenant}); if(r&&r.ok){ RC.dash=r.data; if(HR.view==='expenses') hrRender(); } }
 function hrRCDash(){
   var d=RC.dash; if(!d) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
@@ -1477,7 +1536,7 @@ function hrRCDash(){
 function hrRCSetTab(t){ RC.setTab=t; hrRender(); }
 function hrRCSettings(){
   var cfg=RC.cfg||{}; var tab=RC.setTab||'types';
-  var tabs='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+[['types','Claim Types'],['rates','Mileage Rates'],['workflows','Approval Workflows'],['approvers','Role Approvers']].map(function(t){var on=tab===t[0];return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCSetTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
+  var tabs='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">'+[['types','Claim Types'],['rates','Mileage Rates'],['costcenters','Cost Centers'],['workflows','Approval Workflows'],['approvers','Role Approvers']].map(function(t){var on=tab===t[0];return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCSetTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
   var body='';
   if(tab==='types'){
     if(RC.typeEdit){ body=hrRCTypeForm(); }
@@ -1489,6 +1548,9 @@ function hrRCSettings(){
   } else if(tab==='rates'){
     var rows=(cfg.mileage_rates||[]).map(function(r){return '<tr><td><b>RM'+r.rate+' / km</b>'+(r.is_default?' <span class="pill pill-blue">default</span>':'')+'</td><td class="muted">'+esc(r.label||'')+'</td><td>'+(r.active?'active':'off')+'</td></tr>';}).join('');
     body='<div class="panel"><div class="panel-hd"><h3>Mileage Rates</h3><button class="btn p sm" onclick="hrRCAddRate()">+ Add rate</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Rate</th><th>Label</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  } else if(tab==='costcenters'){
+    var ccRows=(cfg.cost_centers||[]).map(function(c){return '<tr><td><b>'+esc(c.code)+'</b></td><td>'+esc(c.name)+'</td><td class="muted">'+(c.tenant_id?'this company':'all companies')+'</td><td>'+(c.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td><td>'+(c.active?'<button class="btn xs d" onclick="hrRCDelCC(\''+c.id+'\')">deactivate</button>':'')+'</td></tr>';}).join('')||'<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">No cost centers yet</td></tr>';
+    body='<div class="panel"><div class="panel-hd"><h3>Cost Centers</h3><button class="btn p sm" onclick="hrRCAddCC()">+ Add cost center</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Code</th><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>'+ccRows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">Selectable on the claim header and per expense line; flows into the accounting export.</div></div>';
   } else if(tab==='workflows'){
     var stepsByWf={}; (cfg.workflow_steps||[]).forEach(function(s){ (stepsByWf[s.workflow_id]=stepsByWf[s.workflow_id]||[]).push(s); });
     var rows=(cfg.workflows||[]).map(function(w){ var st=(stepsByWf[w.id]||[]).sort(function(a,b){return a.step_order-b.step_order;}); var chain=st.map(function(s){return s.name||s.approver_role;}).join(' → ')||'—'; var rng='RM'+(w.min_amount||0)+(w.max_amount!=null?('–'+w.max_amount):'+'); return '<tr><td><b>'+esc(w.name)+'</b></td><td class="muted">'+esc(rng)+'</td><td style="font-size:12px">'+esc(chain)+'</td><td>'+(w.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td></tr>';}).join('');
@@ -1532,6 +1594,8 @@ function hrRCTypeSave(){
   if(!t.id){ row.code=name.toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,24)||('TYPE'+Date.now().toString().slice(-4)); if(t.sort_order!=null) row.sort_order=t.sort_order; }
   call({api:'hr_rc_admin_save',kind:'claim_type',row:row}).then(function(r){ if(r&&r.ok){ toast('Saved'); RC.typeEdit=null; hrRCReload(); } else toast((r&&r.error)||'Failed',true); });
 }
+function hrRCAddCC(){ var code=prompt('Cost center code (short, e.g. MKT):'); if(!code||!code.trim())return; var name=prompt('Cost center name:',''); if(name==null)return; var scope=confirm('Share across ALL companies?\n\nOK = all companies · Cancel = only '+(hrCompanyName()||'this company')); call({api:'hr_rc_admin_save',kind:'cost_center',row:{code:code.trim().toUpperCase(),name:name.trim()||code.trim(),tenant_id:(scope?null:HR.tenant)}}).then(function(r){ if(r&&r.ok){ toast('Added'); hrRCReload(); } else toast((r&&r.error)||'Failed',true); }); }
+function hrRCDelCC(id){ if(!confirm('Deactivate this cost center? Existing claims keep it.'))return; call({api:'hr_rc_admin_save',kind:'cost_center_del',row:{id:id}}).then(function(r){ if(r&&r.ok){ toast('Deactivated'); hrRCReload(); } else toast('Failed',true); }); }
 function hrRCAddRate(){ var rate=prompt('Rate (RM per km), e.g. 0.70:'); if(!rate)return; var label=prompt('Label:','RM'+rate+'/km'); call({api:'hr_rc_admin_save',kind:'mileage_rate',row:{rate:Number(rate),label:label||('RM'+rate+'/km'),active:true}}).then(function(r){ if(r&&r.ok){ toast('Added'); hrRCReload(); } else toast('Failed',true); }); }
 function hrRCAddApprover(role){ var cfg=RC.cfg||{}; var opts=(cfg.employees||[]).map(function(e,i){return (i+1)+'. '+e.emp_no+' — '+e.name;}).join('\n'); var pick=prompt('Assign '+role+' approver — enter number:\n'+opts); if(!pick)return; var idx=Number(pick)-1; var e=(cfg.employees||[])[idx]; if(!e){ toast('Invalid',true); return; } call({api:'hr_rc_admin_save',kind:'role_approver',row:{role:role,employee_id:e.id,tenant_id:HR.tenant}}).then(function(r){ if(r&&r.ok){ toast('Assigned'); hrRCReload(); } else toast('Failed',true); }); }
 function hrRCDelApprover(id){ call({api:'hr_rc_admin_save',kind:'role_approver_del',row:{id:id}}).then(function(r){ if(r&&r.ok){ toast('Removed'); hrRCReload(); } else toast('Failed',true); }); }
