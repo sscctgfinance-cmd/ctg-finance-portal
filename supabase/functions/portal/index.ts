@@ -2382,7 +2382,8 @@ Deno.serve(async (req)=>{
         // Already posted — don't error; sync the Reference onto the existing (editable) bill so it's never blank.
         try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, Reference: reference }] }) }); } catch(_e){}
       } else {
-        const gl = v.gl_account || "610-1000";
+        const gl = String(v.gl_account||"").trim();
+        if(!gl) return j({ ok:false, error:"No expense account (GL) is set on this invoice. Open it → choose the GL account for the payment → Save, then post to Xero." });
         const items = Array.isArray(v.line_items)? v.line_items : [];
         const lines: any[] = items.map((l: any)=>{
           const up=Number(l.unit_price)||0;
@@ -2399,7 +2400,14 @@ Deno.serve(async (req)=>{
         const idem = "sbi-"+v.id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
         const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
         const out = await r.json();
-        if (!r.ok) return j({ ok:false, error:"Xero "+r.status+": "+JSON.stringify(out.Elements||out.Message||out).slice(0,300) });
+        if (!r.ok){
+          let msg = "";
+          const el = (out.Elements||[])[0];
+          if (el && Array.isArray(el.ValidationErrors) && el.ValidationErrors.length) msg = el.ValidationErrors.map((e:any)=>e.Message).join(" · ");
+          else if (Array.isArray(out.ValidationErrors) && out.ValidationErrors.length) msg = out.ValidationErrors.map((e:any)=>e.Message).join(" · ");
+          else msg = out.Message || JSON.stringify(out);
+          return j({ ok:false, error:"Xero "+r.status+": "+String(msg).slice(0,400) });
+        }
         const bill = (out.Invoices||[])[0]; billId = bill && bill.InvoiceID;
         await sb.from("portal_self_billed_invoices").update({ xero_bill_id: billId||null, status:(v.status==='draft'?'approved':v.status), approved_by:(me.user&&me.user.email)||v.approved_by||null, approved_at: v.approved_at||new Date().toISOString(), updated_at:new Date().toISOString() }).eq("id", v.id);
       }
@@ -3818,6 +3826,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v87 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items/year-end/xero/email) — self-billed + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v88 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
