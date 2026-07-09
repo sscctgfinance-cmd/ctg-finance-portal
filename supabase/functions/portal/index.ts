@@ -179,6 +179,89 @@ async function rcApproverQueue(tenant:string, who:any){
   const byClaim:any={}; (steps||[]).forEach((s:any)=>{ (byClaim[s.claim_id]=byClaim[s.claim_id]||{})[s.step_order]=s; });
   return (claims||[]).filter((c:any)=>{ const st=byClaim[c.id]&&byClaim[c.id][c.current_step]; return st && st.status==="Pending" && rcCanActStep(who, st); });
 }
+// ── Reimbursement email notifications (best-effort; reuse Gmail SMTP / Resend like the AP module). ──
+async function rcSendEmail(toEmail:string, subject:string, body:string){
+  if(!toEmail || !subject || !body) return false;
+  const gmailUser = Deno.env.get("GMAIL_USER"); const gmailPass = Deno.env.get("GMAIL_APP_PASSWORD"); const resendKey = Deno.env.get("RESEND_API_KEY");
+  const fromName = "CTG HR OS";
+  try {
+    if(gmailUser && gmailPass){
+      const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
+      const c:any = new SMTPClient({ connection:{ hostname:"smtp.gmail.com", port:465, tls:true, auth:{ username:gmailUser, password:gmailPass } } });
+      try { await c.send({ from: fromName+" <"+gmailUser+">", to: toEmail, subject, content: body }); } finally { try{ await c.close(); }catch(_e){} }
+      return true;
+    } else if(resendKey){
+      const r = await fetch("https://api.resend.com/emails", { method:"POST", headers:{ "Authorization":"Bearer "+resendKey, "Content-Type":"application/json" }, body: JSON.stringify({ from: fromName+" <onboarding@resend.dev>", to:[toEmail], subject, text: body }) });
+      return r.ok;
+    }
+  } catch(_e){}
+  return false;
+}
+async function rcEmpEmail(empId:any){ if(!empId) return null; const { data } = await sb.from("hr_employees").select("email,name").eq("id",empId).maybeSingle(); return data; }
+function rcMoney(n:any){ return "RM "+(Number(n)||0).toFixed(2); }
+async function rcNotifyEmployee(claim:any, subject:string, body:string){ try{ const e=await rcEmpEmail(claim && claim.employee_id); if(e&&e.email) await rcSendEmail(e.email, subject, body); }catch(_e){} }
+async function rcNotifyStepApprover(claimId:any){ try{
+  const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",claimId).maybeSingle(); if(!inst) return;
+  const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle(); if(!step) return;
+  const { data: claim } = await sb.from("hr_claim_requests").select("claim_no,amount, hr_employees(name)").eq("id",claimId).maybeSingle();
+  const emails:string[]=[];
+  if(step.approver_employee_id){ const e=await rcEmpEmail(step.approver_employee_id); if(e&&e.email) emails.push(e.email); }
+  else if(step.approver_role){ const { data: ras } = await sb.from("hr_claim_role_approvers").select("employee_id").eq("role",step.approver_role); for(const ra of (ras||[])){ const e=await rcEmpEmail(ra.employee_id); if(e&&e.email) emails.push(e.email); } }
+  const nm=(claim&&claim.hr_employees&&claim.hr_employees.name)||"an employee";
+  const subj="[HR OS] Reimbursement "+((claim&&claim.claim_no)||"")+" needs your approval";
+  const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\nLog in to HR OS → Reimbursement → My Approvals to review it.\n\n— CTG HR OS (automated)";
+  for(const em of Array.from(new Set(emails))) await rcSendEmail(em, subj, body);
+}catch(_e){} }
+// ── Factored single-claim decision (used by hr_rc_decide + hr_rc_decide_bulk). Returns {ok,status,error,claim,advanced,final}. ──
+async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:string, overrideAmount:any, overrideReason:string){
+  const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
+  if(!claim) return { ok:false, error:"claim not found" };
+  const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
+  if(!inst) return { ok:false, error:"no approval in progress" };
+  const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
+  if(!rcCanActStep(who, step)) return { ok:false, error:"You are not the approver for this step.", forbidden:true };
+  const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
+  if(decision==="reject"){
+    if(!String(comment||"").trim()) return { ok:false, error:"a rejection reason is required" };
+    if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+    await sb.from("hr_claim_approval_instances").update({status:"rejected"}).eq("id",inst.id);
+    await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
+    await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
+    await rcAuditLog(id,"reject",me,fromS,"Rejected",{comment});
+    return { ok:true, status:"Rejected", claim };
+  }
+  if(decision==="request_info"){
+    if(!String(comment||"").trim()) return { ok:false, error:"a message to the employee is required" };
+    if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+    await sb.from("hr_claim_requests").update({status:"Need More Info"}).eq("id",id);
+    await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"info_request"});
+    await rcAuditLog(id,"request_info",me,fromS,"Need More Info",{comment});
+    return { ok:true, status:"Need More Info", claim, comment };
+  }
+  const override = (overrideAmount!=null && overrideAmount!=="") ? Number(overrideAmount) : null;
+  if(override!=null){ if(!String(overrideReason||"").trim()) return { ok:false, error:"a reason is required to override the amount" }; await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:overrideReason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:overrideReason}); claim.amount=override; }
+  if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+  const { data: allSteps } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).order("step_order");
+  const next=(allSteps||[]).find((s:any)=>s.step_order>inst.current_step);
+  if(next){
+    await sb.from("hr_claim_approval_instances").update({current_step:next.step_order}).eq("id",inst.id);
+    const st=rcStatusForRole(next.approver_role);
+    await sb.from("hr_claim_requests").update({status:st,current_step:next.step_order}).eq("id",id);
+    await rcAuditLog(id,"approve",me,fromS,st,{step:step&&step.name});
+    return { ok:true, status:st, advanced:true, claim };
+  }
+  await sb.from("hr_claim_approval_instances").update({status:"approved"}).eq("id",inst.id);
+  await sb.from("hr_claim_requests").update({status:"Approved",decided_at:nowIso}).eq("id",id);
+  await rcAuditLog(id,"approve",me,fromS,"Approved",{step:step&&step.name});
+  return { ok:true, status:"Approved", final:true, claim };
+}
+async function rcNotifyDecision(res:any){ try{
+  const c=res && res.claim; if(!c) return;
+  if(res.advanced){ await rcNotifyStepApprover(c.id); return; }
+  if(res.status==="Approved") await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" is approved", "Good news — your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") has been fully approved and is now with Finance for payment.\n\n— CTG HR OS (automated)");
+  else if(res.status==="Rejected") await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" was rejected", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") was rejected.\n\nLog in to HR OS → Reimbursement to see the reason.\n\n— CTG HR OS (automated)");
+  else if(res.status==="Need More Info") await rcNotifyEmployee(c, "[HR OS] More info needed on reimbursement "+(c.claim_no||""), "Your reimbursement claim "+(c.claim_no||"")+" needs more information before it can be approved:\n\n  \""+String(res.comment||"").slice(0,500)+"\"\n\nLog in to HR OS → Reimbursement, update it, and resubmit.\n\n— CTG HR OS (automated)");
+}catch(_e){} }
 // â”€â”€ Xero GET with proper 429 rate-limit handling (Retry-After header). â”€â”€
 // Previous behaviour: silent fail on 429 â†’ break upstream loops â†’ cache silently stale.
 // New behaviour: honour Retry-After (cap at 90s), retry up to 3 times, then throw.
@@ -3494,6 +3577,33 @@ Deno.serve(async (req)=>{
       await sb.from("hr_claim_attachments").insert({ claim_id:claimId, file_name:name, file_path:path, file_type:b.file_type||null, file_size:Number(b.file_size)||null, receipt_hash:b.receipt_hash||null, uploaded_by:(me.user&&me.user.id)||null });
       return j({ ok:true, stored:!!path });
     }
+    if (api === "hr_rc_ocr") {
+      // Read an employee expense receipt with Claude vision → prefill an expense line. Available to any logged-in employee/admin.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && !who.employee) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
+      const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!apiKey) return j({ ok:false, error:"Receipt OCR isn’t enabled yet — set ANTHROPIC_API_KEY as a Supabase Edge secret." });
+      const b64 = String(b.file_b64||b.content_base64||"").split(",").pop() || "";
+      if (!b64) return j({ ok:false, error:"no image provided" });
+      const mime = String(b.file_type||b.content_type||"image/jpeg");
+      const isPdf = mime.indexOf("pdf")>=0;
+      const { data: types } = await sb.from("hr_claim_types").select("id,name").eq("active",true).order("sort_order");
+      const typeNames = (types||[]).map((t:any)=>t.name);
+      const sys = "You are reading an employee EXPENSE RECEIPT for a Malaysian company. Reply ONLY with a single JSON object — no prose, no markdown fences. Schema: { vendor: string, date: 'YYYY-MM-DD'|null, total: number, currency: 'MYR'|'USD'|'SGD'|string, description: string, category_guess: string, confidence: 'high'|'medium'|'low' }. 'total' = final amount paid (include tax & service charge). 'description' = short, e.g. 'Lunch — Starbucks KLCC'. 'category_guess' MUST be exactly one of these claim types: "+JSON.stringify(typeNames)+". If a value can't be read use null (strings) or 0 (total). MYR (Ringgit) is the most common currency; dates in Malaysia are usually DD/MM/YYYY — normalise to YYYY-MM-DD.";
+      const media = isPdf ? { type:"document", source:{ type:"base64", media_type:"application/pdf", data:b64 } } : { type:"image", source:{ type:"base64", media_type:mime, data:b64 } };
+      const body = { model:"claude-haiku-4-5-20251001", max_tokens:800, system:sys, messages:[{ role:"user", content:[ media, { type:"text", text:"Extract the receipt fields per the schema. JSON only." } ] }] };
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key":apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
+        if (!r.ok){ const t=await r.text(); return j({ ok:false, error:"Vision API "+r.status+": "+t.slice(0,300) }); }
+        const out = await r.json(); const txt=(out.content&&out.content[0]&&out.content[0].text)||"";
+        let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
+        if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo." });
+        let typeId:any=null;
+        if(parsed.category_guess){ const hit=(types||[]).find((t:any)=>String(t.name).toLowerCase()===String(parsed.category_guess).toLowerCase()); if(hit) typeId=hit.id; }
+        await logAudit(me,"hr_rc_ocr",String(parsed.vendor||"(receipt)"),{ total:parsed.total, confidence:parsed.confidence });
+        return j({ ok:true, extracted: parsed, claim_type_id: typeId });
+      } catch(e){ return j({ ok:false, error:String(e).slice(0,300) }); }
+    }
     if (api === "hr_rc_submit") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!who.isAdmin && !who.employee) return j({ ok:false, error:"no employee profile" });
@@ -3518,6 +3628,7 @@ Deno.serve(async (req)=>{
           const st=rcStatusForRole(step&&step.approver_role);
           await sb.from("hr_claim_requests").update({status:st, warnings, submitted_at:new Date().toISOString()}).eq("id",id);
           await rcAuditLog(id,"resubmit",me,"Need More Info",st,{});
+          try{ await rcNotifyStepApprover(id); }catch(_e){}
           return j({ ok:true, status:st, warnings, resumed:true });
         }
       }
@@ -3531,53 +3642,27 @@ Deno.serve(async (req)=>{
       const st=rcStatusForRole(steps[0].approver_role);
       await sb.from("hr_claim_requests").update({ status:st, current_step:1, workflow_id:wf?wf.id:null, warnings, submitted_at:new Date().toISOString() }).eq("id",id);
       await rcAuditLog(id,"submit",me,claim.status,st,{ workflow: wf?wf.name:"(fallback Finance)", warnings });
+      try{ await rcNotifyStepApprover(id); }catch(_e){}
       return j({ ok:true, status:st, warnings, workflow: wf?wf.name:"Finance only" });
     }
     if (api === "hr_rc_decide") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
-      const id=b.id; const decision=String(b.decision||""); const comment=String(b.comment||"");
-      const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
-      if(!claim) return j({ ok:false, error:"claim not found" });
-      const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
-      if(!inst) return j({ ok:false, error:"no approval in progress" });
-      const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
-      if(!rcCanActStep(who, step)) return j({ ok:false, error:"You are not the approver for this step." }, 403);
-      const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
-      if(decision==="reject"){
-        if(!comment.trim()) return j({ ok:false, error:"a rejection reason is required" });
-        if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
-        await sb.from("hr_claim_approval_instances").update({status:"rejected"}).eq("id",inst.id);
-        await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
-        await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
-        await rcAuditLog(id,"reject",me,fromS,"Rejected",{comment});
-        return j({ ok:true, status:"Rejected" });
-      }
-      if(decision==="request_info"){
-        if(!comment.trim()) return j({ ok:false, error:"a message to the employee is required" });
-        if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
-        await sb.from("hr_claim_requests").update({status:"Need More Info"}).eq("id",id);
-        await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"info_request"});
-        await rcAuditLog(id,"request_info",me,fromS,"Need More Info",{comment});
-        return j({ ok:true, status:"Need More Info" });
-      }
-      // approve (optional amount override)
-      const override = (b.override_amount!=null && b.override_amount!=="") ? Number(b.override_amount) : null;
-      if(override!=null){ if(!String(b.override_reason||"").trim()) return j({ ok:false, error:"a reason is required to override the amount" }); await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:b.override_reason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:b.override_reason}); }
-      if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
-      const { data: allSteps } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).order("step_order");
-      const next=(allSteps||[]).find((s:any)=>s.step_order>inst.current_step);
-      if(next){
-        await sb.from("hr_claim_approval_instances").update({current_step:next.step_order}).eq("id",inst.id);
-        const st=rcStatusForRole(next.approver_role);
-        await sb.from("hr_claim_requests").update({status:st,current_step:next.step_order}).eq("id",id);
-        await rcAuditLog(id,"approve",me,fromS,st,{step:step&&step.name});
-        return j({ ok:true, status:st, advanced:true });
-      }
-      await sb.from("hr_claim_approval_instances").update({status:"approved"}).eq("id",inst.id);
-      await sb.from("hr_claim_requests").update({status:"Approved",decided_at:nowIso}).eq("id",id);
-      await rcAuditLog(id,"approve",me,fromS,"Approved",{step:step&&step.name});
-      return j({ ok:true, status:"Approved", final:true });
+      const res = await rcDecideOne(who, me, b.id, String(b.decision||""), String(b.comment||""), b.override_amount, String(b.override_reason||""));
+      if(!res.ok) return j({ ok:false, error:res.error }, res.forbidden?403:200);
+      await rcNotifyDecision(res);
+      return j({ ok:true, status:res.status, advanced:res.advanced, final:res.final });
+    }
+    if (api === "hr_rc_decide_bulk") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      const decision=String(b.decision||"approve"); const comment=String(b.comment||"");
+      const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,200) : [];
+      if(!ids.length) return j({ ok:false, error:"no claims selected" });
+      if((decision==="reject"||decision==="request_info") && !comment.trim()) return j({ ok:false, error:"a reason / message is required for reject or request-info" });
+      let done=0; const results:any[]=[];
+      for(const id of ids){ const r=await rcDecideOne(who, me, id, decision, comment, null, ""); if(r.ok){ done++; try{ await rcNotifyDecision(r); }catch(_e){} } results.push({ id, ok:r.ok, status:r.status, error:r.error }); }
+      return j({ ok:true, done, total:ids.length, results });
     }
     if (api === "hr_rc_comment") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3608,7 +3693,28 @@ Deno.serve(async (req)=>{
       await sb.from("hr_claim_payments").upsert({ claim_id:b.id, paid_date:b.paid_date||new Date().toISOString().slice(0,10), amount:c.amount, payment_method:b.payment_method||"", payment_reference:b.payment_reference||"", paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
       await sb.from("hr_claim_requests").update({status:"Paid"}).eq("id",b.id);
       await rcAuditLog(b.id,"mark_paid",me,"Approved","Paid",{method:b.payment_method,ref:b.payment_reference});
+      try{ await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" has been paid", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") has been paid"+(b.payment_reference?(" (ref "+b.payment_reference+")"):"")+".\n\n— CTG HR OS (automated)"); }catch(_e){}
       return j({ ok:true, status:"Paid" });
+    }
+    if (api === "hr_rc_mark_paid_bulk") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
+      const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,500) : [];
+      if(!ids.length) return j({ ok:false, error:"no claims selected" });
+      const paidDate = b.paid_date||new Date().toISOString().slice(0,10);
+      const method = b.payment_method||"Bank Transfer"; const ref = b.payment_reference||"";
+      let done=0; const results:any[]=[];
+      for(const id of ids){
+        const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
+        if(!c){ results.push({ id, ok:false, error:"not found" }); continue; }
+        if(c.status!=="Approved"){ results.push({ id, ok:false, error:"not Approved" }); continue; }
+        await sb.from("hr_claim_payments").upsert({ claim_id:id, paid_date:paidDate, amount:c.amount, payment_method:method, payment_reference:ref, paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
+        await sb.from("hr_claim_requests").update({status:"Paid"}).eq("id",id);
+        await rcAuditLog(id,"mark_paid",me,"Approved","Paid",{method,ref,batch:true});
+        try{ await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" has been paid", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") has been paid"+(ref?(" (ref "+ref+")"):"")+".\n\n— CTG HR OS (automated)"); }catch(_e){}
+        done++; results.push({ id, ok:true });
+      }
+      return j({ ok:true, done, total:ids.length, results });
     }
     if (api === "hr_rc_post_xero") {
       // Post an approved reimbursement to Xero as an ACCPAY bill (SUBMITTED, never AUTHORISED — payment stays a human click in Xero).
@@ -3684,7 +3790,7 @@ Deno.serve(async (req)=>{
       const pend=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
       if(who.isAdmin){
         const tenant=String(b.tenant||"");
-        let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
+        let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept,bank_name,bank_account,ic_no,email)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
         if(scope==="pending") q=q.in("status",pend);
         else if(scope==="approved") q=q.eq("status","Approved");
         else if(scope==="paid") q=q.eq("status","Paid");
@@ -3895,6 +4001,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v89 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v90 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+receipt-OCR-autofill+bulk-approve+pay-batch-bankfile+email-notify+voucher-csv/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

@@ -1288,15 +1288,57 @@ function hrRC(){
 }
 async function hrRCBoot(){ var r=await call({api:'hr_rc_config',tenant:HR.tenant}); if(r&&r.ok){ RC.cfg=r; RC.me=r.me; } else toast((r&&r.error)||'Failed to load claim config',true); var l=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(l&&l.ok) RC.list=l.claims; RC.loading=false; if(HR.view==='expenses') hrRender(); }
 function hrRCNav(p){ if(p==='form'){ RC.form={}; } RC.page=p; if(p==='list') hrRCLoadList(); if(p==='dashboard') hrRCLoadDash(); hrRender(); }
-function hrRCScope(s){ RC.scope=s; hrRCLoadList(); }
+function hrRCScope(s){ RC.scope=s; RC.sel={}; hrRCLoadList(); }
 async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(r&&r.ok){ RC.list=r.claims; if(HR.view==='expenses') hrRender(); } }
 function hrRCList(){
   var scopes=[['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
-  var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopes.map(function(s){var on=RC.scope===s[0];return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCScope(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div>';
-  var rows=(RC.list||[]).map(function(c){ var typ=(c.hr_claim_types&&c.hr_claim_types.name)||'—'; var emp=(c.hr_employees&&c.hr_employees.name)||'—';
-    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer"><td><b>'+esc(c.claim_no||'')+'</b></td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td></tr>';
-  }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>';
-  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  var me=RC.me||{}; var list=RC.list||[]; RC.sel=RC.sel||{};
+  var canApprove=!!(me.isAdmin || me.is_manager || (me.roles&&me.roles.length));
+  var canFinance=!!(me.isAdmin || (me.roles&&me.roles.indexOf('finance')>=0));
+  var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance);
+  var n=Object.keys(RC.sel).filter(function(k){return RC.sel[k];}).length;
+  var scopeBtns=scopes.map(function(s){var on=RC.scope===s[0];var cnt=(on&&s[0]==='pending')?(' ('+list.length+')'):'';return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCScope(\''+s[0]+'\')">'+s[1]+cnt+'</button>';}).join('');
+  var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopeBtns+'</div><div style="display:flex;gap:6px"><button class="btn xs" onclick="hrRCExportCsv()" title="Export this list to CSV">⬇ CSV</button><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div></div>';
+  var bar='';
+  if(selecting){
+    var btns=(RC.scope==='pending')
+      ? '<button class="btn p xs" onclick="hrRCBulkApprove()">✓ Approve ('+n+')</button> <button class="btn xs d" onclick="hrRCBulkReject()">✕ Reject</button> <button class="btn xs" onclick="hrRCBulkInfo()">↩ Request info</button>'
+      : '<button class="btn p xs" onclick="hrRCExportBank()">🏦 Bank file ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPay()">💵 Mark paid ('+n+')</button>';
+    bar='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-bottom:10px"><span style="font-size:12px;font-weight:600">'+(n?(n+' selected'):(RC.scope==='pending'?'Select claims to approve in bulk':'Select approved claims to pay'))+'</span>'+(n?btns:'')+(n?' <a onclick="hrRCSelClear()" style="cursor:pointer;font-size:11px;color:var(--muted)">clear</a>':'')+'</div>';
+  }
+  var colspan=selecting?7:6;
+  var rows=list.map(function(c){ var typ=(c.hr_claim_types&&c.hr_claim_types.name)||'—'; var emp=(c.hr_employees&&c.hr_employees.name)||'—';
+    var xb=c.xero_bill_id?' <span title="Posted to Xero" style="color:var(--green-soft)">⇢X</span>':'';
+    var cb=selecting?'<td style="width:26px" onclick="event.stopPropagation()"><input type="checkbox" '+(RC.sel[c.id]?'checked':'')+' onchange="hrRCSelToggle(\''+c.id+'\',this.checked)"></td>':'';
+    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td></tr>';
+  }).join('')||('<tr><td colspan="'+colspan+'" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>');
+  var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
+  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+function hrToday(){ return new Date().toISOString().slice(0,10); }
+function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
+function hrRCSelToggle(id,on){ RC.sel=RC.sel||{}; if(on)RC.sel[id]=true; else delete RC.sel[id]; hrRender(); }
+function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.sel[c.id]=true;}); hrRender(); }
+function hrRCSelClear(){ RC.sel={}; hrRender(); }
+async function hrRCBulkApprove(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCBulkReject(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCBulkInfo(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCBulkPay(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+function hrRCExportBank(){ var ids=hrRCSelIds(); var list=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!list.length){ toast('Select Approved claims first',true); return; } var head=['No','Payee Name','Bank','SWIFT/BIC','Account No','IC','Amount (RM)','Payment Ref','Email']; var body=list.map(function(c,i){ var e=c.hr_employees||{}; return [i+1,e.name||'',e.bank_name||'',hrBankCode(e.bank_name),e.bank_account||'',e.ic_no||'',(Number(c.amount)||0).toFixed(2),c.claim_no||'',e.email||'']; }); var total=list.reduce(function(s,c){return s+(Number(c.amount)||0);},0); body.push(['','TOTAL','','','','',total.toFixed(2),'','']); hrDownload('Reimbursement_Payments_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('Bank file: '+list.length+' claim(s) · RM'+total.toFixed(2)); }
+function hrRCExportCsv(){ var list=RC.list||[]; if(!list.length){ toast('Nothing to export',true); return; } var head=['Claim No','Employee','Type','Date','Amount (RM)','Status','Department','Project','In Xero']; var body=list.map(function(c){ var e=c.hr_employees||{}; var t=c.hr_claim_types||{}; return [c.claim_no||'',e.name||'',t.name||'',c.claim_date||'',(Number(c.amount)||0).toFixed(2),c.status||'',c.department||'',c.project||'',c.xero_bill_id?'Yes':'']; }); hrDownload('Reimbursements_'+RC.scope+'_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('CSV exported ('+list.length+' claim(s))'); }
+function hrRCVoucher(){ var d=RC.detail; if(!d||!d.claim){return;} var c=d.claim; var emp=c.hr_employees||{}; var items=d.items||[]; var pay=d.payment||{}; var TN=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); var tname=TN?(TN.tenant_name||TN.name||''):(typeof hrCompanyName==='function'?hrCompanyName():'');
+  var rows=items.length?items.map(function(it){ var t=it.hr_claim_types||{}; return '<tr><td>'+esc(t.name||'')+'</td><td>'+esc(String(it.item_date||'').slice(0,10))+'</td><td>'+esc(it.description||'')+'</td><td style="text-align:right">'+(Number(it.amount)||0).toFixed(2)+'</td></tr>'; }).join(''):('<tr><td colspan="3">'+esc(c.description||'')+'</td><td style="text-align:right">'+(Number(c.amount)||0).toFixed(2)+'</td></tr>');
+  var html='<html><head><title>Voucher '+esc(c.claim_no||'')+'</title><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:32px;max-width:720px;margin:auto}h1{font-size:19px;margin:0 0 2px}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{border:1px solid #ccc;padding:7px 9px;font-size:12.5px;text-align:left}th{background:#f3f4f6}.tot td{font-weight:bold}.muted{color:#666;font-size:12px}.sig{margin-top:54px;display:flex;justify-content:space-between}.sig div{width:30%;border-top:1px solid #333;padding-top:6px;font-size:11.5px;text-align:center}</style></head><body>'+
+    '<h1>Reimbursement Payment Voucher</h1><div class="muted">'+esc(tname)+'</div>'+
+    '<table><tr><td>Voucher No</td><td><b>'+esc(c.claim_no||'')+'</b></td><td>Date</td><td>'+esc(c.claim_date||'')+'</td></tr>'+
+    '<tr><td>Employee</td><td>'+esc(emp.name||'')+' ('+esc(emp.emp_no||'')+')</td><td>Department</td><td>'+esc(emp.dept||'')+'</td></tr>'+
+    '<tr><td>Status</td><td>'+esc(c.status||'')+'</td><td>Bank</td><td>'+esc(emp.bank_name||'')+' '+esc(emp.bank_account||'')+'</td></tr></table>'+
+    '<table><thead><tr><th>Type</th><th>Date</th><th>Description</th><th style="text-align:right">Amount (RM)</th></tr></thead><tbody>'+rows+'<tr class="tot"><td colspan="3" style="text-align:right">TOTAL</td><td style="text-align:right">'+(Number(c.amount)||0).toFixed(2)+'</td></tr></tbody></table>'+
+    (pay&&pay.paid_date?('<div class="muted">Paid on '+esc(pay.paid_date)+' · '+esc(pay.payment_method||'')+(pay.payment_reference?(' · ref '+esc(pay.payment_reference)):'')+'</div>'):'')+
+    (c.xero_bill_id?('<div class="muted">Posted to Xero · ref '+esc(c.xero_reference||c.claim_no||'')+'</div>'):'')+
+    '<div class="sig"><div>Prepared by</div><div>Approved by</div><div>Received by</div></div>'+
+    '</body></html>';
+  var w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print the voucher',true); return; } w.document.write(html); w.document.close(); w.focus(); setTimeout(function(){ try{w.print();}catch(_e){} },350);
 }
 var RC_TD='padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
 function hrRCDefRate(){ var r=(RC.cfg&&RC.cfg.mileage_rates||[]).find(function(x){return x.is_default;}); return r?r.rate:''; }
@@ -1325,7 +1367,8 @@ function hrRCForm(){
   return '<div class="panel" style="max-width:900px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Department',inp('dept','',f.department))+g('Project',inp('project','',f.project))+'</div>'+
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
-    '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 6px"><div style="font-weight:700;font-size:13px">Expense lines</div><div><input type="file" id="rc_scan" accept="image/*,.pdf" capture="environment" style="display:none" onchange="hrRCScanFile(this.files&&this.files[0])"><button class="btn sm" onclick="document.getElementById(\'rc_scan\').click()">📷 Scan receipt → auto-fill</button></div></div>'+
+    '<div class="muted" style="font-size:11px;margin:-2px 0 6px">Snap or upload a receipt — it reads the amount, date & merchant and picks the category. Always double-check the amount.</div>'+
     '<div>'+rows+'</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
@@ -1359,11 +1402,28 @@ async function hrRCSave(submit){
   var cid=r.id; RC.form.id=cid;
   var fi=document.getElementById('rc_file');
   if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, fi.files[i]); } }
+  if(RC.form._scanFiles&&RC.form._scanFiles.length){ for(var sj=0;sj<RC.form._scanFiles.length;sj++){ await hrRCUpload(cid, RC.form._scanFiles[sj]); } RC.form._scanFiles=[]; }
   if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
   else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
   hrRender();
 }
 function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:file.name,file_type:file.type,file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
+function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
+async function hrRCScanFile(file){
+  if(!file)return; hrRCSyncItems();
+  toast('📷 Reading receipt…'); var b64=await hrRCFileB64(file); if(!b64){ toast('Could not read the file',true); return; }
+  var r=await call({api:'hr_rc_ocr',file_b64:b64,file_type:file.type});
+  if(!r||!r.ok){ toast((r&&r.error)||'Could not read receipt',true); return; }
+  var ex=r.extracted||{};
+  if(!Array.isArray(RC.form.items))RC.form.items=[];
+  var row={ claim_type_id:r.claim_type_id||'', item_date:(ex.date||RC.form.claim_date||new Date().toISOString().slice(0,10)), description:(ex.description||ex.vendor||''), amount:((Number(ex.total)||0)>0?Number(ex.total):''), total_km:'', mileage_rate:hrRCDefRate() };
+  var items=RC.form.items, first=items[0];
+  if(items.length===1 && first && !first.claim_type_id && !first.amount && !first.total_km && !first.description){ items[0]=row; }
+  else items.push(row);
+  if(!RC.form._scanFiles)RC.form._scanFiles=[]; RC.form._scanFiles.push(file);
+  toast('Receipt read ✓ — '+((ex.vendor||'').slice(0,24)||'expense')+(ex.confidence?(' · '+ex.confidence+' confidence, check the amount'):''));
+  hrRender();
+}
 async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender(); var r=await call({api:'hr_rc_get',id:id}); RC.loading=false; if(r&&r.ok){ RC.detail=r; RC.page='detail'; } else toast((r&&r.error)||'Load failed',true); hrRender(); }
 function hrRCDetail(){
   var d=RC.detail; if(!d||!d.claim) return '<div class="muted" style="padding:16px">Not found</div>';
@@ -1391,7 +1451,7 @@ function hrRCDetail(){
   var xeroBlock='';
   if(c.xero_bill_id){ xeroBlock='<div class="panel"><div style="font-size:13px;color:var(--green-soft);font-weight:650">✓ Posted to Xero</div><div class="muted" style="font-size:11.5px;margin-top:3px">ACCPAY bill · SUBMITTED (awaiting your payment approval in Xero) · ref '+esc(c.xero_reference||c.claim_no||'')+(c.xero_posted_at?(' · '+esc(String(c.xero_posted_at).slice(0,16).replace('T',' '))):'')+'</div>'+(d.can_post?'<button class="btn xs" style="margin-top:8px" onclick="hrRCPostXero()">Re-sync reference</button>':'')+'</div>'; }
   else if(d.can_post){ xeroBlock='<div class="panel"><div class="panel-hd"><h3>📤 Post to Xero</h3></div><div class="muted" style="font-size:12px;margin-bottom:8px">Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.</div><button class="btn p sm" onclick="hrRCPostXero()">Post to Xero →</button></div>'; }
-  var editRow='';
+  var editRow='<button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
   if(['Draft','Need More Info'].indexOf(c.status)>=0) editRow+='<button class="btn sm" onclick="hrRCEdit()">Edit</button> <button class="btn p sm" onclick="hrRCResubmit()">'+(c.status==='Need More Info'?'Resubmit →':'Submit →')+'</button> ';
   if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
   return head+warns+mile+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
