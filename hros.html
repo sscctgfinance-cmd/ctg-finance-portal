@@ -1030,7 +1030,24 @@ function logout(){storageRemove('ctg_portal_token');location.reload();}
 function enterApp(){
   var l=document.getElementById('login'); if(l) l.classList.add('hide');
   var a=document.getElementById('app'); if(a) a.classList.remove('hide');
+  if(ME && ME.role && ME.role!=='admin'){ hrEmpBoot(); return; }   // employee / approver self-service mode
   hrBootCompanies();
+}
+var HR_EMP_MODE=false;
+// Employee / approver mode: no hr_bootstrap (admin-only) — identity + config come from hr_rc_config; only the Reimbursement module is shown.
+async function hrEmpBoot(){
+  HR_EMP_MODE=true;
+  var sel=document.getElementById('hr_company'); if(sel) sel.style.display='none';
+  var el=document.getElementById('hr'); if(el) el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading…</div></div>';
+  var r=await call({api:'hr_rc_config'});
+  if(!r||!r.ok||!r.me||!r.me.employee){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">🔒</div><div>'+esc((r&&r.error)||'Your login isn’t linked to an employee profile yet — ask HR to enable your access.')+'</div></div></div>'; return; }
+  RC.cfg=r; RC.me=r.me; RC.tenant=r.me.employee.tenant_id; RC.loading=false;
+  HR.tenant=r.me.employee.tenant_id; HR.data={};
+  HR.companies=[{tenant_id:HR.tenant, tenant_name:(r.tenant_name||'My company')}];
+  HR.view='expenses';
+  RC.scope=(r.me.is_manager || (r.me.roles&&r.me.roles.length)) ? 'pending' : 'all';
+  var l2=await call({api:'hr_rc_list',scope:RC.scope}); if(l2&&l2.ok) RC.list=l2.claims;
+  hrRender();
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
 var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
@@ -1138,7 +1155,7 @@ var HR_NAV=[
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  HR_NAV.forEach(function(t){
+  (HR_EMP_MODE ? HR_NAV.filter(function(t){return t[0]==='expenses';}) : HR_NAV).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')"><span class="ic">'+t[1]+'</span>'+t[2]+'</button>';
@@ -1147,6 +1164,7 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
+  if(HR_EMP_MODE) HR.view='expenses';
   hrSidebar();
   var cur=(HR_NAV.find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
@@ -1275,7 +1293,8 @@ function rcStatusPill(s){ var m={'Draft':['#95a3ba','rgba(107,122,147,.18)'],'Su
 var RC_SEL='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
 function hrRC(){
   if((!RC.cfg || RC.tenant!==HR.tenant) && !RC.loading){ RC.tenant=HR.tenant; RC.loading=true; setTimeout(hrRCBoot,0); }
-  var sub=[['list','📋 Claims'],['form','➕ Submit'],['dashboard','📊 Dashboard'],['settings','⚙ Settings']];
+  var isEmpMode=RC.me && RC.me.isAdmin===false;
+  var sub=isEmpMode ? [['list','📋 Claims'],['form','➕ Submit']] : [['list','📋 Claims'],['form','➕ Submit'],['dashboard','📊 Dashboard'],['settings','⚙ Settings']];
   var tabs='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">'+sub.map(function(s){var on=RC.page===s[0]||(s[0]==='list'&&RC.page==='detail');return '<button class="btn '+(on?'p ':'')+'sm" onclick="hrRCNav(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div>';
   var body;
   if(RC.loading && !RC.cfg) body='<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
@@ -1291,8 +1310,10 @@ function hrRCNav(p){ if(p==='form'){ RC.form={}; } RC.page=p; if(p==='list') hrR
 function hrRCScope(s){ RC.scope=s; RC.sel={}; hrRCLoadList(); }
 async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(r&&r.ok){ RC.list=r.claims; if(HR.view==='expenses') hrRender(); } }
 function hrRCList(){
-  var scopes=[['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
   var me=RC.me||{}; var list=RC.list||[]; RC.sel=RC.sel||{};
+  var scopes=(me.isAdmin===false)
+    ? [['all','My claims'],['pending','🔔 Approvals'],['approved','Approved'],['paid','Paid']]
+    : [['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
   var canApprove=!!(me.isAdmin || me.is_manager || (me.roles&&me.roles.length));
   var canFinance=!!(me.isAdmin || (me.roles&&me.roles.indexOf('finance')>=0));
   var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance);

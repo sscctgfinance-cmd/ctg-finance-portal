@@ -223,18 +223,64 @@ async function rcSendEmail(toEmail:string, subject:string, body:string){
 async function rcEmpEmail(empId:any){ if(!empId) return null; const { data } = await sb.from("hr_employees").select("email,name").eq("id",empId).maybeSingle(); return data; }
 function rcMoney(n:any){ return "RM "+(Number(n)||0).toFixed(2); }
 async function rcNotifyEmployee(claim:any, subject:string, body:string){ try{ const e=await rcEmpEmail(claim && claim.employee_id); if(e&&e.email) await rcSendEmail(e.email, subject, body); }catch(_e){} }
+function rcFnBase(){ return (Deno.env.get("SUPABASE_URL")||"https://cmostxcjtbuhbzfojuid.supabase.co")+"/functions/v1/portal"; }
 async function rcNotifyStepApprover(claimId:any){ try{
   const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",claimId).maybeSingle(); if(!inst) return;
   const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle(); if(!step) return;
   const { data: claim } = await sb.from("hr_claim_requests").select("claim_no,amount, hr_employees(name)").eq("id",claimId).maybeSingle();
-  const emails:string[]=[];
-  if(step.approver_employee_id){ const e=await rcEmpEmail(step.approver_employee_id); if(e&&e.email) emails.push(e.email); }
-  else if(step.approver_role){ const { data: ras } = await sb.from("hr_claim_role_approvers").select("employee_id").eq("role",step.approver_role); for(const ra of (ras||[])){ const e=await rcEmpEmail(ra.employee_id); if(e&&e.email) emails.push(e.email); } }
+  const recips:any[]=[];
+  if(step.approver_employee_id){ const e=await rcEmpEmail(step.approver_employee_id); if(e&&e.email) recips.push({ empId:step.approver_employee_id, email:e.email }); }
+  else if(step.approver_role){ const { data: ras } = await sb.from("hr_claim_role_approvers").select("employee_id").eq("role",step.approver_role); for(const ra of (ras||[])){ const e=await rcEmpEmail(ra.employee_id); if(e&&e.email) recips.push({ empId:ra.employee_id, email:e.email }); } }
   const nm=(claim&&claim.hr_employees&&claim.hr_employees.name)||"an employee";
   const subj="[HR OS] Reimbursement "+((claim&&claim.claim_no)||"")+" needs your approval";
-  const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\nLog in to HR OS → Reimbursement → My Approvals to review it.\n\n— CTG HR OS (automated)";
-  for(const em of Array.from(new Set(emails))) await rcSendEmail(em, subj, body);
+  const seen:any={};
+  for(const r of recips){
+    if(seen[r.email]) continue; seen[r.email]=1;
+    // Per-recipient one-time action token → approve/reject from the email without logging in.
+    let link="";
+    try {
+      const tok=crypto.randomUUID().replace(/-/g,"")+crypto.randomUUID().replace(/-/g,"");
+      const ins=await sb.from("hr_claim_email_actions").insert({ token:tok, claim_id:claimId, step_order:inst.current_step, approver_employee_id:r.empId, approver_email:r.email, expires_at:new Date(Date.now()+14*86400000).toISOString() });
+      if(!ins.error) link=rcFnBase()+"?rc="+tok;
+    } catch(_e){}
+    const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\n"+(link?("Review & approve here (no login needed, link valid 14 days):\n  "+link+"\n\n"):"")+"Or log in to HR OS → Reimbursement → Pending:\n  https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html\n\n— CTG HR OS (automated)";
+    await rcSendEmail(r.email, subj, body);
+  }
 }catch(_e){} }
+// Resolve an employee id into the {isAdmin:false, employee, roles} shape rcDecideOne/rcCanActStep expect (email-approval identity).
+async function rcWhoForEmp(empId:any){
+  const { data: employee } = await sb.from("hr_employees").select("*").eq("id",empId).maybeSingle();
+  if(!employee) return null;
+  const { data: ra } = await sb.from("hr_claim_role_approvers").select("role").eq("employee_id",empId);
+  const set=new Set<string>(); (ra||[]).forEach((x:any)=>set.add(x.role)); if(employee.claim_role) set.add(employee.claim_role);
+  return { isAdmin:false, employee, roles:Array.from(set), is_manager:false };
+}
+// GET ?rc=<token> → self-contained approval page (view is idempotent; the decision is a JS POST so mail scanners can't trigger it).
+async function rcEmailActionPage(token:string){
+  const eh=(s:any)=>String(s==null?"":s).replace(/[&<>"']/g,(c:string)=>(({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"} as any)[c]));
+  const page=(title:string,inner:string)=>new Response("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>"+eh(title)+"</title><style>body{font-family:Segoe UI,system-ui,Arial,sans-serif;background:#0d1420;color:#e8edf5;margin:0;padding:24px;display:flex;justify-content:center}main{max-width:560px;width:100%}.card{background:#141d2e;border:1px solid #24304a;border-radius:12px;padding:20px 22px;margin-bottom:14px}h1{font-size:17px;margin:0 0 4px}.muted{color:#94a3bc;font-size:12.5px}table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}td,th{padding:6px 8px;border-bottom:1px solid #24304a;text-align:left}th{color:#94a3bc;font-weight:600;font-size:11px;text-transform:uppercase}.amt{text-align:right}.tot{font-weight:700;color:#4ade9b}.btn{border:0;border-radius:8px;padding:10px 18px;font-size:13.5px;font-weight:700;cursor:pointer}.ap{background:#16b97a;color:#04140c}.rj{background:#33202a;color:#ff8f7a;border:1px solid #5a2e33}textarea{width:100%;box-sizing:border-box;background:#0d1420;border:1px solid #24304a;border-radius:8px;color:#e8edf5;padding:8px 10px;font-size:13px;min-height:56px;margin-top:8px}.warn{color:#f5b04b;font-size:12px}.ok{color:#4ade9b}.err{color:#ff8f7a}</style></head><body><main>"+inner+"</main></body></html>",{status:200,headers:{"Content-Type":"text/html; charset=utf-8"}});
+  const { data: row } = await sb.from("hr_claim_email_actions").select("*").eq("token",String(token||"")).maybeSingle();
+  if(!row) return page("Invalid link","<div class='card'><h1>Link not valid</h1><div class='muted'>This approval link doesn’t exist. It may have been revoked.</div></div>");
+  if(row.used_at) return page("Already used","<div class='card'><h1>Already actioned ✓</h1><div class='muted'>You already responded to this claim from this link.</div></div>");
+  if(new Date(row.expires_at).getTime()<Date.now()) return page("Expired","<div class='card'><h1>Link expired</h1><div class='muted'>This link was valid for 14 days. Please act on the claim in HR OS instead.</div></div>");
+  const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept), hr_claim_types(name)").eq("id",row.claim_id).maybeSingle();
+  if(!c) return page("Not found","<div class='card'><h1>Claim not found</h1></div>");
+  const PENDING=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"];
+  if(PENDING.indexOf(c.status)<0 || Number(c.current_step)!==Number(row.step_order))
+    return page("Already handled","<div class='card'><h1>Already handled</h1><div class='muted'>This claim has moved on — current status: <b>"+eh(c.status)+"</b>. Nothing left for you to do here.</div></div>");
+  const { data: items } = await sb.from("hr_claim_items").select("*, hr_claim_types(name,is_mileage)").eq("claim_id",row.claim_id).order("item_date");
+  const rowsHtml=(items||[]).map((it:any)=>{ const t=it.hr_claim_types||{}; const km=t.is_mileage?(" · "+(it.total_km||0)+"km":""); return "<tr><td>"+eh(t.name||"—")+"</td><td class='muted'>"+eh(String(it.item_date||"").slice(0,10))+"</td><td>"+eh(it.description||"")+km+(it.vendor_name?("<div class='muted'>"+eh(it.vendor_name)+"</div>"):"")+"</td><td class='amt'>"+(Number(it.amount)||0).toFixed(2)+"</td></tr>"; }).join("");
+  const warns=Array.isArray(c.warnings)&&c.warnings.length?("<div class='card'><div class='warn'>⚠ "+c.warnings.map((w:string)=>eh(w)).join("<br>⚠ ")+"</div></div>"):"";
+  const emp=c.hr_employees||{};
+  const inner="<div class='card'><h1>Reimbursement approval — "+eh(c.claim_no)+"</h1><div class='muted'>"+eh(emp.name||"")+" ("+eh(emp.emp_no||"")+") · "+eh(emp.dept||c.department||"—")+" · "+eh(c.claim_date||"")+"</div><div class='muted' style='margin-top:2px'>"+eh(c.description||"")+"</div>"+
+    "<table><thead><tr><th>Type</th><th>Date</th><th>Description</th><th class='amt'>RM</th></tr></thead><tbody>"+rowsHtml+"<tr><td colspan='3' class='amt' style='font-weight:700'>Total</td><td class='amt tot'>"+(Number(c.amount)||0).toFixed(2)+"</td></tr></tbody></table></div>"+warns+
+    "<div class='card'><div class='muted' style='margin-bottom:8px'>Acting as <b>"+eh(row.approver_email||"approver")+"</b> · step "+eh(row.step_order)+" ("+eh(c.status)+")</div>"+
+    "<textarea id='cm' placeholder='Comment (optional for approve, REQUIRED for reject)'></textarea>"+
+    "<div style='display:flex;gap:10px;margin-top:12px'><button class='btn ap' onclick='act(\"approve\")'>✓ Approve</button><button class='btn rj' onclick='act(\"reject\")'>✕ Reject</button></div>"+
+    "<div id='out' style='margin-top:12px;font-size:13.5px'></div></div>"+
+    "<script>async function act(d){var cm=document.getElementById('cm').value||'';if(d==='reject'&&!cm.trim()){document.getElementById('out').innerHTML=\"<span class='err'>A reason is required to reject.</span>\";return;}var o=document.getElementById('out');o.textContent='Working…';try{var r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api:'hr_rc_email_action',rc_token:'"+eh(row.token)+"',do:d,comment:cm})});var x=await r.json();o.innerHTML=x.ok?(\"<span class='ok'>✓ Done — claim is now: <b>\"+(x.status||'')+\"</b>. You can close this page.</span>\"):(\"<span class='err'>\"+(x.error||'Failed')+\"</span>\");if(x.ok){document.querySelectorAll('.btn').forEach(function(b){b.disabled=true;b.style.opacity=.4;});}}catch(e){o.innerHTML=\"<span class='err'>Network error — try again.</span>\";}}</script>";
+  return page("Approve "+c.claim_no, inner);
+}
 // ── Factored single-claim decision (used by hr_rc_decide + hr_rc_decide_bulk). Returns {ok,status,error,claim,advanced,final}. ──
 async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:string, overrideAmount:any, overrideReason:string){
   const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
@@ -1809,6 +1855,7 @@ Deno.serve(async (req)=>{
     const u = new URL(req.url); const qp = u.searchParams;
     if (qp.get("code") && qp.get("state")) return await xeroOAuthCallback(qp);
     if (qp.get("xero_oauth") === "start") return await xeroOAuthStart(qp);
+    if (qp.get("rc")) return await rcEmailActionPage(qp.get("rc") as string);
     return new Response("portal up", { status: 200, headers: CORS });
   }
   if (req.method !== "POST") return j({ error: "POST only" }, 405);
@@ -3527,7 +3574,9 @@ Deno.serve(async (req)=>{
         return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], workflows:wfs.data||[], workflow_steps:steps.data||[], policy_rules:policy.data||[], role_approvers:roleApprovers.data||[], employees:emps.data||[], cost_centers:ccs.data||[] });
       }
       const [types, rates, ccs] = await Promise.all([ sb.from("hr_claim_types").select("*").eq("active",true).order("sort_order"), sb.from("hr_mileage_rates").select("*").eq("active",true).order("rate"), sb.from("hr_cost_centers").select("*").eq("active",true).order("sort_order") ]);
-      return j({ ok:true, me:meOut, claim_types:types.data||[], mileage_rates:rates.data||[], cost_centers:ccs.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
+      let tenantName:any=null;
+      if(who.employee){ try{ const { data:tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id",who.employee.tenant_id).maybeSingle(); tenantName=tn&&tn.tenant_name; }catch(_e){} }
+      return j({ ok:true, me:meOut, tenant_name:tenantName, claim_types:types.data||[], mileage_rates:rates.data||[], cost_centers:ccs.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
     }
     if (api === "hr_rc_enable_login") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3685,6 +3734,29 @@ Deno.serve(async (req)=>{
       await rcAuditLog(id,"submit",me,claim.status,st,{ workflow: wf?wf.name:"(fallback Finance)", warnings });
       try{ await rcNotifyStepApprover(id); }catch(_e){}
       return j({ ok:true, status:st, warnings, workflow: wf?wf.name:"Finance only" });
+    }
+    if (api === "hr_rc_email_action") {
+      // Tokenless portal-session-wise — gated ONLY by the one-time email action token.
+      const tok=String(b.rc_token||"").trim(); const decision=String(b.do||""); const comment=String(b.comment||"");
+      if(!tok || tok.length<40) return j({ ok:false, error:"invalid link" });
+      if(["approve","reject"].indexOf(decision)<0) return j({ ok:false, error:"invalid action" });
+      const { data: row } = await sb.from("hr_claim_email_actions").select("*").eq("token",tok).maybeSingle();
+      if(!row) return j({ ok:false, error:"This link is not valid." });
+      if(row.used_at) return j({ ok:false, error:"You already responded from this link." });
+      if(new Date(row.expires_at).getTime()<Date.now()) return j({ ok:false, error:"This link has expired — please act in HR OS." });
+      const { data: c } = await sb.from("hr_claim_requests").select("id,status,current_step,claim_no").eq("id",row.claim_id).maybeSingle();
+      if(!c) return j({ ok:false, error:"claim not found" });
+      const PENDING=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"];
+      if(PENDING.indexOf(c.status)<0 || Number(c.current_step)!==Number(row.step_order)) return j({ ok:false, error:"Already handled — claim is now "+c.status+"." });
+      const who = await rcWhoForEmp(row.approver_employee_id);
+      if(!who) return j({ ok:false, error:"approver profile not found" });
+      const meE = { user: { id: (who.employee&&who.employee.user_id)||null, email: String(row.approver_email||who.employee.email||"approver")+" (via email)" } };
+      const res = await rcDecideOne(who, meE, row.claim_id, decision, comment, null, "");
+      if(!res.ok) return j({ ok:false, error:res.error });
+      await sb.from("hr_claim_email_actions").update({ used_at:new Date().toISOString() }).eq("id",row.id);
+      await rcAuditLog(row.claim_id,"email_action",meE,null,res.status,{ decision, via:"email", approver: row.approver_email });
+      try{ await rcNotifyDecision(res); }catch(_e){}
+      return j({ ok:true, status:res.status });
     }
     if (api === "hr_rc_decide") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -4096,6 +4168,6 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v91 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+voucher-csv+pro-form(item-accounting-fields/cost-centers/declarations/blocking-validation/gl-change-audited/accounting-export)/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v92 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
