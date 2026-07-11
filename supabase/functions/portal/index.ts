@@ -3469,9 +3469,12 @@ Deno.serve(async (req)=>{
       const row = b.row||{};
       const code = String(row.code||"").trim().toUpperCase().replace(/[^A-Z0-9_]/g,"_");
       const name = String(row.name||"").trim();
-      if (!code || !name) return j({ ok:false, error:"code and name are required" });
+      if (!code) return j({ ok:false, error:"code is required" });
       if (row.delete){ await sb.from("hr_banks").update({ active:false, updated_at:new Date().toISOString() }).eq("code",code); }
-      else { await sb.from("hr_banks").upsert({ code, name, active: row.active!==false, updated_at:new Date().toISOString() }, { onConflict:"code" }); }
+      else {
+        if (!name) return j({ ok:false, error:"name is required" });
+        await sb.from("hr_banks").upsert({ code, name, active: row.active!==false, updated_at:new Date().toISOString() }, { onConflict:"code" });
+      }
       await logAudit(me, "hr_banks_save", code, { name, active: row.active!==false, deleted: !!row.delete });
       return j({ ok:true });
     }
@@ -4193,7 +4196,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v93 + bank-master-list(hr_banks, searchable, code-stored) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v94 + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
