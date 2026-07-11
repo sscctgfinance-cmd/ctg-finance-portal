@@ -3448,22 +3448,47 @@ Deno.serve(async (req)=>{
       if (!tenant) return j({ ok:true, employees:[], leaveTypes:[], leaves:[], claims:[], employer:null });
       const emp = await sb.from("hr_employees").select("*").eq("tenant_id",tenant).order("emp_no");
       const empIds = (emp.data||[]).map((e:any)=>e.id);
-      const [lt, lv, cl, ei, rt] = await Promise.all([
+      const [lt, lv, cl, ei, rt, bk] = await Promise.all([
         sb.from("hr_leave_types").select("*").eq("active",true).order("code"),
         empIds.length? sb.from("hr_leave_requests").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("date_from",{ascending:false}) : Promise.resolve({data:[]} as any),
         empIds.length? sb.from("hr_claims").select("*, employee:hr_employees(name,dept)").in("employee_id",empIds).order("claim_date",{ascending:false}) : Promise.resolve({data:[]} as any),
         sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle(),
         sb.from("hr_statutory_rates").select("rates").eq("id",1).single(),
+        sb.from("hr_banks").select("code,name,active").eq("active",true).order("name"),
       ]);
-      return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null, rates:(rt.data&&rt.data.rates)||null });
+      return j({ ok:true, employees:emp.data||[], leaveTypes:lt.data||[], leaves:lv.data||[], claims:cl.data||[], employer:ei.data||null, rates:(rt.data&&rt.data.rates)||null, banks:bk.data||[] });
+    }
+    if (api === "hr_banks_list") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("hr_banks").select("code,name,active").order("name");
+      return j({ ok:true, banks:data||[] });
+    }
+    if (api === "hr_banks_save") {
+      // Add / rename / (de)activate a bank — future additions are data-only, no code change (spec).
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const row = b.row||{};
+      const code = String(row.code||"").trim().toUpperCase().replace(/[^A-Z0-9_]/g,"_");
+      const name = String(row.name||"").trim();
+      if (!code || !name) return j({ ok:false, error:"code and name are required" });
+      if (row.delete){ await sb.from("hr_banks").update({ active:false, updated_at:new Date().toISOString() }).eq("code",code); }
+      else { await sb.from("hr_banks").upsert({ code, name, active: row.active!==false, updated_at:new Date().toISOString() }, { onConflict:"code" }); }
+      await logAudit(me, "hr_banks_save", code, { name, active: row.active!==false, deleted: !!row.delete });
+      return j({ ok:true });
     }
     if (api === "hr_emp_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const f = b.emp||{};
+      // Bank: store the master-list CODE as source of truth; resolve the canonical display name from it
+      // (keeps the payroll BIC file + vouchers working). Legacy records with no code keep their typed name.
+      let bankCode = String(f.bankCode||"").trim() || null;
+      let bankName = String(f.bankName||"").trim() || null;
+      if (bankCode){ const { data: bk } = await sb.from("hr_banks").select("name").eq("code",bankCode).maybeSingle(); if (bk) bankName = bk.name; else bankCode = null; }
+      const bankAccount = String(f.bankAccount||"").replace(/\D/g,"").slice(0,20) || null; // digits only, max 20, trimmed
+      const bankHolder = String(f.bankHolder||"").trim() || null;
       const patch: any = {
         name:f.name, ic_no:f.ic||null, email:f.email||null, dept:f.dept||null, position:f.position||null,
         basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
-        bank_name:f.bankName||null, bank_account:f.bankAccount||null,
+        bank_code:bankCode, bank_name:bankName, bank_account:bankAccount, bank_holder:bankHolder,
         epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
         phone:f.phone||null, address:f.address||null, resident:f.resident!==false,
         epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
@@ -4168,7 +4193,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v92 + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v93 + bank-master-list(hr_banks, searchable, code-stored) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

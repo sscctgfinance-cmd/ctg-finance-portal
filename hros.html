@@ -1138,7 +1138,7 @@ async function renderHR(){
   try{
     var r=await call({api:'hr_bootstrap',tenant:HR.tenant});
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc((r&&r.error)||'Failed to load HR')+'</div></div></div>'; return; }
-    HR.data=r; HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); hrRender();
+    HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
@@ -1656,7 +1656,7 @@ function hrEmpForm(){
       g('Name *',inp('name','Full name',x.name))+g('IC / Passport',inp('ic','',x.ic_no))+g('Email',inp('email','',x.email))+
       g('Department',inp('dept','',x.dept))+g('Position',inp('position','',x.position))+g('Phone',inp('phone','',x.phone))+
       g('Basic salary (RM) *',inp('basic','0',x.basic_salary,'type="number" step="0.01"'))+g('Fixed allowance (RM)',inp('allowance','0',x.fixed_allowance,'type="number" step="0.01"'))+g('Date of birth',inp('dob','',dob,'type="date"'))+
-      g('Bank name',sel('bankName',hrBankOpts(x.bank_name),x.bank_name))+g('Bank account',inp('bankAccount','',x.bank_account))+g('&nbsp;','<div></div>')+
+      g('Bank name *',hrBankPicker(x))+g('Bank account no. *',inp('bankAccount','digits only',x.bank_account,'inputmode="numeric" maxlength="20" oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,20)"'))+g('Account holder name *',inp('bankHolder','As per bank statement',(x.bank_holder!=null?x.bank_holder:(x.name||''))))+
       g('EPF no.',inp('epfNo','',x.epf_no))+g('SOCSO no.',inp('socsoNo','',x.socso_no))+g('Tax no. (TIN)',inp('taxNo','',x.tax_no))+
     '</div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Statutory &amp; tax</div>'+
@@ -1672,8 +1672,16 @@ async function hrSaveEmp(){
   var v=function(k){var e=document.getElementById('hr_'+k);return e?e.value:'';};
   var chk=function(k){var e=document.getElementById('hr_'+k);return e?e.checked:false;};
   var name=v('name').trim(); if(!name){ toast('Name is required',true); return; }
+  // Bank validation (required + numeric account + code from master list)
+  var bankCode=v('bankCode'); var bankName=v('bankName').trim(); var bankOrig=v('bankOrig');
+  if(!bankCode){
+    if(!bankName){ toast('Bank name is required — pick a bank from the list',true); return; }
+    if(bankName!==bankOrig){ toast('Please pick a bank from the dropdown list',true); return; }   // typed text that isn’t a real bank
+  }
+  var holder=v('bankHolder').trim(); if(!holder){ toast('Account holder name is required',true); return; }
+  var acct=String(v('bankAccount')||'').replace(/[^0-9]/g,'').slice(0,20); if(!acct){ toast('Bank account number is required (digits only)',true); return; }
   var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'),
-    basic:v('basic'), allowance:v('allowance'), bankName:v('bankName'), bankAccount:v('bankAccount'), epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
+    basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
   var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
@@ -1928,7 +1936,7 @@ function hrLoadJsPDF(cb){
   s.onerror=function(){ HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); };
   document.head.appendChild(s);
 }
-function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
+function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankCode:e.bank_code, bankHolder:e.bank_holder, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
 function hrCurRows(){ return (HR.pay._rows||[]).map(function(r){ return { e:hrEmpView(r.e), p:r.p, d:r.d }; }); }
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
 var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
@@ -2033,15 +2041,44 @@ function hrExpCp39(){
   hrDownload('LHDN_CP39_'+per.label.replace(' ','')+'.txt', lines.join('\r\n')+'\r\n','text/plain;charset=utf-8;');
   toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
-var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL'};
-// Canonical Malaysian bank names for the employee Bank-name dropdown (display text kept so hrBankCode() substring-matches the BIC map above).
-var HR_BANKS=['Maybank','CIMB Bank','Public Bank','RHB Bank','Hong Leong Bank','AmBank','UOB (United Overseas Bank)','OCBC Bank','HSBC Bank','Standard Chartered','Affin Bank','Alliance Bank','Bank Islam','Bank Rakyat','Bank Muamalat','Bank Simpanan Nasional (BSN)','MBSB Bank','Agrobank','Kuwait Finance House','Al Rajhi Bank','Bank of China (M)','Citibank'];
-function hrBankOpts(cur){ var list=HR_BANKS.slice(); if(cur && list.indexOf(cur)<0) list.push(cur); var o=[['','— Select bank —']]; for(var i=0;i<list.length;i++) o.push([list[i],list[i]]); return o; }
+var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
+// ── Employee bank picker: searchable dropdown backed by the hr_banks master list (HR.banks). Stores the bank CODE, shows the name. ──
+function hrBanksSorted(){ return (HR.banks||[]).filter(function(b){return b.active;}).slice().sort(function(a,b){return String(a.name).localeCompare(String(b.name));}); }
+function hrBankPicker(x){
+  var banks=hrBanksSorted();
+  var cur=x.bank_code?banks.find(function(b){return b.code===x.bank_code;}):null;
+  if(!cur && x.bank_name){ var nm=String(x.bank_name).toLowerCase(); cur=banks.find(function(b){return String(b.name).toLowerCase()===nm;}); }
+  var dispName=cur?cur.name:(x.bank_name||'');
+  var codeVal=cur?cur.code:'';
+  var st='width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
+  return '<div style="position:relative">'+
+    '<input id="hr_bankName" autocomplete="off" placeholder="Type to search bank…" value="'+esc(dispName)+'" oninput="hrBankFilter(this.value)" onfocus="hrBankFilter(this.value)" onblur="hrBankBlur()" style="'+st+'">'+
+    '<input type="hidden" id="hr_bankCode" value="'+esc(codeVal)+'">'+
+    '<input type="hidden" id="hr_bankOrig" value="'+esc(dispName)+'">'+
+    '<div id="hr_bankList" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;margin-top:2px;max-height:250px;overflow:auto;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45)"></div>'+
+  '</div>';
+}
+function hrBankFilter(q){
+  var box=document.getElementById('hr_bankList'); if(!box) return;
+  // typing a fresh query invalidates any previously-picked code (unless it exactly matches a bank name)
+  var ci=document.getElementById('hr_bankCode'); if(ci){ var exact=hrBanksSorted().find(function(b){return String(b.name).toLowerCase()===String(q||'').toLowerCase();}); ci.value=exact?exact.code:''; }
+  var s=String(q||'').toLowerCase().trim();
+  var list=hrBanksSorted().filter(function(b){ return !s || String(b.name).toLowerCase().indexOf(s)>=0 || String(b.code).toLowerCase().indexOf(s)>=0; });
+  if(!list.length){ box.innerHTML='<div style="padding:8px 10px;font-size:12px;color:var(--muted)">No matching bank</div>'; box.style.display='block'; return; }
+  box.innerHTML=list.slice(0,80).map(function(b){ return '<div onmousedown="hrBankPick(\''+esc(b.code)+'\')" onmouseover="this.style.background=\'rgba(255,255,255,.06)\'" onmouseout="this.style.background=\'\'" style="padding:7px 10px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--border)">'+esc(b.name)+'</div>'; }).join('');
+  box.style.display='block';
+}
+function hrBankPick(code){ var b=hrBanksSorted().find(function(x){return x.code===code;}); if(!b) return;
+  var ni=document.getElementById('hr_bankName'); if(ni) ni.value=b.name;
+  var ci=document.getElementById('hr_bankCode'); if(ci) ci.value=b.code;
+  var box=document.getElementById('hr_bankList'); if(box) box.style.display='none';
+}
+function hrBankBlur(){ setTimeout(function(){ var b=document.getElementById('hr_bankList'); if(b) b.style.display='none'; },160); }
 function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
 function hrExpGiro(){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
   var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
-  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.name,e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   var total=rows.reduce(function(s,x){return s+x.p.net;},0); body.push(['','','','','','TOTAL',f2(total),'','']);
   hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
 }
@@ -2058,12 +2095,12 @@ function hrExpBank(bank){
   if(bank==='maybank'){
     name='Maybank_M2E_Salary_'+tag+'.csv';
     head=['Payment Mode','Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Amount (RM)','Recipient Reference','Payment Description','Beneficiary ID (New IC)','Beneficiary Email'];
-    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',e.name,e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
+    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
     body.push(['','','','','TOTAL',f2(total),'','','','']);
   } else {
     name='UOB_BIBPlus_Salary_'+tag+'.csv';
     head=['Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Payment Type','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Beneficiary Email'];
-    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [e.name,e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),own?'Internal':'IBG',f2(x.p.net),'Salary '+per.label+' '+(e.empNo||''),e.ic||'',e.email||'']; });
+    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),own?'Internal':'IBG',f2(x.p.net),'Salary '+per.label+' '+(e.empNo||''),e.ic||'',e.email||'']; });
     body.push(['','','','','TOTAL',f2(total),'','','']);
   }
   hrDownload(name,hrCsv([head].concat(body)));
