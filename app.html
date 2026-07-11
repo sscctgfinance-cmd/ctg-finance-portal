@@ -2967,7 +2967,7 @@ function renderSalesRecon(){
         '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
       '</div>'+
       '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b>, Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date</b> · DueDate = InvoiceDate.</div></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date</b> · DueDate = InvoiceDate.</div></div>'+
     '<div class="panel hide" id="sr-result">'+
       '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
@@ -3003,7 +3003,8 @@ function srFiles(list){
     });
   });
 }
-function srBuild(){
+var SR_TENANT='99911869-9e91-4572-b7dc-4db51b45b6a9'; // I PROCARE — the company this import goes into; YRDZ numbering continues from what already exists in its Xero
+async function srBuild(){
   if(!SR.of||!SR.sf){ toast('Load both the Order Form and the Sales file.',true); return; }
   // Order Form lookup: SO -> {ch,pkg,odate}
   var ofWs=SR.of.wb.Sheets[SR.of.wb.SheetNames[0]];
@@ -3013,21 +3014,38 @@ function srBuild(){
   var LK={};
   for(var i=1;i<aoa.length;i++){ var r=aoa[i]; var so=r[iNo]; if(so===''||so==null)continue; so=String(so).trim();
     LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd])}; }
-  // Sales lines
-  var lines=[], seq={};
+  // Pass 1 — build lines; unmatched rows get their month period, numbering deferred to pass 2.
+  var lines=[];
   SR.sf.wb.SheetNames.forEach(function(sn){
     var cfg=SR_CFG[sn.toUpperCase().trim()]; if(!cfg)return;
     srSheetRows(SR.sf.wb.Sheets[sn]).forEach(function(o){
       var amt=srNum(o[cfg.amt]); if(!amt)return;
       var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
       var pdate=srFixDate(o[cfg.date], sn);
-      var inv,acc,pkg,ch,idate,matched;
+      var inv,acc,pkg,ch,idate,matched,per=null;
       if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=pdate||od.odate; matched=true; }
-      else { var per=srPer(pdate); seq[per]=(seq[per]||0)+1; inv='YRDZ_'+per+'_'+('000'+seq[per]).slice(-4); acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
+      else { per=srPer(pdate); inv=null; acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
       var ds=srDmy(idate);
-      lines.push({contact:'DATABEES',inv:inv,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
+      lines.push({contact:'DATABEES',inv:inv,per:per,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
     });
   });
+  // Pass 2 — continue YRDZ numbering from the highest number already in Xero for each month.
+  var pers=[]; lines.forEach(function(l){ if(!l.matched && l.per && pers.indexOf(l.per)<0) pers.push(l.per); });
+  var base={};
+  if(pers.length){
+    toast('Checking Xero for existing YRDZ numbering…');
+    var res=null;
+    try{ res=await call({api:'sr_yrdz_next', tenant:SR_TENANT, prefixes:pers.map(function(p){return 'YRDZ_'+p+'_';})}); }catch(_e){ res=null; }
+    if(res && res.ok){ base=res.max||{}; }
+    else {
+      if(!confirm('Could not check Xero for existing YRDZ numbers ('+((res&&res.error)||'network error')+').\n\nContinue starting from 0001 anyway?\n⚠ Risk: duplicate invoice numbers if this month was already imported into Xero.')) return;
+      base={};
+    }
+  }
+  var seq={};
+  lines.forEach(function(l){ if(!l.matched && l.per!=null){ var pfx='YRDZ_'+l.per+'_'; if(seq[l.per]==null) seq[l.per]=Number(base[pfx])||0; seq[l.per]++; l.inv=pfx+('000'+seq[l.per]).slice(-4); } });
+  var contDesc=pers.filter(function(p){return (Number(base['YRDZ_'+p+'_'])||0)>0;}).map(function(p){return p+' continues from '+('000'+(Number(base['YRDZ_'+p+'_'])+1)).slice(-4);});
+  if(contDesc.length) toast('YRDZ numbering: '+contDesc.join(' · '));
   SR.out=lines; srRenderResult();
 }
 function srRenderResult(){

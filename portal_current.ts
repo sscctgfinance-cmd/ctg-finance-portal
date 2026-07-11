@@ -2245,6 +2245,32 @@ Deno.serve(async (req)=>{
       const results = lines.map((l)=>{ const amt = Math.round(Math.abs(Number(l.amount)||0)*100)/100; let match = null; for (let i=0;i<docs.length;i++){ if(used[i]) continue; if(Math.abs(docs[i].amount-amt)<0.01){ match=docs[i]; used[i]=true; break; } } return { date:l.date, amount:l.amount, description:l.description, match }; });
       return j({ ok:true, total: results.length, matched: results.filter(r=>r.match).length, outstanding_docs: docs.length, results });
     }
+    if (api === "sr_yrdz_next") {
+      // Sales Recon: highest YRDZ_MM'YYYY_#### already used in Xero per month-prefix, so a new
+      // build continues the numbering instead of restarting at 0001 (duplicate import protection).
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      const prefixes: string[] = (Array.isArray(b.prefixes)? b.prefixes : []).slice(0,24).map((x:any)=>String(x||"")).filter((x:string)=>x.length>6 && x.length<40);
+      if (!prefixes.length) return j({ ok:false, error:"prefixes required" });
+      const maxOut:any = {}; const srcOut:any = {};
+      let access:any = null; try { access = await xeroAccessToken(); } catch(_e){ access = null; }
+      for (const p of prefixes){
+        let maxN = 0; let src = "cache";
+        const { data: rows } = await sb.from("xero_invoice_cache").select("invoice_number").eq("tenant_id",tenant).like("invoice_number", p+"%").limit(5000);
+        for (const r of (rows||[])){ const m = String(r.invoice_number||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } }
+        // Live check too — the 20-min cache can lag a CSV the operator imported minutes ago.
+        if (access){
+          try {
+            const where = encodeURIComponent('InvoiceNumber!=null&&InvoiceNumber.StartsWith("'+p.replace(/["\\]/g,"")+'")');
+            const r2 = await fetch("https://api.xero.com/api.xro/2.0/Invoices?where="+where+"&page=1&pageSize=1000", { headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id":tenant, "Accept":"application/json" } });
+            if (r2.ok){ const d = await r2.json(); for (const iv of (d.Invoices||[])){ const m = String(iv.InvoiceNumber||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } } src = "cache+live"; }
+          } catch(_e){}
+        }
+        maxOut[p] = maxN; srcOut[p] = src;
+      }
+      await logAudit(me, "sr_yrdz_next", tenant, { max: maxOut, source: srcOut });
+      return j({ ok:true, max: maxOut, source: srcOut });
+    }
     if (api === "companies_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
@@ -4220,7 +4246,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v95 + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v96 + sr-yrdz-continue-numbering(cache+live) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
