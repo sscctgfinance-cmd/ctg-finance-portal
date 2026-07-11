@@ -2271,6 +2271,49 @@ Deno.serve(async (req)=>{
       await logAudit(me, "sr_yrdz_next", tenant, { max: maxOut, source: srcOut });
       return j({ ok:true, max: maxOut, source: srcOut });
     }
+    if (api === "sr_so_suffix") {
+      // Sales Recon: which of these SO invoice numbers (and their _N suffixes) already exist in Xero?
+      // Lets the build suffix repeat payments as SO-XXXX_1, _2 … instead of colliding on import.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      const bases: string[] = (Array.isArray(b.bases)? b.bases : []).slice(0,2000).map((x:any)=>String(x||"").trim()).filter((x:string)=>x.length>2 && x.length<60);
+      if (!bases.length) return j({ ok:false, error:"bases required" });
+      const takenSet = new Set<string>();
+      // 1) cache: exact base hits (any format) + the whole SO- family for suffix scanning
+      const CHUNK = 400;
+      for (let i=0; i<bases.length; i+=CHUNK){
+        const { data: ex } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).in("number", bases.slice(i,i+CHUNK));
+        for (const r of (ex||[])) if (r.number) takenSet.add(String(r.number));
+      }
+      const { data: fam } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number","SO-%").limit(20000);
+      for (const r of (fam||[])) if (r.number) takenSet.add(String(r.number));
+      // 2) live: everything modified in the last 48h — catches an import done minutes ago that the 20-min cache hasn't seen
+      let liveOk = false;
+      try {
+        const access = await xeroAccessToken();
+        const sinceHeader = new Date(Date.now() - 48*3600*1000).toUTCString();
+        for (let page=1; page<=12; page++){
+          const d = await xeroGet(access, tenant, "Invoices?page="+page+"&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader });
+          if (d.__notModified) break;
+          const arr = d.Invoices || []; if (!arr.length) break;
+          for (const iv of arr) if (iv.InvoiceNumber) takenSet.add(String(iv.InvoiceNumber));
+          liveOk = true;
+          if (arr.length < 100) break;
+        }
+      } catch(_e){}
+      // per base: base taken? highest _N suffix already used?
+      const existing:any = {};
+      for (const base of bases) existing[base] = { taken: takenSet.has(base), max: 0 };
+      for (const num of takenSet){
+        const i = num.lastIndexOf("_");
+        if (i > 0){
+          const basePart = num.slice(0,i), sfx = num.slice(i+1);
+          if (existing[basePart] && /^\d{1,3}$/.test(sfx)){ const n = parseInt(sfx,10); if (n > existing[basePart].max) existing[basePart].max = n; }
+        }
+      }
+      await logAudit(me, "sr_so_suffix", tenant, { bases: bases.length, taken: bases.filter(bs=>existing[bs].taken).length, live: liveOk });
+      return j({ ok:true, existing, live: liveOk });
+    }
     if (api === "companies_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
@@ -4246,7 +4289,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v97 + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v98 + sr-so-suffix(dup SO → _1/_2, cache+live-48h) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

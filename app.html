@@ -2978,7 +2978,7 @@ function renderSalesRecon(){
         '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
       '</div>'+
       '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package — repeat payments on the same SO are suffixed <b>SO-XXXXX_1, _2 …</b> (checked against Xero so numbers never collide). Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div></div>'+
     '<div class="panel hide" id="sr-result">'+
       '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
@@ -3062,6 +3062,26 @@ async function srBuild(){
   var contDesc=pers.filter(function(p){return (Number(base['YRDZ_'+p+'_'])||0)>0;}).map(function(p){return p+' continues from '+('000'+(Number(base['YRDZ_'+p+'_'])+1)).slice(-4);});
   if(contDesc.length) toast('YRDZ numbering: '+contDesc.join(' · '));
   if(swapNote.length) toast('Date repair: Excel-swapped DD/MM detected + corrected on sheet(s): '+swapNote.join(', '));
+  // Pass 3 — repeat payments on the same SO become SO_1, SO_2 …, continuing past whatever already exists in Xero
+  // (e.g. deposit imported last month as SO-IP40466 → this month's balance payment becomes SO-IP40466_1).
+  var soList=[]; lines.forEach(function(l){ if(l.matched && soList.indexOf(l.inv)<0) soList.push(l.inv); });
+  var soInfo={};
+  if(soList.length){
+    var res2=null;
+    try{ res2=await call({api:'sr_so_suffix', tenant:SR_TENANT, bases:soList}); }catch(_e){ res2=null; }
+    if(res2 && res2.ok){ soInfo=res2.existing||{}; }
+    else toast('Could not check Xero for existing SO numbers ('+((res2&&res2.error)||'network')+') — duplicates de-duplicated within this file only.',true);
+  }
+  var soSeq={}, soDup=0;
+  lines.forEach(function(l){ if(!l.matched) return; var so=l.inv; var info=soInfo[so]||{taken:false,max:0}; var mx=Number(info.max)||0;
+    var k=(soSeq[so]==null)?0:(soSeq[so]+1); soSeq[so]=k;
+    var idx;
+    if(info.taken) idx=mx+1+k;                 // base already in Xero → every payment here gets the next suffix
+    else if(mx>0) idx=(k===0)?0:(mx+k);        // base free but _N exist → base first, then continue past _N
+    else idx=k;                                // fresh SO → base, then _1, _2 …
+    if(idx>0){ l.inv=so+'_'+idx; soDup++; }
+  });
+  if(soDup) toast(soDup+' repeat SO payment(s) suffixed _1, _2 … (unique in Xero)');
   SR.out=lines; srRenderResult();
 }
 function srRenderResult(){
