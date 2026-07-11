@@ -2937,14 +2937,25 @@ function srAnyDate(v){ // clean sources (ISO string or JS Date)
   var m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if(m)return new Date(+m[1],+m[2]-1,+m[3]);
   var p=s.split(/[\/.]/); if(p.length===3){ var a=+p[0],b=+p[1],c=+p[2]; if(a>12)return new Date(c,b-1,a); return new Date(c,b-1,a); } return null;
 }
-function srFixDate(v,sheet){ // gateway sheets: Excel swapped DD/MM->MM/DD (datetime day always =6), UOB=MM/DD text
-  if(v instanceof Date && !isNaN(v)){ var mo=v.getMonth()+1, dy=v.getDate(); if(dy<=12) return new Date(v.getFullYear(), dy-1, mo); return new Date(v.getFullYear(),v.getMonth(),v.getDate()); }
+// Detect per sheet whether Excel corrupted the date serials by swapping DD/MM -> MM/DD.
+// In a SWAPPED sheet the serial day-field is the true MONTH (near-constant, always <=12) while the
+// month-field varies (= true days 1-12; true days >12 stay as text). In a CORRECT sheet the month is
+// near-constant and days vary — and any serial with day>12 is impossible when swapped.
+function srDetectSwap(rows,col){
+  var ds={}, ms={}, gt12=0, n=0;
+  rows.forEach(function(o){ var v=o[col]; if(v instanceof Date && !isNaN(v)){ n++; var d=v.getDate(), m=v.getMonth()+1; if(d>12)gt12++; ds[d]=1; ms[m]=1; } });
+  if(!n) return false;
+  if(gt12>0) return false;                                        // a real day >12 exists → serials are already correct
+  return Object.keys(ms).length > Object.keys(ds).length;         // months vary more than days → sheet is swapped
+}
+function srFixDate(v,sheet,swap){ // UOB=MM/DD text; other gateways DD/MM text; serials de-swapped ONLY when srDetectSwap flagged the sheet
+  if(v instanceof Date && !isNaN(v)){ var mo=v.getMonth()+1, dy=v.getDate(); if(swap && dy<=12) return new Date(v.getFullYear(), dy-1, mo); return new Date(v.getFullYear(),v.getMonth(),v.getDate()); }
   var s=String(v==null?'':v).split(/[ T]/)[0].trim(); if(!s)return null;
   var iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if(iso)return new Date(+iso[1],+iso[2]-1,+iso[3]);
   var p=s.split(/[\/.\-]/); if(p.length!==3)return null; var a=+p[0],b=+p[1],c=+p[2];
   return (String(sheet).toUpperCase()==='UOB BANK') ? new Date(c,a-1,b) : new Date(c,b-1,a);
 }
-function srDmy(d){ if(!(d instanceof Date)||isNaN(d))return ''; return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
+function srDmy(d){ if(!(d instanceof Date)||isNaN(d))return ''; return ('0'+d.getDate()).slice(-2)+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+d.getFullYear(); }
 function srPer(d){ if(!(d instanceof Date)||isNaN(d))d=new Date(); return ('0'+(d.getMonth()+1)).slice(-2)+"'"+d.getFullYear(); }
 function srSheetRows(ws){
   var aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
@@ -2967,7 +2978,7 @@ function renderSalesRecon(){
         '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
       '</div>'+
       '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date</b> · DueDate = InvoiceDate.</div></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div></div>'+
     '<div class="panel hide" id="sr-result">'+
       '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
@@ -3016,12 +3027,16 @@ async function srBuild(){
     LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd])}; }
   // Pass 1 — build lines; unmatched rows get their month period, numbering deferred to pass 2.
   var lines=[];
+  var swapNote=[];
   SR.sf.wb.SheetNames.forEach(function(sn){
     var cfg=SR_CFG[sn.toUpperCase().trim()]; if(!cfg)return;
-    srSheetRows(SR.sf.wb.Sheets[sn]).forEach(function(o){
+    var rows=srSheetRows(SR.sf.wb.Sheets[sn]);
+    var swap=srDetectSwap(rows, cfg.date);
+    if(swap) swapNote.push(sn);
+    rows.forEach(function(o){
       var amt=srNum(o[cfg.amt]); if(!amt)return;
       var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
-      var pdate=srFixDate(o[cfg.date], sn);
+      var pdate=srFixDate(o[cfg.date], sn, swap);
       var inv,acc,pkg,ch,idate,matched,per=null;
       if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=pdate||od.odate; matched=true; }
       else { per=srPer(pdate); inv=null; acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
@@ -3046,6 +3061,7 @@ async function srBuild(){
   lines.forEach(function(l){ if(!l.matched && l.per!=null){ var pfx='YRDZ_'+l.per+'_'; if(seq[l.per]==null) seq[l.per]=Number(base[pfx])||0; seq[l.per]++; l.inv=pfx+('000'+seq[l.per]).slice(-4); } });
   var contDesc=pers.filter(function(p){return (Number(base['YRDZ_'+p+'_'])||0)>0;}).map(function(p){return p+' continues from '+('000'+(Number(base['YRDZ_'+p+'_'])+1)).slice(-4);});
   if(contDesc.length) toast('YRDZ numbering: '+contDesc.join(' · '));
+  if(swapNote.length) toast('Date repair: Excel-swapped DD/MM detected + corrected on sheet(s): '+swapNote.join(', '));
   SR.out=lines; srRenderResult();
 }
 function srRenderResult(){
