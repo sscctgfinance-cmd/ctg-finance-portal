@@ -2256,8 +2256,8 @@ Deno.serve(async (req)=>{
       let access:any = null; try { access = await xeroAccessToken(); } catch(_e){ access = null; }
       for (const p of prefixes){
         let maxN = 0; let src = "cache";
-        const { data: rows } = await sb.from("xero_invoice_cache").select("invoice_number").eq("tenant_id",tenant).like("invoice_number", p+"%").limit(5000);
-        for (const r of (rows||[])){ const m = String(r.invoice_number||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } }
+        const { data: rows } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number", p+"%").limit(5000);
+        for (const r of (rows||[])){ const m = String(r.number||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } }
         // Live check too — the 20-min cache can lag a CSV the operator imported minutes ago.
         if (access){
           try {
@@ -4246,7 +4246,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v96 + sr-yrdz-continue-numbering(cache+live) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v97 + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
