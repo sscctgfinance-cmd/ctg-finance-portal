@@ -1871,6 +1871,19 @@ Deno.serve(async (req)=>{
     b = { api: "ap_inbound", payload: b, secret: apInboundSecret };
   }
   const api = b.api;
+  // ── Central tenant-isolation guard (v95): ANY tenant-scoped call must target a company on the
+  // caller's allowed list. Admins with a partial company assignment are restricted to it (see
+  // portal_allowed_tenants). Invalid tokens yield an empty list here and fall through to each
+  // action's own auth (which 401s), so this never masks the real error.
+  if (typeof b.token === "string" && b.token && typeof b.tenant === "string" && b.tenant) {
+    try {
+      const _allowed = await allowedTenants(b.token);
+      if (Array.isArray(_allowed) && _allowed.length && _allowed.indexOf(b.tenant) < 0) {
+        const _me = await meFromToken(b.token);
+        return await denyTenant(_me, String(api || ""), b.tenant);
+      }
+    } catch (_e) {}
+  }
   try {
     if (api === "cron_sync") {
       const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
@@ -2451,6 +2464,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const inv = b.invoice || {};
       if (!inv.tenant_id) return j({ ok:false, error:"Paying company is required" });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(inv.tenant_id) < 0) return await denyTenant(me, "sbi_save", inv.tenant_id); }
       if (!inv.individual_id) return j({ ok:false, error:"Payee is required" });
       const { data: payee } = await sb.from("portal_individuals").select("*").eq("id", Number(inv.individual_id)).single();
       if (!payee) return j({ ok:false, error:"Payee not found" });
@@ -2525,6 +2539,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data: v } = await sb.from("portal_self_billed_invoices").select("*").eq("id", Number(b.id)).single();
       if (!v) return j({ ok:false, error:"not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(v.tenant_id) < 0) return await denyTenant(me, "sbi_post_xero", v.tenant_id); }
       if (v.status==="void") return j({ ok:false, error:"Invoice is void" });
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const reference = String(v.invoice_no || ("SB-"+v.id)).slice(0,255);
@@ -2652,7 +2667,7 @@ Deno.serve(async (req)=>{
     }
     /* ── AP Email Agent ── */
     if (api === "ap_settings_get") {
-      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
       const { data } = await sb.rpc("portal_ap_settings_get", { p_token: b.token||"" });
       return j(data || { ok:true, settings:[] });
     }
@@ -2664,12 +2679,18 @@ Deno.serve(async (req)=>{
       return j(data || { ok:true });
     }
     if (api === "ap_inbox_list") {
-      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
+      const alwAp = await allowedTenants(b.token);
+      if (!b.tenant && alwAp.length){ // no explicit tenant filter → still restrict a partially-assigned admin to their companies
+        const { data } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+        if (data && Array.isArray(data.items)) data.items = data.items.filter((it:any)=>!it.tenant_id || alwAp.indexOf(it.tenant_id)>=0);
+        return j(data || { ok:true, items:[] });
+      }
       const { data } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: b.tenant||null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
       return j(data || { ok:true, items:[] });
     }
     if (api === "ap_inbox_get") {
-      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
       const { data } = await sb.rpc("portal_ap_inbox_get", { p_token: b.token||"", p_id: Number(b.id) });
       // Generate signed download URLs for each attachment so the frontend can fetch them.
       if (data && data.ok && data.item && data.item.attachments) {
@@ -2933,7 +2954,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "ap_decision_log") {
       // Show what the rule engine decided about an inbox item (audit trail).
-      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
       if (!b.id) return j({ ok:false, error:"id required" });
       const { data } = await sb.from("portal_ap_decisions").select("*").eq("inbox_id", Number(b.id)).order("created_at", { ascending:false }).limit(20);
       return j({ ok:true, decisions: data || [] });
@@ -3439,8 +3460,9 @@ Deno.serve(async (req)=>{
     // ===== HR / Payroll (Wave 1: employees, leave, claims) — reads hr_* via service role, gated by portal admin =====
     if (api === "hr_companies") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const alw = await allowedTenants(b.token); // admins with a partial company assignment only see their companies
       const { data } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
-      return j({ ok:true, companies:(data||[]).map((c:any)=>({ tenant_id:c.tenant_id, tenant_name:String(c.tenant_name||"").replace(/[^\x20-\x7E]/g,"").trim() })) });
+      return j({ ok:true, companies:(data||[]).filter((c:any)=>!alw.length || alw.indexOf(c.tenant_id)>=0).map((c:any)=>({ tenant_id:c.tenant_id, tenant_name:String(c.tenant_name||"").replace(/[^\x20-\x7E]/g,"").trim() })) });
     }
     if (api === "hr_bootstrap") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3915,6 +3937,7 @@ Deno.serve(async (req)=>{
       const id=b.id;
       const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(name,emp_no)").eq("id",id).maybeSingle();
       if(!c) return j({ ok:false, error:"claim not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(["Approved","Paid"].indexOf(c.status)<0) return j({ ok:false, error:"Post to Xero only after the claim is fully Approved." });
       const tenant = c.tenant_id;
       const empName = (c.hr_employees&&c.hr_employees.name) || "Employee";
@@ -4012,6 +4035,7 @@ Deno.serve(async (req)=>{
         sb.from("hr_claim_declarations").select("*").eq("claim_id",id).order("declared_at",{ascending:false}).limit(1)
       ]);
       const cl:any=claimR.data; const allSteps:any[]=steps.data||[];
+      if(cl){ const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(cl.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
       if(!who.isAdmin){
         if(!who.employee) return j({ ok:false, error:"forbidden" }, 403);
         const isOwner = cl && cl.employee_id===who.employee.id;
@@ -4196,7 +4220,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v94 + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v95 + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
