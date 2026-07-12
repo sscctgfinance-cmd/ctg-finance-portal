@@ -2245,6 +2245,49 @@ Deno.serve(async (req)=>{
       const results = lines.map((l)=>{ const amt = Math.round(Math.abs(Number(l.amount)||0)*100)/100; let match = null; for (let i=0;i<docs.length;i++){ if(used[i]) continue; if(Math.abs(docs[i].amount-amt)<0.01){ match=docs[i]; used[i]=true; break; } } return { date:l.date, amount:l.amount, description:l.description, match }; });
       return j({ ok:true, total: results.length, matched: results.filter(r=>r.match).length, outstanding_docs: docs.length, results });
     }
+    if (api === "sr_post_invoices") {
+      // Sales Recon → create the Sales Invoices in Xero DIRECTLY (no CSV import step).
+      // Safety: Status=DRAFT (operator approves in Xero); ACCREC numbers are unique-enforced by Xero,
+      // so a re-post of the same batch reports per-invoice "already existed" instead of duplicating.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      const items:any[] = (Array.isArray(b.invoices)? b.invoices : []).slice(0,2000);
+      if (!items.length) return j({ ok:false, error:"no invoices" });
+      const dISO = (s:any)=>{ const m=String(s||"").match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? (m[3]+"-"+m[2]+"-"+m[1]) : String(s||""); };
+      if (b.dry_run){ return j({ ok:true, dry_run:true, count: items.length, sample: items.slice(0,3).map((it:any)=>({ number:it.number, date:dISO(it.date), amount:it.amount, account:it.account })) }); }
+      let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
+      // Tax: use the org's "exempt"-named rate when it exists (matches the CSV import's 'Tax Exempt'), else NONE.
+      let taxType = "NONE";
+      try { const tr = await xeroGet(access, tenant, "TaxRates"); const ex=(tr.TaxRates||[]).find((t:any)=>/exempt/i.test(String(t.Name||"")) && t.Status==="ACTIVE"); if (ex && ex.TaxType) taxType = ex.TaxType; } catch(_e){}
+      const results:any[]=[]; let posted=0, dup=0, fail=0;
+      for (let i=0; i<items.length; i+=50){
+        const chunk = items.slice(i, i+50);
+        const payload = { Invoices: chunk.map((it:any)=>({
+          Type:"ACCREC", Contact:{ Name:String(it.contact||"DATABEES").slice(0,500) },
+          InvoiceNumber:String(it.number||"").slice(0,255), Reference:String(it.number||"").slice(0,255),
+          Date:dISO(it.date), DueDate:dISO(it.due||it.date), Status:"DRAFT", LineAmountTypes:"Exclusive",
+          LineItems:[{ Description:String(it.desc||"Sales").slice(0,4000), Quantity:Number(it.qty)||1, UnitAmount:Number(it.amount)||0, AccountCode:String(it.account||"500-1000"), TaxType:taxType }]
+        })) };
+        let r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id":tenant, "Content-Type":"application/json", "Accept":"application/json" }, body: JSON.stringify(payload) });
+        if (r.status === 429){
+          const ra = Number(r.headers.get("Retry-After"))||60;
+          if (ra <= 90){ await new Promise(res=>setTimeout(res, ra*1000));
+            r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id":tenant, "Content-Type":"application/json", "Accept":"application/json" }, body: JSON.stringify(payload) });
+          } else return j({ ok:false, error:"Xero daily rate limit hit (retry in "+Math.ceil(ra/60)+" min)", posted, dup, fail, results: results.filter((x:any)=>!x.ok) });
+        }
+        const out = await r.json().catch(()=>({}));
+        const arr = out.Invoices || [];
+        if (!arr.length && !r.ok) return j({ ok:false, error:"Xero "+r.status+": "+JSON.stringify(out.Message||out).slice(0,300), posted, dup, fail, results: results.filter((x:any)=>!x.ok) });
+        arr.forEach((iv:any, k:number)=>{
+          const it = chunk[k]||{};
+          const errs = (iv.ValidationErrors||[]).map((e:any)=>e.Message).join("; ");
+          if (iv.InvoiceID && !errs){ posted++; results.push({ number:it.number, ok:true }); }
+          else { const isDup = /must be unique/i.test(errs); if (isDup) dup++; else fail++; results.push({ number:it.number, ok:false, dup:isDup, error:String(errs||"unknown").slice(0,140) }); }
+        });
+      }
+      await logAudit(me, "sr_post_invoices", tenant, { total: items.length, posted, dup, fail, tax_type: taxType });
+      return j({ ok:true, posted, dup, fail, tax_type: taxType, failures: results.filter((x:any)=>!x.ok && !x.dup).slice(0,50) });
+    }
     if (api === "sr_yrdz_next") {
       // Sales Recon: highest YRDZ_MM'YYYY_#### already used in Xero per month-prefix, so a new
       // build continues the numbering instead of restarting at 0001 (duplicate import protection).
@@ -4298,7 +4341,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v101 + sr-so-tally(prev_total per SO, paginated past the 1000-row select cap) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v102 + sr-post-invoices(direct ACCREC DRAFT creation, chunked, dup-safe) + sr-so-tally(prev_total per SO, paginated past the 1000-row select cap) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

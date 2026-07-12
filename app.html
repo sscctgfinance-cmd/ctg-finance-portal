@@ -2923,6 +2923,40 @@ var SR_CHAN2ACC={ 'WHATSAPP':'500-0600','FACEBOOK':'500-0600','INSTA':'500-0600'
 var SR_ACCNAME={ '500-0100':'Retail Sales (O2O)','500-0200':'WebStore Sales (Shopify)','500-0300':'COD','500-0400':'Shopee Sales','500-0500':'Lazada Sales','500-0600':'Meta Platform Sales (FB/IG/WhatsApp)','500-0700':'TikTok Sales','500-0800':'Live Streaming Sales','500-0900':'Exhibition Event','500-1000':'One-Day Shop Manager Event' };
 var SR_CFG={ 'ATOME':{id:'PIC Name',date:'Transaction Date',amt:'Transaction Amount'},'PAYEX':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'PINE LABS':{id:'PIC Name',date:'Date & Time',amt:'Amount'},'AHAPAY':{id:'PIC Name',date:'Transaction Date & Time',amt:'Transaction Amount'},'UOB BANK':{id:'Databees Order ID',date:'Date',amt:'Deposit'} };
 function srAcc(ch){ return SR_CHAN2ACC[String(ch||'').trim().toUpperCase()]||'500-1000'; }
+// ── Content-based recognition: the converter reads the DATA (keywords/shapes), never trusts fixed formats. ──
+// SO numbers are recognised by pattern anywhere in a cell (any casing/spacing), normalised to SO-IP#####.
+function srCanonSO(v){ var m=String(v==null?'':v).match(/SO[\s_-]*IP[\s_-]*(\d{3,})/i); return m?('SO-IP'+m[1]):null; }
+// Pick the id/date/amount columns of a sheet by scoring each column's VALUES; header words are only a tiebreaker.
+function srSmartCols(rows){
+  if(!rows||!rows.length) return null;
+  var keys=Object.keys(rows[0]||{}); var best={id:null,date:null,amt:null}, sc={id:0,date:0,amt:0};
+  var kw=function(h,words){ h=String(h).toLowerCase(); for(var i=0;i<words.length;i++){ if(h.indexOf(words[i])>=0) return 1; } return 0; };
+  keys.forEach(function(k){
+    var vals=[]; rows.forEach(function(o){ var v=o[k]; if(v!==''&&v!=null)vals.push(v); });
+    if(!vals.length) return; var n=vals.length;
+    var so=0,dt=0,num=0;
+    vals.forEach(function(v){
+      if(srCanonSO(v))so++;
+      if((v instanceof Date&&!isNaN(v)) || /^\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/.test(String(v).trim()))dt++;
+      if(!(v instanceof Date) && srNum(v)>0)num++;
+    });
+    so/=n; dt/=n; num/=n;
+    var soS=so+0.2*kw(k,['pic','order id','order no','so no','so number','reference']);
+    var dtS=dt+0.2*kw(k,['date','time']);
+    var amS=(dt>0.5?0:num)+0.25*kw(k,['amount','deposit','total','amt','paid','nett','net']);
+    if(so>0.02&&soS>sc.id){sc.id=soS;best.id=k;}
+    if(dt>0.5&&dtS>sc.date){sc.date=dtS;best.date=k;}
+    if(num>0.5&&amS>sc.amt){sc.amt=amS;best.amt=k;}
+  });
+  if(best.amt===best.date||best.amt===best.id) return null;   // ambiguous sheet — refuse rather than guess
+  return (best.date&&best.amt)?best:null;
+}
+// Text-date order per sheet from CONTENT: first part >12 ⇒ day-first (DD/MM), second part >12 ⇒ month-first (MM/DD).
+function srDetectTextOrder(rows,col){
+  var dmy=0,mdy=0;
+  rows.forEach(function(o){ var v=o[col]; if(v instanceof Date)return; var s=String(v==null?'':v).split(/[ T]/)[0].trim(); var p=s.split(/[\/.\-]/); if(p.length!==3)return; var a=+p[0],b=+p[1]; if(a>12&&b<=12)dmy++; else if(b>12&&a<=12)mdy++; });
+  if(mdy>dmy) return 'mdy'; if(dmy>0) return 'dmy'; return null;
+}
 // Xero can't import Chinese/emoji/weird symbols — translate known CN terms, strip everything non-ASCII.
 var SR_ZH=[['普通长期','Standard Long-term'],['回购配套','Repurchase Package'],['普通优惠','Standard Offer'],['线下专属','Offline Exclusive'],['新品','New Item'],['回购','Repurchase'],['优惠','Offer'],['配套','Package'],['12月','December'],['11月','November'],['10月','October'],['1月','January'],['2月','February'],['3月','March'],['4月','April'],['5月','May'],['6月','June'],['7月','July'],['8月','August'],['9月','September']];
 function srClean(s){
@@ -2950,12 +2984,13 @@ function srDetectSwap(rows,col){
   if(gt12>0) return false;                                        // a real day >12 exists → serials are already correct
   return Object.keys(ms).length > Object.keys(ds).length;         // months vary more than days → sheet is swapped
 }
-function srFixDate(v,sheet,swap){ // UOB=MM/DD text; other gateways DD/MM text; serials de-swapped ONLY when srDetectSwap flagged the sheet
+function srFixDate(v,sheet,swap,ord){ // serials de-swapped ONLY when srDetectSwap flagged the sheet; text order from srDetectTextOrder content evidence (UOB legacy = MM/DD fallback)
   if(v instanceof Date && !isNaN(v)){ var mo=v.getMonth()+1, dy=v.getDate(); if(swap && dy<=12) return new Date(v.getFullYear(), dy-1, mo); return new Date(v.getFullYear(),v.getMonth(),v.getDate()); }
   var s=String(v==null?'':v).split(/[ T]/)[0].trim(); if(!s)return null;
   var iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if(iso)return new Date(+iso[1],+iso[2]-1,+iso[3]);
   var p=s.split(/[\/.\-]/); if(p.length!==3)return null; var a=+p[0],b=+p[1],c=+p[2];
-  return (String(sheet).toUpperCase()==='UOB BANK') ? new Date(c,a-1,b) : new Date(c,b-1,a);
+  var mdy = (ord==='mdy') || (!ord && String(sheet).toUpperCase()==='UOB BANK');
+  return mdy ? new Date(c,a-1,b) : new Date(c,b-1,a);
 }
 function srDmy(d){ if(!(d instanceof Date)||isNaN(d))return ''; return ('0'+d.getDate()).slice(-2)+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+d.getFullYear(); }
 function srPer(d){ if(!(d instanceof Date)||isNaN(d))d=new Date(); return ('0'+(d.getMonth()+1)).slice(-2)+"'"+d.getFullYear(); }
@@ -2980,9 +3015,9 @@ function renderSalesRecon(){
         '<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px"><div style="font-size:16px">💰</div><div><div style="font-weight:600;font-size:13px">Sales (gateways)</div><div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div></div></div>'+
       '</div>'+
       '<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>'+
-      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Basis = actual cash received. Matched → real SO no. + Channel account + Package — repeat payments on the same SO are suffixed <b>SO-XXXXX_1, _2 …</b> (checked against Xero so numbers never collide). Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Recognition is <b>content-based</b>: SO numbers, date & amount columns are detected from the data itself (any sheet/column naming works; known layouts are just a fast path; unrecognisable sheets are reported, never silently skipped). Basis = actual cash received. Matched → real SO no. + Channel account + Package — repeat payments on the same SO are suffixed <b>SO-XXXXX_1, _2 …</b> (checked against Xero so numbers never collide). After building: <b>🚀 Create in Xero</b> makes the DRAFT Sales Invoices directly (no CSV import needed — you approve them in Xero), or download the CSV as before. Unmatched (no SO) → auto <b>YRDZ_MM\'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div></div>'+
     '<div class="panel hide" id="sr-result">'+
-      '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
+      '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn p sm" id="sr-post-btn" onclick="srPostXero()">🚀 Create in Xero (DRAFT)</button><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
       '<div style="font-size:12px;font-weight:600;margin:6px 0">Revenue by Account (Xero)</div><div class="tbl-wrap" style="margin-bottom:14px"><table class="bigtable"><thead><tr><th>Account</th><th>Name</th><th>Channels</th><th class="amt" style="text-align:right">Lines</th><th class="amt" style="text-align:right">Amount (MYR)</th></tr></thead><tbody id="sr-acctbody"></tbody></table></div>'+
       '<div id="sr-tally" style="margin-bottom:14px"></div>'+
@@ -3003,13 +3038,14 @@ function srFiles(list){
         try{
           var wb=XLSX.read(rd.result,{type:'array',cellDates:true});
           var names=wb.SheetNames.map(function(s){return s.toUpperCase().trim();});
-          var isSales=names.some(function(n){return SR_CFG[n];});
-          if(isSales){ SR.sf={name:file.name,wb:wb}; document.getElementById('sr-chip-sf-s').textContent=file.name+' · '+wb.SheetNames.length+' sheets'; document.getElementById('sr-chip-sf').style.borderColor='var(--green-soft)'; }
-          else {
-            var ws=wb.Sheets[wb.SheetNames[0]]; var H=(XLSX.utils.sheet_to_json(ws,{header:1,defval:''})[0]||[]).map(function(c){return String(c).trim();});
-            if(H.indexOf('Order No')>=0){ SR.of={name:file.name,wb:wb}; document.getElementById('sr-chip-of-s').textContent=file.name; document.getElementById('sr-chip-of').style.borderColor='var(--green-soft)'; }
-            else { toast(file.name+': unrecognised — not the Order Form nor the Sales file',true); }
-          }
+          // Content-first classification: an Order Form is recognised by its own headers,
+          // a Sales file by known gateway sheets OR by any sheet whose CONTENT yields date+amount columns.
+          var ws0=wb.Sheets[wb.SheetNames[0]]; var H=(XLSX.utils.sheet_to_json(ws0,{header:1,defval:''})[0]||[]).map(function(c){return String(c).trim();});
+          var isOF = H.indexOf('Order No')>=0 && (H.indexOf('Grand Total')>=0 || H.indexOf('Package')>=0 || H.indexOf('Channel')>=0);
+          var isSales = !isOF && (names.some(function(n){return SR_CFG[n];}) || wb.SheetNames.some(function(sn){ return !!srSmartCols(srSheetRows(wb.Sheets[sn])); }));
+          if(isOF){ SR.of={name:file.name,wb:wb}; document.getElementById('sr-chip-of-s').textContent=file.name; document.getElementById('sr-chip-of').style.borderColor='var(--green-soft)'; }
+          else if(isSales){ SR.sf={name:file.name,wb:wb}; document.getElementById('sr-chip-sf-s').textContent=file.name+' · '+wb.SheetNames.length+' sheets'; document.getElementById('sr-chip-sf').style.borderColor='var(--green-soft)'; }
+          else { toast(file.name+': unrecognised — no Order Form headers and no sheet with recognisable date + amount content',true); }
           document.getElementById('sr-build').disabled=!(SR.of&&SR.sf);
         }catch(e){ toast(file.name+': read failed — '+(e.message||e),true); }
       };
@@ -3027,19 +3063,28 @@ async function srBuild(){
   var iNo=H.indexOf('Order No'), iCh=H.indexOf('Channel'), iPkg=H.indexOf('Package'), iOd=H.indexOf('Order Date'), iGt=H.indexOf('Grand Total');
   var LK={};
   for(var i=1;i<aoa.length;i++){ var r=aoa[i]; var so=r[iNo]; if(so===''||so==null)continue; so=String(so).trim();
-    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd]), gt:(iGt>=0?srNum(r[iGt]):0)}; }
+    var cso=srCanonSO(so)||so; // keyword-normalised key (case/spacing tolerant)
+    LK[cso]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd]), gt:(iGt>=0?srNum(r[iGt]):0)}; }
   // Pass 1 — build lines; unmatched rows get their month period, numbering deferred to pass 2.
   var lines=[];
-  var swapNote=[];
+  var swapNote=[], skipped=[], smartNote=[];
   SR.sf.wb.SheetNames.forEach(function(sn){
-    var cfg=SR_CFG[sn.toUpperCase().trim()]; if(!cfg)return;
     var rows=srSheetRows(SR.sf.wb.Sheets[sn]);
-    var swap=srDetectSwap(rows, cfg.date);
+    if(!rows.length){ skipped.push(sn+' (empty)'); return; }
+    // known layout is only a FAST PATH — and only when its columns actually exist; otherwise recognise by content.
+    var cfg=SR_CFG[sn.toUpperCase().trim()], cols=null;
+    if(cfg && rows[0] && (cfg.date in rows[0]) && (cfg.amt in rows[0])) cols={id:cfg.id,date:cfg.date,amt:cfg.amt};
+    else { cols=srSmartCols(rows); if(cols) smartNote.push(sn+' → id:'+(cols.id||'(scan rows)')+' · date:'+cols.date+' · amt:'+cols.amt); }
+    if(!cols){ skipped.push(sn+' (no date/amount columns recognised)'); return; }
+    var swap=srDetectSwap(rows, cols.date);
     if(swap) swapNote.push(sn);
+    var ord=srDetectTextOrder(rows, cols.date);
     rows.forEach(function(o){
-      var amt=srNum(o[cfg.amt]); if(!amt)return;
-      var so=o[cfg.id]; so=(so===''||so==null)?null:String(so).trim();
-      var pdate=srFixDate(o[cfg.date], sn, swap);
+      var amt=srNum(o[cols.amt]); if(!amt)return;
+      // SO = keyword pattern, from the id column first, else scanned across the whole row
+      var so=cols.id?srCanonSO(o[cols.id]):null;
+      if(!so){ for(var kk in o){ if(kk===cols.amt||kk===cols.date)continue; so=srCanonSO(o[kk]); if(so)break; } }
+      var pdate=srFixDate(o[cols.date], sn, swap, ord);
       var inv,acc,pkg,ch,idate,matched,per=null;
       if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=pdate||od.odate; matched=true; }
       else { per=srPer(pdate); inv=null; acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
@@ -3047,6 +3092,9 @@ async function srBuild(){
       lines.push({contact:'DATABEES',inv:inv,so:(matched?so:null),per:per,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
     });
   });
+  if(skipped.length) toast('⚠ Skipped sheet(s): '+skipped.join(' · '),true);
+  if(smartNote.length) toast('Content-recognised columns — '+smartNote.join(' | '));
+  if(!lines.length){ toast('No payment rows recognised in the Sales file.',true); return; }
   // Pass 2 — continue YRDZ numbering from the highest number already in Xero for each month.
   var pers=[]; lines.forEach(function(l){ if(!l.matched && l.per && pers.indexOf(l.per)<0) pers.push(l.per); });
   var base={};
@@ -3157,6 +3205,25 @@ function srDownloadCSV(){
   SR.out.forEach(function(l){ out.push(srXeroRow(l).map(q).join(',')); });
   var blob=new Blob(['﻿'+out.join('\r\n')],{type:'text/csv;charset=utf-8'});
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='IPROCARE_Xero_SalesInvoice_'+srTag()+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+async function srPostXero(){
+  if(!SR.out.length){ toast('Nothing to post.',true); return; }
+  if(SR._posting){ toast('Already posting…',true); return; }
+  var lines=SR.out, total=lines.reduce(function(s,l){return s+l.amt;},0);
+  if(!confirm('Create '+lines.length+' Sales Invoices in Xero (I PROCARE) as DRAFT?\nTotal RM '+total.toFixed(2)+'\n\nThey go in as DRAFT — you review & approve inside Xero.\nInvoice numbers are unique, so already-created ones are skipped automatically.'))return;
+  SR._posting=true; var btn=document.getElementById('sr-post-btn'); if(btn)btn.disabled=true;
+  try{
+    var posted=0,dup=0,fail=0,failures=[];
+    for(var i=0;i<lines.length;i+=150){
+      var chunk=lines.slice(i,i+150).map(function(l){ return { number:l.inv, date:l.date, due:l.due, desc:l.desc, qty:1, amount:l.amt, account:l.acc, contact:l.contact||'DATABEES' }; });
+      toast('Creating '+(i+1)+'–'+Math.min(i+150,lines.length)+' of '+lines.length+' in Xero…');
+      var r=await call({api:'sr_post_invoices',tenant:SR_TENANT,invoices:chunk});
+      if(!r||!r.ok){ toast((r&&r.error)||'Posting failed at batch '+(Math.floor(i/150)+1)+' — already-created invoices are safe; fix and retry.',true); break; }
+      posted+=r.posted||0; dup+=r.dup||0; fail+=r.fail||0; (r.failures||[]).forEach(function(x){failures.push(x.number+': '+x.error);});
+    }
+    toast('Xero: '+posted+' draft invoice(s) created'+(dup?(' · '+dup+' already existed (skipped)'):'')+(fail?(' · '+fail+' FAILED'):''), fail>0);
+    if(failures.length) alert('Failed invoices ('+failures.length+'):\n\n'+failures.slice(0,12).join('\n')+(failures.length>12?'\n…':''));
+  } finally { SR._posting=false; if(btn)btn.disabled=false; }
 }
 function srDownloadXlsx(){
   if(!SR.out.length){ toast('Nothing to export.',true); return; }
