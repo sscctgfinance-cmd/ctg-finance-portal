@@ -2263,7 +2263,7 @@ Deno.serve(async (req)=>{
           try {
             const where = encodeURIComponent('InvoiceNumber!=null&&InvoiceNumber.StartsWith("'+p.replace(/["\\]/g,"")+'")');
             const r2 = await fetch("https://api.xero.com/api.xro/2.0/Invoices?where="+where+"&page=1&pageSize=1000", { headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id":tenant, "Accept":"application/json" } });
-            if (r2.ok){ const d = await r2.json(); for (const iv of (d.Invoices||[])){ const m = String(iv.InvoiceNumber||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } } src = "cache+live"; }
+            if (r2.ok){ const d = await r2.json(); for (const iv of (d.Invoices||[])){ const st=String(iv.Status||""); if (st==="DELETED"||st==="VOIDED") continue; const m = String(iv.InvoiceNumber||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } } src = "cache+live"; }
           } catch(_e){}
         }
         maxOut[p] = maxN; srcOut[p] = src;
@@ -2296,7 +2296,7 @@ Deno.serve(async (req)=>{
           const d = await xeroGet(access, tenant, "Invoices?page="+page+"&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader });
           if (d.__notModified) break;
           const arr = d.Invoices || []; if (!arr.length) break;
-          for (const iv of arr) if (iv.InvoiceNumber) takenSet.add(String(iv.InvoiceNumber));
+          for (const iv of arr){ const st = String(iv.Status||""); if (st==="DELETED" || st==="VOIDED") continue; if (iv.InvoiceNumber) takenSet.add(String(iv.InvoiceNumber)); } // deleted/voided numbers are reusable
           liveOk = true;
           if (arr.length < 100) break;
         }
@@ -4289,7 +4289,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v98 + sr-so-suffix(dup SO → _1/_2, cache+live-48h) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v99 + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
