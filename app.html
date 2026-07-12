@@ -1521,6 +1521,109 @@ function cfoRevLines(cm){
   var legend=series.map(function(s,idx){ var col=OV_PALETTE[idx%OV_PALETTE.length]; return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px"><span style="width:12px;height:3px;border-radius:2px;background:'+col+'"></span>'+esc(cfoShortName(s.tenant_name))+'</span>'; }).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+lines+xlab+'</svg><div style="margin-top:8px">'+legend+'</div>';
 }
+// Monthly P&L combo — revenue vs expenses grouped bars + net-profit line (with a zero baseline for loss months).
+function cfoPnlCombo(mon){
+  var n=(mon||[]).length; if(!n) return '<div class="muted" style="padding:20px">No monthly data.</div>';
+  var rev=mon.map(function(m){return Number(m.revenue)||0;});
+  var exp=mon.map(function(m){return Number(m.bills)||0;});
+  var net=mon.map(function(m){return (Number(m.revenue)||0)-(Number(m.bills)||0);});
+  var w=820,h=290,padL=54,padR=14,padB=52,padT=18;
+  var vmax=Math.max.apply(null,[1].concat(rev,exp,net));
+  var vmin=Math.min.apply(null,[0].concat(net));
+  var span=(vmax-vmin)||1;
+  var yat=function(v){return padT+(vmax-v)/span*(h-padB-padT);};
+  var slot=(w-padL-padR)/n, grp=Math.min(46,slot*0.62), bw=grp/2, zeroY=yat(0);
+  var grid=''; for(var k=0;k<=4;k++){ var gv=vmax-(k/4)*span, gy=yat(gv);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(gv)+'</text>'; }
+  grid+='<line x1="'+padL+'" y1="'+zeroY.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+zeroY.toFixed(1)+'" stroke="var(--muted)" stroke-width="1.2" opacity=".55"/>';
+  var bars=mon.map(function(m,i){
+    var cx=padL+slot*i+slot/2, rY=yat(rev[i]), eY=yat(exp[i]);
+    return '<rect x="'+(cx-bw-1).toFixed(1)+'" y="'+rY.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,zeroY-rY).toFixed(1)+'" rx="2" fill="#0E9D67"><title>'+esc(m.month+' · revenue '+M(rev[i]))+'</title></rect>'+
+      '<rect x="'+(cx+1).toFixed(1)+'" y="'+eY.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,zeroY-eY).toFixed(1)+'" rx="2" fill="#E0714E"><title>'+esc(m.month+' · expenses '+M(exp[i]))+'</title></rect>';
+  }).join('');
+  var netLine=net.map(function(v,i){var cx=padL+slot*i+slot/2;return (i?'L':'M')+cx.toFixed(1)+' '+yat(v).toFixed(1);}).join(' ');
+  var netDots=net.map(function(v,i){var cx=padL+slot*i+slot/2;return '<circle cx="'+cx.toFixed(1)+'" cy="'+yat(v).toFixed(1)+'" r="2.6" fill="var(--text)" stroke="var(--surface)" stroke-width="1"><title>'+esc(mon[i].month+' · net '+M(v))+'</title></circle>';}).join('');
+  var xlab=mon.map(function(m,i){ if(n>10&&i%2) return ''; var cx=padL+slot*i+slot/2; return '<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.month.slice(2))+'</text>'; }).join('');
+  var legend='<div style="margin-top:6px;font-size:11.5px"><span style="margin-right:16px"><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#0E9D67;vertical-align:middle"></span> Revenue</span><span style="margin-right:16px"><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#E0714E;vertical-align:middle"></span> Expenses (bills)</span><span><span style="display:inline-block;width:15px;height:3px;background:var(--text);vertical-align:middle"></span> Net profit</span></div>';
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'<path d="'+netLine+'" fill="none" stroke="var(--text)" stroke-width="2"/>'+netDots+xlab+'</svg>'+legend;
+}
+// Month-by-month P&L table (most-recent first) + totals row.
+function cfoPnlTable(mon){
+  if(!(mon||[]).length) return '';
+  var rows=mon.map(function(m,i){
+    var rev=Number(m.revenue)||0, exp=Number(m.bills)||0, net=rev-exp;
+    var prev=i>0?(Number(mon[i-1].revenue)||0):null;
+    return {month:m.month,rev:rev,exp:exp,net:net,margin:rev>0?Math.round(net/rev*100):null,mom:(prev&&prev>0)?Math.round((rev-prev)/prev*100):null,mtd:(i===mon.length-1)};
+  });
+  var body=rows.slice().reverse().map(function(r){
+    var momTxt=r.mom===null?'—':((r.mom>=0?'▲':'▼')+Math.abs(r.mom)+'%');
+    var momCol=r.mom===null?'var(--muted)':(r.mom>=0?'var(--green)':'var(--red)');
+    return '<tr'+(r.mtd?' style="opacity:.72"':'')+'><td>'+esc(r.month)+(r.mtd?' <span style="font-size:9px;font-weight:700;color:var(--muted);border:1px solid var(--border-strong);border-radius:4px;padding:0 4px;vertical-align:middle">MTD</span>':'')+'</td>'+
+      '<td class="amt" style="color:var(--green)">'+M(r.rev)+'</td>'+
+      '<td class="amt" style="color:var(--coral)">'+M(r.exp)+'</td>'+
+      '<td class="amt" style="font-weight:700;color:'+(r.net>=0?'var(--green)':'var(--red)')+'">'+M(r.net)+'</td>'+
+      '<td class="amt">'+(r.margin===null?'—':r.margin+'%')+'</td>'+
+      '<td class="amt" style="color:'+momCol+'">'+momTxt+'</td></tr>';
+  }).join('');
+  var tr=rows.reduce(function(s,r){return s+r.rev;},0), te=rows.reduce(function(s,r){return s+r.exp;},0), tn=tr-te;
+  var foot='<tr style="border-top:2px solid var(--border-strong);font-weight:800"><td>Total</td>'+
+    '<td class="amt" style="color:var(--green)">'+M(tr)+'</td><td class="amt" style="color:var(--coral)">'+M(te)+'</td>'+
+    '<td class="amt" style="color:'+(tn>=0?'var(--green)':'var(--red)')+'">'+M(tn)+'</td><td class="amt">'+(tr>0?Math.round(tn/tr*100):0)+'%</td><td class="amt">—</td></tr>';
+  return '<div class="tbl-wrap" style="margin-top:12px"><table class="bigtable"><thead><tr><th>Month</th><th class="amt">Revenue</th><th class="amt">Expenses</th><th class="amt">Net profit</th><th class="amt">Margin</th><th class="amt">Rev MoM</th></tr></thead><tbody>'+body+foot+'</tbody></table></div>';
+}
+// Stacked-area chart — each company's monthly value (key='revenue' or 'bills') stacked into the group total.
+function cfoStack(cm, key){
+  var series=(cm||[]).filter(function(s){return s.series && s.series.length;});
+  if(!series.length) return '<div class="muted" style="padding:20px">No monthly data.</div>';
+  var months=series[0].series.map(function(p){return p.month;}), n=months.length;
+  var w=820,h=250,padL=52,padR=14,padB=30,padT=14;
+  var totals=months.map(function(_x,i){ return series.reduce(function(s,se){return s+(Number(se.series[i]&&se.series[i][key])||0);},0); });
+  var max=Math.max.apply(null,[1].concat(totals));
+  var xat=function(i){return padL+(n<=1?(w-padL-padR)/2:i*(w-padL-padR)/(n-1));};
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var grid=''; for(var k=0;k<=3;k++){ var gy=padT+(k/3)*(h-padB-padT);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>'; }
+  var cum=months.map(function(){return 0;});
+  var areas=series.map(function(se,idx){
+    var col=OV_PALETTE[idx%OV_PALETTE.length];
+    var lower=cum.slice();
+    var upper=months.map(function(_x,i){ return lower[i]+(Number(se.series[i]&&se.series[i][key])||0); });
+    cum=upper.slice();
+    var d='M'+xat(0).toFixed(1)+' '+yat(upper[0]).toFixed(1)+' '+upper.map(function(v,i){return 'L'+xat(i).toFixed(1)+' '+yat(v).toFixed(1);}).join(' ');
+    for(var i=n-1;i>=0;i--){ d+=' L'+xat(i).toFixed(1)+' '+yat(lower[i]).toFixed(1); }
+    return '<path d="'+d+' Z" fill="'+col+'" opacity=".85"><title>'+esc(cfoShortName(se.tenant_name))+'</title></path>';
+  }).join('');
+  var xlab=months.map(function(m,i){ if(n>8&&i%2) return ''; return '<text x="'+xat(i).toFixed(1)+'" y="'+(h-padB+15)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.slice(5))+'</text>'; }).join('');
+  var legend=series.map(function(se,idx){ var col=OV_PALETTE[idx%OV_PALETTE.length]; return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px"><span style="width:11px;height:11px;border-radius:2px;background:'+col+'"></span>'+esc(cfoShortName(se.tenant_name))+'</span>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+areas+xlab+'</svg><div style="margin-top:8px">'+legend+'</div>';
+}
+// Vertical bars — expenses per company for the period, sorted desc, with MoM (up = worse for spend).
+function cfoExpBars(cos){
+  var data=(cos||[]).map(function(c){return {name:c.tenant_name,exp:Number(c.expenses)||0,cur:Number(c.exp_cur)||0,prev:Number(c.exp_prev)||0};})
+    .sort(function(a,b){return b.exp-a.exp;});
+  var n=data.length; if(!n) return '<div class="muted" style="padding:20px">No expense data.</div>';
+  var w=780,h=270,padL=52,padR=12,padB=56,padT=14;
+  var max=Math.max.apply(null,[1].concat(data.map(function(d){return d.exp;})));
+  var slot=(w-padL-padR)/n, barW=Math.min(64,slot*0.56);
+  var yat=function(v){return h-padB-(v/max)*(h-padB-padT);};
+  var EXP_PALETTE=['#E0714E','#D9564B','#E8894A','#C2700A','#B23C1F','#CF4A28'];
+  var grid=''; for(var k=0;k<=3;k++){ var gy=padT+(k/3)*(h-padB-padT);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(max*(3-k)/3)+'</text>'; }
+  var bars=data.map(function(d,i){
+    var cx=padL+slot*i+slot/2, x=cx-barW/2, y=yat(d.exp), bh=(h-padB)-y, col=EXP_PALETTE[i%EXP_PALETTE.length];
+    var mom = d.prev>0 ? Math.round((d.cur-d.prev)/d.prev*100) : null;
+    var momTxt = mom===null?'':(mom>=0?('▲'+mom+'%'):('▼'+Math.abs(mom)+'%'));
+    var momCol = mom===null?'var(--muted)':(mom>=0?'#e85d3c':'#3ddc97');
+    return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="'+col+'"><title>'+esc(d.name+' — '+M(d.exp))+'</title></rect>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(y-5).toFixed(1)+'" text-anchor="middle" font-size="10.5" font-weight="800" fill="var(--text)">'+cfoMk(d.exp)+'</text>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9.5" fill="var(--muted)">'+esc(cfoShortName(d.name).slice(0,13))+'</text>'+
+      (momTxt?'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+30)+'" text-anchor="middle" font-size="9" fill="'+momCol+'">'+momTxt+'</text>':'');
+  }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg>';
+}
 async function renderCFO(){
   var el=document.getElementById('cfo'); if(!el) return;
   el.innerHTML='<div class="panel"><div class="panel-hd"><h3>🎯 CFO Cockpit · group financial position</h3></div><div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing group analytics from '+(((COMPANIES||[]).length)||5)+' companies…</div></div>';
@@ -1537,9 +1640,17 @@ function cfoRender(){
   var overdue=Number(g.ar_overdue)||0, arOpen=Number(g.ar_open)||0;
   var revCur=Number(g.rev_cur)||0, revPrev=Number(g.rev_prev)||0;
   var momPct = revPrev>0 ? Math.round((revCur-revPrev)/revPrev*100) : null;
-  // ── Hero KPIs ──
-  var kpis='<div class="cards" style="grid-template-columns:repeat(5,1fr)">'+
-    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:var(--green-soft)">'+M(g.revenue)+'</div><div class="l">Revenue · 12 mo</div></div>'+
+  var pm=r.period_months||12;
+  var expense=Number(g.expenses)||0, net=Number(g.net_profit)||0, revenue=Number(g.revenue)||0;
+  var margin=revenue>0?Math.round(net/revenue*100):0;
+  // ── Hero KPIs: P&L row + financial-position row ──
+  var kpis='<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
+    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:var(--green-soft)">'+M(revenue)+'</div><div class="l">Revenue · '+pm+' mo</div></div>'+
+    '<div class="card"><div class="c-ico">🧾</div><div class="n" style="color:var(--coral)">'+M(expense)+'</div><div class="l">Expenses (bills) · '+pm+' mo</div></div>'+
+    '<div class="card '+(net>=0?'green':'red')+'"><div class="c-ico">'+(net>=0?'📈':'📉')+'</div><div class="n" style="color:'+(net>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(net)+'</div><div class="l">Net profit · '+pm+' mo</div></div>'+
+    '<div class="card"><div class="c-ico">📊</div><div class="n" style="color:'+(margin>=0?'var(--text)':'var(--red-soft)')+'">'+margin+'%</div><div class="l">Net margin</div></div>'+
+  '</div><div style="height:12px"></div>'+
+  '<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
     '<div class="card"><div class="c-ico">📥</div><div class="n" style="color:var(--sky-soft)">'+M(g.ar_open)+'</div><div class="l">Receivables (owed to us)</div></div>'+
     '<div class="card"><div class="c-ico">📤</div><div class="n" style="color:var(--amber)">'+M(g.ap_open)+'</div><div class="l">Payables (we owe)</div></div>'+
     '<div class="card '+(wc>=0?'green':'red')+'"><div class="c-ico">⚖️</div><div class="n" style="color:'+(wc>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(wc)+'</div><div class="l">Net working capital</div></div>'+
@@ -1552,28 +1663,36 @@ function cfoRender(){
       alerts.map(function(a){ var col=a.severity==='high'?'var(--red-soft)':'var(--amber)'; return '<div style="display:flex;gap:9px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--border)"><span style="color:'+col+'">'+(a.severity==='high'?'🔴':'🟠')+'</span><span>'+esc(a.text)+'</span></div>'; }).join('')+
     '</div>';
   }
-  // ── Trend ──
-  var trendHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills</div></div>'+cfoTrend(mon)+'</div>';
-  // ── Revenue by company: comparison bar + monthly multi-line ──
   var cm=r.companies_monthly||[];
-  var revCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏆 Revenue by company</h3><span class="muted" style="font-size:11px">'+(r.period_months||12)+'-month total · ▲▼ this month vs last</span></div>'+cfoRevBars(cos)+'</div>';
-  var revLineHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📊 Monthly revenue by company</h3></div>'+cfoRevLines(cm)+'</div>';
+  // ── Monthly P&L: revenue vs expenses + net profit, plus month-by-month table ──
+  var pnlHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📅 Monthly P&L — revenue vs expenses</h3><span class="muted" style="font-size:11px">'+pm+' months · net = revenue − supplier bills</span></div>'+cfoPnlCombo(mon)+cfoPnlTable(mon)+'</div>';
+  // ── Revenue: comparison bar · structure (stacked) · each-company trend (lines) ──
+  var revCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏆 Revenue by company</h3><span class="muted" style="font-size:11px">'+pm+'-month total · ▲▼ this month vs last</span></div>'+cfoRevBars(cos)+'</div>';
+  var revStructHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📈 Revenue structure — monthly, stacked by company</h3><span class="muted" style="font-size:11px">each band = one company · total height = group revenue</span></div>'+cfoStack(cm,'revenue')+'</div>';
+  var revLineHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📊 Revenue trend — each company</h3><span class="muted" style="font-size:11px">one line per company</span></div>'+cfoRevLines(cm)+'</div>';
+  // ── Expenses: comparison bar + structure (stacked) ──
+  var expCmpHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🧾 Expenses by company</h3><span class="muted" style="font-size:11px">supplier bills · '+pm+'-month total · ▲▼ this month vs last</span></div>'+cfoExpBars(cos)+'</div>';
+  var expStructHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>📉 Expenses structure — monthly, stacked by company</h3><span class="muted" style="font-size:11px">each band = one company · total height = group bills</span></div>'+cfoStack(cm,'bills')+'</div>';
   // ── Per-company scorecard ──
   var maxRev=Math.max.apply(null,[1].concat(cos.map(function(c){return Number(c.revenue)||0;})));
   var rows=cos.map(function(c){
     var dot=c.health==='green'?'🟢':c.health==='amber'?'🟡':'🔴';
     var cwc=Number(c.working_capital)||0;
-    var revBar=Math.round((Number(c.revenue)||0)/maxRev*100);
+    var crev=Number(c.revenue)||0, cexp=Number(c.expenses)||0, cnet=Number(c.net_profit)||0;
+    var cmargin=crev>0?Math.round(cnet/crev*100):null;
+    var revBar=Math.round(crev/maxRev*100);
     return '<tr>'+
       '<td><b>'+esc(c.tenant_name)+'</b> '+dot+'</td>'+
-      '<td style="min-width:130px"><div style="background:var(--panel-2);border-radius:4px;height:7px;overflow:hidden"><div style="width:'+revBar+'%;height:100%;background:var(--coral)"></div></div><div class="muted" style="font-size:10.5px;margin-top:2px">'+M(c.revenue)+'</div></td>'+
+      '<td style="min-width:110px"><div style="background:var(--panel-2);border-radius:4px;height:7px;overflow:hidden"><div style="width:'+revBar+'%;height:100%;background:var(--coral)"></div></div><div class="muted" style="font-size:10.5px;margin-top:2px">'+M(crev)+'</div></td>'+
+      '<td class="amt" style="color:var(--coral)">'+M(cexp)+'</td>'+
+      '<td class="amt" style="font-weight:700;color:'+(cnet>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(cnet)+(cmargin!==null?'<div class="muted" style="font-size:10px;font-weight:400">'+cmargin+'% margin</div>':'')+'</td>'+
       '<td class="amt" style="color:var(--sky-soft)">'+M(c.ar_open)+'</td>'+
       '<td class="amt" style="color:var(--amber)">'+M(c.ap_open)+'</td>'+
       '<td class="amt" style="color:'+(cwc>=0?'var(--green-soft)':'var(--red-soft)')+';font-weight:700">'+M(cwc)+'</td>'+
     '</tr>';
   }).join('');
-  var scoreHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏢 Company scorecard</h3><span class="muted" style="font-size:11px">🟢 healthy · 🟡 watch · 🔴 cash pressure</span></div>'+
-    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Revenue (12mo)</th><th class="amt">AR (owed us)</th><th class="amt">AP (we owe)</th><th class="amt">Working capital</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  var scoreHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🏢 Company scorecard — P&L & position</h3><span class="muted" style="font-size:11px">🟢 healthy · 🟡 watch · 🔴 cash pressure</span></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Revenue ('+pm+'mo)</th><th class="amt">Expenses</th><th class="amt">Net profit</th><th class="amt">AR (owed us)</th><th class="amt">AP (we owe)</th><th class="amt">Working capital</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   // ── AR aging + Top customers side by side ──
   var agingHtml='<div class="panel"><div class="panel-hd"><h3>📊 Receivables aging</h3></div>'+cfoAgingBar(aging)+'</div>';
   var maxCust=Math.max.apply(null,[1].concat(top.map(function(c){return Number(c.revenue)||0;})));
@@ -1584,7 +1703,8 @@ function cfoRender(){
       '<div class="muted" style="font-size:12.5px">Group financial position across all '+cos.length+' companies · from live invoice data'+(momPct!=null?(' · revenue this month '+(momPct>=0?'▲':'▼')+' '+Math.abs(momPct)+'% vs last'):'')+'</div>'+
       '<button class="btn sm" onclick="CFO_DATA=null;renderCFO()">↻ Refresh</button>'+
     '</div>'+
-    kpis + '<div style="height:16px"></div>' + alertHtml + revCmpHtml + revLineHtml + trendHtml + scoreHtml +
+    kpis + '<div style="height:16px"></div>' + alertHtml + pnlHtml +
+    revCmpHtml + revStructHtml + revLineHtml + expCmpHtml + expStructHtml + scoreHtml +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">'+agingHtml+custHtml+'</div>'+
     '<div id="cfo-analytics" style="margin-top:16px"></div>';
   loaded.cfo=true;
