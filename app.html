@@ -796,7 +796,9 @@ table[data-list] tbody tr:hover input[type=text]{
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 <style>html{font-family:'Inter var',Inter,system-ui,-apple-system,sans-serif}</style>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- SheetJS 0.20.3 (vendored). ⚠ Do NOT use xlsx@0.18.x — its serial-date parsing lands 25s before
+     midnight under Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
+<script src="xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 /* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
