@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -787,6 +787,7 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"]{
   color-scheme:light;
   --bg-deep:#E9EEF6; --bg:#F3F6FB; --surface:#FFFFFF; --surface2:#F6F9FC;
+  --panel:#FFFFFF; --panel-2:#F4F7FB;
   --border:#E0E7F1; --border-strong:#CAD6E6;
   --text:#15233F; --text-soft:#4C5B74; --muted:#7C8AA3;
   --coral:#E04E2B; --coral-deep:#B23C1F; --coral-soft:#CF4A28;
@@ -839,6 +840,13 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .lbox h1{ background:linear-gradient(90deg,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
 :root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(21,35,63,.20); background-clip:content-box; }
 :root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(232,93,60,.42); background-clip:content-box; }
+:root[data-theme="light"] .emp-card{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
+:root[data-theme="light"] .emp-card:hover{ border-color:rgba(232,93,60,.32); }
+:root[data-theme="light"] .emp-name{ color:var(--text); }
+:root[data-theme="light"] .page-title{ color:var(--text); }
+:root[data-theme="light"] .side-brand-name{ color:var(--text); }
+:root[data-theme="light"] .side-link.on{ background:linear-gradient(90deg,rgba(232,93,60,.13),rgba(232,93,60,.03)); color:var(--coral-deep); }
+:root[data-theme="light"] .btn.p{ background:linear-gradient(135deg,var(--coral),var(--coral-deep)); color:#fff; border:none; }
 .theme-btn{ font-size:15px; line-height:1; }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
