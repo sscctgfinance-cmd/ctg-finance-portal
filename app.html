@@ -2942,7 +2942,9 @@ function srSmartCols(rows){
     });
     so/=n; dt/=n; num/=n;
     var soS=so+0.2*kw(k,['pic','order id','order no','so no','so number','reference']);
-    var dtS=dt+0.2*kw(k,['date','time']);
+    // Sales date rule: the bank/gateway TRANSACTION date is the sales date — prefer transaction-named
+    // date columns, avoid settlement-style ones (Value Date / Posting Date) when both parse as dates.
+    var dtS=dt+0.2*kw(k,['date','time'])+0.3*kw(k,['transaction','txn'])-0.25*kw(k,['value','posting','settle']);
     var amS=(dt>0.5?0:num)+0.25*kw(k,['amount','deposit','total','amt','paid','nett','net']);
     if(so>0.02&&soS>sc.id){sc.id=soS;best.id=k;}
     if(dt>0.5&&dtS>sc.date){sc.date=dtS;best.date=k;}
