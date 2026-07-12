@@ -2279,14 +2279,15 @@ Deno.serve(async (req)=>{
       const bases: string[] = (Array.isArray(b.bases)? b.bases : []).slice(0,2000).map((x:any)=>String(x||"").trim()).filter((x:string)=>x.length>2 && x.length<60);
       if (!bases.length) return j({ ok:false, error:"bases required" });
       const takenSet = new Set<string>();
+      const amtMap: any = {}; // invoice number -> total already invoiced in Xero (for the Order-Form tally)
       // 1) cache: exact base hits (any format) + the whole SO- family for suffix scanning
       const CHUNK = 400;
       for (let i=0; i<bases.length; i+=CHUNK){
-        const { data: ex } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).in("number", bases.slice(i,i+CHUNK));
-        for (const r of (ex||[])) if (r.number) takenSet.add(String(r.number));
+        const { data: ex } = await sb.from("xero_invoice_cache").select("number,total").eq("tenant_id",tenant).in("number", bases.slice(i,i+CHUNK));
+        for (const r of (ex||[])) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
       }
-      const { data: fam } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number","SO-%").limit(20000);
-      for (const r of (fam||[])) if (r.number) takenSet.add(String(r.number));
+      const { data: fam } = await sb.from("xero_invoice_cache").select("number,total").eq("tenant_id",tenant).like("number","SO-%").limit(20000);
+      for (const r of (fam||[])) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
       // 2) live: everything modified in the last 48h — catches an import done minutes ago that the 20-min cache hasn't seen
       let liveOk = false;
       try {
@@ -2296,20 +2297,22 @@ Deno.serve(async (req)=>{
           const d = await xeroGet(access, tenant, "Invoices?page="+page+"&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader });
           if (d.__notModified) break;
           const arr = d.Invoices || []; if (!arr.length) break;
-          for (const iv of arr){ const st = String(iv.Status||""); if (st==="DELETED" || st==="VOIDED") continue; if (iv.InvoiceNumber) takenSet.add(String(iv.InvoiceNumber)); } // deleted/voided numbers are reusable
+          for (const iv of arr){ const st = String(iv.Status||""); if (st==="DELETED" || st==="VOIDED") continue; if (iv.InvoiceNumber){ takenSet.add(String(iv.InvoiceNumber)); amtMap[String(iv.InvoiceNumber)] = Number(iv.Total)||0; } } // deleted/voided numbers are reusable
           liveOk = true;
           if (arr.length < 100) break;
         }
       } catch(_e){}
-      // per base: base taken? highest _N suffix already used?
+      // per base: base taken? highest _N suffix already used? how much already invoiced (base + _N)?
       const existing:any = {};
-      for (const base of bases) existing[base] = { taken: takenSet.has(base), max: 0 };
+      for (const base of bases) existing[base] = { taken: takenSet.has(base), max: 0, prev_total: 0 };
       for (const num of takenSet){
+        let basePart = num;
         const i = num.lastIndexOf("_");
-        if (i > 0){
-          const basePart = num.slice(0,i), sfx = num.slice(i+1);
-          if (existing[basePart] && /^\d{1,3}$/.test(sfx)){ const n = parseInt(sfx,10); if (n > existing[basePart].max) existing[basePart].max = n; }
+        if (i > 0 && /^\d{1,3}$/.test(num.slice(i+1))){
+          basePart = num.slice(0,i);
+          if (existing[basePart]){ const n = parseInt(num.slice(i+1),10); if (n > existing[basePart].max) existing[basePart].max = n; }
         }
+        if (existing[basePart]) existing[basePart].prev_total = Math.round((existing[basePart].prev_total + (Number(amtMap[num])||0))*100)/100;
       }
       await logAudit(me, "sr_so_suffix", tenant, { bases: bases.length, taken: bases.filter(bs=>existing[bs].taken).length, live: liveOk });
       return j({ ok:true, existing, live: liveOk });
@@ -4289,7 +4292,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v99 + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v100 + sr-so-tally(prev_total per SO for OrderForm-vs-payments check) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

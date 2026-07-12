@@ -2983,6 +2983,7 @@ function renderSalesRecon(){
       '<div class="panel-hd"><h3>2 · Result</h3><div style="display:flex;gap:8px"><button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button><button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button></div></div>'+
       '<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>'+
       '<div style="font-size:12px;font-weight:600;margin:6px 0">Revenue by Account (Xero)</div><div class="tbl-wrap" style="margin-bottom:14px"><table class="bigtable"><thead><tr><th>Account</th><th>Name</th><th>Channels</th><th class="amt" style="text-align:right">Lines</th><th class="amt" style="text-align:right">Amount (MYR)</th></tr></thead><tbody id="sr-acctbody"></tbody></table></div>'+
+      '<div id="sr-tally" style="margin-bottom:14px"></div>'+
       '<div style="font-size:12px;font-weight:600;margin:6px 0">Sales Import preview (first 150)</div><div class="tbl-wrap" style="max-height:360px;overflow:auto"><table class="bigtable"><thead><tr><th>Contact</th><th>Invoice No</th><th>Date</th><th>Description</th><th class="amt" style="text-align:right">Amount</th><th>Acct</th><th>Gateway</th></tr></thead><tbody id="sr-tbody"></tbody></table></div>'+
       '<div class="muted" style="font-size:11px;margin-top:10px" id="sr-note"></div></div>';
   var dz=document.getElementById('sr-drop');
@@ -3021,10 +3022,10 @@ async function srBuild(){
   var ofWs=SR.of.wb.Sheets[SR.of.wb.SheetNames[0]];
   var aoa=XLSX.utils.sheet_to_json(ofWs,{header:1,raw:true,defval:''});
   var H=(aoa[0]||[]).map(function(c){return String(c).trim();});
-  var iNo=H.indexOf('Order No'), iCh=H.indexOf('Channel'), iPkg=H.indexOf('Package'), iOd=H.indexOf('Order Date');
+  var iNo=H.indexOf('Order No'), iCh=H.indexOf('Channel'), iPkg=H.indexOf('Package'), iOd=H.indexOf('Order Date'), iGt=H.indexOf('Grand Total');
   var LK={};
   for(var i=1;i<aoa.length;i++){ var r=aoa[i]; var so=r[iNo]; if(so===''||so==null)continue; so=String(so).trim();
-    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd])}; }
+    LK[so]={ch:r[iCh], pkg:(r[iPkg]===''||r[iPkg]==null)?'(no package)':srClean(String(r[iPkg]).trim()), odate:srAnyDate(r[iOd]), gt:(iGt>=0?srNum(r[iGt]):0)}; }
   // Pass 1 — build lines; unmatched rows get their month period, numbering deferred to pass 2.
   var lines=[];
   var swapNote=[];
@@ -3041,7 +3042,7 @@ async function srBuild(){
       if(so && LK[so]){ var od=LK[so]; inv=so; acc=srAcc(od.ch); pkg=od.pkg; ch=srClean(String(od.ch||'').trim()); idate=pdate||od.odate; matched=true; }
       else { per=srPer(pdate); inv=null; acc='500-1000'; pkg='YRDZ_Package_'+amt.toFixed(2); ch='YRDZ (unmatched)'; idate=pdate; matched=false; }
       var ds=srDmy(idate);
-      lines.push({contact:'DATABEES',inv:inv,per:per,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
+      lines.push({contact:'DATABEES',inv:inv,so:(matched?so:null),per:per,date:ds,due:ds,desc:pkg,qty:1,amt:amt,acc:acc,tax:'Tax Exempt',ch:ch,gw:sn,matched:matched});
     });
   });
   // Pass 2 — continue YRDZ numbering from the highest number already in Xero for each month.
@@ -3082,6 +3083,21 @@ async function srBuild(){
     if(idx>0){ l.inv=so+'_'+idx; soDup++; }
   });
   if(soDup) toast(soDup+' repeat SO payment(s) suffixed _1, _2 … (unique in Xero)');
+  // Pass 4 — SO amount tally: Order Form Grand Total vs money received (this file + already invoiced in Xero).
+  SR.tally=null;
+  if(iGt>=0){
+    var paidFile={}; lines.forEach(function(l){ if(l.matched&&l.so){ paidFile[l.so]=Math.round(((paidFile[l.so]||0)+l.amt)*100)/100; } });
+    SR.tally=Object.keys(paidFile).map(function(s){
+      var od=LK[s]||{}; var order=Math.round((Number(od.gt)||0)*100)/100;
+      var prev=(soInfo[s]&&Number(soInfo[s].prev_total))||0;
+      var fileAmt=paidFile[s]; var total=Math.round((prev+fileAmt)*100)/100;
+      var diff=Math.round((total-order)*100)/100;
+      var st=(order<=0)?'no-total':(Math.abs(diff)<=0.01?'tally':(diff<0?'short':'over'));
+      return { so:s, ch:srClean(String(od.ch||'').trim()), order:order, prev:prev, file:fileAmt, total:total, diff:diff, st:st };
+    }).sort(function(a,b){ return Math.abs(b.diff)-Math.abs(a.diff); });
+    var mm=SR.tally.filter(function(x){return x.st==='short'||x.st==='over';}).length;
+    if(mm) toast('⚠ SO tally: '+mm+' SO(s) where payments ≠ Order Form total — see the tally table',true);
+  }
   SR.out=lines; srRenderResult();
 }
 function srRenderResult(){
@@ -3091,6 +3107,32 @@ function srRenderResult(){
   document.getElementById('sr-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;'+(c[2]?('color:'+c[2]):'')+'">'+c[1]+'</div></div>';}).join('');
   var accRows=Object.keys(byAcc).sort().map(function(code){ var a=byAcc[code]; return '<tr><td><b>'+esc(code)+'</b></td><td class="muted">'+esc(SR_ACCNAME[code]||'')+'</td><td class="muted" style="font-size:11px">'+esc(Object.keys(a.ch).join(' / '))+'</td><td class="amt" style="text-align:right">'+a.n+'</td><td class="amt" style="text-align:right;font-weight:600">'+M(a.amt)+'</td></tr>'; }).join('');
   document.getElementById('sr-acctbody').innerHTML=accRows;
+  // SO tally — Order Form Grand Total vs payments received (matched SOs only)
+  var tEl=document.getElementById('sr-tally');
+  if(tEl){
+    var tl=SR.tally;
+    if(!tl){ tEl.innerHTML='<div class="muted" style="font-size:11px">SO amount tally skipped — no "Grand Total" column found in the Order Form.</div>'; }
+    else {
+      var ok=0,sh=0,ov=0,nt=0; tl.forEach(function(x){ if(x.st==='tally')ok++; else if(x.st==='short')sh++; else if(x.st==='over')ov++; else nt++; });
+      var pill=function(txt,col,bg){ return '<span style="padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:700;color:'+col+';background:'+bg+'">'+txt+'</span>'; };
+      var head='<div style="font-size:12px;font-weight:600;margin:6px 0">SO amount tally — Order Form (Grand Total) vs payments received</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+        pill('✓ Tally: '+ok,'var(--green-soft)','rgba(22,185,122,.14)')+
+        pill('⚠ Short-paid: '+sh,'var(--amber)','rgba(245,158,11,.14)')+
+        pill('⚠ Over-paid: '+ov,'var(--coral-soft)','rgba(232,93,60,.14)')+
+        (nt?pill('No order total: '+nt,'var(--muted)','rgba(255,255,255,.05)'):'')+'</div>';
+      var mism=tl.filter(function(x){return x.st==='short'||x.st==='over';});
+      var body;
+      if(!mism.length){ body='<div style="font-size:12.5px;color:var(--green-soft)">✓ Every matched SO’s payments equal its Order Form Grand Total.</div>'; }
+      else {
+        var rows2=mism.slice(0,200).map(function(x){ var col=x.st==='short'?'var(--amber)':'var(--coral-soft)';
+          return '<tr><td><b>'+esc(x.so)+'</b></td><td class="muted">'+esc(x.ch)+'</td><td class="amt" style="text-align:right">'+x.order.toFixed(2)+'</td><td class="amt" style="text-align:right">'+x.prev.toFixed(2)+'</td><td class="amt" style="text-align:right">'+x.file.toFixed(2)+'</td><td class="amt" style="text-align:right;font-weight:600">'+x.total.toFixed(2)+'</td><td class="amt" style="text-align:right;font-weight:700;color:'+col+'">'+(x.diff>0?'+':'')+x.diff.toFixed(2)+'</td><td><span style="color:'+col+';font-size:11px;font-weight:700">'+(x.st==='short'?'SHORT':'OVER')+'</span></td></tr>'; }).join('');
+        body='<div class="tbl-wrap" style="max-height:300px;overflow:auto"><table class="bigtable"><thead><tr><th>SO</th><th>Channel</th><th class="amt" style="text-align:right">Order total</th><th class="amt" style="text-align:right">Already in Xero</th><th class="amt" style="text-align:right">This file</th><th class="amt" style="text-align:right">Total paid</th><th class="amt" style="text-align:right">Diff</th><th></th></tr></thead><tbody>'+rows2+'</tbody></table></div>'+
+        (mism.length>200?'<div class="muted" style="font-size:11px;margin-top:4px">Showing worst 200 of '+mism.length+' — full list in the xlsx report (SO Tally sheet).</div>':'');
+      }
+      tEl.innerHTML=head+body+'<div class="muted" style="font-size:11px;margin-top:6px">Short-paid can be a legit instalment (balance next month). "Already in Xero" = invoices previously imported for that SO (base + _N) — if this file’s own import is still sitting in Xero as drafts, delete them before rebuilding or amounts double-count.</div>';
+    }
+  }
   var show=lines.slice(0,150);
   document.getElementById('sr-tbody').innerHTML=show.map(function(l){ var col=l.matched?'var(--text)':'var(--amber)';
     return '<tr><td class="muted">'+esc(l.contact)+'</td><td style="color:'+col+'">'+esc(l.inv)+'</td><td>'+esc(l.date)+'</td><td class="muted">'+esc(l.desc)+'</td><td class="amt" style="text-align:right;font-weight:600">'+l.amt.toFixed(2)+'</td><td>'+esc(l.acc)+'</td><td class="muted">'+esc(l.gw)+'</td></tr>'; }).join('');
@@ -3124,6 +3166,11 @@ function srDownloadXlsx(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sm), 'Xero Summary');
   var un=[SR_COLS.concat(['Gateway'])]; SR.out.filter(function(l){return !l.matched;}).forEach(function(l){ un.push(srRowArr(l).concat([l.gw])); });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(un), 'Unmatched (YRDZ)');
+  if(SR.tally){
+    var ty=[['SO','Channel','Order Form Grand Total','Already in Xero','This file','Total paid','Diff','Status']];
+    SR.tally.forEach(function(x){ ty.push([x.so,x.ch,x.order,x.prev,x.file,x.total,x.diff,x.st]); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ty), 'SO Tally');
+  }
   XLSX.writeFile(wb, 'IPROCARE_Sales_Reconciliation_'+srTag()+'.xlsx');
 }
 
