@@ -792,6 +792,13 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(21,35,63,.20); background-clip:content-box; }
 :root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(232,93,60,.42); background-clip:content-box; }
 .theme-btn{ font-size:15px; line-height:1; }
+/* Light-mode: category nav bar + inactive sub-tabs (base uses hardcoded dark). */
+:root[data-theme="light"] .tab-cats{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border); box-shadow:0 1px 2px rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab-cat{ color:var(--text-soft); }
+:root[data-theme="light"] .tab-cat:hover{ color:var(--text); background:rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab-cat.active{ color:#fff; background:linear-gradient(135deg,var(--coral),var(--coral-deep)); box-shadow:0 2px 8px -2px rgba(224,78,43,.45); }
+:root[data-theme="light"] .tab{ color:var(--muted); }
+:root[data-theme="light"] .sub{ color:var(--muted); }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -804,12 +811,16 @@ table[data-list] tbody tr:hover input[type=text]{
 /* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
 (function(){
   try{
-    var t = localStorage.getItem('ctg-theme');
-    if(t!=='light' && t!=='dark'){
-      t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    // 2026-07: LIGHT is the CTG brand default. One-time reset flips any pre-existing preference
+    // (incl. an old saved 'dark') to light once; the toggle still lets anyone switch afterwards.
+    if(localStorage.getItem('ctg-theme-default')!=='light-v1'){
+      localStorage.setItem('ctg-theme','light');
+      localStorage.setItem('ctg-theme-default','light-v1');
     }
+    var t = localStorage.getItem('ctg-theme');
+    if(t!=='light' && t!=='dark') t='light';
     document.documentElement.setAttribute('data-theme', t);
-  }catch(e){ document.documentElement.setAttribute('data-theme','dark'); }
+  }catch(e){ document.documentElement.setAttribute('data-theme','light'); }
 })();
 function syncThemeBtn(){
   var light = document.documentElement.getAttribute('data-theme')==='light';
@@ -4646,7 +4657,7 @@ async function smartLoad(){
       '<div class="card"><div class="n" style="color:'+(odtot>0?'var(--red-soft)':'var(--green-soft)')+'">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
       '<div class="card"><div class="n" style="color:'+(cash>payDue?'var(--green-soft)':'var(--red-soft)')+';font-size:18px">'+(cash>payDue?'✓ Healthy':'⚠ Tight')+'</div><div class="l">Cash vs payables</div></div></div>';
     var sevC={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
-    var aHtml = alerts.length ? alerts.map(function(a){return '<div style="padding:12px 14px;border:1px solid var(--border);border-left:3px solid '+sevC[a.sev]+';border-radius:9px;margin-bottom:8px;background:rgba(7,13,23,.4)"><div style="font-weight:700;font-size:13px">'+a.t+'</div><div class="muted" style="font-size:12px">'+a.d+'</div></div>';}).join('')
+    var aHtml = alerts.length ? alerts.map(function(a){return '<div style="padding:12px 14px;border:1px solid var(--border);border-left:3px solid '+sevC[a.sev]+';border-radius:9px;margin-bottom:8px;background:var(--surface2)"><div style="font-weight:700;font-size:13px">'+a.t+'</div><div class="muted" style="font-size:12px">'+a.d+'</div></div>';}).join('')
       : '<div class="card" style="max-width:360px"><div class="n" style="color:var(--green-soft);font-size:16px">✓ All clear</div><div class="l">No anomalies detected in your current data</div></div>';
     document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:var(--text)">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
       '<div class="muted" style="font-size:11px;margin-top:16px;line-height:1.6">Rule-based intelligence over live Xero data — duplicate &amp; anomaly detection, cash-risk &amp; profit insights. Add an AI key in the backend to unlock natural-language CFO Q&amp;A and photo→bill extraction.</div>';
