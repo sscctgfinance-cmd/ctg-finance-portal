@@ -1774,6 +1774,56 @@ function hrPaySumHtml(tot){
   var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
   return stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('');
 }
+// ══ 💸 Payment & Statutory Hub — the monthly payroll ecosystem: UOB Infinity salaries + EPF + PERKESO + PCB + Xero, one place ══
+function hrHubKey(){ return 'hr_hub_'+HR.tenant+'_'+HR.pay.month+'-'+HR.pay.year; }
+function hrHubGet(){ try{ return JSON.parse(storageGet(hrHubKey())||'{}')||{}; }catch(_e){ return {}; } }
+function hrHubTick(k,on){ var s=hrHubGet(); s[k]=!!on; storageSet(hrHubKey(), JSON.stringify(s)); hrRender(); }
+function hrUobCfg(){ try{ return JSON.parse(storageGet('hr_uob_'+HR.tenant)||'{}')||{}; }catch(_e){ return {}; } }
+function hrUobCfgSave(){ var a=(document.getElementById('hr_uob_acct')||{}).value||''; var c=(document.getElementById('hr_uob_cd')||{}).value||''; storageSet('hr_uob_'+HR.tenant, JSON.stringify({acct:String(a).replace(/[^0-9]/g,''), cd:c})); toast('UOB Infinity settings saved'); }
+function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate()); var days=Math.round((due-t)/86400000);
+  var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
+  var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
+  return { txt:'due 15 '+HR_MONTHS[nm]+' '+ny+(days<0?(' · OVERDUE '+(-days)+'d'):(' · '+days+' day'+(days===1?'':'s')+' left')), col:col }; }
+function hrPayHub(tot,finalised,p){
+  var st=hrHubGet(), u=hrUobCfg(), due=hrDueInfo();
+  var done=['salary','epf','perkeso','pcb','xero'].filter(function(k){return st[k];}).length;
+  var chk=function(k){ return '<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap"><input type="checkbox" '+(st[k]?'checked':'')+' onchange="hrHubTick(\''+k+'\',this.checked)" style="accent-color:var(--green-soft)"> Done</label>'; };
+  var sec=function(icon,title,amtHtml,dueHtml,btns,path,key){
+    return '<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">'+
+      '<div><div style="font-weight:700;font-size:13px">'+icon+' '+title+'</div><div style="font-size:15px;font-weight:750;margin-top:2px">'+amtHtml+'</div>'+(dueHtml?('<div style="margin-top:2px">'+dueHtml+'</div>'):'')+'</div>'+
+      '<div><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+btns+'</div><div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">'+path+'</div></div>'+
+      '<div style="padding-top:4px">'+chk(key)+'</div></div>';
+  };
+  var dd='<span style="font-size:10.5px;color:'+due.col+'">'+due.txt+'</span>';
+  var uobCfgRow='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;width:100%;margin-bottom:6px">'+
+    '<div><label class="muted" style="font-size:10px">UOB debit account</label><br><input id="hr_uob_acct" value="'+esc(u.acct||'')+'" placeholder="company UOB account no" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:180px"></div>'+
+    '<div><label class="muted" style="font-size:10px">Crediting date</label><br><input id="hr_uob_cd" type="date" value="'+esc(u.cd||'')+'" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"></div>'+
+    '<button class="btn xs" onclick="hrUobCfgSave()">Save</button></div>';
+  return '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
+    sec('🏦','Salaries — UOB Infinity', M(tot.net)+' <span class="muted" style="font-size:10px">net pay</span>', '<span class="muted" style="font-size:10.5px">pay on your payday</span>',
+      uobCfgRow+'<button class="btn xs p" onclick="hrExpBank(\'uob\')">⬇ UOB Infinity salary file</button><button class="btn xs" onclick="hrExpBank(\'maybank\')">Maybank M2E</button><button class="btn xs" onclick="hrExpGiro()">Generic IBG CSV</button>',
+      'UOB Infinity → <b>Pay &amp; Transfer → Bulk Transactions → Upload Bulk Files</b> → file type <b>&ldquo;IBG Payroll with Payment Advice (Employee)&rdquo;</b>. First upload needs UOB&rsquo;s one-time test-file certification. If your Infinity requires their fixed-width UFF template, get the spec sheet from your UOB RM — it can be encoded exactly.','salary')+
+    sec('🏛️','EPF — KWSP', M(tot.epfEe+tot.epfEr)+' <span class="muted" style="font-size:10px">EE '+M(tot.epfEe)+' + ER '+M(tot.epfEr)+'</span>', dd,
+      '<button class="btn xs p" onclick="hrExpKwsp()">⬇ KWSP i-Akaun file</button>',
+      'Upload + pay at <b>i-Akaun (Majikan)</b>, or in UOB Infinity → Upload Bulk Files → file type <b>&ldquo;EPF Payment (Employee)&rdquo;</b>.','epf')+
+    sec('🏛️','SOCSO + EIS — PERKESO', M(tot.socsoEe+tot.socsoEr+tot.eisEe+tot.eisEr)+' <span class="muted" style="font-size:10px">SOCSO '+M(tot.socsoEe+tot.socsoEr)+' · EIS '+M(tot.eisEe+tot.eisEr)+'</span>', dd,
+      '<button class="btn xs p" onclick="hrExpAssist()">⬇ PERKESO ASSIST file</button>',
+      'Upload + pay at the <b>ASSIST portal</b>, or in UOB Infinity → <b>Services → Send to UOB</b> → &ldquo;SOCSO Monthly Contribution&rdquo; / &ldquo;EIS Contribution&rdquo;.','perkeso')+
+    sec('🏛️','PCB — LHDN', M(tot.pcb), dd,
+      '<button class="btn xs p" onclick="hrExpCp39()">⬇ CP39 / e-PCB file</button>',
+      'Upload at <b>e-PCB / e-Data PCB</b> and pay by FPX there. ⚠ UOB Infinity does <b>not</b> accept PCB files — LHDN portal only.','pcb')+
+    sec('📒','Xero — payroll journal', '<span class="muted" style="font-size:12px">wages + statutory liabilities</span>', '',
+      (finalised&&p.data.run?('<button class="btn xs p" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Post DRAFT journal</button>'):'<button class="btn xs" disabled style="opacity:.5;cursor:not-allowed" title="Finalise payroll first">Finalise payroll first</button>'),
+      'Posts a <b>DRAFT</b> manual journal to Xero — you review &amp; approve it inside Xero.','xero')+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"><span class="muted" style="font-size:11px;font-weight:600">📄 Documents</span>'+
+      '<button class="btn xs" onclick="hrExpSummary()">Payroll Summary (Excel)</button>'+
+      '<button class="btn xs" onclick="hrExpPayslips()">Payslips PDF</button>'+
+      '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
+      '<span class="muted" style="font-size:10.5px">· raw csv:</span>'+
+      '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF</button><button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO</button><button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS</button><button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB</button></div>'+
+    '<div class="muted" style="font-size:10.5px;margin-top:8px;line-height:1.5">Checklist ticks save per company + month (this browser). Statutory amounts are system-computed estimates — verify against the official portal figure before paying, and do a one-time test upload for each file type.</div>'+
+  '</div>';
+}
 function hrPayroll(){
   var p=HR.pay; if(!p.month){ var d=new Date(); p.month=d.getMonth()+1; p.year=d.getFullYear(); }
   var picker='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'+
@@ -1806,31 +1856,9 @@ function hrPayroll(){
     '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt">PCB</th><th class="amt">Net</th></tr></thead><tbody>'+trs+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
-  var grp=function(label,btns){ return '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"><span class="muted" style="font-size:11px;min-width:78px;font-weight:600">'+label+'</span>'+btns+'</div>'; };
-  var exp='<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:8px">'+
-    grp('📄 Documents',
-      '<button class="btn xs p" onclick="hrExpSummary()">Payroll Summary (Excel)</button>'+
-      '<button class="btn xs" onclick="hrExpPayslips()">Payslips PDF</button>')+
-    grp('💸 Salary pay',
-      '<button class="btn xs" onclick="hrExpBank(\'maybank\')">🏦 Maybank M2E file</button>'+
-      '<button class="btn xs" onclick="hrExpBank(\'uob\')">🏦 UOB BIBPlus file</button>'+
-      '<button class="btn xs" onclick="hrExpGiro()">Generic IBG/giro CSV</button>')+
-    grp('🏛️ Statutory',
-      '<button class="btn xs" onclick="hrExpKwsp()">🏛️ KWSP i-Akaun (EPF)</button>'+
-      '<button class="btn xs" onclick="hrExpAssist()">🏛️ PERKESO ASSIST (SOCSO+EIS)</button>'+
-      '<button class="btn xs" onclick="hrExpCp39()">🏛️ LHDN CP39 (PCB)</button>')+
-    grp('&nbsp;&nbsp;· raw CSV',
-      '<button class="btn xs" onclick="hrExpStatutory(\'epf\')">EPF</button>'+
-      '<button class="btn xs" onclick="hrExpStatutory(\'socso\')">SOCSO</button>'+
-      '<button class="btn xs" onclick="hrExpStatutory(\'eis\')">EIS</button>'+
-      '<button class="btn xs" onclick="hrExpStatutory(\'pcb\')">PCB</button>')+
-    grp('📤 Send / post',
-      '<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>'+
-      (finalised&&p.data.run?('<button class="btn xs" onclick="hrPostXero(\''+p.data.run.id+'\')">📥 Xero draft journal</button>'):'<button class="btn xs" disabled title="Finalise payroll first" style="opacity:.5;cursor:not-allowed">📥 Xero (finalise first)</button>'))+
-    '<div class="muted" style="font-size:10.5px;margin-top:8px;line-height:1.5">Salary files use each employee\'s net pay + bank details — confirm the column order in your Maybank M2E / UOB BIBPlus uploader on first use. Statutory files carry EPF/SOCSO/EIS/PCB figures for KWSP i-Akaun / PERKESO ASSIST / LHDN e-PCB.</div>'+
-    '</div>';
+  var exp=hrPayHub(tot,finalised,p);
   var dedPanel = p.dedEmp ? hrDedPanel(p.dedEmp) : '';
-  return picker+ratesPanel+table+exp+sum+dedPanel;
+  return picker+ratesPanel+table+sum+exp+dedPanel;
 }
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
 function hrRatesPanel(cfg){
@@ -2098,13 +2126,18 @@ function hrExpBank(bank){
     body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
     body.push(['','','','','TOTAL',f2(total),'','','','']);
   } else {
-    name='UOB_BIBPlus_Salary_'+tag+'.csv';
-    head=['Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Payment Type','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Beneficiary Email'];
-    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrBankCode(e.bankName),own?'Internal':'IBG',f2(x.p.net),'Salary '+per.label+' '+(e.empNo||''),e.ic||'',e.email||'']; });
-    body.push(['','','','','TOTAL',f2(total),'','','']);
+    // UOB Infinity — Pay & Transfer → Bulk Transactions → Upload Bulk Files → "IBG Payroll with Payment Advice (Employee)"
+    var u=hrUobCfg();
+    if(!u.acct) toast('Tip: set the UOB debit account (Payment Hub → Save) so the file carries it.',true);
+    var cd=u.cd ? u.cd.split('-').reverse().join('/') : '';   // yyyy-mm-dd → dd/mm/yyyy
+    if(!cd) toast('Tip: pick a Crediting date in the Payment Hub — UOB needs the date salaries reach staff.',true);
+    name='UOB_Infinity_IBG_Payroll_'+tag+'.csv';
+    head=['Crediting Date','Debit Account','Beneficiary Name','Beneficiary Bank','SWIFT/BIC','Beneficiary Account No','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Payment Advice Email','Payment Type'];
+    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',f2(x.p.net),('SALARY '+per.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
+    body.push(['','','','','','TOTAL',f2(total),'','','','']);
   }
   hrDownload(name,hrCsv([head].concat(body)));
-  toast((bank==='maybank'?'Maybank':'UOB')+' salary file — '+pay.length+' staff, '+M(total)+(noAcct?(' · ⚠ '+noAcct+' missing bank a/c'):''), noAcct>0);
+  toast((bank==='maybank'?'Maybank':'UOB Infinity')+' salary file — '+pay.length+' staff, '+M(total)+(noAcct?(' · ⚠ '+noAcct+' missing bank a/c'):''), noAcct>0);
 }
 // ---- Payroll Summary (styled .xls that opens formatted in Excel) ----
 var HR_HRDF_RATE=0.01; // HRD Corp levy = 1% of basic (only for HRDF-registered employers)
