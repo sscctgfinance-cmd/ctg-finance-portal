@@ -2256,7 +2256,8 @@ Deno.serve(async (req)=>{
       let access:any = null; try { access = await xeroAccessToken(); } catch(_e){ access = null; }
       for (const p of prefixes){
         let maxN = 0; let src = "cache";
-        const { data: rows } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number", p+"%").limit(5000);
+        // zero-padded suffix → lexicographic DESC = numeric DESC, so the max sits in the first rows (1000-row select cap safe)
+        const { data: rows } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number", p+"%").order("number",{ascending:false}).limit(1000);
         for (const r of (rows||[])){ const m = String(r.number||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } }
         // Live check too — the 20-min cache can lag a CSV the operator imported minutes ago.
         if (access){
@@ -2286,8 +2287,13 @@ Deno.serve(async (req)=>{
         const { data: ex } = await sb.from("xero_invoice_cache").select("number,total").eq("tenant_id",tenant).in("number", bases.slice(i,i+CHUNK));
         for (const r of (ex||[])) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
       }
-      const { data: fam } = await sb.from("xero_invoice_cache").select("number,total").eq("tenant_id",tenant).like("number","SO-%").limit(20000);
-      for (const r of (fam||[])) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
+      // Supabase caps every select at 1000 rows regardless of .limit() — paginate the SO- family (IPROCARE has ~3.7k+).
+      for (let from=0; from<40000; from+=1000){
+        const { data: fam } = await sb.from("xero_invoice_cache").select("number,total").eq("tenant_id",tenant).like("number","SO-%").order("number").range(from, from+999);
+        if (!fam || !fam.length) break;
+        for (const r of fam) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
+        if (fam.length < 1000) break;
+      }
       // 2) live: everything modified in the last 48h — catches an import done minutes ago that the 20-min cache hasn't seen
       let liveOk = false;
       try {
@@ -4292,7 +4298,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v100 + sr-so-tally(prev_total per SO for OrderForm-vs-payments check) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v101 + sr-so-tally(prev_total per SO, paginated past the 1000-row select cap) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
