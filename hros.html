@@ -1708,6 +1708,10 @@ function hrEmployees(){
   return '<div class="panel"><div class="panel-hd"><h3>Workforce ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div>'+body+'</div>';
 }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
+// Default role/position list (operator's roster) — the Position field is a select-or-type combobox.
+// Any new position typed on an employee is auto-remembered (pulled from existing staff next time).
+var HR_POSITIONS=['Director','Senior Executive','Senior Sales Advisor','Sales Executive','After Sales Service Representative','Customer Service','Channel Marketer','Content Creator','Graphic Designer','Multi Media Designer','Administrative Assistant'];
+function hrPositionList(){ var set={}; HR_POSITIONS.forEach(function(p){set[p]=1;}); ((HR.data&&HR.data.employees)||[]).forEach(function(e){ if(e.position&&String(e.position).trim()) set[String(e.position).trim()]=1; }); return Object.keys(set).sort(); }
 function hrEmpForm(){
   var x=HR.editEmp||{};
   var inp=function(k,ph,val,extra){return '<input id="hr_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">';};
@@ -1723,7 +1727,7 @@ function hrEmpForm(){
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Personal &amp; pay</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">'+
       g('Name *',inp('name','Full name',x.name))+g('IC / Passport',inp('ic','',x.ic_no))+g('Email',inp('email','',x.email))+
-      g('Department',inp('dept','',x.dept))+g('Position',inp('position','',x.position))+g('Employment type',sel('empType',etOpts,x.employment_type||'Full-time'))+
+      g('Department',inp('dept','',x.dept))+g('Position / role',inp('position','Select or type…',x.position,'list="hr_pos_dl"')+'<datalist id="hr_pos_dl">'+hrPositionList().map(function(p){return '<option value="'+esc(p)+'"></option>';}).join('')+'</datalist>')+g('Employment type',sel('empType',etOpts,x.employment_type||'Full-time'))+
       g('Phone',inp('phone','',x.phone))+g('Basic salary (RM) *',inp('basic','0',x.basic_salary,'type="number" step="0.01"'))+g('Fixed allowance (RM)',inp('allowance','0',x.fixed_allowance,'type="number" step="0.01"'))+
       g('Date of birth',inp('dob','',dob,'type="date"'))+
       g('Bank name *',hrBankPicker(x))+g('Bank account no. *',inp('bankAccount','digits only',x.bank_account,'inputmode="numeric" maxlength="20" oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,20)"'))+g('Account holder name *',inp('bankHolder','As per bank statement',(x.bank_holder!=null?x.bank_holder:(x.name||''))))+
