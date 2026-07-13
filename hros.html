@@ -1694,21 +1694,38 @@ function hrEmployees(){
   var e=(HR.data.employees||[]).slice().sort(function(a,b){return String(a.emp_no).localeCompare(String(b.emp_no));});
   var typePill=function(t){ t=t||'Full-time'; var m={'Full-time':'pill-green','Contract':'pill-blue','Part-time':'pill-coral'}; return '<span class="pill '+(m[t]||'pill-draft')+'">'+esc(t)+'</span>'; };
   var statusPill=function(s){ return '<span class="pill '+(s==='active'?'pill-green':'pill-draft')+'">'+esc(s||'—')+'</span>'; };
-  var cards=e.map(function(x){ var h=hrAvatarHue(x.name||x.emp_no);
-    return '<div class="emp-card">'+
+  var cards=e.map(function(x){ var h=hrAvatarHue(x.name||x.emp_no); var gone=hrIsResigned(x);
+    return '<div class="emp-card"'+(gone?' style="opacity:.62"':'')+'>'+
       '<div class="emp-av" style="background:hsl('+h+',42%,26%);color:hsl('+h+',72%,78%)">'+esc(hrInitials(x.name))+'</div>'+
       '<div class="emp-main"><div class="emp-name">'+esc(x.name||'—')+' <span class="emp-no">'+esc(x.emp_no||'—')+'</span></div>'+
-        '<div class="emp-meta">'+esc(x.position||'—')+' · '+esc(x.dept||'—')+(x.bank_name?' · '+esc(x.bank_name):'')+'</div></div>'+
+        '<div class="emp-meta">'+esc(x.position||'—')+' · '+esc(x.dept||'—')+(x.bank_name?' · '+esc(x.bank_name):'')+(gone&&x.resign_date?' · left '+esc(String(x.resign_date).slice(0,10)):'')+'</div></div>'+
       typePill(x.employment_type)+
       '<div class="emp-sal"><div class="v">'+M(x.basic_salary)+'</div><div class="l">+ '+M(x.fixed_allowance)+' allow</div></div>'+
       statusPill(x.status)+
       '<button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button>'+
+      (gone?' <button class="btn xs d" onclick="hrEmpDelete(\''+x.id+'\')" title="Delete this resigned employee">Delete</button>':'')+
     '</div>';
   }).join('');
   var body=e.length?'<div class="emp-list">'+cards+'</div>':'<div class="empty"><div class="empty-ico">👤</div>No employees yet — add your first team member.</div>';
   return '<div class="panel"><div class="panel-hd"><h3>Workforce ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div>'+body+'</div>';
 }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
+function hrIsResigned(x){ var s=String((x&&x.status)||'').toLowerCase(); return s==='resigned'||s==='inactive'||s==='terminated'||s==='left'||!!(x&&x.resign_date); }
+async function hrEmpDelete(id){
+  var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
+  if(!hrIsResigned(e)){ toast('Mark this employee as Resigned first',true); return; }
+  if(!confirm('Delete '+(e.name||'this employee')+' permanently?\n\nRemoves their profile plus leave / claim / attendance records. This cannot be undone.')) return;
+  var r=await call({api:'hr_emp_delete',id:id,tenant:HR.tenant});
+  if(r&&r.ok){ toast('Employee deleted'+(r.payslips?' (+ '+r.payslips+' payslip records)':'')); renderHR(); return; }
+  if(r&&r.needs_confirm){
+    if(confirm('⚠️ '+(r.error||'')+'\n\nDelete anyway and permanently erase '+r.payslips+' payslip record(s)? Payroll history / EA source data will be lost.')){
+      var r2=await call({api:'hr_emp_delete',id:id,tenant:HR.tenant,force:true});
+      if(r2&&r2.ok){ toast('Employee + payroll history deleted'); renderHR(); } else toast((r2&&r2.error)||'Delete failed',true);
+    }
+    return;
+  }
+  toast((r&&r.error)||'Delete failed',true);
+}
 // Default role/position list (operator's roster) — the Position field is a select-or-type combobox.
 // Any new position typed on an employee is auto-remembered (pulled from existing staff next time).
 var HR_POSITIONS=['Director','Senior Executive','Senior Sales Advisor','Sales Executive','After Sales Service Representative','Customer Service','Channel Marketer','Content Creator','Graphic Designer','Multi Media Designer','Administrative Assistant'];
@@ -1733,6 +1750,8 @@ function hrEmpForm(){
       g('Date of birth',inp('dob','',dob,'type="date"'))+
       g('Bank name *',hrBankPicker(x))+g('Bank account no. *',inp('bankAccount','digits only',x.bank_account,'inputmode="numeric" maxlength="20" oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,20)"'))+g('Account holder name *',inp('bankHolder','As per bank statement',(x.bank_holder!=null?x.bank_holder:(x.name||''))))+
       g('EPF no.',inp('epfNo','',x.epf_no))+g('SOCSO no.',inp('socsoNo','',x.socso_no))+g('Tax no. (TIN)',inp('taxNo','',x.tax_no))+
+      g('Status',sel('status',[['active','Active'],['resigned','Resigned']],(String(x.status||'').toLowerCase()==='resigned'?'resigned':'active')))+
+      g('Resign date',inp('resignDate','',x.resign_date?String(x.resign_date).slice(0,10):'','type="date"'))+g('&nbsp;','<div></div>')+
     '</div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Statutory &amp; tax</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
@@ -1770,6 +1789,7 @@ async function hrSaveEmp(){
     basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
     payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
+    status:v('status')||'active', resignDate:v('resignDate')||null,
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
   var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
   if(r&&r.ok){ toast('Employee saved'); HR.editEmp=null; renderHR(); } else toast((r&&r.error)||'Save failed',true);

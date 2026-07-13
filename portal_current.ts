@@ -3884,6 +3884,12 @@ Deno.serve(async (req)=>{
         shift_end:(String(f.shiftEnd||"").trim()||null),
         clock_reminder:!!f.clockReminder,
       };
+      // Status / resignation (only touched when the form sends it, so we never clobber an existing status on partial saves)
+      if (f.status !== undefined && f.status !== null && String(f.status) !== "") {
+        const st = String(f.status).toLowerCase()==="resigned" ? "resigned" : "active";
+        patch.status = st;
+        patch.resign_date = st==="resigned" ? (String(f.resignDate||"").slice(0,10) || new Date(Date.now()+8*3600*1000).toISOString().slice(0,10)) : null;
+      }
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
       else {
@@ -3899,6 +3905,30 @@ Deno.serve(async (req)=>{
       if (res.error) return j({ ok:false, error:res.error.message });
       await logAudit(me,"hr_emp_save",String(res.data&&res.data.id),{ name:f.name });
       return j({ ok:true, employee:res.data });
+    }
+    if (api === "hr_emp_delete") {
+      // Permanently delete a RESIGNED employee. Most child rows CASCADE at the DB; hr_payslips is RESTRICT,
+      // so an employee with payroll history is protected unless the caller explicitly forces it.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const id = String(b.id||""); if (!id) return j({ ok:false, error:"No employee specified." });
+      const { data: emp } = await sb.from("hr_employees").select("id,name,status,resign_date,tenant_id").eq("id",id).maybeSingle();
+      if (!emp) return j({ ok:false, error:"Employee not found." });
+      const alw = await allowedTenants(b.token);
+      if (emp.tenant_id && alw.length && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403);
+      const stat = String(emp.status||"").toLowerCase();
+      const resigned = stat==="resigned" || ["inactive","terminated","left","ex-staff"].indexOf(stat) >= 0 || !!emp.resign_date;
+      if (!resigned) return j({ ok:false, error:"Only a resigned employee can be deleted — set their status to Resigned first." });
+      const { count: pc } = await sb.from("hr_payslips").select("*",{ count:"exact", head:true }).eq("employee_id",id);
+      const payslips = pc||0;
+      if (payslips > 0 && !b.force) {
+        return j({ ok:false, needs_confirm:true, payslips, error:"This employee has "+payslips+" payslip(s) on record. Deleting permanently erases their payroll history (EA / Form E source data)." });
+      }
+      try { await sb.from("hr_employees").update({ manager_id:null }).eq("manager_id",id); } catch(_e){} // release any staff reporting to them
+      if (payslips > 0) { const pd = await sb.from("hr_payslips").delete().eq("employee_id",id); if (pd.error) return j({ ok:false, error:pd.error.message }); }
+      const del = await sb.from("hr_employees").delete().eq("id",id); // cascades leave/claims/balances/attendance/timeclock/adjustments/approval-steps
+      if (del.error) return j({ ok:false, error:del.error.message });
+      await logAudit(me,"hr_emp_delete",id,{ name:emp.name, payslips, forced:!!b.force });
+      return j({ ok:true, payslips });
     }
     if (api === "hr_leave_my") {
       // Employee self-service: their leave types, balances (this year), and requests.
@@ -4762,7 +4792,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
+    return j({ ok:true, hint:"portal v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
