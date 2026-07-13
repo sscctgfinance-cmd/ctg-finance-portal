@@ -102,6 +102,15 @@ function isAdmin(me){ const r = me && me.user && me.user.role; return me && me.o
 function superAdmin(me){ return me && me.ok && me.user && me.user.role==="admin"; }
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return Array.isArray(data) ? data : []; } catch (_e) { return []; } }
+// Tenant pin for by-id actions (v103): the central guard only sees b.tenant in the request body, so an
+// action that takes only an id could act on another company's record. Call with the FETCHED record's
+// tenant_id; returns false when the caller's allowed list doesn't include it. Apply on admin paths —
+// employee self-service flows are already record-pinned by their own ownership/approver checks.
+async function tenantPinned(token, tenantId){
+  if(!tenantId) return true;
+  const allowed = await allowedTenants(token);
+  return allowed.indexOf(String(tenantId)) >= 0;
+}
 async function denyTenant(me, action, tenant){ await logAudit(me, "tenant_access_denied", String(tenant||""), { action }); return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
 
 // ===== Reimbursement / Claim engine helpers =====
@@ -282,9 +291,17 @@ async function rcEmailActionPage(token:string){
   return page("Approve "+c.claim_no, inner);
 }
 // ── Factored single-claim decision (used by hr_rc_decide + hr_rc_decide_bulk). Returns {ok,status,error,claim,advanced,final}. ──
-async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:string, overrideAmount:any, overrideReason:string){
+async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:string, overrideAmount:any, overrideReason:string, pinTenants:any=null){
   const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
   if(!claim) return { ok:false, error:"claim not found" };
+  // Tenant pin (v103): an admin restricted to company A must not decide company B's claims by id.
+  // pinTenants is the caller's allowed list (null = caller isn't an admin / path is token-scoped).
+  if(Array.isArray(pinTenants) && claim.tenant_id && pinTenants.indexOf(String(claim.tenant_id))<0)
+    return { ok:false, error:"You do not have access to this company's claims.", forbidden:true };
+  // Status gate: only actionable claims can be decided. Without this, a stale bulk-approve list could
+  // regress a Paid claim back to Approved (re-enabling a second payment) or reject an already-paid claim.
+  const RC_ACTIONABLE=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
+  if(RC_ACTIONABLE.indexOf(claim.status)<0) return { ok:false, error:"Already handled — claim is now "+claim.status+"." };
   const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
   if(!inst) return { ok:false, error:"no approval in progress" };
   const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
@@ -361,9 +378,14 @@ async function xeroGet(access, tenant, path, extraHeaders){
   throw new Error(lastErr || "Xero retries exhausted on " + path);
 }
 async function xeroInvoicesAll(access, tenant, type){
-  const out = [];
+  const out:any[] = [];
+  // A mid-pagination failure (e.g. daily 429 cap on page 3) used to silently return a PARTIAL list that
+  // callers treated as complete — the collections screen would show a fraction of overdue AR as "all".
+  // Surface truncation via a non-enumerable-ish marker the callers pass through to the UI.
+  (out as any).__partial = false;
   for (let page=1; page<=100; page++){
-    let d; try { d = await xeroGet(access, tenant, "Invoices?Statuses=AUTHORISED,SUBMITTED&page=" + page + "&where=" + encodeURIComponent('Type=="' + type + '"')); } catch (_e) { break; }
+    let d; try { d = await xeroGet(access, tenant, "Invoices?Statuses=AUTHORISED,SUBMITTED&page=" + page + "&where=" + encodeURIComponent('Type=="' + type + '"')); }
+    catch (e) { (out as any).__partial = true; (out as any).__error = String(e).slice(0,200); break; }
     const arr = d.Invoices || [];
     if (!arr.length) break;
     for (const iv of arr) out.push(iv);
@@ -371,7 +393,10 @@ async function xeroInvoicesAll(access, tenant, type){
   }
   return out;
 }
-async function resolveContact(tenant, name){ if(!name) return null; const { data } = await sb.from("xero_contacts_cache").select("contact_id,name").eq("tenant_id", tenant).ilike("name", String(name).trim()).limit(1); return (data && data.length) ? data[0].contact_id : null; }
+// ilike special chars must be literal: a vendor named "100% Wellness" must not wildcard-match
+// "100 PLUS WELLNESS" — with AP autonomy ON that posts the bill to the wrong supplier contact.
+function ilikeEscape(s){ return String(s).replace(/([%_\\])/g, "\\$1"); }
+async function resolveContact(tenant, name){ if(!name) return null; const { data } = await sb.from("xero_contacts_cache").select("contact_id,name").eq("tenant_id", tenant).ilike("name", ilikeEscape(String(name).trim())).limit(1); return (data && data.length) ? data[0].contact_id : null; }
 async function getWebhookKey(){ try{ const { data } = await sb.from("portal_secrets").select("value").eq("key","xero_webhook").single(); if (data && data.value) return data.value; }catch(_e){} return Deno.env.get("XERO_WEBHOOK_KEY") || ""; }
 async function hmacSha256B64(key, msg){
   const enc = new TextEncoder();
@@ -613,8 +638,14 @@ async function processPendingDedup(limit){
         calls++;
         const r = await fetchInvoiceIdsBatch(access, tid, chunk.map((b)=>b.ev.resourceId));
         deleted += r.deleted;
-        await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString() }).in("id", rowIds);
-        processed += rowIds.length;
+        if (r.error){
+          // The Xero fetch worked but the cache upsert reported an error — do NOT drain these events as
+          // "processed" (the invoice would silently stay stale). Leave them for retry with the error recorded.
+          for (const bk of chunk){ await sb.from("xero_webhook_events").update({ attempts: bk.maxAttempts + 1, last_attempt_at: new Date().toISOString(), last_error: ("batch-upsert: " + String(r.error)).slice(0,500) }).in("id", bk.ids); }
+        } else {
+          await sb.from("xero_webhook_events").update({ processed: true, last_attempt_at: new Date().toISOString() }).in("id", rowIds);
+          processed += rowIds.length;
+        }
       } catch (e) {
         const msg = String(e);
         if (/rate limit/i.test(msg)){ await recordRateLimit(tid, msg); tenantBlocked.set(tid, true); }
@@ -1174,13 +1205,20 @@ Important:
     decision = "company_unknown";
     reasoning = "Company routing status is not postable: " + routingStatus;
     issues.push(reasoning);
-  } else if (dupHit){
+  } else if (dupHit && (dupLayer === "L2_invoice_no" || (dupLayer === "L3_vendor_total" && parsed.invoice_no && dupHit.number && String(parsed.invoice_no).trim().toLowerCase() === String(dupHit.number).trim().toLowerCase()))){
+    // CERTAIN duplicate: same invoice number already recorded (directly, or the L3 hit carries the same number).
     decision = "duplicate_rejected";
-    const dupWhat = dupLayer === "L2_invoice_no" ? "same invoice number already recorded"
-                  : dupLayer === "L4_reimbursement" ? "same claimant + amount + date already claimed"
+    reasoning = "Duplicate (same invoice number already recorded): " + (dupHit.number||dupHit.invoice_id||"") + " [" + (dupHit.status||"") + (dupHit.inv_date?(", "+dupHit.inv_date):"") + ", total " + (dupHit.total!=null?dupHit.total:"?") + "]";
+    issues.push("Duplicate — same invoice number already recorded.");
+  } else if (dupHit){
+    // HEURISTIC duplicate (L3 vendor+amount / L4 claimant+amount+date): a monthly recurring bill with a fixed
+    // amount (rent, subscriptions) legitimately matches last month's — never auto-reject + auto-reply on a
+    // heuristic. Gate to needs_review so a human confirms.
+    const dupWhat = dupLayer === "L4_reimbursement" ? "same claimant + amount + date already claimed"
                   : "same vendor + amount within the dedup window";
-    reasoning = "Duplicate (" + (dupLayer||"L3") + " — " + dupWhat + "): " + (dupHit.number||dupHit.invoice_id||"") + " [" + (dupHit.status||"") + (dupHit.inv_date?(", "+dupHit.inv_date):"") + ", total " + (dupHit.total!=null?dupHit.total:"?") + "]";
-    issues.push("Possible duplicate — " + dupWhat + ". Review before posting.");
+    decision = "needs_review";
+    reasoning = "Possible duplicate (" + (dupLayer||"L3") + " — " + dupWhat + "): " + (dupHit.number||dupHit.invoice_id||"") + " [" + (dupHit.status||"") + (dupHit.inv_date?(", "+dupHit.inv_date):"") + ", total " + (dupHit.total!=null?dupHit.total:"?") + "] — could be a recurring bill; confirm before posting.";
+    issues.push("Possible duplicate — " + dupWhat + ". Confirm it is not a recurring bill before posting.");
   } else if (parsed.doc_type === "reimbursement" && route.require_4item_reimbursement !== false){
     const miss = [];
     if (!parsed.reimb_has_claim_form) miss.push("a formal claim form");
@@ -1926,9 +1964,9 @@ Deno.serve(async (req)=>{
           for (const t of (health.tenants||[])){
             // Staleness = the sync MECHANISM stopped running (last_delta_sync_at), NOT "no data changed".
             // A quiet tenant legitimately has an old cache_last_updated — that is normal, not a fault.
-            // Delta runs every 20 min, so >90 min without a delta = ~4 consecutive misses = real problem.
+            // Delta runs every 5 min, so >25 min without a delta = ~5 consecutive misses = real problem.
             const deltaMin = t.last_delta_sync_at ? (nowMs - new Date(t.last_delta_sync_at).getTime())/60000 : 99999;
-            if (deltaMin > 90) problems.push("Delta sync stalled: " + t.tenant_name + " (last ran " + (t.last_delta_sync_at ? Math.round(deltaMin)+"m ago" : "never") + ")");
+            if (deltaMin > 25) problems.push("Delta sync stalled: " + t.tenant_name + " (last ran " + (t.last_delta_sync_at ? Math.round(deltaMin)+"m ago" : "never") + ")");
             if (t.last_error) problems.push("Sync error: " + t.tenant_name + " — " + String(t.last_error).slice(0,80));
           }
           const signature = problems.slice().sort().join(" || ");
@@ -1990,9 +2028,10 @@ Deno.serve(async (req)=>{
           const since = base ? new Date(new Date(base).getTime() - 15*60*1000).toISOString() : new Date(Date.now() - 6*3600*1000).toISOString();
           const d = await runDelta(access, [t], since); totalUp += d.upserted; totalDel += d.deleted; per.push({ tenant: t.tenant_name, since, ...d.per[0] });
         }
-        await sb.from("portal_audit").insert({ action:"cron_delta", ref:"hourly", detail:{ upserted:totalUp, deleted:totalDel, per } });
+        // 5-min cadence: only write an audit row when something actually changed (heartbeat below always records the run).
+        if (totalUp + totalDel > 0) await sb.from("portal_audit").insert({ action:"cron_delta", ref:"5min", detail:{ upserted:totalUp, deleted:totalDel, per } });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_delta", p_status:"ok", p_detail:{ upserted:totalUp, deleted:totalDel } }); } catch (_e) {}
-      } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_delta_error", ref:"hourly", detail:{ error:String(e) } }); } catch (_e) {} } })();
+      } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_delta_error", ref:"5min", detail:{ error:String(e) } }); } catch (_e) {} } })();
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       return j({ ok:true, started:true });
     }
@@ -2157,7 +2196,13 @@ Deno.serve(async (req)=>{
       if (!b.tenant) return j({ ok:false, error:"no tenant" });
       const allowed = await allowedTenants(b.token);
       if (allowed.indexOf(b.tenant) < 0) return await denyTenant(me, "inv_meta", b.tenant);
-      const { data: contacts } = await sb.from("xero_contacts_cache").select("contact_id,name,email").eq("tenant_id", b.tenant).order("name").limit(5000);
+      // Paginated: .limit(5000) still caps at 1000 — contacts past #1000 vanished from the picker and
+      // were re-created as DUPLICATE Xero contacts on invoice issue.
+      let contacts:any[] = [];
+      for (let off=0; off<20000; off+=1000){
+        const { data: pg } = await sb.from("xero_contacts_cache").select("contact_id,name,email").eq("tenant_id", b.tenant).order("name").range(off, off+999);
+        contacts = contacts.concat(pg||[]); if (!pg || pg.length < 1000) break;
+      }
       const { data: accounts } = await sb.from("xero_accounts").select("code,name").eq("type","REVENUE").eq("status","ACTIVE").order("code");
       let items = [];
       try { const access = await xeroAccessToken(); const d = await xeroGet(access, b.tenant, "Items"); items = (d.Items||[]).filter((it)=> it.IsSold !== false).map((it)=>({ code: it.Code, name: it.Name || it.Code, price: (it.SalesDetails && it.SalesDetails.UnitPrice) || 0, account: (it.SalesDetails && it.SalesDetails.AccountCode) || "", description: (it.SalesDetails && it.SalesDetails.Description) || it.Name || "" })); } catch (_e) { items = []; }
@@ -2173,7 +2218,7 @@ Deno.serve(async (req)=>{
       let contact;
       if (b.contact_id) { contact = { ContactID: b.contact_id }; }
       else { const cid = await resolveContact(tenant, b.contact_name); contact = cid ? { ContactID: cid } : { Name: String(b.contact_name||"").slice(0,500) }; }
-      const inv = { Type:"ACCREC", Contact: contact, Date: b.date||new Date().toISOString().slice(0,10), Status: b.status||"AUTHORISED", LineAmountTypes: b.line_amount_types||"Exclusive", LineItems: li };
+      const inv = { Type:"ACCREC", Contact: contact, Date: b.date||new Date(Date.now()+8*3600*1000).toISOString().slice(0,10), Status: b.status||"AUTHORISED", LineAmountTypes: b.line_amount_types||"Exclusive", LineItems: li };
       if (b.due_date) inv.DueDate = b.due_date;
       if (b.reference) inv.Reference = String(b.reference).slice(0,255);
       if (b.dry_run !== false) { const tot = li.reduce((s,x)=>s+x.Quantity*x.UnitAmount,0); return j({ ok:true, dry_run:true, total: Math.round(tot*100)/100, contact: contact.ContactID?"existing":"new", invoice: inv }); }
@@ -2197,14 +2242,17 @@ Deno.serve(async (req)=>{
       const list = tn || [];
       const access = await xeroAccessToken();
       // v64: age receivables using MYT so days_overdue matches the operator's local calendar.
-      const now = Date.now() + 8*3600*1000; const items = [];
+      const now = Date.now() + 8*3600*1000; const items = []; const partialTenants:string[]=[];
       for (const t of list) {
         try { const invs = await xeroInvoicesAll(access, t.tenant_id, "ACCREC");
+          if ((invs as any).__partial) partialTenants.push(t.tenant_name);
           for (const iv of invs) { const due = Number(iv.AmountDue||0); if (due <= 0) continue; const dd = String(iv.DueDateString || iv.DueDate || "").slice(0,10); const days = dd ? Math.floor((now - new Date(dd).getTime())/86400000) : 0; items.push({ tenant_name:t.tenant_name, contact:(iv.Contact||{}).Name, email:(iv.Contact||{}).EmailAddress, number:iv.InvoiceNumber, amount_due:Math.round(due*100)/100, currency:iv.CurrencyCode||"MYR", due_date:dd, days_overdue:days }); }
-        } catch (_e) {}
+        } catch (e) { partialTenants.push(t.tenant_name + " (" + String(e).slice(0,80) + ")"); }
       }
       items.sort((a,b2)=>b2.days_overdue - a.days_overdue);
-      return j({ ok:true, count: items.length, total: Math.round(items.reduce((s,x)=>s+x.amount_due,0)*100)/100, items: items.slice(0,1000) });
+      return j({ ok:true, count: items.length, total: Math.round(items.reduce((s,x)=>s+x.amount_due,0)*100)/100, items: items.slice(0,1000),
+        partial: partialTenants.length>0, partial_tenants: partialTenants,
+        warning: partialTenants.length ? ("Xero fetch was INCOMPLETE for: " + partialTenants.join(", ") + " — totals below may be missing invoices (likely rate-limited). Retry later or use the cached AR aging.") : undefined });
     }
     if (api === "cached_receivables") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -2214,7 +2262,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "close_list") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const period = String(b.period || new Date().toISOString().slice(0,7));
+      const period = String(b.period || new Date(Date.now()+8*3600*1000).toISOString().slice(0,7));
       let { data: tasks } = await sb.from("portal_close_tasks").select("*").eq("period", period).order("sort");
       if (!tasks || !tasks.length) { const seed = CLOSE_TEMPLATE.map((t,i)=>({ period, title:t.title, category:t.category, sort:i, status:"pending" })); await sb.from("portal_close_tasks").insert(seed); const r2 = await sb.from("portal_close_tasks").select("*").eq("period", period).order("sort"); tasks = r2.data || []; }
       return j({ ok:true, period, tasks: tasks||[] });
@@ -2237,13 +2285,14 @@ Deno.serve(async (req)=>{
       const lines = Array.isArray(b.lines) ? b.lines : [];
       if (!lines.length) return j({ ok:false, error:"no bank lines" });
       const access = await xeroAccessToken();
-      const docs = [];
+      const docs = []; let reconPartial=false;
       for (const ty of ["ACCREC","ACCPAY"]) {
-        try { const invs = await xeroInvoicesAll(access, tenant, ty); for (const iv of invs) { const due = Number(iv.AmountDue||0); if (due>0) docs.push({ kind: ty==="ACCREC"?"AR (money in)":"AP (money out)", amount: Math.round(due*100)/100, contact:(iv.Contact||{}).Name, number: iv.InvoiceNumber, date:(iv.DateString||iv.Date||"").slice(0,10) }); } } catch (_e) {}
+        try { const invs = await xeroInvoicesAll(access, tenant, ty); if((invs as any).__partial) reconPartial=true; for (const iv of invs) { const due = Number(iv.AmountDue||0); if (due>0) docs.push({ kind: ty==="ACCREC"?"AR (money in)":"AP (money out)", amount: Math.round(due*100)/100, contact:(iv.Contact||{}).Name, number: iv.InvoiceNumber, date:(iv.DateString||iv.Date||"").slice(0,10) }); } } catch (_e) { reconPartial=true; }
       }
       const used = {};
       const results = lines.map((l)=>{ const amt = Math.round(Math.abs(Number(l.amount)||0)*100)/100; let match = null; for (let i=0;i<docs.length;i++){ if(used[i]) continue; if(Math.abs(docs[i].amount-amt)<0.01){ match=docs[i]; used[i]=true; break; } } return { date:l.date, amount:l.amount, description:l.description, match }; });
-      return j({ ok:true, total: results.length, matched: results.filter(r=>r.match).length, outstanding_docs: docs.length, results });
+      return j({ ok:true, total: results.length, matched: results.filter(r=>r.match).length, outstanding_docs: docs.length, results,
+        partial: reconPartial, warning: reconPartial ? "Xero fetch was INCOMPLETE — unmatched lines may actually have a match (likely rate-limited). Retry later." : undefined });
     }
     if (api === "sr_post_invoices") {
       // Sales Recon → create the Sales Invoices in Xero DIRECTLY (no CSV import step).
@@ -2302,7 +2351,7 @@ Deno.serve(async (req)=>{
         // zero-padded suffix → lexicographic DESC = numeric DESC, so the max sits in the first rows (1000-row select cap safe)
         const { data: rows } = await sb.from("xero_invoice_cache").select("number").eq("tenant_id",tenant).like("number", p+"%").order("number",{ascending:false}).limit(1000);
         for (const r of (rows||[])){ const m = String(r.number||"").slice(p.length).match(/^(\d{1,6})$/); if (m){ const n = parseInt(m[1],10); if (n>maxN) maxN = n; } }
-        // Live check too — the 20-min cache can lag a CSV the operator imported minutes ago.
+        // Live check too — the cache (delta every 5 min) can lag a CSV the operator imported moments ago.
         if (access){
           try {
             const where = encodeURIComponent('InvoiceNumber!=null&&InvoiceNumber.StartsWith("'+p.replace(/["\\]/g,"")+'")');
@@ -2337,7 +2386,7 @@ Deno.serve(async (req)=>{
         for (const r of fam) if (r.number){ takenSet.add(String(r.number)); amtMap[String(r.number)] = Number(r.total)||0; }
         if (fam.length < 1000) break;
       }
-      // 2) live: everything modified in the last 48h — catches an import done minutes ago that the 20-min cache hasn't seen
+      // 2) live: everything modified in the last 48h — catches an import done moments ago that the cache hasn't seen
       let liveOk = false;
       try {
         const access = await xeroAccessToken();
@@ -2548,6 +2597,7 @@ Deno.serve(async (req)=>{
     if (api === "sbi_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       let q = sb.from("portal_self_billed_invoices").select("id,invoice_no,tenant_id,payee_name,invoice_date,payment_type,gross_amount,wht_amount,net_payable,status,xero_bill_id,created_at").order("created_at",{ascending:false}).limit(Math.min(Number(b.limit)||200,500));
+      { const alw = await allowedTenants(b.token); if (alw.length) q = q.in("tenant_id", alw); }
       if (b.tenant) q = q.eq("tenant_id", b.tenant);
       if (b.status) q = q.eq("status", b.status);
       const { data } = await q;
@@ -2556,6 +2606,7 @@ Deno.serve(async (req)=>{
     if (api === "sbi_get") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("portal_self_billed_invoices").select("*").eq("id", Number(b.id)).single();
+      { const alw = await allowedTenants(b.token); if (data && alw.length && data.tenant_id && alw.indexOf(data.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if (data && Array.isArray(data.attachments)){
         for (const a of data.attachments){ if (a && a.storage_path){ try{ const { data:s } = await sb.storage.from("portal-ap-uploads").createSignedUrl(a.storage_path,300); if (s) a.download_url = s.signedUrl; }catch(_e){} } }
       }
@@ -2646,12 +2697,16 @@ Deno.serve(async (req)=>{
     }
     if (api === "sbi_approve") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      { const { data: rec } = await sb.from("portal_self_billed_invoices").select("tenant_id").eq("id", Number(b.id)).maybeSingle();
+        const alw = await allowedTenants(b.token); if (rec && alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       const { data } = await sb.from("portal_self_billed_invoices").update({ status:'approved', approved_by:(me.user&&me.user.email)||null, approved_at:new Date().toISOString() }).eq("id", Number(b.id)).select().single();
       await logAudit(me, "sbi_approve", String(b.id), {});
       return j({ ok:true, invoice: data });
     }
     if (api === "sbi_void") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      { const { data: rec } = await sb.from("portal_self_billed_invoices").select("tenant_id").eq("id", Number(b.id)).maybeSingle();
+        const alw = await allowedTenants(b.token); if (rec && alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       await sb.from("portal_self_billed_invoices").update({ status:'void', updated_at:new Date().toISOString() }).eq("id", Number(b.id));
       await logAudit(me, "sbi_void", String(b.id), {});
       return j({ ok:true });
@@ -2789,7 +2844,8 @@ Deno.serve(async (req)=>{
     /* ── AP Email Agent ── */
     if (api === "ap_settings_get") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
-      const { data } = await sb.rpc("portal_ap_settings_get", { p_token: b.token||"" });
+      const { data, error } = await sb.rpc("portal_ap_settings_get", { p_token: b.token||"" });
+      if (error) return j({ ok:false, error:"ap_settings_get failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, settings:[] });
     }
     if (api === "ap_settings_save") {
@@ -2803,11 +2859,13 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401); // AP module is admin-only
       const alwAp = await allowedTenants(b.token);
       if (!b.tenant && alwAp.length){ // no explicit tenant filter → still restrict a partially-assigned admin to their companies
-        const { data } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+        const { data, error } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+        if (error) return j({ ok:false, error:"ap_inbox_list failed: "+String(error.message||error) }, 500);
         if (data && Array.isArray(data.items)) data.items = data.items.filter((it:any)=>!it.tenant_id || alwAp.indexOf(it.tenant_id)>=0);
         return j(data || { ok:true, items:[] });
       }
-      const { data } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: b.tenant||null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+      const { data, error } = await sb.rpc("portal_ap_inbox_list", { p_token: b.token||"", p_tenant: b.tenant||null, p_status: b.status||null, p_limit: Math.min(Number(b.limit)||100, 500) });
+      if (error) return j({ ok:false, error:"ap_inbox_list failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, items:[] });
     }
     if (api === "ap_inbox_get") {
@@ -3163,24 +3221,28 @@ Deno.serve(async (req)=>{
     }
     if (api === "compliance_calendar") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_compliance_calendar", { p_token: b.token||"", p_days: Number(b.days)||365 });
+      const { data, error } = await sb.rpc("portal_compliance_calendar", { p_token: b.token||"", p_days: Number(b.days)||365 });
+      if (error) return j({ ok:false, error:"compliance_calendar failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, deadlines:[] });
     }
     if (api === "cashflow_forecast") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_cashflow_forecast", { p_token: b.token||"", p_days: Number(b.days)||90, p_tenant: b.tenant||null });
+      const { data, error } = await sb.rpc("portal_cashflow_forecast", { p_token: b.token||"", p_days: Number(b.days)||90, p_tenant: b.tenant||null });
+      if (error) return j({ ok:false, error:"cashflow_forecast failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true });
     }
     if (api === "group_dashboard") {
       // CFO Cockpit — group analytics from the invoice cache (reliable), not the Xero P&L.
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_group_dashboard", { p_token: b.token||"", p_months: Number(b.months)||12 });
+      const { data, error } = await sb.rpc("portal_group_dashboard", { p_token: b.token||"", p_months: Number(b.months)||12, p_tenant: b.tenant||null });
+      if (error) return j({ ok:false, error:"group_dashboard failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true });
     }
     if (api === "fin_analytics") {
       // Financial-analyst toolkit — DSO/DPO + cash-conversion, customer AR credit risk, intercompany matrix.
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_fin_analytics", { p_token: b.token||"", p_months: Number(b.months)||12 });
+      const { data, error } = await sb.rpc("portal_fin_analytics", { p_token: b.token||"", p_months: Number(b.months)||12, p_tenant: b.tenant||null });
+      if (error) return j({ ok:false, error:"fin_analytics failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true });
     }
     if (api === "pnl_report") {
@@ -3267,10 +3329,14 @@ Deno.serve(async (req)=>{
       const results = [];
       for (const t of list){
         try {
-          // Cache side — open ACCREC (AUTHORISED + SUBMITTED).
-          const { data: rows } = await sb.from("xero_invoice_cache").select("amount_due").eq("tenant_id", t.tenant_id).eq("type","ACCREC").in("status",["AUTHORISED","SUBMITTED"]);
-          const cacheSum = (rows||[]).reduce((s,r)=>s+Number(r.amount_due||0),0);
-          const cacheCount = (rows||[]).length;
+          // Cache side — open ACCREC (AUTHORISED + SUBMITTED). Paginated: a single select caps at 1000
+          // rows, which froze cache_count at 1000 for big tenants → permanent false "drift" alarms.
+          let cacheSum = 0, cacheCount = 0;
+          for (let off=0; off<50000; off+=1000){
+            const { data: rows } = await sb.from("xero_invoice_cache").select("amount_due").eq("tenant_id", t.tenant_id).eq("type","ACCREC").in("status",["AUTHORISED","SUBMITTED"]).order("invoice_id").range(off, off+999);
+            (rows||[]).forEach((r)=>{ cacheSum += Number(r.amount_due||0); cacheCount++; });
+            if (!rows || rows.length < 1000) break;
+          }
           // Xero side — page through AUTHORISED+SUBMITTED ACCREC, sum AmountDue live.
           let xeroSum = 0, xeroCount = 0;
           for (let page=1; page<=100; page++){
@@ -3318,11 +3384,14 @@ Deno.serve(async (req)=>{
           }
           if (arr.length < 100) break;
         }
-        // Cache side — every invoice for this tenant updated since the same window
-        const { data: cacheRows } = await sb.from("xero_invoice_cache").select("invoice_id,type,status").eq("tenant_id", b.tenant).gte("updated_at", sinceISO);
-        const cacheIds = new Set((cacheRows||[]).map((r)=>r.invoice_id));
-        const cacheByStatus = {};
-        for (const r of (cacheRows||[])){ const k = (r.type||"?") + "/" + (r.status||"?"); cacheByStatus[k] = (cacheByStatus[k]||0) + 1; }
+        // Cache side — every invoice for this tenant updated since the same window (paginated past the
+        // 1000-row select cap; an unpaginated read reported phantom "missing" ids on busy windows).
+        const cacheIds = new Set(); const cacheByStatus = {};
+        for (let off=0; off<50000; off+=1000){
+          const { data: cacheRows } = await sb.from("xero_invoice_cache").select("invoice_id,type,status").eq("tenant_id", b.tenant).gte("updated_at", sinceISO).order("invoice_id").range(off, off+999);
+          for (const r of (cacheRows||[])){ cacheIds.add(r.invoice_id); const k = (r.type||"?") + "/" + (r.status||"?"); cacheByStatus[k] = (cacheByStatus[k]||0) + 1; }
+          if (!cacheRows || cacheRows.length < 1000) break;
+        }
         // Missing = in Xero but not in cache (THE BUG WE'RE HUNTING)
         const missing = [];
         for (const id of xeroIds){ if (!cacheIds.has(id)) missing.push(id); }
@@ -3355,6 +3424,10 @@ Deno.serve(async (req)=>{
       if (b.confirm !== "REBUILD") return j({ ok:false, error:"set confirm='REBUILD' to proceed (this wipes the cache for that tenant)" });
       const { data: wipe, error: wErr } = await sb.rpc("portal_tenant_rebuild_wipe", { p_token: b.token||"", p_tenant: b.tenant });
       if (wErr || !wipe || !wipe.ok) return j(wipe || { ok:false, error: (wErr&&wErr.message)||"wipe failed" });
+      // Reset the sync watermark AT WIPE TIME: if the background backfill dies mid-run (daily rate cap,
+      // token expiry), the nightly sync must NOT resume from the stale pre-wipe last_full_sync_at — that
+      // would leave the wiped history permanently missing. Null forces the next backfill to run deep.
+      try { await syncStateUpdate(b.tenant, { last_full_sync_at: null, last_delta_sync_at: null }); } catch(_e){}
       const access = await xeroAccessToken();
       const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name").eq("tenant_id", b.tenant);
       const work = (async ()=>{ try { const bf = await runBackfill(access, tenants||[], { sinceISO: "2015-01-01T00:00:00Z" }); await logAudit(me, "tenant_rebuild_done", b.tenant, { rows_deleted: wipe.rows_deleted, bf }); } catch (e) { await logAudit(me, "tenant_rebuild_error", b.tenant, { error: String(e).slice(0,500) }); } })();
@@ -3438,7 +3511,8 @@ Deno.serve(async (req)=>{
     }
     if (api === "pharmacy_list") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_pharmacy_list", { p_token: b.token||"" });
+      const { data, error } = await sb.rpc("portal_pharmacy_list", { p_token: b.token||"" });
+      if (error) return j({ ok:false, error:"pharmacy_list failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, pharmacies:[] });
     }
     if (api === "pharmacy_get") {
@@ -3458,8 +3532,12 @@ Deno.serve(async (req)=>{
       // Read SKINDAE contacts from the cache; this is what the picker shows.
       const allowed = await allowedTenants(b.token);
       if (allowed.indexOf(SKINDAE_TENANT) < 0) return j({ ok:false, error:"forbidden" }, 403);
-      const { data } = await sb.from("xero_contacts_cache").select("contact_id,name,email").eq("tenant_id", SKINDAE_TENANT).order("name").limit(5000);
-      return j({ ok:true, contacts: data || [] });
+      let pxc:any[] = [];
+      for (let off=0; off<20000; off+=1000){
+        const { data: pg } = await sb.from("xero_contacts_cache").select("contact_id,name,email").eq("tenant_id", SKINDAE_TENANT).order("name").range(off, off+999);
+        pxc = pxc.concat(pg||[]); if (!pg || pg.length < 1000) break;
+      }
+      return j({ ok:true, contacts: pxc });
     }
     if (api === "pharmacy_link_xero") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -3477,7 +3555,8 @@ Deno.serve(async (req)=>{
     }
     if (api === "company_folder_list") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_company_folder_list", { p_token: b.token||"", p_tenant: b.tenant||null });
+      const { data, error } = await sb.rpc("portal_company_folder_list", { p_token: b.token||"", p_tenant: b.tenant||null });
+      if (error) return j({ ok:false, error:"company_folder_list failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, folders:[] });
     }
     if (api === "company_folder_create") {
@@ -3518,7 +3597,8 @@ Deno.serve(async (req)=>{
     }
     if (api === "company_doc_list") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.rpc("portal_company_doc_list", { p_token: b.token||"", p_tenant: b.tenant||null });
+      const { data, error } = await sb.rpc("portal_company_doc_list", { p_token: b.token||"", p_tenant: b.tenant||null });
+      if (error) return j({ ok:false, error:"company_doc_list failed: "+String(error.message||error) }, 500);
       return j(data || { ok:true, documents:[], editable:false });
     }
     if (api === "company_doc_upload") {
@@ -3650,9 +3730,11 @@ Deno.serve(async (req)=>{
       else {
         const tenant = String(b.tenant||f.tenant||"");
         if (!tenant) return j({ ok:false, error:"no company selected" });
-        const { data:last } = await sb.from("hr_employees").select("emp_no").order("emp_no",{ascending:false}).limit(1);
-        const n = (last&&last[0]&&last[0].emp_no)? parseInt(String(last[0].emp_no).slice(1))+1 : 1;
-        patch.emp_no = "E"+String(n).padStart(3,"0"); patch.status="active"; patch.tenant_id=tenant;
+        // Numeric max, not lexicographic: order("emp_no" desc) on TEXT ranks "E999" above "E1000",
+        // which would hand out an already-taken number once headcount passes 999.
+        const { data:allNos } = await sb.from("hr_employees").select("emp_no").range(0,4999);
+        let maxN=0; (allNos||[]).forEach((r:any)=>{ const m=String(r.emp_no||"").match(/^E(\d+)$/i); if(m){ const v=parseInt(m[1],10); if(v>maxN) maxN=v; } });
+        patch.emp_no = "E"+String(maxN+1).padStart(3,"0"); patch.status="active"; patch.tenant_id=tenant;
         res = await sb.from("hr_employees").insert(patch).select().single();
       }
       if (res.error) return j({ ok:false, error:res.error.message });
@@ -3664,6 +3746,7 @@ Deno.serve(async (req)=>{
       const id=String(b.id), status=String(b.status||"");
       const { data:req } = await sb.from("hr_leave_requests").select("*").eq("id",id).single();
       if (!req) return j({ ok:false, error:"not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && req.tenant_id && alw.indexOf(req.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       await sb.from("hr_leave_requests").update({ status }).eq("id",id);
       if (status==="Approved"){
         const year = new Date(req.date_from).getFullYear();
@@ -3678,6 +3761,8 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_claim_decide") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      { const { data: rec } = await sb.from("hr_claims").select("tenant_id").eq("id",String(b.id)).maybeSingle();
+        const alw = await allowedTenants(b.token); if (rec && alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",String(b.id));
       if (error) return j({ ok:false, error:error.message });
       await logAudit(me,"hr_claim_decide",String(b.id),{ status:b.status });
@@ -3826,8 +3911,11 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me);
       const claimId=b.claim_id; if(!claimId) return j({ ok:false, error:"claim_id required" });
       if(!who.isAdmin){ const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",claimId).maybeSingle(); if(!oc || !who.employee || oc.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403); }
-      const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null;
-      if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error) path=null; }catch(_e){ path=null; } }
+      const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null; let upErr:any=null;
+      if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error){ upErr=up.error.message||String(up.error); path=null; } }catch(e){ upErr=String(e).slice(0,200); path=null; } }
+      // A failed upload must NOT leave a phantom attachment row — the "receipt required" gate counts rows,
+      // so a rowed-but-not-stored receipt would let a claim through with no receipt on file.
+      if(b64 && !path) return j({ ok:false, error:"Receipt upload failed — please try again ("+(upErr||"storage error")+")." });
       await sb.from("hr_claim_attachments").insert({ claim_id:claimId, file_name:name, file_path:path, file_type:b.file_type||null, file_size:Number(b.file_size)||null, receipt_hash:b.receipt_hash||null, uploaded_by:(me.user&&me.user.id)||null });
       return j({ ok:true, stored:!!path });
     }
@@ -3868,9 +3956,11 @@ Deno.serve(async (req)=>{
       const tenant = who.isAdmin ? String(b.tenant||"") : who.employee.tenant_id;
       if(!["Draft","Need More Info"].includes(claim.status)) return j({ ok:false, error:"Only Draft or Need More Info claims can be submitted." });
       const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",claim.claim_type_id).maybeSingle();
-      const { data: sItems } = await sb.from("hr_claim_items").select("amount,total_km,mileage_rate, hr_claim_types(is_mileage)").eq("claim_id",id);
+      const { data: sItems } = await sb.from("hr_claim_items").select("amount").eq("claim_id",id);
       if(sItems && sItems.length){
-        let tot=0; for(const it of sItems){ const mile=it.hr_claim_types&&it.hr_claim_types.is_mileage; tot += mile ? Math.round((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)*100)/100 : (Number(it.amount)||0); }
+        // Item amounts are server-computed at save time (mileage = km×rate + parking + toll), so the stored
+        // amount IS the truth — recomputing km×rate here would silently drop parking/toll and underpay.
+        let tot=0; for(const it of sItems){ tot += (Number(it.amount)||0); }
         tot=Math.round(tot*100)/100; if(tot!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:tot}).eq("id",id); claim.amount=tot; }
       } else if(type&&type.is_mileage){ const { data: md } = await sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(); if(md){ const calc=Math.round(((Number(md.total_km)||0)*(Number(md.mileage_rate)||0)+(Number(md.parking_amount)||0)+(Number(md.toll_amount)||0))*100)/100; if(calc!==Number(claim.amount)){ await sb.from("hr_claim_requests").update({amount:calc}).eq("id",id); claim.amount=calc; } } }
       // Declaration gate (spec §6): all four statements must be ticked on EVERY submit/resubmit — no ticks, no submit.
@@ -3932,7 +4022,8 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_decide") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
-      const res = await rcDecideOne(who, me, b.id, String(b.decision||""), String(b.comment||""), b.override_amount, String(b.override_reason||""));
+      const pin = who.isAdmin ? await allowedTenants(b.token) : null;
+      const res = await rcDecideOne(who, me, b.id, String(b.decision||""), String(b.comment||""), b.override_amount, String(b.override_reason||""), pin);
       if(!res.ok) return j({ ok:false, error:res.error }, res.forbidden?403:200);
       await rcNotifyDecision(res);
       return j({ ok:true, status:res.status, advanced:res.advanced, final:res.final });
@@ -3944,8 +4035,9 @@ Deno.serve(async (req)=>{
       const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,200) : [];
       if(!ids.length) return j({ ok:false, error:"no claims selected" });
       if((decision==="reject"||decision==="request_info") && !comment.trim()) return j({ ok:false, error:"a reason / message is required for reject or request-info" });
+      const pin = who.isAdmin ? await allowedTenants(b.token) : null;
       let done=0; const results:any[]=[];
-      for(const id of ids){ const r=await rcDecideOne(who, me, id, decision, comment, null, ""); if(r.ok){ done++; try{ await rcNotifyDecision(r); }catch(_e){} } results.push({ id, ok:r.ok, status:r.status, error:r.error }); }
+      for(const id of ids){ const r=await rcDecideOne(who, me, id, decision, comment, null, "", pin); if(r.ok){ done++; try{ await rcNotifyDecision(r); }catch(_e){} } results.push({ id, ok:r.ok, status:r.status, error:r.error }); }
       return j({ ok:true, done, total:ids.length, results });
     }
     if (api === "hr_rc_set_gl") {
@@ -3954,8 +4046,9 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can change the GL account." }, 403);
       const reason=String(b.reason||"").trim(); if(!reason) return j({ ok:false, error:"A reason is required to change the GL account." });
       const gl=String(b.gl_account||"").trim(); if(!gl) return j({ ok:false, error:"gl_account required" });
-      const { data: c } = await sb.from("hr_claim_requests").select("id,claim_no,status,xero_bill_id").eq("id",b.id).maybeSingle();
+      const { data: c } = await sb.from("hr_claim_requests").select("id,claim_no,status,xero_bill_id,tenant_id").eq("id",b.id).maybeSingle();
       if(!c) return j({ ok:false, error:"claim not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && c.tenant_id && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(c.xero_bill_id) return j({ ok:false, error:"Already posted to Xero — change the account on the Xero bill instead." });
       let q:any = sb.from("hr_claim_items").select("id,gl_account, hr_claim_types(name)").eq("claim_id",b.id);
       if(b.item_id) q=q.eq("id",b.item_id);
@@ -3973,8 +4066,15 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
       const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
       let q:any = sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,bank_name,bank_account), hr_claim_types(name)").eq("tenant_id",tenant).in("status",["Approved","Paid"]).order("claim_date").limit(2000);
-      if(month) q=q.gte("claim_date",month+"-01").lte("claim_date",month+"-31");
-      const { data: claims } = await q;
+      if(month){
+        // claim_date is a Postgres DATE — "YYYY-02-31" is a hard error Postgres rejects (and the error was
+        // silently discarded, so Feb/Apr/Jun/Sep/Nov exports returned EMPTY). Use an exclusive next-month bound.
+        const [yy,mm]=month.split("-").map(Number);
+        const nextMonth=(mm===12)?((yy+1)+"-01"):(yy+"-"+String(mm+1).padStart(2,"0"));
+        q=q.gte("claim_date",month+"-01").lt("claim_date",nextMonth+"-01");
+      }
+      const { data: claims, error: claimsErr } = await q;
+      if(claimsErr) return j({ ok:false, error:"export query failed: "+String(claimsErr.message||claimsErr) }, 500);
       const ids=(claims||[]).map((x:any)=>x.id);
       const [itemsR, paysR] = await Promise.all([
         ids.length? sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account)").in("claim_id",ids) : Promise.resolve({data:[]} as any),
@@ -4011,9 +4111,10 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_cancel") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
-      const {data:c}=await sb.from("hr_claim_requests").select("status,employee_id").eq("id",b.id).maybeSingle();
+      const {data:c}=await sb.from("hr_claim_requests").select("status,employee_id,tenant_id").eq("id",b.id).maybeSingle();
       if(!c) return j({ ok:false, error:"not found" });
       if(!who.isAdmin && (!who.employee || c.employee_id!==who.employee.id)) return j({ ok:false, error:"forbidden" }, 403);
+      if(who.isAdmin){ const alw = await allowedTenants(b.token); if (alw.length && c.tenant_id && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(c.status==="Paid") return j({ ok:false, error:"A paid claim cannot be cancelled." });
       await sb.from("hr_claim_requests").update({status:"Cancelled"}).eq("id",b.id);
       await rcAuditLog(b.id,"cancel",me,c&&c.status,"Cancelled",{});
@@ -4024,8 +4125,9 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
       const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",b.id).maybeSingle();
       if(!c) return j({ ok:false, error:"not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && c.tenant_id && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(c.status!=="Approved") return j({ ok:false, error:"Only Approved claims can be marked paid." });
-      await sb.from("hr_claim_payments").upsert({ claim_id:b.id, paid_date:b.paid_date||new Date().toISOString().slice(0,10), amount:c.amount, payment_method:b.payment_method||"", payment_reference:b.payment_reference||"", paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
+      await sb.from("hr_claim_payments").upsert({ claim_id:b.id, paid_date:b.paid_date||new Date(Date.now()+8*3600*1000).toISOString().slice(0,10), amount:c.amount, payment_method:b.payment_method||"", payment_reference:b.payment_reference||"", paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
       await sb.from("hr_claim_requests").update({status:"Paid"}).eq("id",b.id);
       await rcAuditLog(b.id,"mark_paid",me,"Approved","Paid",{method:b.payment_method,ref:b.payment_reference});
       try{ await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" has been paid", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") has been paid"+(b.payment_reference?(" (ref "+b.payment_reference+")"):"")+".\n\n— CTG HR OS (automated)"); }catch(_e){}
@@ -4036,12 +4138,14 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
       const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,500) : [];
       if(!ids.length) return j({ ok:false, error:"no claims selected" });
-      const paidDate = b.paid_date||new Date().toISOString().slice(0,10);
+      const paidDate = b.paid_date||new Date(Date.now()+8*3600*1000).toISOString().slice(0,10);
       const method = b.payment_method||"Bank Transfer"; const ref = b.payment_reference||"";
+      const alwPaid = await allowedTenants(b.token);
       let done=0; const results:any[]=[];
       for(const id of ids){
         const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
         if(!c){ results.push({ id, ok:false, error:"not found" }); continue; }
+        if(alwPaid.length && c.tenant_id && alwPaid.indexOf(c.tenant_id)<0){ results.push({ id, ok:false, error:"no access to this company" }); continue; }
         if(c.status!=="Approved"){ results.push({ id, ok:false, error:"not Approved" }); continue; }
         await sb.from("hr_claim_payments").upsert({ claim_id:id, paid_date:paidDate, amount:c.amount, payment_method:method, payment_reference:ref, paid_by:(me.user&&me.user.id)||null }, {onConflict:"claim_id"});
         await sb.from("hr_claim_requests").update({status:"Paid"}).eq("id",id);
@@ -4195,8 +4299,11 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_dashboard") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant=String(b.tenant||"");
-      const { data: all } = await sb.from("hr_claim_requests").select("id,claim_no,amount,status,claim_date,department,warnings, hr_claim_types(name), hr_employees(name,dept)").eq("tenant_id",tenant).neq("status","Draft").neq("status","Cancelled").limit(5000);
-      const rows:any[]=all||[];
+      let rows:any[]=[];
+      for(let off=0; off<20000; off+=1000){
+        const { data: pg } = await sb.from("hr_claim_requests").select("id,claim_no,amount,status,claim_date,department,warnings, hr_claim_types(name), hr_employees(name,dept)").eq("tenant_id",tenant).neq("status","Draft").neq("status","Cancelled").order("id").range(off, off+999);
+        rows=rows.concat(pg||[]); if(!pg || pg.length<1000) break;
+      }
       const isPending=(s:string)=>["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"].includes(s);
       const sumF=(f:any)=>Math.round(rows.filter(f).reduce((s,r)=>s+(Number(r.amount)||0),0)*100)/100;
       const cntF=(f:any)=>rows.filter(f).length;
@@ -4206,9 +4313,10 @@ Deno.serve(async (req)=>{
       const alerts=rows.filter(r=>Array.isArray(r.warnings)&&r.warnings.length).slice(0,20).map(r=>({claim_no:r.claim_no, amount:Number(r.amount)||0, warnings:r.warnings, name:r.hr_employees&&r.hr_employees.name}));
       // by claim type — aggregate from line items (falls back to header type for item-less claims)
       const cids=rows.map((r:any)=>r.id);
-      const { data: dItems } = cids.length ? await sb.from("hr_claim_items").select("claim_id,amount,total_km,mileage_rate, hr_claim_types(name,is_mileage)").in("claim_id",cids) : { data:[] } as any;
+      const { data: dItems } = cids.length ? await sb.from("hr_claim_items").select("claim_id,amount, hr_claim_types(name,is_mileage)").in("claim_id",cids) : { data:[] } as any;
       const withItems=new Set((dItems||[]).map((x:any)=>x.claim_id)); const tm:any={};
-      (dItems||[]).forEach((it:any)=>{ const t=it.hr_claim_types||{}; const a=t.is_mileage?Math.round((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)*100)/100:(Number(it.amount)||0); const k=t.name||"—"; tm[k]=(tm[k]||0)+a; });
+      // it.amount is server-computed at save (mileage = km×rate + parking + toll) — recomputing km×rate here dropped parking/toll.
+      (dItems||[]).forEach((it:any)=>{ const t=it.hr_claim_types||{}; const a=Number(it.amount)||0; const k=t.name||"—"; tm[k]=(tm[k]||0)+a; });
       rows.filter((r:any)=>!withItems.has(r.id)).forEach((r:any)=>{ const k=(r.hr_claim_types&&r.hr_claim_types.name)||"—"; tm[k]=(tm[k]||0)+(Number(r.amount)||0); });
       const byType=Object.keys(tm).map(k=>({label:k,value:Math.round(tm[k]*100)/100})).sort((a,b)=>b.value-a.value);
       return j({ ok:true, data:{ total_claims:rows.length, total_amount:sumF(()=>true), pending:cntF((r:any)=>isPending(r.status)), approved:cntF((r:any)=>r.status==="Approved"), rejected:cntF((r:any)=>r.status==="Rejected"), paid:cntF((r:any)=>r.status==="Paid"), paid_amount:sumF((r:any)=>r.status==="Paid"), by_department:byKey((r:any)=>r.department||(r.hr_employees&&r.hr_employees.dept)), by_type:byType, by_employee:byKey((r:any)=>r.hr_employees&&r.hr_employees.name), trend, alerts } });
@@ -4287,13 +4395,18 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const yr = Number(b.year); const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
-      const [ps, ei] = await Promise.all([
-        sb.from("hr_payslips").select("*, run:hr_payroll_runs(period_year,tenant_id)"),
-        sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle(),
-      ]);
+      // Filter server-side via the run ids (an unfiltered hr_payslips select silently caps at 1000 rows —
+      // at 5 companies × 12 months that understates EA-form annual totals once headcount grows).
+      const { data: yrRuns } = await sb.from("hr_payroll_runs").select("id").eq("tenant_id",tenant).eq("period_year",yr);
+      const runIds=(yrRuns||[]).map((r:any)=>r.id);
+      let slips:any[]=[];
+      for(let off=0; runIds.length && off<20000; off+=1000){
+        const { data: pg } = await sb.from("hr_payslips").select("*").in("run_id",runIds).order("id").range(off,off+999);
+        slips=slips.concat(pg||[]); if(!pg || pg.length<1000) break;
+      }
+      const ei = await sb.from("hr_employer_info").select("*").eq("tenant_id",tenant).maybeSingle();
       const map:any = {};
-      (ps.data||[]).forEach((s:any)=>{
-        if (!s.run || Number(s.run.period_year)!==yr || String(s.run.tenant_id)!==tenant) return;
+      slips.forEach((s:any)=>{
         const k = s.employee_id;
         const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, pcb:0, net:0, months:0 });
         t.gross+=Number(s.gross); t.epfEe+=Number(s.epf_ee); t.epfEr+=Number(s.epf_er);
@@ -4341,7 +4454,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v102 + sr-post-invoices(direct ACCREC DRAFT creation, chunked, dup-safe) + sr-so-tally(prev_total per SO, paginated past the 1000-row select cap) + sr-so-suffix(dup SO → _1/_2, cache+live-48h, skip-deleted-voided) + sr-yrdz-continue-numbering(cache+live, number-col-fix) + tenant-isolation(admin-subset-restricted + central-guard + AP-admin-gate) + bank-master-list(hr_banks, searchable, code-stored, deactivate-fix) + HR (multi-company/employees/leave/claims/payroll-grid+statutory/calculator+audit/analytics-dashboard+insights/reimbursement-claim-engine+employee-self-service(frontend-live)+multi-line-items+xero-post(GL-mapped ACCPAY SUBMITTED)+bulk-approve+pay-batch-bankfile+email-notify+approve-from-email(magic-link)+voucher-csv+pro-form/year-end/xero/email) — self-billed(GL-required+clear-Xero-errors) + Doc AI OCR + fin-analytics + sync-fast" });
+    return j({ ok:true, hint:"portal v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

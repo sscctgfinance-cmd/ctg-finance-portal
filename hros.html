@@ -1047,15 +1047,17 @@ async function hrEmpBoot(){
   HR_EMP_MODE=true;
   var sel=document.getElementById('hr_company'); if(sel) sel.style.display='none';
   var el=document.getElementById('hr'); if(el) el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading…</div></div>';
-  var r=await call({api:'hr_rc_config'});
-  if(!r||!r.ok||!r.me||!r.me.employee){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">🔒</div><div>'+esc((r&&r.error)||'Your login isn’t linked to an employee profile yet — ask HR to enable your access.')+'</div></div></div>'; return; }
-  RC.cfg=r; RC.me=r.me; RC.tenant=r.me.employee.tenant_id; RC.loading=false;
-  HR.tenant=r.me.employee.tenant_id; HR.data={};
-  HR.companies=[{tenant_id:HR.tenant, tenant_name:(r.tenant_name||'My company')}];
-  HR.view='expenses';
-  RC.scope=(r.me.is_manager || (r.me.roles&&r.me.roles.length)) ? 'pending' : 'all';
-  var l2=await call({api:'hr_rc_list',scope:RC.scope}); if(l2&&l2.ok) RC.list=l2.claims;
-  hrRender();
+  try{
+    var r=await call({api:'hr_rc_config'});
+    if(!r||!r.ok||!r.me||!r.me.employee){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">🔒</div><div>'+esc((r&&r.error)||'Your login isn’t linked to an employee profile yet — ask HR to enable your access.')+'</div></div></div>'; return; }
+    RC.cfg=r; RC.me=r.me; RC.tenant=r.me.employee.tenant_id; RC.loading=false;
+    HR.tenant=r.me.employee.tenant_id; HR.data={};
+    HR.companies=[{tenant_id:HR.tenant, tenant_name:(r.tenant_name||'My company')}];
+    HR.view='expenses';
+    RC.scope=(r.me.is_manager || (r.me.roles&&r.me.roles.length)) ? 'pending' : 'all';
+    var l2=await call({api:'hr_rc_list',scope:RC.scope}); if(l2&&l2.ok) RC.list=l2.claims;
+    hrRender();
+  }catch(e){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+' — <a onclick="hrEmpBoot()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>'; }
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
 var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
@@ -1083,6 +1085,10 @@ function hrPickCompany(tid){
   HR.data=null; HR.view='dashboard'; HR.editEmp=null;
   HR.pay={ month:0, year:0, data:null, loading:false, adjEmp:null, dedEmp:null, _rows:[], grid:null };
   if(typeof HR_YE!=='undefined'){ HR_YE.annual=null; HR_YE.year=0; }
+  if(typeof HR_DASH!=='undefined'){ HR_DASH.data=null; HR_DASH.loading=false; }
+  // RC.accounts is the XERO CHART OF ACCOUNTS of the previous company — carrying it over would let a
+  // claim type in company B be coded to a GL account that only exists in company A's Xero org.
+  if(typeof RC!=='undefined'){ RC.accounts=null; RC.accLoading=false; RC.loading=false; }
   renderHR();
 }
 var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
@@ -1122,6 +1128,11 @@ function hrCompute(emp,cfg,adj){ adj=adj||[];
   var eisOn=emp.eis_eligible!==false && !senior;
   var ip=eisOn?hrTableParts(statWage,cfg.eis.ceiling,cfg.eis.eeRate,cfg.eis.erRate):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;
   // ---- PCB / MTD (annualised chargeable-income estimate) ----
+  // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
+  // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).
+  // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
+  var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
+  var statWageNormal=Math.max(0, statWage - bonusStat);
   var pcb, pcbCat=1;
   if(emp.resident===false){ pcb=hrRound2(statWage*0.30); pcbCat=0; }
   else {
@@ -1131,10 +1142,18 @@ function hrCompute(emp,cfg,adj){ adj=adj||[];
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var kids=Number(emp.num_children||0);
     var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(epfEe*12, rEpf);
-    var chargeable=Math.max(0, statWage*12 - reliefs);
+    var chargeable=Math.max(0, statWageNormal*12 - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
-    pcb=hrRound2(Math.max(0,(tax-rebate)/12));
+    var monthlyBase=Math.max(0,(tax-rebate)/12);
+    var addlTax=0;
+    if(bonusStat>0){
+      var chargeableB=Math.max(0, statWageNormal*12 + bonusStat - reliefs);
+      var taxB=hrProgTax(chargeableB);
+      var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
+      addlTax=Math.max(0,(taxB-rebateB)-(tax-rebate));
+    }
+    pcb=hrRound2(monthlyBase + addlTax);
   }
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
@@ -1143,8 +1162,10 @@ function hrCompute(emp,cfg,adj){ adj=adj||[];
 async function renderHR(){
   var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
+  var reqTenant=HR.tenant; // discard the response if the operator switched company while it was in flight
   try{
-    var r=await call({api:'hr_bootstrap',tenant:HR.tenant});
+    var r=await call({api:'hr_bootstrap',tenant:reqTenant});
+    if(HR.tenant!==reqTenant){ renderHR(); return; } // stale — reload for the newly selected company
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc((r&&r.error)||'Failed to load HR')+'</div></div></div>'; return; }
     HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
@@ -1273,11 +1294,16 @@ function hrDashboard(){
 function hrDashStepRaw(delta){ var m=HR_DASH.month+delta,y=HR_DASH.year; if(m<1){m=12;y--;} if(m>12){m=1;y++;} HR_DASH.month=m; HR_DASH.year=y; }
 async function hrDashLoad(auto){
   HR_DASH.loading=true;
-  var r=await call({api:'hr_dashboard',tenant:HR.tenant,month:HR_DASH.month,year:HR_DASH.year});
-  if(r&&r.ok){ HR_DASH.data=r.data; var o=r.data&&r.data.overview;
-    if(auto && o && (Number(o.gross)||0)===0 && (Number(o.attendance_rate)||0)===0 && HR_DASH.steps<6){ HR_DASH.steps++; hrDashStepRaw(-1); return hrDashLoad(true); }
-  } else { toast((r&&r.error)||'Failed to load dashboard',true); }
-  HR_DASH.loading=false; if(HR.view==='dashboard') hrRender();
+  // try/finally: call() throws on timeout/network/session-expiry — an unhandled throw wedged
+  // loading=true forever, permanently freezing the Dashboard tab on the spinner until F5.
+  try{
+    var r=await call({api:'hr_dashboard',tenant:HR.tenant,month:HR_DASH.month,year:HR_DASH.year});
+    if(r&&r.ok){ HR_DASH.data=r.data; var o=r.data&&r.data.overview;
+      if(auto && o && (Number(o.gross)||0)===0 && (Number(o.attendance_rate)||0)===0 && HR_DASH.steps<6){ HR_DASH.steps++; hrDashStepRaw(-1); return hrDashLoad(true); }
+    } else { toast((r&&r.error)||'Failed to load dashboard',true); }
+  }catch(e){ toast(e.message||e,true); }
+  finally{ HR_DASH.loading=false; }
+  if(HR.view==='dashboard') hrRender();
 }
 function hrDashStep(delta){ hrDashStepRaw(delta); HR_DASH.steps=99; HR_DASH.data=null; HR_DASH.loading=true; setTimeout(function(){ hrDashLoad(false); },0); hrRender(); }
 function hrDashSetPage(p){ HR_DASH.page=p; hrRender(); }
@@ -1313,7 +1339,16 @@ function hrRC(){
   else body=hrRCList();
   return tabs+body;
 }
-async function hrRCBoot(){ var r=await call({api:'hr_rc_config',tenant:HR.tenant}); if(r&&r.ok){ RC.cfg=r; RC.me=r.me; } else toast((r&&r.error)||'Failed to load claim config',true); var l=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(l&&l.ok) RC.list=l.claims; RC.loading=false; if(HR.view==='expenses') hrRender(); }
+async function hrRCBoot(){
+  // try/finally: an unhandled throw left RC.loading=true forever, which ALSO disabled the
+  // tenant-change reload guard — company A's claims kept rendering under company B.
+  try{
+    var r=await call({api:'hr_rc_config',tenant:HR.tenant}); if(r&&r.ok){ RC.cfg=r; RC.me=r.me; } else toast((r&&r.error)||'Failed to load claim config',true);
+    var l=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(l&&l.ok) RC.list=l.claims;
+  }catch(e){ toast(e.message||e,true); }
+  finally{ RC.loading=false; }
+  if(HR.view==='expenses') hrRender();
+}
 function hrRCNav(p){ if(p==='form'){ RC.form={}; } RC.page=p; if(p==='list') hrRCLoadList(); if(p==='dashboard') hrRCLoadDash(); hrRender(); }
 function hrRCScope(s){ RC.scope=s; RC.sel={}; hrRCLoadList(); }
 async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(r&&r.ok){ RC.list=r.claims; if(HR.view==='expenses') hrRender(); } }
@@ -1344,7 +1379,7 @@ function hrRCList(){
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-function hrToday(){ return new Date().toISOString().slice(0,10); }
+function hrToday(){ return todayLocalISO(); } // local (MYT) — toISOString() is UTC and dated claims "yesterday" before 8am
 function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
 function hrRCSelToggle(id,on){ RC.sel=RC.sel||{}; if(on)RC.sel[id]=true; else delete RC.sel[id]; hrRender(); }
 function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.sel[c.id]=true;}); hrRender(); }
@@ -1389,7 +1424,7 @@ function hrRCItemAmt(it,mile){ return mile ? Math.round(((Number(it.total_km)||0
 function hrRCItemMore(i){ hrRCSyncItems(); RC.form.items[i]._open=!RC.form.items[i]._open; hrRender(); }
 function hrRCForm(){
   var f=RC.form||{}; var cfg=RC.cfg||{};
-  if(!Array.isArray(f.items)||!f.items.length){ f.items=[{claim_type_id:'',item_date:(f.claim_date||new Date().toISOString().slice(0,10)),description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}]; RC.form=f; }
+  if(!Array.isArray(f.items)||!f.items.length){ f.items=[{claim_type_id:'',item_date:(f.claim_date||todayLocalISO()),description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}]; RC.form=f; }
   var empOpts='<option value="">— select —</option>'+(cfg.employees||[]).map(function(e){return '<option value="'+e.id+'"'+(f.employee_id===e.id?' selected':'')+'>'+esc(e.emp_no+' — '+e.name)+'</option>';}).join('');
   var typeOptsFor=function(sel){ return '<option value="">— type —</option>'+(cfg.claim_types||[]).filter(function(t){return t.active;}).map(function(t){return '<option value="'+t.id+'"'+(sel===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join(''); };
   var rateOptsFor=function(sel){ return (cfg.mileage_rates||[]).filter(function(r){return r.active;}).map(function(r){return '<option value="'+r.rate+'"'+(Number(sel)===Number(r.rate)?' selected':'')+'>'+esc('RM'+r.rate)+'</option>';}).join(''); };
@@ -1424,7 +1459,7 @@ function hrRCForm(){
   var decs=[['dec1','I confirm this claim is for business purpose.'],['dec2','I confirm this claim has not been claimed before.'],['dec3','I confirm all receipts / invoices attached are valid.'],['dec4','I understand false claims may result in disciplinary action.']];
   var decHtml='<div style="margin:16px 0 4px;font-weight:700;font-size:13px">Declaration</div><div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">'+decs.map(function(d){return '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:3px 0;cursor:pointer"><input type="checkbox" id="rc_'+d[0]+'" style="margin-top:2px">'+d[1]+'</label>';}).join('')+'</div>';
   return '<div class="panel" style="max-width:940px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||new Date().toISOString().slice(0,10),'type="date"'))+g('Claim month',inp('month','',f.claim_month||String(f.claim_date||new Date().toISOString().slice(0,10)).slice(0,7),'type="month"'))+g('Department',inp('dept','',f.department))+g('Cost center','<select id="rc_cc" style="'+RC_SEL+'">'+hrRCCcOpts(f.cost_center)+'</select>')+g('Project',inp('project','',f.project))+'</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||todayLocalISO(),'type="date"'))+g('Claim month',inp('month','',f.claim_month||String(f.claim_date||todayLocalISO()).slice(0,7),'type="month"'))+g('Department',inp('dept','',f.department))+g('Cost center','<select id="rc_cc" style="'+RC_SEL+'">'+hrRCCcOpts(f.cost_center)+'</select>')+g('Project',inp('project','',f.project))+'</div>'+
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
     '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
     '<div>'+rows+'</div>'+
@@ -1485,7 +1520,7 @@ async function hrRCScanFile(file){
   if(!r||!r.ok){ toast((r&&r.error)||'Could not read receipt',true); return; }
   var ex=r.extracted||{};
   if(!Array.isArray(RC.form.items))RC.form.items=[];
-  var row={ claim_type_id:r.claim_type_id||'', item_date:(ex.date||RC.form.claim_date||new Date().toISOString().slice(0,10)), description:(ex.description||ex.vendor||''), amount:((Number(ex.total)||0)>0?Number(ex.total):''), total_km:'', mileage_rate:hrRCDefRate() };
+  var row={ claim_type_id:r.claim_type_id||'', item_date:(ex.date||RC.form.claim_date||todayLocalISO()), description:(ex.description||ex.vendor||''), amount:((Number(ex.total)||0)>0?Number(ex.total):''), total_km:'', mileage_rate:hrRCDefRate() };
   var items=RC.form.items, first=items[0];
   if(items.length===1 && first && !first.claim_type_id && !first.amount && !first.total_km && !first.description){ items[0]=row; }
   else items.push(row);
@@ -1493,7 +1528,11 @@ async function hrRCScanFile(file){
   toast('Receipt read ✓ — '+((ex.vendor||'').slice(0,24)||'expense')+(ex.confidence?(' · '+ex.confidence+' confidence, check the amount'):''));
   hrRender();
 }
-async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender(); var r=await call({api:'hr_rc_get',id:id}); RC.loading=false; if(r&&r.ok){ RC.detail=r; RC.page='detail'; } else toast((r&&r.error)||'Load failed',true); hrRender(); }
+async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender();
+  try{ var r=await call({api:'hr_rc_get',id:id}); if(r&&r.ok){ RC.detail=r; RC.page='detail'; } else toast((r&&r.error)||'Load failed',true); }
+  catch(e){ toast(e.message||e,true); }
+  finally{ RC.loading=false; } // a throw here used to wedge loading=true → claim list frozen + tenant-reload guard disabled
+  hrRender(); }
 function hrRCDetail(){
   var d=RC.detail; if(!d||!d.claim) return '<div class="muted" style="padding:16px">Not found</div>';
   var c=d.claim; var emp=c.hr_employees; var typ=c.hr_claim_types;
@@ -1592,7 +1631,14 @@ function hrRCSettings(){
   }
   return tabs+body;
 }
-async function hrRCLoadAccounts(){ if(RC.accounts) return RC.accounts; var r=await call({api:'sbi_accounts',tenant:HR.tenant}); RC.accounts=(r&&r.ok)?(r.accounts||[]):[]; if(!(r&&r.ok)) toast((r&&r.error)||'Could not load Xero accounts',true); return RC.accounts; }
+async function hrRCLoadAccounts(){
+  // Tenant-keyed: the chart of accounts is PER XERO ORG — serving company A's cached chart while
+  // editing company B's claim types stores GL codes that don't exist in B's org.
+  if(RC.accounts && RC.accountsTenant===HR.tenant) return RC.accounts;
+  var t=HR.tenant; var r=await call({api:'sbi_accounts',tenant:t});
+  if(HR.tenant!==t) return []; // company switched mid-flight — drop the stale chart
+  RC.accounts=(r&&r.ok)?(r.accounts||[]):[]; RC.accountsTenant=t;
+  if(!(r&&r.ok)) toast((r&&r.error)||'Could not load Xero accounts',true); return RC.accounts; }
 function hrRCEnterTypeEdit(t){ RC.typeEdit=t; RC.accLoading=!RC.accounts; if(HR.view==='expenses')hrRender(); if(!RC.accounts){ hrRCLoadAccounts().then(function(){ RC.accLoading=false; if(HR.view==='expenses')hrRender(); }); } }
 function hrRCEditType(id){ var t=(RC.cfg.claim_types||[]).find(function(x){return x.id===id;}); if(!t)return; hrRCEnterTypeEdit(JSON.parse(JSON.stringify(t))); }
 function hrRCTypeNew(){ hrRCEnterTypeEdit({ name:'', gl_account:'', requires_receipt:true, taxable:false, is_mileage:false, active:true, max_amount_per_claim:'', max_amount_per_month:'', sort_order:((RC.cfg&&RC.cfg.claim_types||[]).length+1) }); }
@@ -1932,7 +1978,16 @@ async function hrGridSave(){
 function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; hrRender(); }
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
-  try{ var r=await call({api:'hr_payroll_data',month:HR.pay.month,year:HR.pay.year,tenant:HR.tenant}); HR.pay.loading=false; if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true); }
+  // Capture the request identity: if the operator switches company or period while this request is in
+  // flight, the late response must be DISCARDED — applying it would render (and let you FINALISE)
+  // company A's payroll under company B's header, or July's figures labelled June.
+  var req={ t:HR.tenant, m:HR.pay.month, y:HR.pay.year };
+  try{
+    var r=await call({api:'hr_payroll_data',month:req.m,year:req.y,tenant:req.t});
+    HR.pay.loading=false;
+    if(HR.tenant!==req.t || HR.pay.month!==req.m || HR.pay.year!==req.y){ hrLoadPayroll(); return; } // stale — reload for the current selection
+    if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true);
+  }
   catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
 }
 async function hrFinalise(){
@@ -1985,7 +2040,8 @@ function hrDrawPayslip(doc,e,p,period,d){
   doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(HR_COMPANY,m,15);
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(184,204,194); doc.text('Payslip  ·  Confidential',m,21);
   doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(period.label,W-m,15,{align:'right'});
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: 31 '+period.label,W-m,21,{align:'right'});
+  var lastDay=new Date(period.year, period.month, 0).getDate(); // real month end — "31 February" was printed on short months
+  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: '+lastDay+' '+period.label,W-m,21,{align:'right'});
   var y=44;
   doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(e.name,m,y);
   doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(9);

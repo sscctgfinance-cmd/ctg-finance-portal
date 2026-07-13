@@ -38,6 +38,10 @@
   --red-soft:#fca5a5;
   --amber:#f59e0b;
   --shadow:0 30px 80px rgba(0,0,0,.7);
+  /* aliases used ~88× across panels/progress-tracks — previously undefined, so bar tracks were invisible */
+  --panel:var(--surface);
+  --panel-2:var(--surface2);
+  --panel-border:var(--border);
 }
 *{box-sizing:border-box}
 body{
@@ -141,6 +145,8 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .empty-ico{font-size:40px;margin-bottom:12px;opacity:.85}
 .load{text-align:center;color:var(--text-soft);padding:48px}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--border-strong);border-top-color:var(--coral);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:8px}
+.spinner{display:block;width:22px;height:22px;border:2.5px solid var(--border-strong);border-top-color:var(--coral);border-radius:50%;animation:sp .7s linear infinite}
+.btn.xs{padding:4px 9px;font-size:11px;border-radius:7px}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 /* ── Row actions / status ── */
@@ -1325,8 +1331,19 @@ function tab(t){
     render(t);
   }
 }
-function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;render(t);}
-function onCompany(){loaded.overview=false;loaded.approvals=false;const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';if(t==='overview'||t==='approvals')render(t);}
+function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;
+  // Explicit refresh must also drop the panel-level caches, or the analytics under the KPIs stay stale all session.
+  if(t==='cfo'){ CFO_DATA=null; FIN_DATA=null; }
+  if(t==='overview'){ try{ OV_TREND=null; }catch(_e){} }
+  render(t);}
+function onCompany(){
+  // Switching the top-bar company must re-scope every tenant-aware dashboard tab + drop its cached data.
+  loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.recv=false; loaded.today=false; loaded.cashflow=false;
+  CFO_DATA=null; FIN_DATA=null; try{ OV_TREND=null; }catch(_e){}
+  const a=document.querySelector('.tab.active'); const t=a?a.dataset.t:'overview';
+  const tenantAware=['overview','approvals','cfo','recv','today','cashflow'];
+  if(tenantAware.indexOf(t)>=0) render(t);
+}
 function curCo(){return document.getElementById('company').value;}
 function spin(id){document.getElementById(id).innerHTML='<div class="cards"><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div></div><div class="sk-row"></div><div class="sk-row"></div><div class="sk-row" style="width:65%"></div>';}
 
@@ -1624,12 +1641,16 @@ function cfoExpBars(cos){
   }).join('');
   return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg>';
 }
+function cfoScopeName(){ var id=curCo(); if(!id) return null; var c=(COMPANIES||[]).find(function(x){return x.tenant_id===id;}); return c?c.tenant_name:null; }
 async function renderCFO(){
   var el=document.getElementById('cfo'); if(!el) return;
-  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>🎯 CFO Cockpit · group financial position</h3></div><div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing group analytics from '+(((COMPANIES||[]).length)||5)+' companies…</div></div>';
+  var scopeCo=cfoScopeName();
+  var loadingWho = scopeCo ? esc(scopeCo) : ('all '+(((COMPANIES||[]).length)||5)+' companies');
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>🎯 CFO Cockpit · '+(scopeCo?esc(scopeCo):'group financial position')+'</h3></div><div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing analytics for '+loadingWho+'…</div></div>';
   try{
-    var r=await call({api:'group_dashboard', months:12});
-    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load group analytics')+'</div></div></div>'; return; }
+    var r=await call({api:'group_dashboard', months:12, tenant:curCo()||null});
+    if(r&&r.ok&&(r.scoped_tenant||null)!==(curCo()||null)) return; // stale — operator switched company mid-load
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load analytics')+'</div></div></div>'; return; }
     CFO_DATA=r; cfoRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
@@ -1700,8 +1721,8 @@ function cfoRender(){
   var custHtml='<div class="panel"><div class="panel-hd"><h3>👑 Top customers · revenue</h3></div>'+(custRows||'<div class="muted" style="padding:14px">No customer data.</div>')+'</div>';
   el.innerHTML =
     '<div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 14px;flex-wrap:wrap;gap:8px">'+
-      '<div class="muted" style="font-size:12.5px">Group financial position across all '+cos.length+' companies · from live invoice data'+(momPct!=null?(' · revenue this month '+(momPct>=0?'▲':'▼')+' '+Math.abs(momPct)+'% vs last'):'')+'</div>'+
-      '<button class="btn sm" onclick="CFO_DATA=null;renderCFO()">↻ Refresh</button>'+
+      '<div class="muted" style="font-size:12.5px">'+(r.scoped_tenant?('Financial position · <b style="color:var(--text)">'+esc(cfoScopeName()||'selected company')+'</b> · from live invoice data'):('Group financial position across all '+cos.length+' companies · from live invoice data'))+(momPct!=null?(' · revenue this month '+(momPct>=0?'▲':'▼')+' '+Math.abs(momPct)+'% vs last'):'')+'</div>'+
+      '<button class="btn sm" onclick="CFO_DATA=null;FIN_DATA=null;renderCFO()">↻ Refresh</button>'+
     '</div>'+
     kpis + '<div style="height:16px"></div>' + alertHtml + pnlHtml +
     revCmpHtml + revStructHtml + revLineHtml + expCmpHtml + expStructHtml + scoreHtml +
@@ -1717,7 +1738,8 @@ async function cfoAnalyticsLoad(){
   if(FIN_DATA){ cfoAnalyticsRender(); return; }
   el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📐 Financial analytics</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Computing DSO/DPO, customer risk, intercompany…</div></div>';
   try{
-    var r=await call({api:'fin_analytics', months:12});
+    var r=await call({api:'fin_analytics', months:12, tenant:curCo()||null});
+    if(r&&r.ok&&(r.scoped_tenant||null)!==(curCo()||null)) return; // stale — company switched mid-load
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load analytics')+'</div></div></div>'; return; }
     FIN_DATA=r; cfoAnalyticsRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
@@ -2783,10 +2805,13 @@ async function o2oEnrichWithPharmacyMaster(){
   O2O_DATA.pharmacies.forEach(function(p){
     var match = pharmFindByName(p.pharmacy);
     p.__master = match || null;
-    // Override per-line commission rate if the master sets a different one.
-    if(match && Number(match.commission_rate)!=O2O_DISCOUNT_RATE){
-      p.lines.forEach(function(l){ l.discount_rate = Number(match.commission_rate); });
-      p.commission = Math.round((p.total_sales*Number(match.commission_rate)/100)*100)/100;
+    // Override per-line commission rate if the master sets a VALID different one.
+    // A blank/null master rate must fall back to the default 19.2% — Number('')===0 would
+    // otherwise zero the discount and invoice the pharmacy at full gross price.
+    var mRate = (match && match.commission_rate!=null && match.commission_rate!=='') ? Number(match.commission_rate) : NaN;
+    if(match && isFinite(mRate) && mRate>0 && mRate!=O2O_DISCOUNT_RATE){
+      p.lines.forEach(function(l){ l.discount_rate = mRate; });
+      p.commission = Math.round((p.total_sales*mRate/100)*100)/100;
       p.total = Math.round((p.total_sales-p.commission)*100)/100;
     }
   });
@@ -3747,7 +3772,7 @@ function sbiFormRender(inv){
         '<div style="margin-bottom:8px"><label class="muted" style="font-size:11px">Withholding tax</label><select id="sbi_wht" onchange="this.dataset.touched=1;sbiWhtChange()" style="width:100%;padding:7px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11.5px">'+whtOpts+'</select></div>'+
         '<div id="sbi_wht_rate_box" style="margin-bottom:8px;display:none"><label class="muted" style="font-size:11px">WHT rate %</label>'+inp('sbi_wht_rate','',inv.wht_rate,'type="number" step="0.01"')+'</div>'+
         '<div style="border-top:1px solid var(--border);padding-top:8px;font-size:13px;line-height:1.9"><div style="display:flex;justify-content:space-between"><span class="muted">Gross</span><b id="sbi_t_gross">RM 0.00</b></div><div style="display:flex;justify-content:space-between"><span class="muted">WHT <span id="sbi_t_whtr"></span></span><b id="sbi_t_wht" style="color:var(--amber)">RM 0.00</b></div><div style="display:flex;justify-content:space-between;font-size:15px;margin-top:4px"><span>Net payable</span><b id="sbi_t_net" style="color:var(--green-soft)">RM 0.00</b></div></div>'+
-        '<button class="btn p sm" style="width:100%;margin-top:10px" onclick="sbiSave()">'+(SBI.editId?'Save changes':'Create invoice')+'</button>'+
+        '<button class="btn p sm" id="sbi_save_btn" style="width:100%;margin-top:10px" onclick="sbiSaveOnce()">'+(SBI.editId?'Save changes':'Create invoice')+'</button>'+
       '</div>'+
     '</div>'+
     '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">⚠️ Whether WHT applies (e.g. s.107D) and the MyInvois classification should be confirmed with your licensed tax agent. e-Invoice submission to IRBM is handled via Xero once posted.</div>'+
@@ -3812,6 +3837,14 @@ async function sbiSave(){
   var r=await call({api:'sbi_save',invoice:inv});
   if(r&&r.ok){toast('Invoice '+(r.invoice&&r.invoice.invoice_no||'')+' saved');renderSelfbill();}
   else toast((r&&r.error)||'Save failed',true);
+}
+// Double-submit guard: the file-read + network await leaves the button clickable — a double-click
+// created TWO self-billed invoices with sequential numbers. Wrap the raw save in a lock.
+var SBI_SAVING=false;
+async function sbiSaveOnce(){ if(SBI_SAVING) return; SBI_SAVING=true;
+  var btn=document.getElementById('sbi_save_btn'); var old=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  try{ await sbiSave(); } finally { SBI_SAVING=false; if(btn){ btn.disabled=false; btn.textContent=old; } }
 }
 async function sbiApprove(id){ if(!confirm('Approve this invoice for payment?'))return; var r=await call({api:'sbi_approve',id:id}); if(r&&r.ok){toast('Approved');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
 async function sbiVoid(id){ if(!confirm('Void this draft?'))return; var r=await call({api:'sbi_void',id:id}); if(r&&r.ok){toast('Voided');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
@@ -4095,12 +4128,13 @@ async function qiCreate(){
 
 /* ---- Receivables ---- */
 function renderRecv(){
-  document.getElementById('recv').innerHTML='<div class="panel"><div class="panel-hd"><h3>Receivables · who owes you</h3><button class="btn p" onclick="recvLoad()">↻ Load from Xero</button></div><div id="recv_out" class="muted">Click load (queries all companies live in Xero).</div></div>';
+  var scope=cfoScopeName();
+  document.getElementById('recv').innerHTML='<div class="panel"><div class="panel-hd"><h3>Receivables · who owes you'+(scope?(' · '+esc(scope)):'')+'</h3><button class="btn p" onclick="recvLoad()">↻ Load from Xero</button></div><div id="recv_out" class="muted">Click load (queries '+(scope?esc(scope):'all companies')+' live in Xero).</div></div>';
   loaded.recv=true;
 }
 async function recvLoad(){
   document.getElementById('recv_out').innerHTML='<div class="load"><span class="spin"></span>Querying Xero…</div>';
-  try{ var r=await call({api:'receivables'});
+  try{ var r=await call({api:'receivables', tenant:curCo()||undefined});
     if(r&&r.ok){
       var overdue=r.items.filter(function(i){return i.days_overdue>0;}); var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
       var rows=r.items.map(function(i){ var cls=i.days_overdue>0?' style="color:var(--red-soft)"':'';
@@ -4122,7 +4156,7 @@ function renderToday(){
 async function todayLoad(){
   document.getElementById('today_out').innerHTML='<div class="load"><span class="spin"></span>Gathering…</div>';
   try{
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables', tenant:curCo()||undefined})]);
     var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var cash=0,np=0; if(ov&&ov.companies){ ov.companies.forEach(function(c){cash+=+c.bank;np+=+c.net_profit;}); }
     var bills=(pend&&pend.bills)?pend.bills:[]; var od=(recv&&recv.items)?recv.items.filter(function(i){return i.days_overdue>0;}):[];
@@ -4696,7 +4730,7 @@ async function syncHealthLoad(){
     }).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">No companies</td></tr>';
     el.innerHTML = alertBanner +
       '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Cached</th><th class="amt">Open AR</th><th>Cache age</th><th>Open AR freshness</th><th>Last sync (F=full, Δ=delta)</th><th>Drift</th><th>Last error</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Delta sync every 20 min (:07/:27/:47). Daily full sync 02:00 MYT. Auto drift-repair 02:30 MYT. Webhook retry every 5 min (rate-limit-aware: skips invoices the delta already cached, capped fetches/run, honours cooldowns). Real-time push: INVOICE / CONTACT / PAYMENT / CREDITNOTE. <b>If you see drift &gt; 50 or stale records &gt; 100</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b>.</div>';
+      '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Delta sync every 5 min (:01/:06/:11…). Daily full sync 02:00 MYT. Auto drift-repair 02:30 MYT. Webhook retry every 5 min (rate-limit-aware: skips invoices the delta already cached, capped fetches/run, honours cooldowns). Real-time push: INVOICE / CONTACT / PAYMENT / CREDITNOTE. <b>If you see drift &gt; 50 or stale records &gt; 100</b>, the cache likely missed events while Xero was rate-limited — try <b>Delta sync</b>, then <b>Drift check</b>.</div>';
   }catch(e){ el.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 async function arAgingLoad(){
@@ -4755,7 +4789,7 @@ function renderSmart(){
 async function smartLoad(){
   document.getElementById('smart_out').innerHTML='<div class="load"><span class="spin"></span>Analysing your live data…</div>';
   try{
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables', tenant:curCo()||undefined})]);
     var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
     var alerts=[];
@@ -4813,8 +4847,8 @@ function exportCurrent(){
 /* ---- Month-end close workflow ---- */
 var CLOSE_TASKS=[];
 function renderClose(){
-  var period=new Date().toISOString().slice(0,7);
-  document.getElementById('close').innerHTML='<div class="panel"><div class="panel-hd"><h3>\U0001f4cb Month-end close</h3><div style="display:flex;gap:8px;align-items:center"><input type="month" id="close_period" value="'+period+'" onchange="closeLoad()"/><button class="btn p" onclick="closeLoad()">↻ Load</button></div></div><div id="close_out" class="muted">Loading…</div></div>';
+  var period=todayLocalISO().slice(0,7); // MYT, not UTC — before 8am on the 1st, UTC pre-selects LAST month
+  document.getElementById('close').innerHTML='<div class="panel"><div class="panel-hd"><h3>📋 Month-end close</h3><div style="display:flex;gap:8px;align-items:center"><input type="month" id="close_period" value="'+period+'" onchange="closeLoad()"/><button class="btn p" onclick="closeLoad()">↻ Load</button></div></div><div id="close_out" class="muted">Loading…</div></div>';
   loaded.close=true; closeLoad();
 }
 async function closeLoad(){
@@ -4866,7 +4900,7 @@ function bankParse(buf,isCsv){
 var RECON_LINES=null;
 function renderRecon(){
   var opts=COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('');
-  document.getElementById('recon').innerHTML='<div class="panel"><div class="panel-hd"><h3>\U0001f3e6 Bank reconciliation <span class="pill pill-submit" style="font-size:9px">beta</span></h3></div>'+
+  document.getElementById('recon').innerHTML='<div class="panel"><div class="panel-hd"><h3>🏦 Bank reconciliation <span class="pill pill-submit" style="font-size:9px">beta</span></h3></div>'+
     '<p class="muted" style="font-size:12.5px;margin:0 0 12px">Upload a bank statement (CSV/Excel with Date, Description, Amount or Debit/Credit). Each line is matched by amount to your outstanding Xero invoices &amp; bills.</p>'+
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="rc_co" style="max-width:300px">'+opts+'</select><input type="file" id="rc_file" accept=".csv,.xlsx,.xls" onchange="reconPick(this)"/></div>'+
     '<div id="rc_out" style="margin-top:14px"></div></div>';
@@ -6190,7 +6224,7 @@ async function ocrPostBill(){
     lineMap[i][k] = (k==='quantity'||k==='unit_amount')?Number(el.value)||0:el.value;
   });
   bill.line_items = Object.keys(lineMap).map(k=>lineMap[k]).filter(l=>l.description||l.unit_amount||Number(l.quantity)>0);
-  if(!confirm('Create DRAFT bill for '+(bill.vendor_name||'?')+' · Total: RM '+(bill.total||0).toFixed(2)+'\\n\\nThe bill will be DRAFT in Xero — review and approve there before payment.')) return;
+  if(!confirm('Create DRAFT bill for '+(bill.vendor_name||'?')+' · Total: RM '+(bill.total||0).toFixed(2)+'\n\nThe bill will be DRAFT in Xero — review and approve there before payment.')) return;
   await runOnce('ocr_post_btn', 'Posting…', async()=>{
     try{
       const r=await call({api:'create_bill_from_ocr', tenant, bill});
@@ -6484,10 +6518,11 @@ function apRenderDetail(){
     '</div></div></div>';
 }
 async function apOpen(id){
-  AP_ACTIVE_ID=id; AP_DECISIONS=[];
+  AP_ACTIVE_ID=id; AP_DECISIONS=[]; AP_DETAIL=null;
   apRender();
   try {
     const [r, dR] = await Promise.all([ call({api:'ap_inbox_get', id}), call({api:'ap_decision_log', id}) ]);
+    if(id!==AP_ACTIVE_ID) return; // stale response — user already clicked another email; rendering it would post A's bill under B's id
     if(r&&r.ok){ AP_DETAIL=r.item; }
     if(dR&&dR.ok){ AP_DECISIONS = dR.decisions||[]; }
     apRender();
