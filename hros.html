@@ -1053,7 +1053,7 @@ async function hrEmpBoot(){
     RC.cfg=r; RC.me=r.me; RC.tenant=r.me.employee.tenant_id; RC.loading=false;
     HR.tenant=r.me.employee.tenant_id; HR.data={};
     HR.companies=[{tenant_id:HR.tenant, tenant_name:(r.tenant_name||'My company')}];
-    HR.view=(location.hash==='#expenses')?'expenses':'clock';  // part-timers land on the clock; bookmark #clock for one-tap
+    HR.view=(hrNeedsClock(r.me&&r.me.employee) && location.hash!=='#expenses') ? 'clock' : 'expenses';  // part-timers land on the clock; bookmark #clock
     RC.scope=(r.me.is_manager || (r.me.roles&&r.me.roles.length)) ? 'pending' : 'all';
     var l2=await call({api:'hr_rc_list',scope:RC.scope}); if(l2&&l2.ok) RC.list=l2.claims;
     hrRender();
@@ -1182,15 +1182,18 @@ var HR_NAV=[
   ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
   ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
 ];
-// Employee self-service sees a Time Clock + Reimbursement.
+// Employee self-service sees a Time Clock (part-timers only) + Reimbursement.
 var HR_EMP_NAV=[
   ['clock','⏱','Time Clock','Me','Clock in / out and see your hours'],
   ['expenses','💳','Reimbursement','Me','Submit and track your expense claims']
 ];
+// Only part-timers punch: Part-time employment OR hourly/daily pay. Full-time monthly staff don't clock.
+function hrNeedsClock(e){ e=e||{}; return e.employment_type==='Part-time' || e.pay_type==='hourly' || e.pay_type==='daily'; }
+function hrEmpNav(){ if(hrNeedsClock(RC.me&&RC.me.employee)) return HR_EMP_NAV; return HR_EMP_NAV.filter(function(t){return t[0]!=='clock';}); }
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  (HR_EMP_MODE ? HR_EMP_NAV : HR_NAV).forEach(function(t){
+  (HR_EMP_MODE ? hrEmpNav() : HR_NAV).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')"><span class="ic">'+t[1]+'</span>'+t[2]+'</button>';
@@ -1199,8 +1202,10 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  // Employee mode is limited to Time Clock + Reimbursement.
-  if(HR_EMP_MODE && HR.view!=='clock' && HR.view!=='expenses') HR.view='clock';
+  // Employee mode: part-timers get Time Clock + Reimbursement; full-timers only Reimbursement.
+  if(HR_EMP_MODE){ var canClk=hrNeedsClock(RC.me&&RC.me.employee);
+    if(HR.view==='clock' && !canClk) HR.view='expenses';
+    if(HR.view!=='clock' && HR.view!=='expenses') HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
@@ -1850,7 +1855,7 @@ function hrAttRender(){
 }
 function hrAttEdit(id){ if(id){ ATT.editRow=(ATT.data&&ATT.data.punches||[]).find(function(p){return p.id===id;})||{}; } else { ATT.editRow={}; } hrRender(); }
 function hrAttEditModal(){
-  var r=ATT.editRow||{}; var emps=(HR.data&&HR.data.employees)||[];
+  var r=ATT.editRow||{}; var emps=((HR.data&&HR.data.employees)||[]).filter(function(e){return hrNeedsClock(e) || e.id===r.employee_id;});
   var opts='<option value="">— select employee —</option>'+emps.map(function(e){return '<option value="'+esc(e.id)+'"'+(r.employee_id===e.id?' selected':'')+'>'+esc(e.name||'')+' ('+esc(e.emp_no||'')+')</option>';}).join('');
   var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
   var g=function(l,el){return '<div style="margin-bottom:10px"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};

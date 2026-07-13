@@ -3718,6 +3718,10 @@ Deno.serve(async (req)=>{
       const { data: open } = await sb.from("hr_timeclock").select("*").eq("employee_id",empId).eq("status","open").maybeSingle();
 
       if (api === "clock_in") {
+        // Time clock is only for part-timers (Part-time employment OR hourly/daily pay). Full-time
+        // monthly staff don't punch. clock_out/clock_status stay open so an existing punch can be closed.
+        const needsClock = String(emp.employment_type||"")==="Part-time" || ["hourly","daily"].indexOf(String(emp.pay_type||""))>=0;
+        if (!needsClock) return j({ ok:false, error:"Time clock is only for part-time / hourly staff. Full-time staff don’t need to clock in." });
         if (open) return j({ ok:false, error:"You are already clocked in.", open });
         const { data: ins, error } = await sb.from("hr_timeclock").insert({ tenant_id: emp.tenant_id, employee_id: empId, work_date: mytToday,
           clock_in: new Date(nowMs).toISOString(), status:"open", source:(who.isAdmin && b.employee_id)?"admin":"self",
