@@ -1053,7 +1053,7 @@ async function hrEmpBoot(){
     RC.cfg=r; RC.me=r.me; RC.tenant=r.me.employee.tenant_id; RC.loading=false;
     HR.tenant=r.me.employee.tenant_id; HR.data={};
     HR.companies=[{tenant_id:HR.tenant, tenant_name:(r.tenant_name||'My company')}];
-    HR.view='expenses';
+    HR.view=(location.hash==='#expenses')?'expenses':'clock';  // part-timers land on the clock; bookmark #clock for one-tap
     RC.scope=(r.me.is_manager || (r.me.roles&&r.me.roles.length)) ? 'pending' : 'all';
     var l2=await call({api:'hr_rc_list',scope:RC.scope}); if(l2&&l2.ok) RC.list=l2.claims;
     hrRender();
@@ -1174,6 +1174,7 @@ function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
 var HR_NAV=[
   ['dashboard','📊','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
   ['employees','👤','Employees','People','Your workforce master — profiles, pay & statutory setup'],
+  ['attendance','🕐','Attendance','People','Clock-in records, hours & timesheet corrections'],
   ['leave','🌴','Leave','People','Review and approve leave requests'],
   ['claims','🧾','Claims','People','Review and approve expense claims'],
   ['expenses','💳','Reimbursement','People','Employee expense claims, receipts & multi-level approval'],
@@ -1181,10 +1182,15 @@ var HR_NAV=[
   ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
   ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
 ];
+// Employee self-service sees a Time Clock + Reimbursement.
+var HR_EMP_NAV=[
+  ['clock','⏱','Time Clock','Me','Clock in / out and see your hours'],
+  ['expenses','💳','Reimbursement','Me','Submit and track your expense claims']
+];
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  (HR_EMP_MODE ? HR_NAV.filter(function(t){return t[0]==='expenses';}) : HR_NAV).forEach(function(t){
+  (HR_EMP_MODE ? HR_EMP_NAV : HR_NAV).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')"><span class="ic">'+t[1]+'</span>'+t[2]+'</button>';
@@ -1193,13 +1199,16 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  if(HR_EMP_MODE) HR.view='expenses';
+  // Employee mode is limited to Time Clock + Reimbursement.
+  if(HR_EMP_MODE && HR.view!=='clock' && HR.view!=='expenses') HR.view='clock';
   hrSidebar();
-  var cur=(HR_NAV.find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
+  var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
   else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
+  else if(HR.view==='attendance') body=hrAttendance();
+  else if(HR.view==='clock') body=hrClock();
   else if(HR.view==='payroll') body=hrPayroll();
   else if(HR.view==='calculator') body=hrCalculator();
   else if(HR.view==='yearend') body=hrYearend();
@@ -1722,6 +1731,17 @@ function hrEmpForm(){
     '</div>'+
     '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px">'+ck('epf','EPF',x.epf_eligible!==false)+ck('socso','SOCSO',x.socso_eligible!==false)+ck('eis','EIS',x.eis_eligible!==false)+ck('resident','Tax resident',x.resident!==false)+ck('spouseWorking','Spouse working',!!x.spouse_working)+'</div>'+
     '<div class="muted" style="font-size:11px;margin-bottom:12px">EPF/SOCSO/EIS rates follow the Malaysian statutory tables. Age 60+ auto-switches to the senior EPF rate, SOCSO Category 2 and no EIS. PCB uses marital status + children + EPF relief; it is an estimate — verify against the LHDN MTD schedule before filing.</div>'+
+    '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Pay basis &amp; time clock</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
+      g('Pay basis',sel('payType',[['monthly','Monthly salary'],['hourly','Hourly (part-time)'],['daily','Daily (part-time)']],x.pay_type||'monthly'))+
+      g('Hourly rate (RM/hr)',inp('hourlyRate','0.00',x.hourly_rate,'type="number" step="0.01" min="0"'))+
+      g('Daily rate (RM/day)',inp('dailyRate','0.00',x.daily_rate,'type="number" step="0.01" min="0"'))+
+      g('Shift start (for reminder)',inp('shiftStart','',x.shift_start?String(x.shift_start).slice(0,5):'','type="time"'))+
+      g('Shift end (for reminder)',inp('shiftEnd','',x.shift_end?String(x.shift_end).slice(0,5):'','type="time"'))+
+      g('&nbsp;','<div></div>')+
+    '</div>'+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">'+ck('clockReminder','Email clock-in/out reminders at shift times',!!x.clock_reminder)+'</div>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:12px">Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. Monthly = fixed salary (uses Basic salary above). Reminders need this box ticked + shift times + an email on file.</div>'+
     '<button class="btn p sm" onclick="hrSaveEmp()">'+(x.id?'Save changes':'Add employee')+'</button></div>';
 }
 async function hrSaveEmp(){
@@ -1739,9 +1759,128 @@ async function hrSaveEmp(){
   var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'), employmentType:v('empType')||'Full-time',
     basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
+    payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
   var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
   if(r&&r.ok){ toast('Employee saved'); HR.editEmp=null; renderHR(); } else toast((r&&r.error)||'Save failed',true);
+}
+// ===== ⏱ Time Clock (employee self-service) + 🕐 Attendance (admin) =====
+var CLK={ data:null, loading:false, acting:false, err:null };
+function hrClkTime(iso){ if(!iso) return '—'; var d=new Date(iso); if(isNaN(d)) return '—'; return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+function hrClkNow(){ return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+function hrClkTick(){ var el=document.getElementById('clk_elapsed'); if(!el||!CLK.data||!CLK.data.open) return; var ms=Date.now()-new Date(CLK.data.open.clock_in).getTime(); if(ms<0)ms=0; var h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000); var p=function(n){return(n<10?'0':'')+n;}; el.textContent=p(h)+':'+p(m)+':'+p(s); }
+function hrGetGeo(){ return new Promise(function(res){ if(!navigator.geolocation){res({});return;} var done=false,t=setTimeout(function(){if(!done){done=true;res({});}},4000); try{ navigator.geolocation.getCurrentPosition(function(pos){if(done)return;done=true;clearTimeout(t);res({lat:pos.coords.latitude,lng:pos.coords.longitude});},function(){if(done)return;done=true;clearTimeout(t);res({});},{enableHighAccuracy:false,timeout:3500,maximumAge:60000}); }catch(_e){ if(!done){done=true;clearTimeout(t);res({});} } }); }
+function hrClock(){
+  if(!HR._clkTimer){ HR._clkTimer=setInterval(hrClkTick,1000); }
+  if(!CLK.data && !CLK.loading){ CLK.loading=true; setTimeout(hrClockLoad,0); }
+  if(CLK.loading && !CLK.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  return hrClockRender();
+}
+async function hrClockLoad(){
+  try{ var r=await call({api:'clock_status'}); if(r&&r.ok){ CLK.data=r; CLK.err=null; } else { CLK.err=(r&&r.error)||'Failed to load'; } }
+  catch(e){ CLK.err=e.message||e; }
+  finally{ CLK.loading=false; }
+  if(HR.view==='clock') hrRender();
+}
+function hrClockRender(){
+  var d=CLK.data;
+  if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(CLK.err||'Could not load your clock')+' — <a onclick="CLK.data=null;CLK.err=null;CLK.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
+  var open=d.open, emp=d.employee||{};
+  var statusCard;
+  if(open){
+    statusCard='<div class="panel" style="text-align:center;padding:30px 20px">'+
+      (d.stale_open?'<div class="pill pill-coral" style="margin-bottom:12px;font-size:11px">⚠ Clocked in since '+esc(String(open.work_date))+' — remember to clock out</div>':'')+
+      '<div class="muted" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em">Currently clocked in</div>'+
+      '<div id="clk_elapsed" style="font-size:42px;font-weight:800;letter-spacing:-.02em;margin:8px 0;color:var(--green-soft)">00:00:00</div>'+
+      '<div class="muted" style="font-size:12.5px">since '+esc(hrClkTime(open.clock_in))+'</div>'+
+      '<button class="btn p" '+(CLK.acting?'disabled':'')+' style="margin-top:20px;font-size:16px;padding:14px 42px;background:linear-gradient(135deg,#DC2626,#B23C1F)" onclick="hrClockAction(\'out\')">⏹ Clock Out</button>'+
+    '</div>';
+  } else {
+    statusCard='<div class="panel" style="text-align:center;padding:30px 20px">'+
+      '<div class="muted" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em">Not clocked in</div>'+
+      '<div style="font-size:36px;font-weight:800;margin:10px 0;color:var(--text)">'+esc(hrClkNow())+'</div>'+
+      '<button class="btn p" '+(CLK.acting?'disabled':'')+' style="margin-top:6px;font-size:16px;padding:14px 46px" onclick="hrClockAction(\'in\')">▶ Clock In</button>'+
+    '</div>';
+  }
+  var today=d.today||[];
+  var rows=today.map(function(p){ return '<tr><td>'+esc(hrClkTime(p.clock_in))+'</td><td>'+(p.clock_out?esc(hrClkTime(p.clock_out)):'<span class="pill pill-amber" style="font-size:9px">OPEN</span>')+'</td><td class="amt">'+(p.hours!=null?Number(p.hours).toFixed(2)+'h':'—')+'</td></tr>'; }).join('');
+  var wkPay=(emp.pay_type==='hourly'&&emp.hourly_rate)?(' · ≈ '+M((Number(d.week_hours)||0)*Number(emp.hourly_rate))):'';
+  var todayCard='<div class="panel"><div class="panel-hd"><h3>Today</h3><span class="muted" style="font-size:11.5px">This week: <b>'+Number(d.week_hours||0).toFixed(2)+' h</b>'+wkPay+'</span></div>'+(today.length?('<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>In</th><th>Out</th><th class="amt">Hours</th></tr></thead><tbody>'+rows+'</tbody></table></div>'):'<div class="muted" style="padding:12px">No punches today yet.</div>')+'</div>';
+  var tip='<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.</div>';
+  setTimeout(hrClkTick,30);
+  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+tip+'</div>';
+}
+async function hrClockAction(dir){
+  if(CLK.acting) return; CLK.acting=true; if(HR.view==='clock')hrRender();
+  var geo=await hrGetGeo();
+  try{
+    var r=await call(Object.assign({api: dir==='in'?'clock_in':'clock_out'}, geo));
+    if(r&&r.ok){ toast(dir==='in'?'Clocked in ✓':'Clocked out ✓'); CLK.data=null; CLK.acting=false; hrClockLoad(); return; }
+    toast((r&&r.error)||'Failed',true);
+  }catch(e){ toast(e.message||e,true); }
+  CLK.acting=false; if(HR.view==='clock')hrRender();
+}
+// ── Admin attendance: view/correct punches, hours summary, CSV ──
+var ATT={ month:'', tenant:'', data:null, loading:false, editRow:null };
+function hrDtLocal(iso){ if(!iso) return ''; var d=new Date(iso); if(isNaN(d)) return ''; var p=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function hrAttendance(){
+  var mo=ATT.month||todayLocalISO().slice(0,7);
+  if(ATT.month!==mo || ATT.tenant!==HR.tenant){ ATT.month=mo; ATT.tenant=HR.tenant; ATT.data=null; }
+  if(!ATT.data && !ATT.loading){ ATT.loading=true; setTimeout(hrAttLoad,0); }
+  var head='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">'+
+    '<input type="month" value="'+esc(ATT.month)+'" onchange="ATT.month=this.value;ATT.data=null;hrRender()" style="padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">'+
+    '<div style="display:flex;gap:6px"><button class="btn xs" onclick="hrAttEdit()">+ Add punch</button><button class="btn xs" onclick="hrAttExport()">⬇ CSV</button></div></div>';
+  var body=(ATT.loading && !ATT.data)?'<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>':hrAttRender();
+  return head+body+(ATT.editRow!==null?hrAttEditModal():'');
+}
+async function hrAttLoad(){
+  try{ var r=await call({api:'attendance_list',tenant:HR.tenant,month:ATT.month}); if(r&&r.ok) ATT.data=r; else toast((r&&r.error)||'Failed',true); }
+  catch(e){ toast(e.message||e,true); }
+  finally{ ATT.loading=false; }
+  if(HR.view==='attendance') hrRender();
+}
+function hrAttRender(){
+  var d=ATT.data; if(!d) return '';
+  var sum=d.summary||[], punches=d.punches||[];
+  var sumRows=sum.map(function(s){ return '<tr><td><b>'+esc(s.name||'')+'</b> <span class="muted" style="font-size:10.5px">'+esc(s.emp_no||'')+'</span></td><td class="muted">'+esc(s.pay_type||'monthly')+'</td><td class="amt">'+Number(s.hours||0).toFixed(2)+'</td><td class="amt">'+s.days+'</td><td class="amt" style="font-weight:700">'+(s.est_pay!=null?M(s.est_pay):'—')+'</td><td class="amt">'+(s.open?('<span class="pill pill-amber" style="font-size:9px">'+s.open+' open</span>'):'')+'</td></tr>'; }).join('');
+  var sumCard='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Hours summary · '+esc(ATT.month)+'</h3><span class="muted" style="font-size:11px">est. pay = hourly/daily staff only</span></div>'+(sum.length?'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Pay type</th><th class="amt">Hours</th><th class="amt">Days</th><th class="amt">Est. pay</th><th class="amt"></th></tr></thead><tbody>'+sumRows+'</tbody></table></div>':'<div class="muted" style="padding:12px">No attendance this month.</div>')+'</div>';
+  var pRows=punches.map(function(p){ var e=p.hr_employees||{}; return '<tr><td class="muted">'+esc(String(p.work_date))+'</td><td>'+esc(e.name||'')+'</td><td>'+esc(hrClkTime(p.clock_in))+'</td><td>'+(p.clock_out?esc(hrClkTime(p.clock_out)):'<span class="pill pill-amber" style="font-size:9px">OPEN</span>')+'</td><td class="amt">'+(p.hours!=null?Number(p.hours).toFixed(2):'—')+'</td><td class="muted" style="font-size:11px">'+esc(p.source||'')+'</td><td style="white-space:nowrap"><a onclick="hrAttEdit(\''+p.id+'\')" style="cursor:pointer;color:var(--sky-soft);font-size:11.5px">edit</a> · <a onclick="hrAttDel(\''+p.id+'\')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">del</a></td></tr>'; }).join('');
+  var logCard='<div class="panel"><div class="panel-hd"><h3>Punch log</h3><span class="muted" style="font-size:11px">'+punches.length+' records</span></div>'+(punches.length?'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Date</th><th>Employee</th><th>In</th><th>Out</th><th class="amt">Hrs</th><th>Src</th><th></th></tr></thead><tbody>'+pRows+'</tbody></table></div>':'<div class="muted" style="padding:12px">No punches.</div>')+'</div>';
+  return sumCard+logCard;
+}
+function hrAttEdit(id){ if(id){ ATT.editRow=(ATT.data&&ATT.data.punches||[]).find(function(p){return p.id===id;})||{}; } else { ATT.editRow={}; } hrRender(); }
+function hrAttEditModal(){
+  var r=ATT.editRow||{}; var emps=(HR.data&&HR.data.employees)||[];
+  var opts='<option value="">— select employee —</option>'+emps.map(function(e){return '<option value="'+esc(e.id)+'"'+(r.employee_id===e.id?' selected':'')+'>'+esc(e.name||'')+' ('+esc(e.emp_no||'')+')</option>';}).join('');
+  var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+  var g=function(l,el){return '<div style="margin-bottom:10px"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};
+  return '<div onclick="if(event.target===this){ATT.editRow=null;hrRender();}" style="position:fixed;inset:0;background:rgba(5,10,20,.55);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px">'+
+    '<div class="panel" style="max-width:440px;width:100%;margin:0">'+
+    '<div class="panel-hd"><h3>'+(r.id?'Edit':'Add')+' punch</h3><button class="btn sm" onclick="ATT.editRow=null;hrRender()">✕</button></div>'+
+    g('Employee','<select id="att_emp" style="'+S+'">'+opts+'</select>')+
+    g('Clock in','<input type="datetime-local" id="att_in" value="'+esc(hrDtLocal(r.clock_in))+'" style="'+S+'">')+
+    g('Clock out <span style="opacity:.6">(blank = still working)</span>','<input type="datetime-local" id="att_out" value="'+esc(hrDtLocal(r.clock_out))+'" style="'+S+'">')+
+    g('Break (minutes)','<input type="number" id="att_break" value="'+(Number(r.break_minutes)||0)+'" min="0" step="5" style="'+S+'">')+
+    g('Note','<input id="att_note" value="'+esc(r.note||'')+'" placeholder="e.g. forgot to clock out" style="'+S+'">')+
+    '<button class="btn p sm" style="width:100%;margin-top:6px" onclick="hrAttSave()">Save punch</button>'+
+    '</div></div>';
+}
+async function hrAttSave(){
+  var emp=document.getElementById('att_emp').value; if(!emp){ toast('Select an employee',true); return; }
+  var ci=document.getElementById('att_in').value; if(!ci){ toast('Clock-in time is required',true); return; }
+  var co=document.getElementById('att_out').value;
+  var punch={ id:(ATT.editRow&&ATT.editRow.id)||undefined, employee_id:emp, clock_in:new Date(ci).toISOString(), clock_out:co?new Date(co).toISOString():null,
+    break_minutes:Number(document.getElementById('att_break').value)||0, note:document.getElementById('att_note').value||null };
+  var r=await call({api:'attendance_save',punch:punch});
+  if(r&&r.ok){ toast('Saved ✓'); ATT.editRow=null; ATT.data=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
+}
+async function hrAttDel(id){ if(!confirm('Delete this punch record?'))return; var r=await call({api:'attendance_delete',id:id}); if(r&&r.ok){ toast('Deleted'); ATT.data=null; hrRender(); } else toast((r&&r.error)||'Failed',true); }
+function hrAttExport(){
+  var d=ATT.data; if(!d||!(d.punches||[]).length){ toast('Nothing to export',true); return; }
+  var rows=[['Date','Employee','Emp No','Clock In','Clock Out','Hours','Break (min)','Source','Status','Note']];
+  d.punches.forEach(function(p){ var e=p.hr_employees||{}; rows.push([p.work_date, e.name||'', e.emp_no||'', p.clock_in||'', p.clock_out||'', p.hours!=null?Number(p.hours).toFixed(2):'', p.break_minutes||0, p.source||'', p.status||'', p.note||'']); });
+  var csv=rows.map(function(r){return r.map(hrCsv).join(',');}).join('\n');
+  var blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a'); a.href=url; a.download='Attendance_'+ATT.month+'.csv'; a.click(); URL.revokeObjectURL(url); toast('CSV exported');
 }
 function hrLeave(){
   var lv=HR.data.leaves||[];
@@ -1769,7 +1908,13 @@ function hrGridInit(){
     var setK=function(k){ var f=mine.filter(function(a){return a.kind===k;}); return f.length?Number(f[f.length-1].amount):null; };
     var bset=setK('basic_set'), aset=setK('allow_set');
     var deds=mine.filter(function(a){return a.kind==='deduction';}).map(function(a){ return { label:a.label||'Other deduction', amount:Number(a.amount)||0 }; });
-    p.grid[e.id]={ basic:(bset!=null?bset:Number(e.basic_salary||0)), allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave') };
+    // Part-timers (hourly/daily): auto-fill Basic from this month's clocked hours × rate (unless the admin
+    // set a manual basic override). Monthly staff keep their fixed basic_salary.
+    var att=(p.data.attendance||{})[e.id]||{}; var autoBasic=null;
+    if(e.pay_type==='hourly') autoBasic=Math.round((Number(att.hours)||0)*(Number(e.hourly_rate)||0)*100)/100;
+    else if(e.pay_type==='daily') autoBasic=Math.round((Number(att.days)||0)*(Number(e.daily_rate)||0)*100)/100;
+    var baseVal=(bset!=null?bset:(autoBasic!=null?autoBasic:Number(e.basic_salary||0)));
+    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }

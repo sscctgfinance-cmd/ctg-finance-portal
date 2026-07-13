@@ -3701,6 +3701,139 @@ Deno.serve(async (req)=>{
       await logAudit(me, "hr_banks_save", code, { name, active: row.active!==false, deleted: !!row.delete });
       return j({ ok:true });
     }
+    // ═══ Time clock / attendance (part-time & hourly staff) ═══════════════════
+    // Employees clock in/out from their phone; admins view + correct punches; hours feed payroll.
+    if (api === "clock_status" || api === "clock_in" || api === "clock_out") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      // Target: the logged-in employee, or (admin only) an employee_id passed in the body.
+      let empId = who.employee ? who.employee.id : null;
+      if (who.isAdmin && b.employee_id) empId = String(b.employee_id);
+      if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet — ask HR to enable your access.", need_profile:true });
+      const { data: emp } = await sb.from("hr_employees").select("id,name,tenant_id,pay_type,hourly_rate,daily_rate,shift_start,shift_end,employment_type").eq("id",empId).maybeSingle();
+      if (!emp) return j({ ok:false, error:"employee not found" });
+      if (who.isAdmin){ const alw = await allowedTenants(b.token); if (alw.length && emp.tenant_id && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
+      const nowMs = Date.now();
+      const mytToday = new Date(nowMs+8*3600*1000).toISOString().slice(0,10);
+      const { data: open } = await sb.from("hr_attendance").select("*").eq("employee_id",empId).eq("status","open").maybeSingle();
+
+      if (api === "clock_in") {
+        if (open) return j({ ok:false, error:"You are already clocked in.", open });
+        const { data: ins, error } = await sb.from("hr_attendance").insert({ tenant_id: emp.tenant_id, employee_id: empId, work_date: mytToday,
+          clock_in: new Date(nowMs).toISOString(), status:"open", source:(who.isAdmin && b.employee_id)?"admin":"self",
+          in_lat: (b.lat!=null?Number(b.lat):null), in_lng:(b.lng!=null?Number(b.lng):null), note: b.note||null }).select().single();
+        if (error) return j({ ok:false, error: error.message });
+        return j({ ok:true, punch: ins });
+      }
+      if (api === "clock_out") {
+        if (!open) return j({ ok:false, error:"You are not clocked in." });
+        const inMs = new Date(open.clock_in).getTime();
+        let hrs = (nowMs - inMs)/3600000 - (Number(open.break_minutes)||0)/60;
+        hrs = Math.max(0, Math.round(hrs*100)/100);
+        const { data: upd, error } = await sb.from("hr_attendance").update({ clock_out: new Date(nowMs).toISOString(), hours: hrs, status:"complete",
+          out_lat:(b.lat!=null?Number(b.lat):null), out_lng:(b.lng!=null?Number(b.lng):null), updated_at:new Date().toISOString() }).eq("id",open.id).select().single();
+        if (error) return j({ ok:false, error: error.message });
+        return j({ ok:true, punch: upd });
+      }
+      // clock_status: current open punch (+ whether it's stale from a previous day), today's punches, week hours.
+      const { data: todayRows } = await sb.from("hr_attendance").select("*").eq("employee_id",empId).eq("work_date",mytToday).order("clock_in");
+      const mytNow = new Date(nowMs+8*3600*1000);
+      const dow = (mytNow.getUTCDay()+6)%7; // 0=Mon
+      const wkFrom = new Date(mytNow.getTime()-dow*86400000).toISOString().slice(0,10);
+      const { data: wkRows } = await sb.from("hr_attendance").select("hours").eq("employee_id",empId).gte("work_date",wkFrom).eq("status","complete");
+      const weekHours = Math.round(((wkRows||[]).reduce((s,r)=>s+(Number(r.hours)||0),0))*100)/100;
+      const staleOpen = open && String(open.work_date) < mytToday;
+      return j({ ok:true, employee:{ id:emp.id, name:emp.name, pay_type:emp.pay_type||"monthly", hourly_rate:emp.hourly_rate, daily_rate:emp.daily_rate, employment_type:emp.employment_type },
+        open: open||null, stale_open: !!staleOpen, today: todayRows||[], week_hours: weekHours, server_now: new Date(nowMs).toISOString() });
+    }
+    if (api === "attendance_list") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(tenant) < 0) return j({ ok:false, error:"forbidden" }, 403); }
+      const month = String(b.month||"").trim(); // YYYY-MM optional
+      let from = month ? month+"-01" : new Date(Date.now()+8*3600*1000 - 30*86400000).toISOString().slice(0,10);
+      let to; if(month){ const [yy,mm]=month.split("-").map(Number); to = (mm===12)?((yy+1)+"-01-01"):(yy+"-"+String(mm+1).padStart(2,"0")+"-01"); } else { to = new Date(Date.now()+8*3600*1000 + 86400000).toISOString().slice(0,10); }
+      let rows:any[]=[];
+      for(let off=0; off<20000; off+=1000){
+        const { data: pg } = await sb.from("hr_attendance").select("*, hr_employees(emp_no,name,pay_type,hourly_rate,daily_rate,employment_type)").eq("tenant_id",tenant).gte("work_date",from).lt("work_date",to).order("work_date",{ascending:false}).order("clock_in",{ascending:false}).range(off,off+999);
+        rows=rows.concat(pg||[]); if(!pg || pg.length<1000) break;
+      }
+      if (b.employee_id) rows = rows.filter((r:any)=>r.employee_id===b.employee_id);
+      // per-employee summary for the window
+      const sum:any = {};
+      for(const r of rows){ const e=r.hr_employees||{}; const k=r.employee_id;
+        const s = sum[k] || (sum[k] = { employee_id:k, emp_no:e.emp_no, name:e.name, pay_type:e.pay_type, hourly_rate:e.hourly_rate, daily_rate:e.daily_rate, hours:0, days:new Set(), open:0 });
+        if(r.status==="complete"){ s.hours += Number(r.hours)||0; s.days.add(r.work_date); }
+        if(r.status==="open") s.open++;
+      }
+      const summary = Object.values(sum).map((s:any)=>({ employee_id:s.employee_id, emp_no:s.emp_no, name:s.name, pay_type:s.pay_type,
+        hourly_rate:s.hourly_rate, daily_rate:s.daily_rate, hours:Math.round(s.hours*100)/100, days:s.days.size, open:s.open,
+        est_pay: s.pay_type==="hourly" ? Math.round((s.hours*(Number(s.hourly_rate)||0))*100)/100 : (s.pay_type==="daily" ? Math.round((s.days.size*(Number(s.daily_rate)||0))*100)/100 : null) }))
+        .sort((a:any,b2:any)=> String(a.name||"").localeCompare(String(b2.name||"")));
+      return j({ ok:true, punches: rows, summary });
+    }
+    if (api === "attendance_save") {
+      // Admin add/correct a punch. Computes hours from in/out.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const p = b.punch||{}; const empId = String(p.employee_id||"");
+      if(!empId) return j({ ok:false, error:"employee required" });
+      const { data: emp } = await sb.from("hr_employees").select("id,tenant_id").eq("id",empId).maybeSingle();
+      if(!emp) return j({ ok:false, error:"employee not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && emp.tenant_id && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
+      const ci = p.clock_in? new Date(p.clock_in): null; const co = p.clock_out? new Date(p.clock_out): null;
+      if(!ci || isNaN(+ci)) return j({ ok:false, error:"valid clock-in time required" });
+      let hrs:any=null, status="open";
+      if(co && !isNaN(+co)){ if(+co < +ci) return j({ ok:false, error:"clock-out must be after clock-in" }); hrs = Math.max(0, Math.round(((+co - +ci)/3600000 - (Number(p.break_minutes)||0)/60)*100)/100); status="complete"; }
+      const wd = p.work_date || new Date(+ci+8*3600*1000).toISOString().slice(0,10);
+      const rowData:any = { tenant_id:emp.tenant_id, employee_id:empId, work_date:wd, clock_in:ci.toISOString(), clock_out:co?co.toISOString():null, hours:hrs, break_minutes:Number(p.break_minutes)||0, status, source:"admin", note:p.note||null, updated_at:new Date().toISOString() };
+      let res:any;
+      if(p.id){ res = await sb.from("hr_attendance").update(rowData).eq("id",p.id).select().single(); }
+      else { res = await sb.from("hr_attendance").insert(rowData).select().single(); }
+      if(res.error) return j({ ok:false, error:res.error.message });
+      await logAudit(me,"attendance_save",String(res.data&&res.data.id),{ employee_id:empId, hours:hrs });
+      return j({ ok:true, punch: res.data });
+    }
+    if (api === "attendance_delete") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data: rec } = await sb.from("hr_attendance").select("tenant_id").eq("id",String(b.id)).maybeSingle();
+      if(rec){ const alw = await allowedTenants(b.token); if (alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
+      await sb.from("hr_attendance").delete().eq("id",String(b.id));
+      await logAudit(me,"attendance_delete",String(b.id),{});
+      return j({ ok:true });
+    }
+    if (api === "cron_clock_reminders") {
+      // Email part-timers with a shift + reminder ON: nudge to clock IN near shift_start, and warn if still
+      // clocked in past shift_end (forgot to clock out). Idempotent per 15-min window via portal_secrets marker.
+      const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
+      const work = (async ()=>{ try {
+        const mytNow = new Date(Date.now()+8*3600*1000);
+        const hhmm = mytNow.toISOString().slice(11,16); // "HH:MM" MYT
+        const today = mytNow.toISOString().slice(0,10);
+        const { data: emps } = await sb.from("hr_employees").select("id,name,email,shift_start,shift_end,tenant_id,clock_remind_in_date,clock_remind_out_date").eq("status","active").eq("clock_reminder",true);
+        let sent=0;
+        const clkBase="https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html#clock";
+        for(const e of (emps||[])){
+          if(!e.email) continue;
+          const { data: open } = await sb.from("hr_attendance").select("id,work_date").eq("employee_id",e.id).eq("status","open").maybeSingle();
+          const near = (a:string,b2:string)=>{ if(!a||!b2) return false; const m=(t:string)=>parseInt(t.slice(0,2))*60+parseInt(t.slice(3,5)); return Math.abs(m(a)-m(b2))<=7; };
+          // clock-in reminder: shift_start ~now, not already reminded today, no open punch, nothing completed today
+          if(e.shift_start && String(e.clock_remind_in_date||"")!==today && near(hhmm, String(e.shift_start).slice(0,5)) && !open){
+            const { count } = await sb.from("hr_attendance").select("id",{count:"exact",head:true}).eq("employee_id",e.id).eq("work_date",today);
+            if(!count){ await rcSendEmail(e.email, "[HR OS] Time to clock in", "Hi "+(e.name||"")+",\n\nYour shift is starting. Please clock in:\n  "+clkBase+"\n\n(Tip: add HR OS to your phone home screen for one-tap clock-in.)\n\n— CTG HR OS (automated)");
+              await sb.from("hr_employees").update({ clock_remind_in_date: today }).eq("id",e.id); sent++; }
+          }
+          // clock-out reminder: shift_end ~now, still open, not already reminded today
+          if(e.shift_end && String(e.clock_remind_out_date||"")!==today && near(hhmm, String(e.shift_end).slice(0,5)) && open){
+            await rcSendEmail(e.email, "[HR OS] Don’t forget to clock out", "Hi "+(e.name||"")+",\n\nYour shift is ending and you’re still clocked in. Please clock out:\n  "+clkBase+"\n\n— CTG HR OS (automated)");
+            await sb.from("hr_employees").update({ clock_remind_out_date: today }).eq("id",e.id); sent++;
+          }
+        }
+        try { await sb.from("portal_audit").insert({ action:"cron_clock_reminders", ref:hhmm, detail:{ sent } }); } catch(_e){}
+      } catch(e){ try { await sb.from("portal_audit").insert({ action:"cron_clock_reminders_error", detail:{ error:String(e) } }); } catch(_e){} } })();
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
+      return j({ ok:true, started:true });
+    }
     if (api === "hr_emp_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const f = b.emp||{};
@@ -3725,6 +3858,12 @@ Deno.serve(async (req)=>{
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
         manager_id:f.managerId||null,
         claim_role:(f.claimRole===""||f.claimRole==null)?null:f.claimRole,
+        pay_type:(["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"),
+        hourly_rate:(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate),
+        daily_rate:(f.dailyRate===""||f.dailyRate==null)?null:Number(f.dailyRate),
+        shift_start:(String(f.shiftStart||"").trim()||null),
+        shift_end:(String(f.shiftEnd||"").trim()||null),
+        clock_reminder:!!f.clockReminder,
       };
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
@@ -3782,7 +3921,20 @@ Deno.serve(async (req)=>{
       ]);
       let payslips:any[]=[];
       if (run.data){ const ps=await sb.from("hr_payslips").select("*").eq("run_id",run.data.id); payslips=ps.data||[]; }
-      return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips });
+      // Attendance hours/days this month per employee → the grid auto-fills hourly/daily part-timers' basic.
+      const attendance:any = {};
+      if (empIds.length){
+        const mFrom = yr+"-"+String(mo).padStart(2,"0")+"-01";
+        const mTo = (mo===12)?((yr+1)+"-01-01"):(yr+"-"+String(mo+1).padStart(2,"0")+"-01");
+        let arows:any[]=[];
+        for(let off=0; off<20000; off+=1000){
+          const { data: pg } = await sb.from("hr_attendance").select("employee_id,hours,work_date,status").eq("tenant_id",tenant).gte("work_date",mFrom).lt("work_date",mTo).eq("status","complete").order("work_date").range(off,off+999);
+          arows=arows.concat(pg||[]); if(!pg || pg.length<1000) break;
+        }
+        for(const r of arows){ const a=attendance[r.employee_id]||(attendance[r.employee_id]={hours:0,days:new Set()}); a.hours+=Number(r.hours)||0; a.days.add(r.work_date); }
+        for(const k in attendance){ attendance[k]={ hours:Math.round(attendance[k].hours*100)/100, days:attendance[k].days.size }; }
+      }
+      return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips, attendance });
     }
     if (api === "hr_adj_add") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -4455,7 +4607,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
+    return j({ ok:true, hint:"portal v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
