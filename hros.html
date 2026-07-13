@@ -1893,18 +1893,21 @@ function hrAttExport(){
   var blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a'); a.href=url; a.download='Attendance_'+ATT.month+'.csv'; a.click(); URL.revokeObjectURL(url); toast('CSV exported');
 }
 // ===== 🌴 Employee Leave (self-service: apply + balance + my requests) =====
-var ELV={ data:null, loading:false, err:null };
+var ELV={ data:null, loading:false, err:null, pending:[] };
 function hrEmpLeave(){
   if(!ELV.data && !ELV.loading){ ELV.loading=true; setTimeout(hrEmpLeaveLoad,0); }
   if(ELV.loading && !ELV.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrEmpLeaveRender();
 }
 async function hrEmpLeaveLoad(){
-  try{ var r=await call({api:'hr_leave_my'}); if(r&&r.ok){ ELV.data=r; ELV.err=null; } else ELV.err=(r&&r.error)||'Failed'; }
+  try{ var r=await call({api:'hr_leave_my'}); if(r&&r.ok){ ELV.data=r; ELV.err=null; } else ELV.err=(r&&r.error)||'Failed';
+       try{ var p=await call({api:'hr_leave_pending'}); ELV.pending=(p&&p.ok)?(p.requests||[]):[]; }catch(_e){ ELV.pending=[]; }
+  }
   catch(e){ ELV.err=e.message||e; }
   finally{ ELV.loading=false; }
-  if(HR.view==='leave') hrRender();
+  if(HR.view==='leave' && HR_EMP_MODE) hrRender();
 }
+async function hrEmpLeaveDecide(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Approved ✓':(r.advanced?'Approved → next level':'Done')); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }
 function hrEmpLeaveRender(){
   var d=ELV.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(ELV.err||'Could not load leave')+' — <a onclick="ELV.data=null;ELV.err=null;ELV.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
   var types=d.types||[], bals=d.balances||[], reqs=d.requests||[];
@@ -1921,13 +1924,19 @@ function hrEmpLeaveRender(){
     '</div>'+
     g('Reason','<input id="lv_reason" placeholder="e.g. family matters" style="'+S+'">')+
     '<button class="btn p sm" id="lv_submit" style="margin-top:4px" onclick="hrEmpLeaveApply()">Submit application</button>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). HR reviews &amp; approves.</div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). Routed through the approval levels (e.g. Manager → HR → Director) — approvers are notified by email at each step.</div>'+
   '</div>';
-  var rows=reqs.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
-    var act=st==='Pending'?('<a onclick="hrEmpLeaveCancel(\''+x.id+'\')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">cancel</a>'):'';
-    return '<tr><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td>'+act+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No leave requests yet</td></tr>';
-  var list='<div class="panel"><div class="panel-hd"><h3>My leave</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
-  return balCards+form+list;
+  var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
+    var act=(!fin)?('<a onclick="hrEmpLeaveCancel(\''+x.id+'\')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">cancel</a>'):'';
+    return '<tr><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td>'+act+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No leave requests yet</td></tr>';
+  var list='<div class="panel"><div class="panel-hd"><h3>My leave</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  // Approver queue — requests waiting on THIS employee's approval step (managers / HR / director see this).
+  var pend=ELV.pending||[], apprCard='';
+  if(pend.length){
+    var pr=pend.map(function(x){ return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.current_step_name||'')+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td style="white-space:nowrap"><button class="btn xs" onclick="hrEmpLeaveDecide(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrEmpLeaveDecide(\''+x.id+'\',\'reject\')">Reject</button></td></tr>'; }).join('');
+    apprCard='<div class="panel" style="margin-bottom:14px;border-color:rgba(245,158,11,.35)"><div class="panel-hd"><h3>🔔 Pending your approval <span class="pill" style="color:var(--amber);font-size:10px">'+pend.length+'</span></h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Level</th><th>Reason</th><th></th></tr></thead><tbody>'+pr+'</tbody></table></div></div>';
+  }
+  return apprCard+balCards+form+list;
 }
 async function hrEmpLeaveApply(){
   var type=document.getElementById('lv_type').value; if(!type){ toast('Select a leave type',true); return; }
@@ -1943,13 +1952,53 @@ async function hrEmpLeaveApply(){
   if(btn){btn.disabled=false;btn.textContent='Submit application';}
 }
 async function hrEmpLeaveCancel(id){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }
-function hrLeave(){
-  var lv=HR.data.leaves||[];
-  var rows=lv.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
-    var act=st==='Pending'?('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'Approved\')">Approve</button> <button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'Rejected\')">Reject</button>'):'';
-    return '<tr><td>'+esc((x.employee&&x.employee.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
-  return '<div class="panel"><div class="panel-hd"><h3>Leave requests</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+// Step-pills used by both admin + employee views (needs x.steps + x.current_step + x.status).
+function hrLeaveStepPills(x){
+  var steps=x.steps||[]; if(!steps.length) return '<span class="muted" style="font-size:10.5px">—</span>';
+  var cur=x.current_step||1, fin=['Approved','Rejected','Cancelled'].indexOf(x.status)>=0;
+  return steps.map(function(s){ var done=s.status==='Approved', rej=s.status==='Rejected', isCur=(s.step_order===cur && !fin);
+    var col=done?'var(--green-soft)':rej?'var(--coral-soft)':isCur?'var(--amber)':'var(--muted)';
+    var ic=done?'✓':rej?'✕':isCur?'⏳':'○';
+    return '<span style="font-size:10px;color:'+col+';margin-right:9px;white-space:nowrap" title="'+esc(s.status||'')+'">'+ic+' '+esc(s.name||s.approver_role||'')+'</span>';
+  }).join('');
 }
+var LVA={ data:null, loading:false, flowEdit:null };
+function hrLeave(){
+  if(!LVA.data && !LVA.loading){ LVA.loading=true; setTimeout(hrLeaveAdminLoad,0); }
+  if(LVA.loading && !LVA.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  return hrLeaveAdminRender();
+}
+async function hrLeaveAdminLoad(){
+  try{ var r=await call({api:'hr_leave_admin'}); if(r&&r.ok){ LVA.data=r; if(LVA.flowEdit===null) LVA.flowEdit=(r.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role};}); } else toast((r&&r.error)||'Failed',true); }
+  catch(e){ toast(e.message||e,true); }
+  finally{ LVA.loading=false; }
+  if(HR.view==='leave' && !HR_EMP_MODE) hrRender();
+}
+function hrLeaveAdminRender(){
+  var d=LVA.data; var reqs=(d&&d.requests)||[];
+  var roleOpts=[['manager','Direct Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+  var fe=LVA.flowEdit||[];
+  var flowRows=fe.map(function(s,i){
+    var cur=s.approver_type==='manager'?'manager':s.approver_role;
+    var sel='<select onchange="hrLeaveFlowSet('+i+',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">'+roleOpts.map(function(o){return '<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span class="muted" style="width:18px">'+(i+1)+'.</span>'+sel+'<a onclick="hrLeaveFlowDel('+i+')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">remove</a></div>';
+  }).join('');
+  var flowPanel='<div class="panel" style="margin-bottom:14px;max-width:480px"><div class="panel-hd"><h3>Approval flow</h3><span class="muted" style="font-size:11px">levels every leave request passes through</span></div>'+
+    (flowRows||'<div class="muted" style="font-size:12px;margin-bottom:6px">No levels — leave goes straight to any admin.</div>')+
+    '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn xs" onclick="hrLeaveFlowAdd()">+ Add level</button><button class="btn p xs" onclick="hrLeaveFlowSave()">💾 Save flow</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">"Direct Manager" resolves to each employee’s manager. HR / Finance / Director resolve to whoever holds that role (Reimbursement → Settings → role approvers). Applies to future requests.</div></div>';
+  var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0;
+    var col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--coral-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
+    var act=(!fin)?('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrDecideLeave(\''+x.id+'\',\'reject\')">Reject</button>'):'';
+    return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
+  var table='<div class="panel"><div class="panel-hd"><h3>Leave requests</h3><button class="btn xs" onclick="LVA.data=null;hrRender()">↻</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  return flowPanel+table;
+}
+function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return; if(v==='manager'){ LVA.flowEdit[i]={name:'Direct Manager',approver_type:'manager',approver_role:'manager'}; } else { var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[v]||v; LVA.flowEdit[i]={name:nm,approver_type:'role',approver_role:v}; } }
+function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; LVA.flowEdit.push({name:'HR',approver_type:'role',approver_role:'hr'}); hrRender(); }
+function hrLeaveFlowDel(i){ LVA.flowEdit.splice(i,1); hrRender(); }
+async function hrLeaveFlowSave(){ var r=await call({api:'hr_leave_flow_save',steps:LVA.flowEdit||[]}); if(r&&r.ok){ toast('Approval flow saved ✓'); LVA.data=null; LVA.flowEdit=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
+async function hrDecideLeave(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
 function hrClaims(){
   var cl=HR.data.claims||[];
   var rows=cl.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
