@@ -3715,11 +3715,11 @@ Deno.serve(async (req)=>{
       if (who.isAdmin){ const alw = await allowedTenants(b.token); if (alw.length && emp.tenant_id && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       const nowMs = Date.now();
       const mytToday = new Date(nowMs+8*3600*1000).toISOString().slice(0,10);
-      const { data: open } = await sb.from("hr_attendance").select("*").eq("employee_id",empId).eq("status","open").maybeSingle();
+      const { data: open } = await sb.from("hr_timeclock").select("*").eq("employee_id",empId).eq("status","open").maybeSingle();
 
       if (api === "clock_in") {
         if (open) return j({ ok:false, error:"You are already clocked in.", open });
-        const { data: ins, error } = await sb.from("hr_attendance").insert({ tenant_id: emp.tenant_id, employee_id: empId, work_date: mytToday,
+        const { data: ins, error } = await sb.from("hr_timeclock").insert({ tenant_id: emp.tenant_id, employee_id: empId, work_date: mytToday,
           clock_in: new Date(nowMs).toISOString(), status:"open", source:(who.isAdmin && b.employee_id)?"admin":"self",
           in_lat: (b.lat!=null?Number(b.lat):null), in_lng:(b.lng!=null?Number(b.lng):null), note: b.note||null }).select().single();
         if (error) return j({ ok:false, error: error.message });
@@ -3730,17 +3730,17 @@ Deno.serve(async (req)=>{
         const inMs = new Date(open.clock_in).getTime();
         let hrs = (nowMs - inMs)/3600000 - (Number(open.break_minutes)||0)/60;
         hrs = Math.max(0, Math.round(hrs*100)/100);
-        const { data: upd, error } = await sb.from("hr_attendance").update({ clock_out: new Date(nowMs).toISOString(), hours: hrs, status:"complete",
+        const { data: upd, error } = await sb.from("hr_timeclock").update({ clock_out: new Date(nowMs).toISOString(), hours: hrs, status:"complete",
           out_lat:(b.lat!=null?Number(b.lat):null), out_lng:(b.lng!=null?Number(b.lng):null), updated_at:new Date().toISOString() }).eq("id",open.id).select().single();
         if (error) return j({ ok:false, error: error.message });
         return j({ ok:true, punch: upd });
       }
       // clock_status: current open punch (+ whether it's stale from a previous day), today's punches, week hours.
-      const { data: todayRows } = await sb.from("hr_attendance").select("*").eq("employee_id",empId).eq("work_date",mytToday).order("clock_in");
+      const { data: todayRows } = await sb.from("hr_timeclock").select("*").eq("employee_id",empId).eq("work_date",mytToday).order("clock_in");
       const mytNow = new Date(nowMs+8*3600*1000);
       const dow = (mytNow.getUTCDay()+6)%7; // 0=Mon
       const wkFrom = new Date(mytNow.getTime()-dow*86400000).toISOString().slice(0,10);
-      const { data: wkRows } = await sb.from("hr_attendance").select("hours").eq("employee_id",empId).gte("work_date",wkFrom).eq("status","complete");
+      const { data: wkRows } = await sb.from("hr_timeclock").select("hours").eq("employee_id",empId).gte("work_date",wkFrom).eq("status","complete");
       const weekHours = Math.round(((wkRows||[]).reduce((s,r)=>s+(Number(r.hours)||0),0))*100)/100;
       const staleOpen = open && String(open.work_date) < mytToday;
       return j({ ok:true, employee:{ id:emp.id, name:emp.name, pay_type:emp.pay_type||"monthly", hourly_rate:emp.hourly_rate, daily_rate:emp.daily_rate, employment_type:emp.employment_type },
@@ -3755,7 +3755,7 @@ Deno.serve(async (req)=>{
       let to; if(month){ const [yy,mm]=month.split("-").map(Number); to = (mm===12)?((yy+1)+"-01-01"):(yy+"-"+String(mm+1).padStart(2,"0")+"-01"); } else { to = new Date(Date.now()+8*3600*1000 + 86400000).toISOString().slice(0,10); }
       let rows:any[]=[];
       for(let off=0; off<20000; off+=1000){
-        const { data: pg } = await sb.from("hr_attendance").select("*, hr_employees(emp_no,name,pay_type,hourly_rate,daily_rate,employment_type)").eq("tenant_id",tenant).gte("work_date",from).lt("work_date",to).order("work_date",{ascending:false}).order("clock_in",{ascending:false}).range(off,off+999);
+        const { data: pg } = await sb.from("hr_timeclock").select("*, hr_employees(emp_no,name,pay_type,hourly_rate,daily_rate,employment_type)").eq("tenant_id",tenant).gte("work_date",from).lt("work_date",to).order("work_date",{ascending:false}).order("clock_in",{ascending:false}).range(off,off+999);
         rows=rows.concat(pg||[]); if(!pg || pg.length<1000) break;
       }
       if (b.employee_id) rows = rows.filter((r:any)=>r.employee_id===b.employee_id);
@@ -3787,17 +3787,17 @@ Deno.serve(async (req)=>{
       const wd = p.work_date || new Date(+ci+8*3600*1000).toISOString().slice(0,10);
       const rowData:any = { tenant_id:emp.tenant_id, employee_id:empId, work_date:wd, clock_in:ci.toISOString(), clock_out:co?co.toISOString():null, hours:hrs, break_minutes:Number(p.break_minutes)||0, status, source:"admin", note:p.note||null, updated_at:new Date().toISOString() };
       let res:any;
-      if(p.id){ res = await sb.from("hr_attendance").update(rowData).eq("id",p.id).select().single(); }
-      else { res = await sb.from("hr_attendance").insert(rowData).select().single(); }
+      if(p.id){ res = await sb.from("hr_timeclock").update(rowData).eq("id",p.id).select().single(); }
+      else { res = await sb.from("hr_timeclock").insert(rowData).select().single(); }
       if(res.error) return j({ ok:false, error:res.error.message });
       await logAudit(me,"attendance_save",String(res.data&&res.data.id),{ employee_id:empId, hours:hrs });
       return j({ ok:true, punch: res.data });
     }
     if (api === "attendance_delete") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data: rec } = await sb.from("hr_attendance").select("tenant_id").eq("id",String(b.id)).maybeSingle();
+      const { data: rec } = await sb.from("hr_timeclock").select("tenant_id").eq("id",String(b.id)).maybeSingle();
       if(rec){ const alw = await allowedTenants(b.token); if (alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
-      await sb.from("hr_attendance").delete().eq("id",String(b.id));
+      await sb.from("hr_timeclock").delete().eq("id",String(b.id));
       await logAudit(me,"attendance_delete",String(b.id),{});
       return j({ ok:true });
     }
@@ -3815,11 +3815,11 @@ Deno.serve(async (req)=>{
         const clkBase="https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html#clock";
         for(const e of (emps||[])){
           if(!e.email) continue;
-          const { data: open } = await sb.from("hr_attendance").select("id,work_date").eq("employee_id",e.id).eq("status","open").maybeSingle();
+          const { data: open } = await sb.from("hr_timeclock").select("id,work_date").eq("employee_id",e.id).eq("status","open").maybeSingle();
           const near = (a:string,b2:string)=>{ if(!a||!b2) return false; const m=(t:string)=>parseInt(t.slice(0,2))*60+parseInt(t.slice(3,5)); return Math.abs(m(a)-m(b2))<=7; };
           // clock-in reminder: shift_start ~now, not already reminded today, no open punch, nothing completed today
           if(e.shift_start && String(e.clock_remind_in_date||"")!==today && near(hhmm, String(e.shift_start).slice(0,5)) && !open){
-            const { count } = await sb.from("hr_attendance").select("id",{count:"exact",head:true}).eq("employee_id",e.id).eq("work_date",today);
+            const { count } = await sb.from("hr_timeclock").select("id",{count:"exact",head:true}).eq("employee_id",e.id).eq("work_date",today);
             if(!count){ await rcSendEmail(e.email, "[HR OS] Time to clock in", "Hi "+(e.name||"")+",\n\nYour shift is starting. Please clock in:\n  "+clkBase+"\n\n(Tip: add HR OS to your phone home screen for one-tap clock-in.)\n\n— CTG HR OS (automated)");
               await sb.from("hr_employees").update({ clock_remind_in_date: today }).eq("id",e.id); sent++; }
           }
@@ -3928,7 +3928,7 @@ Deno.serve(async (req)=>{
         const mTo = (mo===12)?((yr+1)+"-01-01"):(yr+"-"+String(mo+1).padStart(2,"0")+"-01");
         let arows:any[]=[];
         for(let off=0; off<20000; off+=1000){
-          const { data: pg } = await sb.from("hr_attendance").select("employee_id,hours,work_date,status").eq("tenant_id",tenant).gte("work_date",mFrom).lt("work_date",mTo).eq("status","complete").order("work_date").range(off,off+999);
+          const { data: pg } = await sb.from("hr_timeclock").select("employee_id,hours,work_date,status").eq("tenant_id",tenant).gte("work_date",mFrom).lt("work_date",mTo).eq("status","complete").order("work_date").range(off,off+999);
           arows=arows.concat(pg||[]); if(!pg || pg.length<1000) break;
         }
         for(const r of arows){ const a=attendance[r.employee_id]||(attendance[r.employee_id]={hours:0,days:new Set()}); a.hours+=Number(r.hours)||0; a.days.add(r.work_date); }
