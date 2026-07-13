@@ -1941,7 +1941,8 @@ async function ovTrendLoad(){
   if(OV_TREND){ ovTrendRender(); return; }
   el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Loading group trend…</div></div>';
   try{
-    var r=await call({api:'group_dashboard', months:12});
+    var r=await call({api:'group_dashboard', months:12, tenant:curCo()||null});
+    if(r&&r.ok&&(r.scoped_tenant||null)!==(curCo()||null)) return; // stale — company switched mid-load
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load trend')+'</div></div></div>'; return; }
     OV_TREND=r; ovTrendRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
