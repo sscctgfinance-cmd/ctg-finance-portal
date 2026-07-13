@@ -1983,40 +1983,104 @@ function hrLeaveStepPills(x){
     return '<span style="font-size:10px;color:'+col+';margin-right:9px;white-space:nowrap" title="'+esc(s.status||'')+'">'+ic+' '+esc(s.name||s.approver_role||'')+'</span>';
   }).join('');
 }
-var LVA={ data:null, loading:false, flowEdit:null };
+var LVA={ data:null, loading:false, flowEdit:null, applyOpen:false, balOpen:false, balEmp:null, balData:null, balLoading:false };
+var LV_SS='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+var LV_MINI='padding:5px 7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px';
 function hrLeave(){
   if(!LVA.data && !LVA.loading){ LVA.loading=true; setTimeout(hrLeaveAdminLoad,0); }
   if(LVA.loading && !LVA.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrLeaveAdminRender();
 }
 async function hrLeaveAdminLoad(){
-  try{ var r=await call({api:'hr_leave_admin'}); if(r&&r.ok){ LVA.data=r; if(LVA.flowEdit===null) LVA.flowEdit=(r.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role};}); } else toast((r&&r.error)||'Failed',true); }
+  try{ var r=await call({api:'hr_leave_admin',tenant:HR.tenant}); if(r&&r.ok){ LVA.data=r; if(LVA.flowEdit===null) LVA.flowEdit=(r.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role,approver_employee_id:s.approver_employee_id};}); } else toast((r&&r.error)||'Failed',true); }
   catch(e){ toast(e.message||e,true); }
   finally{ LVA.loading=false; }
   if(HR.view==='leave' && !HR_EMP_MODE) hrRender();
 }
 function hrLeaveAdminRender(){
-  var d=LVA.data; var reqs=(d&&d.requests)||[];
-  var roleOpts=[['manager','Direct Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+  var d=LVA.data; var reqs=(d&&d.requests)||[]; var emps=(d&&d.employees)||[]; var types=(d&&d.leave_types)||[];
+  var empOpt=function(sel){ return emps.map(function(e){return '<option value="'+esc(e.id)+'"'+(sel===e.id?' selected':'')+'>'+esc(e.name)+' ('+esc(e.emp_no||'')+')</option>';}).join(''); };
+  // ── toolbar ──
+  var bar='<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">'+
+    '<button class="btn p sm" onclick="LVA.applyOpen=!LVA.applyOpen;hrRender()">➕ Apply on behalf</button>'+
+    '<button class="btn sm" onclick="LVA.balOpen=!LVA.balOpen;hrRender()">⚖️ Adjust leave balances</button></div>';
+  // ── apply-on-behalf form ──
+  var applyPanel='';
+  if(LVA.applyOpen){
+    var fld=function(l,el){return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};
+    var t0=todayLocalISO();
+    applyPanel='<div class="panel" style="margin-bottom:14px;max-width:660px"><div class="panel-hd"><h3>Apply leave on behalf</h3><button class="btn sm" onclick="LVA.applyOpen=false;hrRender()">✕ Close</button></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
+        fld('Employee','<select id="lvob_emp" style="'+LV_SS+'"><option value="">— pick employee —</option>'+empOpt()+'</select>')+
+        fld('Leave type','<select id="lvob_type" style="'+LV_SS+'">'+types.map(function(t){return '<option value="'+esc(t.id)+'">'+esc(t.name)+(t.paid?'':' (unpaid)')+'</option>';}).join('')+'</select>')+
+        fld('From','<input type="date" id="lvob_from" value="'+t0+'" style="'+LV_SS+'">')+
+        fld('To','<input type="date" id="lvob_to" value="'+t0+'" style="'+LV_SS+'">')+
+      '</div>'+
+      fld('Reason','<input id="lvob_reason" placeholder="e.g. MC — clinic visit" style="'+LV_SS+'">')+
+      '<div style="margin:8px 0 4px"><label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" id="lvob_half" style="accent-color:var(--coral)"> Half day (single date)</label></div>'+
+      '<div style="margin:4px 0 12px"><label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" id="lvob_auto" checked style="accent-color:var(--coral)"> Record as already approved &amp; deduct balance now <span class="muted">(untick to route through the approval flow)</span></label></div>'+
+      '<button class="btn p sm" onclick="hrLeaveApplyOnBehalf()">Submit</button></div>';
+  }
+  // ── balance editor ──
+  var balPanel = LVA.balOpen ? hrLeaveBalPanelHtml() : '';
+  // ── approval flow editor (choose a specific employee by name, the applicant's manager, or a role) ──
   var fe=LVA.flowEdit||[];
+  var flowSel=function(s,i){
+    var val = s.approver_type==='employee' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
+    var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
+    var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+    return '<select onchange="hrLeaveFlowSet('+i+',this.value)" style="'+LV_MINI+';min-width:210px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
+  };
   var flowRows=fe.map(function(s,i){
-    var cur=s.approver_type==='manager'?'manager':s.approver_role;
-    var sel='<select onchange="hrLeaveFlowSet('+i+',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">'+roleOpts.map(function(o){return '<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';
-    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span class="muted" style="width:18px">'+(i+1)+'.</span>'+sel+'<a onclick="hrLeaveFlowDel('+i+')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">remove</a></div>';
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span class="muted" style="width:18px">'+(i+1)+'.</span>'+flowSel(s,i)+'<a onclick="hrLeaveFlowDel('+i+')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">remove</a></div>';
   }).join('');
-  var flowPanel='<div class="panel" style="margin-bottom:14px;max-width:480px"><div class="panel-hd"><h3>Approval flow</h3><span class="muted" style="font-size:11px">levels every leave request passes through</span></div>'+
+  var flowPanel='<div class="panel" style="margin-bottom:14px;max-width:520px"><div class="panel-hd"><h3>Approval flow</h3><span class="muted" style="font-size:11px">levels every leave request passes through</span></div>'+
     (flowRows||'<div class="muted" style="font-size:12px;margin-bottom:6px">No levels — leave goes straight to any admin.</div>')+
     '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn xs" onclick="hrLeaveFlowAdd()">+ Add level</button><button class="btn p xs" onclick="hrLeaveFlowSave()">💾 Save flow</button></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">"Direct Manager" resolves to each employee’s manager. HR / Finance / Director resolve to whoever holds that role (Reimbursement → Settings → role approvers). Applies to future requests.</div></div>';
+    '<div class="muted" style="font-size:11px;margin-top:8px">Pick a specific person (by name) for each level, or use a role: "Applicant’s direct manager" resolves per employee; HR / Finance / Director resolve to whoever holds that role. Applies to future requests.</div></div>';
+  // ── requests table ──
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0;
     var col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--coral-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
     var act=(!fin)?('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrDecideLeave(\''+x.id+'\',\'reject\')">Reject</button>'):'';
     return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Leave requests</h3><button class="btn xs" onclick="LVA.data=null;hrRender()">↻</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
-  return flowPanel+table;
+  return bar+applyPanel+balPanel+flowPanel+table;
 }
-function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return; if(v==='manager'){ LVA.flowEdit[i]={name:'Direct Manager',approver_type:'manager',approver_role:'manager'}; } else { var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[v]||v; LVA.flowEdit[i]={name:nm,approver_type:'role',approver_role:v}; } }
-function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; LVA.flowEdit.push({name:'HR',approver_type:'role',approver_role:'hr'}); hrRender(); }
+function hrLeaveBalPanelHtml(){
+  var d=LVA.data; var emps=(d&&d.employees)||[];
+  var head='<div class="panel" style="margin-bottom:14px;max-width:660px"><div class="panel-hd"><h3>Adjust leave balances</h3><button class="btn sm" onclick="LVA.balOpen=false;hrRender()">✕ Close</button></div>';
+  var pick='<div style="margin-bottom:10px"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Employee</label><select onchange="hrLeaveBalPick(this.value)" style="'+LV_SS+'"><option value="">— pick an employee —</option>'+emps.map(function(e){return '<option value="'+esc(e.id)+'"'+((LVA.balEmp===e.id)?' selected':'')+'>'+esc(e.name)+' ('+esc(e.emp_no||'')+')</option>';}).join('')+'</select></div>';
+  var body='';
+  if(LVA.balLoading){ body='<div class="muted" style="font-size:12px;padding:8px"><span class="spin"></span> Loading…</div>'; }
+  else if(LVA.balData){
+    var bd=LVA.balData; var ptypes=(bd.types||[]).filter(function(t){return t.paid;});
+    var balByName={}; (bd.balances||[]).forEach(function(b){balByName[b.type]=b;});
+    var rows=ptypes.map(function(t){ var b=balByName[t.name]||{}; var ent=(b.entitled!=null?b.entitled:(t.default_days||0)); var tk=(b.taken||0);
+      return '<tr><td>'+esc(t.name)+' <span class="muted" style="font-size:10px">'+esc(t.code||'')+'</span></td>'+
+        '<td><input id="bal_ent_'+esc(t.id)+'" type="number" step="0.5" min="0" value="'+ent+'" style="width:82px;'+LV_MINI+';text-align:right"></td>'+
+        '<td><input id="bal_tk_'+esc(t.id)+'" type="number" step="0.5" min="0" value="'+tk+'" style="width:82px;'+LV_MINI+';text-align:right"></td>'+
+        '<td><button class="btn xs p" onclick="hrLeaveBalSave(\''+esc(t.id)+'\')">Save</button></td></tr>'; }).join('');
+    body='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Leave type</th><th>Entitled (days)</th><th>Taken (days)</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:6px">Set entitlement or correct the taken count for Annual, Medical (MC), Emergency, etc. Year: '+(bd.year||'')+'.</div>';
+  } else { body='<div class="muted" style="font-size:12px;padding:4px 0">Pick an employee to view &amp; edit their balances.</div>'; }
+  return head+pick+body+'</div>';
+}
+async function hrLeaveBalPick(empId){ LVA.balEmp=empId||null; LVA.balData=null; if(!empId){hrRender();return;} LVA.balLoading=true; hrRender(); try{ var r=await call({api:'hr_leave_my',employee_id:empId}); if(r&&r.ok) LVA.balData=r; else toast((r&&r.error)||'Failed',true); }catch(e){ toast(e.message||e,true); } LVA.balLoading=false; hrRender(); }
+async function hrLeaveBalSave(ltId){ if(!LVA.balEmp){toast('Pick an employee',true);return;} var ent=document.getElementById('bal_ent_'+ltId), tk=document.getElementById('bal_tk_'+ltId); var year=(LVA.balData&&LVA.balData.year)||undefined; var r=await call({api:'hr_leave_balance_save',employee_id:LVA.balEmp,leave_type_id:ltId,year:year,entitled:Number(ent&&ent.value)||0,taken:Number(tk&&tk.value)||0}); if(r&&r.ok){ toast('Balance saved ✓'); hrLeaveBalPick(LVA.balEmp); } else toast((r&&r.error)||'Failed',true); }
+async function hrLeaveApplyOnBehalf(){
+  var emp=(document.getElementById('lvob_emp')||{}).value; if(!emp){ toast('Pick an employee',true); return; }
+  var type=(document.getElementById('lvob_type')||{}).value; if(!type){ toast('Pick a leave type',true); return; }
+  var from=(document.getElementById('lvob_from')||{}).value, to=(document.getElementById('lvob_to')||{}).value;
+  if(!from||!to){ toast('Pick the dates',true); return; } if(to<from){ toast('End date can’t be before start',true); return; }
+  var r=await call({api:'hr_leave_apply', employee_id:emp, leave_type_id:type, date_from:from, date_to:to, half_day:(document.getElementById('lvob_half')||{}).checked, reason:(document.getElementById('lvob_reason')||{}).value, auto_approve:(document.getElementById('lvob_auto')||{}).checked });
+  if(r&&r.ok){ toast(r.approved?('Recorded & approved ('+r.days+'d) ✓'):('Leave submitted ('+r.days+'d) → routed for approval')); LVA.applyOpen=false; LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true);
+}
+function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return;
+  if(v && v.indexOf('emp:')===0){ var id=v.slice(4); var e=((LVA.data&&LVA.data.employees)||[]).find(function(x){return x.id===id;}); LVA.flowEdit[i]={name:(e&&e.name)||'Employee',approver_type:'employee',approver_employee_id:id}; }
+  else if(v==='manager'){ LVA.flowEdit[i]={name:'Direct Manager',approver_type:'manager',approver_role:'manager'}; }
+  else if(v && v.indexOf('role:')===0){ var role=v.slice(5); var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[role]||role; LVA.flowEdit[i]={name:nm,approver_type:'role',approver_role:role}; }
+  hrRender();
+}
+function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; var emps=(LVA.data&&LVA.data.employees)||[]; if(emps.length){ LVA.flowEdit.push({name:emps[0].name,approver_type:'employee',approver_employee_id:emps[0].id}); } else { LVA.flowEdit.push({name:'HR',approver_type:'role',approver_role:'hr'}); } hrRender(); }
 function hrLeaveFlowDel(i){ LVA.flowEdit.splice(i,1); hrRender(); }
 async function hrLeaveFlowSave(){ var r=await call({api:'hr_leave_flow_save',steps:LVA.flowEdit||[]}); if(r&&r.ok){ toast('Approval flow saved ✓'); LVA.data=null; LVA.flowEdit=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
 async function hrDecideLeave(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
@@ -2306,7 +2370,7 @@ function hrLoadJsPDF(cb){
   document.head.appendChild(s);
 }
 function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankCode:e.bank_code, bankHolder:e.bank_holder, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
-function hrCurRows(){ return (HR.pay._rows||[]).map(function(r){ return { e:hrEmpView(r.e), p:r.p, d:r.d }; }); }
+function hrCurRows(){ var lb=(HR.pay.data&&HR.pay.data.leaveBalances)||{}; return (HR.pay._rows||[]).map(function(r){ var ev=hrEmpView(r.e); ev.leaveBal=lb[r.e.id]||[]; return { e:ev, p:r.p, d:r.d }; }); }
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
 var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
@@ -2348,6 +2412,11 @@ function hrDrawPayslip(doc,e,p,period,d){
   doc.setFillColor(HR_NETBG[0],HR_NETBG[1],HR_NETBG[2]); doc.roundedRect(m,y-5,W-2*m,11,2,2,'F');
   doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('NET PAY',m+4,y+1.5); doc.setFontSize(14); doc.text('RM '+HR_money2(p.net),W-m-4,y+2,{align:'right'}); y+=16;
   section('Employer contributions'); row(pctLbl('EPF (KWSP)',mt.epfErRate),p.epfEr); row('SOCSO (PERKESO)',p.socsoEr); row('EIS (SIP)',p.eisEr); row('Total employer cost',p.employerCost,{bold:true});
+  // Leave balances (remaining) — shown in days, not RM.
+  if(e.leaveBal && e.leaveBal.length && y<250){ y+=3; section('Leave balances '+period.year);
+    var textRow=function(label,val){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(label,m,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(val,W-m,y,{align:'right'}); y+=5.6; };
+    e.leaveBal.forEach(function(b){ textRow(b.type, (Math.round(b.remaining*10)/10)+' of '+(Math.round(b.entitled*10)/10)+' days left  ·  taken '+(Math.round(b.taken*10)/10)); });
+  }
   doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,275,W-m,275);
   doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
   doc.text('This is a computer-generated payslip and does not require a signature.',m,280);

@@ -3971,15 +3971,39 @@ Deno.serve(async (req)=>{
       if (days<=0) return j({ ok:false, error:"That range has no working days (weekends are excluded)." });
       const { data: ins, error } = await sb.from("hr_leave_requests").insert({ employee_id:empId, leave_type:typeName, date_from:from, date_to:to, days, reason:String(b.reason||"").slice(0,500)||null, status:"Submitted", current_step:1 }).select().single();
       if (error) return j({ ok:false, error: error.message });
-      // Build the multi-level approval chain (manager → HR → director, configurable in hr_leave_flow_steps).
+      // Build the multi-level approval chain (configurable in hr_leave_flow_steps: a specific employee, the
+      // applicant's direct manager, or a role holder).
       let firstStatus = "Pending";
       try {
         const { data: flow } = await sb.from("hr_leave_flow_steps").select("*").eq("active",true).order("step_order");
         const { data: empRow } = await sb.from("hr_employees").select("manager_id").eq("id",empId).maybeSingle();
-        const steps = (flow||[]).map((s:any,i:number)=>({ leave_request_id: ins.id, step_order: i+1, name: s.name, approver_role: s.approver_role, approver_employee_id: (s.approver_type==="manager"?((empRow&&empRow.manager_id)||null):null), status:"Pending" }));
-        if(steps.length){ await sb.from("hr_leave_approval_steps").insert(steps); firstStatus = rcStatusForRole(steps[0].approver_role); }
+        const stepStatus = (s:any)=> s.approver_type==="employee" ? "Pending Approval" : rcStatusForRole(s.approver_role);
+        const steps = (flow||[]).map((s:any,i:number)=>({
+          leave_request_id: ins.id, step_order: i+1, name: s.name,
+          approver_role: (s.approver_type==="employee" ? null : s.approver_role),
+          approver_employee_id: (s.approver_type==="employee" ? (s.approver_employee_id||null) : (s.approver_type==="manager" ? ((empRow&&empRow.manager_id)||null) : null)),
+          status:"Pending",
+        }));
+        if(steps.length){ await sb.from("hr_leave_approval_steps").insert(steps); firstStatus = stepStatus(flow[0]); }
         await sb.from("hr_leave_requests").update({ status:firstStatus, current_step:1 }).eq("id",ins.id);
       } catch(_e){}
+      // Admin "record / apply on behalf" with immediate approval — used to log MC / leave that already happened.
+      if (who.isAdmin && b.auto_approve) {
+        const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString();
+        await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_at:nowIso, comment:"Recorded by admin" }).eq("leave_request_id",ins.id);
+        await sb.from("hr_leave_requests").update({ status:"Approved" }).eq("id",ins.id);
+        try {
+          const year = new Date(from).getFullYear();
+          const { data:lt2 } = await sb.from("hr_leave_types").select("id,paid,default_days").eq("name",typeName).maybeSingle();
+          if (lt2 && lt2.paid) {
+            const { data:bal } = await sb.from("hr_leave_balances").select("id,taken").eq("employee_id",empId).eq("leave_type_id",lt2.id).eq("year",year).maybeSingle();
+            if (bal) await sb.from("hr_leave_balances").update({ taken:Number(bal.taken||0)+Number(days) }).eq("id",bal.id);
+            else await sb.from("hr_leave_balances").insert({ employee_id:empId, leave_type_id:lt2.id, year, entitled:Number(lt2.default_days||0), taken:Number(days) });
+          }
+        } catch(_e){}
+        await logAudit(me,"hr_leave_apply",String(ins.id),{ on_behalf:true, auto_approve:true, days });
+        return j({ ok:true, request:{...ins, status:"Approved"}, days, approved:true });
+      }
       try { await leaveNotifyStep(ins.id); } catch(_e){}
       return j({ ok:true, request: {...ins, status:firstStatus}, days });
     }
@@ -4022,18 +4046,53 @@ Deno.serve(async (req)=>{
       if(ids.length){ const { data: st } = await sb.from("hr_leave_approval_steps").select("*").in("leave_request_id",ids).order("step_order"); (st||[]).forEach((s:any)=>{ (stepsByReq[s.leave_request_id]=stepsByReq[s.leave_request_id]||[]).push(s); }); }
       const requests=(reqs||[]).map((r:any)=>({ ...r, steps: stepsByReq[r.id]||[] }));
       const { data: flow } = await sb.from("hr_leave_flow_steps").select("*").order("step_order");
-      return j({ ok:true, requests, flow: flow||[] });
+      // Employees of the selected company — powers the apply-on-behalf picker, balance editor & name-based flow.
+      const tenant = String(b.tenant||"");
+      const empQ = tenant ? await sb.from("hr_employees").select("id,name,emp_no").eq("tenant_id",tenant).eq("status","active").order("emp_no")
+                          : await sb.from("hr_employees").select("id,name,emp_no").eq("status","active").order("emp_no").limit(500);
+      const { data: types } = await sb.from("hr_leave_types").select("id,code,name,paid,default_days").eq("active",true).order("code");
+      return j({ ok:true, requests, flow: flow||[], employees: empQ.data||[], leave_types: types||[] });
     }
     if (api === "hr_leave_flow_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const steps = Array.isArray(b.steps) ? b.steps : [];
-      const clean = steps.map((s:any,i:number)=>({ step_order:i+1, name:String(s.name||s.approver_role||"Step").slice(0,60), approver_type:(s.approver_type==="manager"?"manager":"role"), approver_role:String(s.approver_role||"").trim()||null, active:true }))
-        .filter((s:any)=>s.approver_type==="manager" || s.approver_role);
+      const clean = steps.map((s:any,i:number)=>{
+        const t = s.approver_type==="employee" ? "employee" : (s.approver_type==="manager" ? "manager" : "role");
+        return {
+          step_order:i+1,
+          name:String(s.name||s.approver_role||"Step").slice(0,60),
+          approver_type:t,
+          approver_role:(t==="role" ? (String(s.approver_role||"").trim()||null) : null),
+          approver_employee_id:(t==="employee" ? (String(s.approver_employee_id||"").trim()||null) : null),
+          active:true,
+        };
+      }).filter((s:any)=> s.approver_type==="manager" || (s.approver_type==="role" && s.approver_role) || (s.approver_type==="employee" && s.approver_employee_id));
       await sb.from("hr_leave_flow_steps").delete().gte("step_order",0);
       if(clean.length) await sb.from("hr_leave_flow_steps").insert(clean);
       await logAudit(me,"hr_leave_flow_save",String(clean.length),{});
       const { data } = await sb.from("hr_leave_flow_steps").select("*").order("step_order");
       return j({ ok:true, steps: data||[] });
+    }
+    if (api === "hr_leave_balance_save") {
+      // Admin adjusts an employee's leave entitlement / taken for a given year & type (Annual, Medical/MC, …).
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const empId = String(b.employee_id||""); const ltId = String(b.leave_type_id||"");
+      const year = Number(b.year)|| new Date(Date.now()+8*3600*1000).getUTCFullYear();
+      if (!empId || !ltId) return j({ ok:false, error:"employee and leave type are required" });
+      // tenant guard
+      const { data: emp } = await sb.from("hr_employees").select("tenant_id").eq("id",empId).maybeSingle();
+      if (!emp) return j({ ok:false, error:"Employee not found." });
+      const alw = await allowedTenants(b.token);
+      if (emp.tenant_id && alw.length && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403);
+      const entitled = Math.max(0, Number(b.entitled)||0);
+      const taken = Math.max(0, Number(b.taken)||0);
+      const { data: existing } = await sb.from("hr_leave_balances").select("id").eq("employee_id",empId).eq("leave_type_id",ltId).eq("year",year).maybeSingle();
+      let res:any;
+      if (existing) res = await sb.from("hr_leave_balances").update({ entitled, taken }).eq("id",existing.id);
+      else res = await sb.from("hr_leave_balances").insert({ employee_id:empId, leave_type_id:ltId, year, entitled, taken });
+      if (res.error) return j({ ok:false, error:res.error.message });
+      await logAudit(me,"hr_leave_balance_save",empId,{ leave_type_id:ltId, year, entitled, taken });
+      return j({ ok:true });
     }
     if (api === "hr_leave_decide") {
       // Step-aware: the current step's approver (manager / role) or an admin acts; advances or finalises.
@@ -4119,7 +4178,17 @@ Deno.serve(async (req)=>{
         for(const r of arows){ const a=attendance[r.employee_id]||(attendance[r.employee_id]={hours:0,days:new Set()}); a.hours+=Number(r.hours)||0; a.days.add(r.work_date); }
         for(const k in attendance){ attendance[k]={ hours:Math.round(attendance[k].hours*100)/100, days:attendance[k].days.size }; }
       }
-      return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips, attendance });
+      // Paid-leave balances (this payroll year) per employee → printed on the payslip.
+      const leaveBalances:any = {};
+      if (empIds.length){
+        const { data: ltypes } = await sb.from("hr_leave_types").select("id,code,name,paid,default_days").eq("active",true).order("code");
+        const { data: lbals } = await sb.from("hr_leave_balances").select("employee_id,leave_type_id,entitled,taken").in("employee_id",empIds).eq("year",yr);
+        const balByEmp:any={}; (lbals||[]).forEach((x:any)=>{ (balByEmp[x.employee_id]=balByEmp[x.employee_id]||{})[x.leave_type_id]=x; });
+        for(const id of empIds){
+          leaveBalances[id]=(ltypes||[]).filter((t:any)=>t.paid).map((t:any)=>{ const bl=(balByEmp[id]||{})[t.id]||{}; const entitled=bl.entitled!=null?Number(bl.entitled):Number(t.default_days||0); const taken=Number(bl.taken||0); return { type:t.name, code:t.code, entitled, taken, remaining:Math.round((entitled-taken)*100)/100 }; });
+        }
+      }
+      return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips, attendance, leaveBalances });
     }
     if (api === "hr_adj_add") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -4792,7 +4861,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
+    return j({ ok:true, hint:"portal v107 leave-admin-tools: hr_leave_apply admin apply-on-behalf + auto_approve(record MC, deduct once); hr_leave_flow_steps.approver_employee_id → approval levels can name a specific employee (approver_type employee|manager|role); hr_leave_balance_save(admin adjust entitled/taken per type incl Medical/MC); hr_payroll_data returns leaveBalances→payslip prints remaining paid-leave days; hr_leave_admin returns employees+leave_types. prior v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
