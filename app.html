@@ -2034,8 +2034,7 @@ function ovTrendRender(){
     '<div class="card"><div class="c-ico">📊</div><div class="n" style="color:'+(margin>=0?'var(--sky-soft)':'var(--red-soft)')+'">'+margin+'%</div><div class="l">Margin</div></div>'+
   '</div>';
   el.innerHTML=
-    '<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3><div class="muted" style="font-size:11.5px"><span style="color:var(--coral)">━</span> Revenue &nbsp; <span style="color:var(--sky-soft)">╌</span> Bills · all companies</div></div>'+cfoTrend(mon)+'</div>'+
-    '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📊 Revenue vs Expenses · monthly P&L</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> Revenue &nbsp;<span style="color:#e85d3c">■</span> Expenses &nbsp;<span style="color:#5b9bd5">━</span> Net</div></div>'+kpis+ovPnlBars(mon)+
+    '<div class="panel"><div class="panel-hd"><h3>📊 Revenue vs Expenses · monthly P&L</h3><div class="muted" style="font-size:11.5px"><span style="color:#3ddc97">■</span> Revenue &nbsp;<span style="color:#e85d3c">■</span> Expenses &nbsp;<span style="color:#5b9bd5">━</span> Net</div></div>'+kpis+ovPnlBars(mon)+
       '<div class="muted" style="font-size:11px;margin-top:8px">From the reliable invoice cache: Revenue = AR invoicing, Expenses = supplier bills (AP). Excludes payroll/depreciation and other non-billed costs — not a full accounting P&L.</div></div>'+
     '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>📉 Net margin % trend</h3><span class="muted" style="font-size:11px">Net &divide; Revenue</span></div>'+ovMarginLine(mon)+'</div>'+
     '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>🏭 Expense breakdown · top vendors</h3><span class="muted" style="font-size:11px">Trailing 12 months · who spent the most</span></div>'+ovVendorBars(vendors)+'</div>'+
