@@ -3885,6 +3885,60 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_emp_save",String(res.data&&res.data.id),{ name:f.name });
       return j({ ok:true, employee:res.data });
     }
+    if (api === "hr_leave_my") {
+      // Employee self-service: their leave types, balances (this year), and requests.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      let empId = who.employee ? who.employee.id : null;
+      if (who.isAdmin && b.employee_id) empId = String(b.employee_id);
+      if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet — ask HR to enable your access.", need_profile:true });
+      const [typesR, reqR] = await Promise.all([
+        sb.from("hr_leave_types").select("id,code,name,paid,color,default_days").eq("active",true).order("code"),
+        sb.from("hr_leave_requests").select("*").eq("employee_id",empId).order("date_from",{ascending:false}).limit(200),
+      ]);
+      const yr = new Date(Date.now()+8*3600*1000).getUTCFullYear();
+      const { data: bals } = await sb.from("hr_leave_balances").select("leave_type_id,entitled,taken").eq("employee_id",empId).eq("year",yr);
+      const balMap:any = {}; (bals||[]).forEach((x:any)=>{ balMap[x.leave_type_id]=x; });
+      const balances = (typesR.data||[]).map((t:any)=>{ const bl=balMap[t.id]||{}; const entitled = bl.entitled!=null?Number(bl.entitled):Number(t.default_days||0); const taken=Number(bl.taken||0); return { type:t.name, code:t.code, paid:t.paid, color:t.color, entitled, taken, remaining: Math.round((entitled-taken)*100)/100 }; });
+      return j({ ok:true, types: typesR.data||[], requests: reqR.data||[], balances, year: yr });
+    }
+    if (api === "hr_leave_apply") {
+      // Employee submits a leave request → status Pending; admin approves in the Leave tab.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      let empId = who.employee ? who.employee.id : null;
+      if (who.isAdmin && b.employee_id) empId = String(b.employee_id);
+      if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet — ask HR to enable your access." });
+      const from = String(b.date_from||"").slice(0,10), to = String(b.date_to||"").slice(0,10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return j({ ok:false, error:"Pick a start and end date." });
+      if (to < from) return j({ ok:false, error:"End date can’t be before start date." });
+      let typeName = String(b.leave_type||"").trim();
+      if (b.leave_type_id){ const { data: lt } = await sb.from("hr_leave_types").select("name").eq("id",String(b.leave_type_id)).maybeSingle(); if(lt) typeName = lt.name; }
+      if (!typeName) return j({ ok:false, error:"Select a leave type." });
+      // Working days (Mon–Fri) inclusive; half-day only for a single date. Public holidays not auto-deducted.
+      let days:number;
+      if (b.half_day && from===to) days = 0.5;
+      else { let d=new Date(from+"T00:00:00Z"); const end=new Date(to+"T00:00:00Z"); let n=0, guard=0; while(d<=end && guard<400){ const dow=d.getUTCDay(); if(dow!==0&&dow!==6) n++; d=new Date(d.getTime()+86400000); guard++; } days=n; }
+      if (days<=0) return j({ ok:false, error:"That range has no working days (weekends are excluded)." });
+      const { data: ins, error } = await sb.from("hr_leave_requests").insert({ employee_id:empId, leave_type:typeName, date_from:from, date_to:to, days, reason:String(b.reason||"").slice(0,500)||null, status:"Pending" }).select().single();
+      if (error) return j({ ok:false, error: error.message });
+      try {
+        const { data: emp } = await sb.from("hr_employees").select("name").eq("id",empId).maybeSingle();
+        const { data: ras } = await sb.from("hr_claim_role_approvers").select("employee_id").eq("role","hr");
+        for (const ra of (ras||[])){ const e=await rcEmpEmail(ra.employee_id); if(e&&e.email) await rcSendEmail(e.email, "[HR OS] Leave request needs review", "Hi,\n\n"+((emp&&emp.name)||"An employee")+" applied for "+typeName+" leave "+from+" → "+to+" ("+days+" day(s)).\nReason: "+(String(b.reason||"—"))+"\n\nReview in HR OS → Leave:\n  https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html\n\n— CTG HR OS (automated)"); }
+      } catch(_e){}
+      return j({ ok:true, request: ins, days });
+    }
+    if (api === "hr_leave_cancel") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      const { data: req } = await sb.from("hr_leave_requests").select("*").eq("id",String(b.id)).maybeSingle();
+      if(!req) return j({ ok:false, error:"not found" });
+      if(!who.isAdmin && (!who.employee || req.employee_id!==who.employee.id)) return j({ ok:false, error:"forbidden" }, 403);
+      if(String(req.status)!=="Pending") return j({ ok:false, error:"Only a pending request can be cancelled." });
+      await sb.from("hr_leave_requests").update({ status:"Cancelled" }).eq("id",String(b.id));
+      return j({ ok:true });
+    }
     if (api === "hr_leave_decide") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const id=String(b.id), status=String(b.status||"");

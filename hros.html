@@ -1182,9 +1182,10 @@ var HR_NAV=[
   ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
   ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
 ];
-// Employee self-service sees a Time Clock (part-timers only) + Reimbursement.
+// Employee self-service: Time Clock (part-timers only) + Leave + Reimbursement.
 var HR_EMP_NAV=[
   ['clock','⏱','Time Clock','Me','Clock in / out and see your hours'],
+  ['leave','🌴','Leave','Me','Apply for leave and check your balance'],
   ['expenses','💳','Reimbursement','Me','Submit and track your expense claims']
 ];
 // Only part-timers punch: Part-time employment OR hourly/daily pay. Full-time monthly staff don't clock.
@@ -1202,10 +1203,10 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  // Employee mode: part-timers get Time Clock + Reimbursement; full-timers only Reimbursement.
+  // Employee mode allowed views: clock (part-timers only), leave, expenses.
   if(HR_EMP_MODE){ var canClk=hrNeedsClock(RC.me&&RC.me.employee);
     if(HR.view==='clock' && !canClk) HR.view='expenses';
-    if(HR.view!=='clock' && HR.view!=='expenses') HR.view=(canClk?'clock':'expenses'); }
+    if(['clock','leave','expenses'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
@@ -1217,7 +1218,7 @@ function hrRender(){
   else if(HR.view==='payroll') body=hrPayroll();
   else if(HR.view==='calculator') body=hrCalculator();
   else if(HR.view==='yearend') body=hrYearend();
-  else if(HR.view==='leave') body=hrLeave();
+  else if(HR.view==='leave') body=(HR_EMP_MODE?hrEmpLeave():hrLeave());
   else if(HR.view==='claims') body=hrClaims();
   else if(HR.view==='expenses') body=hrRC();
   el.innerHTML=head+body;
@@ -1891,6 +1892,57 @@ function hrAttExport(){
   var csv=rows.map(function(r){return r.map(hrCsv).join(',');}).join('\n');
   var blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a'); a.href=url; a.download='Attendance_'+ATT.month+'.csv'; a.click(); URL.revokeObjectURL(url); toast('CSV exported');
 }
+// ===== 🌴 Employee Leave (self-service: apply + balance + my requests) =====
+var ELV={ data:null, loading:false, err:null };
+function hrEmpLeave(){
+  if(!ELV.data && !ELV.loading){ ELV.loading=true; setTimeout(hrEmpLeaveLoad,0); }
+  if(ELV.loading && !ELV.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  return hrEmpLeaveRender();
+}
+async function hrEmpLeaveLoad(){
+  try{ var r=await call({api:'hr_leave_my'}); if(r&&r.ok){ ELV.data=r; ELV.err=null; } else ELV.err=(r&&r.error)||'Failed'; }
+  catch(e){ ELV.err=e.message||e; }
+  finally{ ELV.loading=false; }
+  if(HR.view==='leave') hrRender();
+}
+function hrEmpLeaveRender(){
+  var d=ELV.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(ELV.err||'Could not load leave')+' — <a onclick="ELV.data=null;ELV.err=null;ELV.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
+  var types=d.types||[], bals=d.balances||[], reqs=d.requests||[];
+  var S=(typeof RC_SEL!=='undefined'?RC_SEL:'width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px');
+  var balCards='<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:14px">'+bals.filter(function(b){return b.paid;}).map(function(b){ return '<div class="card"><div class="n" style="color:'+(b.color||'var(--green-soft)')+'">'+b.remaining+'</div><div class="l">'+esc(b.type)+' left <span class="muted">/ '+b.entitled+'</span></div></div>'; }).join('')+'</div>';
+  var typeOpts=types.map(function(t){return '<option value="'+esc(t.id)+'">'+esc(t.name)+(t.paid?'':' (unpaid)')+'</option>';}).join('');
+  var g=function(l,el){return '<div style="margin-bottom:10px"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};
+  var form='<div class="panel" style="margin-bottom:14px;max-width:560px"><div class="panel-hd"><h3>Apply for leave</h3></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+      g('Leave type','<select id="lv_type" style="'+S+'">'+typeOpts+'</select>')+
+      g('&nbsp;','<label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding-top:7px"><input type="checkbox" id="lv_half" style="accent-color:var(--coral)"> Half day (single day)</label>')+
+      g('From','<input type="date" id="lv_from" value="'+esc(todayLocalISO())+'" style="'+S+'">')+
+      g('To','<input type="date" id="lv_to" value="'+esc(todayLocalISO())+'" style="'+S+'">')+
+    '</div>'+
+    g('Reason','<input id="lv_reason" placeholder="e.g. family matters" style="'+S+'">')+
+    '<button class="btn p sm" id="lv_submit" style="margin-top:4px" onclick="hrEmpLeaveApply()">Submit application</button>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). HR reviews &amp; approves.</div>'+
+  '</div>';
+  var rows=reqs.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
+    var act=st==='Pending'?('<a onclick="hrEmpLeaveCancel(\''+x.id+'\')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">cancel</a>'):'';
+    return '<tr><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td>'+act+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No leave requests yet</td></tr>';
+  var list='<div class="panel"><div class="panel-hd"><h3>My leave</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  return balCards+form+list;
+}
+async function hrEmpLeaveApply(){
+  var type=document.getElementById('lv_type').value; if(!type){ toast('Select a leave type',true); return; }
+  var from=document.getElementById('lv_from').value, to=document.getElementById('lv_to').value;
+  if(!from||!to){ toast('Pick the dates',true); return; }
+  if(to<from){ toast('End date can’t be before start',true); return; }
+  var btn=document.getElementById('lv_submit'); if(btn){btn.disabled=true;btn.textContent='Submitting…';}
+  try{
+    var r=await call({api:'hr_leave_apply', leave_type_id:type, date_from:from, date_to:to, half_day:document.getElementById('lv_half').checked, reason:document.getElementById('lv_reason').value});
+    if(r&&r.ok){ toast('Leave applied ('+r.days+' day'+(r.days===1?'':'s')+') ✓'); ELV.data=null; hrEmpLeaveLoad(); return; }
+    toast((r&&r.error)||'Failed',true);
+  }catch(e){ toast(e.message||e,true); }
+  if(btn){btn.disabled=false;btn.textContent='Submit application';}
+}
+async function hrEmpLeaveCancel(id){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }
 function hrLeave(){
   var lv=HR.data.leaves||[];
   var rows=lv.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
