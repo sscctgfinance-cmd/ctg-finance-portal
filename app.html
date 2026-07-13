@@ -1939,7 +1939,7 @@ var OV_TREND=null;
 async function ovTrendLoad(){
   var el=document.getElementById('ov-trend'); if(!el) return;
   if(OV_TREND){ ovTrendRender(); return; }
-  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📈 Group revenue & bills · monthly</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Loading group trend…</div></div>';
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📊 Revenue vs Expenses · monthly P&L</h3></div><div class="muted" style="padding:22px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Loading analytics…</div></div>';
   try{
     var r=await call({api:'group_dashboard', months:12, tenant:curCo()||null});
     if(r&&r.ok&&(r.scoped_tenant||null)!==(curCo()||null)) return; // stale — company switched mid-load
