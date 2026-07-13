@@ -1728,8 +1728,9 @@ async function hrEmpDelete(id){
 }
 // Default role/position list (operator's roster) — the Position field is a select-or-type combobox.
 // Any new position typed on an employee is auto-remembered (pulled from existing staff next time).
-var HR_POSITIONS=['Director','Senior Executive','Senior Sales Advisor','Sales Executive','After Sales Service Representative','Customer Service','Channel Marketer','Content Creator','Graphic Designer','Multi Media Designer','Administrative Assistant'];
-function hrPositionList(){ var set={}; HR_POSITIONS.forEach(function(p){set[p]=1;}); ((HR.data&&HR.data.employees)||[]).forEach(function(e){ if(e.position&&String(e.position).trim()) set[String(e.position).trim()]=1; }); return Object.keys(set).sort(); }
+var HR_POSITIONS=['Senior Executive','Senior Sales Advisor','Sales Executive','After Sales Service Representative','Customer Service','Channel Marketer','Content Creator','Graphic Designer','Multi Media Designer'];
+// Case-insensitive dedupe (first-seen casing wins) so a differently-cased existing position never double-shows.
+function hrPositionList(){ var seen={}, out=[]; var add=function(p){ p=String(p||'').trim(); if(!p)return; var k=p.toLowerCase(); if(seen[k])return; seen[k]=1; out.push(p); }; HR_POSITIONS.forEach(add); ((HR.data&&HR.data.employees)||[]).forEach(function(e){ add(e.position); }); return out.sort(function(a,b){return a.localeCompare(b);}); }
 function hrEmpForm(){
   var x=HR.editEmp||{};
   var inp=function(k,ph,val,extra){return '<input id="hr_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">';};
