@@ -3713,6 +3713,7 @@ Deno.serve(async (req)=>{
       const bankHolder = String(f.bankHolder||"").trim() || null;
       const patch: any = {
         name:f.name, ic_no:f.ic||null, email:f.email||null, dept:f.dept||null, position:f.position||null,
+        employment_type: (["Full-time","Part-time","Contract","Intern","Probation"].indexOf(String(f.employmentType))>=0 ? f.employmentType : "Full-time"),
         basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
         bank_code:bankCode, bank_name:bankName, bank_account:bankAccount, bank_holder:bankHolder,
         epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
