@@ -1088,7 +1088,10 @@ function hrPickCompany(tid){
   if(typeof HR_DASH!=='undefined'){ HR_DASH.data=null; HR_DASH.loading=false; }
   // RC.accounts is the XERO CHART OF ACCOUNTS of the previous company — carrying it over would let a
   // claim type in company B be coded to a GL account that only exists in company A's Xero org.
-  if(typeof RC!=='undefined'){ RC.accounts=null; RC.accLoading=false; RC.loading=false; }
+  if(typeof RC!=='undefined'){ RC.accounts=null; RC.accLoading=false; RC.loading=false; RC.cfg=null; RC.list=[]; RC.err=null; }
+  // Leave-admin state (requests, employee pickers, approval-flow edits) is per-company — must not leak.
+  if(typeof LVA!=='undefined'){ LVA.data=null; LVA.loading=false; LVA.err=null; LVA.flowEdit=null; LVA.applyOpen=false; LVA.balOpen=false; LVA.balEmp=null; LVA.balData=null; LVA.balLoading=false; }
+  if(typeof HR_CALC!=='undefined'){ HR_CALC.empId=''; HR_CALC.result=null; }
   renderHR();
 }
 var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
@@ -1803,7 +1806,7 @@ function hrClkTick(){ var el=document.getElementById('clk_elapsed'); if(!el||!CL
 function hrGetGeo(){ return new Promise(function(res){ if(!navigator.geolocation){res({});return;} var done=false,t=setTimeout(function(){if(!done){done=true;res({});}},4000); try{ navigator.geolocation.getCurrentPosition(function(pos){if(done)return;done=true;clearTimeout(t);res({lat:pos.coords.latitude,lng:pos.coords.longitude});},function(){if(done)return;done=true;clearTimeout(t);res({});},{enableHighAccuracy:false,timeout:3500,maximumAge:60000}); }catch(_e){ if(!done){done=true;clearTimeout(t);res({});} } }); }
 function hrClock(){
   if(!HR._clkTimer){ HR._clkTimer=setInterval(hrClkTick,1000); }
-  if(!CLK.data && !CLK.loading){ CLK.loading=true; setTimeout(hrClockLoad,0); }
+  if(!CLK.data && !CLK.loading && !CLK.err){ CLK.loading=true; setTimeout(hrClockLoad,0); }
   if(CLK.loading && !CLK.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrClockRender();
 }
@@ -1916,7 +1919,7 @@ function hrAttExport(){
 // ===== 🌴 Employee Leave (self-service: apply + balance + my requests) =====
 var ELV={ data:null, loading:false, err:null, pending:[] };
 function hrEmpLeave(){
-  if(!ELV.data && !ELV.loading){ ELV.loading=true; setTimeout(hrEmpLeaveLoad,0); }
+  if(!ELV.data && !ELV.loading && !ELV.err){ ELV.loading=true; setTimeout(hrEmpLeaveLoad,0); }
   if(ELV.loading && !ELV.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrEmpLeaveRender();
 }
@@ -1983,17 +1986,18 @@ function hrLeaveStepPills(x){
     return '<span style="font-size:10px;color:'+col+';margin-right:9px;white-space:nowrap" title="'+esc(s.status||'')+'">'+ic+' '+esc(s.name||s.approver_role||'')+'</span>';
   }).join('');
 }
-var LVA={ data:null, loading:false, flowEdit:null, applyOpen:false, balOpen:false, balEmp:null, balData:null, balLoading:false };
+var LVA={ data:null, loading:false, err:null, flowEdit:null, applyOpen:false, balOpen:false, balEmp:null, balData:null, balLoading:false };
 var LV_SS='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
 var LV_MINI='padding:5px 7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px';
 function hrLeave(){
-  if(!LVA.data && !LVA.loading){ LVA.loading=true; setTimeout(hrLeaveAdminLoad,0); }
+  if(!LVA.data && !LVA.loading && !LVA.err){ LVA.loading=true; setTimeout(hrLeaveAdminLoad,0); }
   if(LVA.loading && !LVA.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  if(LVA.err && !LVA.data) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(LVA.err)+' — <a onclick="LVA.err=null;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
   return hrLeaveAdminRender();
 }
 async function hrLeaveAdminLoad(){
-  try{ var r=await call({api:'hr_leave_admin',tenant:HR.tenant}); if(r&&r.ok){ LVA.data=r; if(LVA.flowEdit===null) LVA.flowEdit=(r.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role,approver_employee_id:s.approver_employee_id};}); } else toast((r&&r.error)||'Failed',true); }
-  catch(e){ toast(e.message||e,true); }
+  try{ var r=await call({api:'hr_leave_admin',tenant:HR.tenant}); if(r&&r.ok){ LVA.data=r; LVA.err=null; if(LVA.flowEdit===null) LVA.flowEdit=(r.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role,approver_employee_id:s.approver_employee_id};}); } else LVA.err=(r&&r.error)||'Could not load leave'; }
+  catch(e){ LVA.err=e.message||String(e); }
   finally{ LVA.loading=false; }
   if(HR.view==='leave' && !HR_EMP_MODE) hrRender();
 }
@@ -2091,7 +2095,6 @@ function hrClaims(){
     return '<tr><td>'+esc((x.employee&&x.employee.name)||'—')+'</td><td>'+esc(x.category)+'</td><td class="amt">'+M(x.amount)+'</td><td class="muted">'+esc(x.claim_date)+'</td><td class="muted" style="font-size:11px">'+esc(x.note||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No claims</td></tr>';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Category</th><th class="amt">Amount</th><th>Date</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-async function hrDecideLeave(id,status){ var r=await call({api:'hr_leave_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.leaves||[]).find(function(l){return l.id===id;}); if(x)x.status=status; hrRender(); toast('Leave '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
 async function hrDecideClaim(id,status){ var r=await call({api:'hr_claim_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.claims||[]).find(function(c){return c.id===id;}); if(x)x.status=status; hrRender(); toast('Claim '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
 // ---- Payroll (Wave 2) ----
 // ---- Bulk payroll grid: fill every employee inline (editable basic + variable items), live calc ----

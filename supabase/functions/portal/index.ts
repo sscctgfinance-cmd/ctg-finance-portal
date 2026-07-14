@@ -3937,6 +3937,7 @@ Deno.serve(async (req)=>{
       let empId = who.employee ? who.employee.id : null;
       if (who.isAdmin && b.employee_id) empId = String(b.employee_id);
       if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet — ask HR to enable your access.", need_profile:true });
+      if (who.isAdmin && b.employee_id){ const { data: te } = await sb.from("hr_employees").select("tenant_id").eq("id",empId).maybeSingle(); const alw=await allowedTenants(b.token); if(te && te.tenant_id && alw.length && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_leave_my",te.tenant_id); }
       const [typesR, reqR] = await Promise.all([
         sb.from("hr_leave_types").select("id,code,name,paid,color,default_days").eq("active",true).order("code"),
         sb.from("hr_leave_requests").select("*").eq("employee_id",empId).order("date_from",{ascending:false}).limit(200),
@@ -3958,6 +3959,7 @@ Deno.serve(async (req)=>{
       let empId = who.employee ? who.employee.id : null;
       if (who.isAdmin && b.employee_id) empId = String(b.employee_id);
       if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet — ask HR to enable your access." });
+      if (who.isAdmin && b.employee_id){ const { data: te } = await sb.from("hr_employees").select("tenant_id").eq("id",empId).maybeSingle(); const alw=await allowedTenants(b.token); if(te && te.tenant_id && alw.length && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_leave_apply",te.tenant_id); }
       const from = String(b.date_from||"").slice(0,10), to = String(b.date_to||"").slice(0,10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return j({ ok:false, error:"Pick a start and end date." });
       if (to < from) return j({ ok:false, error:"End date can’t be before start date." });
@@ -4122,7 +4124,7 @@ Deno.serve(async (req)=>{
       const { data: allSteps } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",id).order("step_order");
       const next=(allSteps||[]).find((s:any)=>s.step_order>(req.current_step||1));
       if(next){
-        const st=rcStatusForRole(next.approver_role);
+        const st=(next.approver_role?rcStatusForRole(next.approver_role):"Pending Approval"); // employee-type step has null role
         await sb.from("hr_leave_requests").update({ status:st, current_step:next.step_order }).eq("id",id);
         await logAudit(me,"hr_leave_decide",id,{ decision:"approve", advanced:true, to:st });
         try{ await leaveNotifyStep(id); }catch(_e){}
@@ -4156,6 +4158,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year); const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_data",tenant); }
       const emp = await sb.from("hr_employees").select("*").eq("status","active").eq("tenant_id",tenant).order("emp_no");
       const empIds = (emp.data||[]).map((e:any)=>e.id);
       const [rt, adj, run] = await Promise.all([
@@ -4208,6 +4211,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_finalise",tenant); }
       const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
@@ -4472,23 +4476,24 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
       const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
-      let q:any = sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,bank_name,bank_account), hr_claim_types(name)").eq("tenant_id",tenant).in("status",["Approved","Paid"]).order("claim_date").limit(2000);
+      let mFrom="", mTo="";
       if(month){
-        // claim_date is a Postgres DATE — "YYYY-02-31" is a hard error Postgres rejects (and the error was
-        // silently discarded, so Feb/Apr/Jun/Sep/Nov exports returned EMPTY). Use an exclusive next-month bound.
+        // claim_date is a Postgres DATE — "YYYY-02-31" is a hard error Postgres rejects. Use an exclusive next-month bound.
         const [yy,mm]=month.split("-").map(Number);
         const nextMonth=(mm===12)?((yy+1)+"-01"):(yy+"-"+String(mm+1).padStart(2,"0"));
-        q=q.gte("claim_date",month+"-01").lt("claim_date",nextMonth+"-01");
+        mFrom=month+"-01"; mTo=nextMonth+"-01";
       }
-      const { data: claims, error: claimsErr } = await q;
-      if(claimsErr) return j({ ok:false, error:"export query failed: "+String(claimsErr.message||claimsErr) }, 500);
-      const ids=(claims||[]).map((x:any)=>x.id);
-      const [itemsR, paysR] = await Promise.all([
-        ids.length? sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account)").in("claim_id",ids) : Promise.resolve({data:[]} as any),
-        ids.length? sb.from("hr_claim_payments").select("*").in("claim_id",ids) : Promise.resolve({data:[]} as any)
-      ]);
-      const itemsBy:any={}; (itemsR.data||[]).forEach((it:any)=>{ (itemsBy[it.claim_id]=itemsBy[it.claim_id]||[]).push(it); });
-      const payBy:any={}; (paysR.data||[]).forEach((p:any)=>{ payBy[p.claim_id]=p; });
+      const buildQ=()=>{ let x:any=sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,bank_name,bank_account), hr_claim_types(name)").eq("tenant_id",tenant).in("status",["Approved","Paid"]).order("claim_date"); if(month) x=x.gte("claim_date",mFrom).lt("claim_date",mTo); return x; };
+      // Paginate — PostgREST caps every select at 1000 rows regardless of .limit(), which silently dropped claims from the export.
+      let claims:any[]=[];
+      for(let off=0; off<50000; off+=1000){ const { data: pg, error } = await buildQ().range(off,off+999); if(error) return j({ ok:false, error:"export query failed: "+String(error.message||error) }, 500); claims=claims.concat(pg||[]); if(!pg || pg.length<1000) break; }
+      const ids=claims.map((x:any)=>x.id);
+      // Items + payments — chunk claim_ids (avoid over-long .in() URLs) AND paginate (the 1000-item cap dropped line coding).
+      const itemsBy:any={}, payBy:any={};
+      for(let i=0;i<ids.length;i+=300){ const chunk=ids.slice(i,i+300);
+        for(let off=0; off<50000; off+=1000){ const { data: pg } = await sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account)").in("claim_id",chunk).range(off,off+999); (pg||[]).forEach((it:any)=>{ (itemsBy[it.claim_id]=itemsBy[it.claim_id]||[]).push(it); }); if(!pg || pg.length<1000) break; }
+        const { data: pp } = await sb.from("hr_claim_payments").select("*").in("claim_id",chunk); (pp||[]).forEach((p:any)=>{ payBy[p.claim_id]=p; });
+      }
       const rows:any[]=[];
       for(const c of (claims||[])){
         const emp=c.hr_employees||{}; const pay=payBy[c.id]||{};
@@ -4706,6 +4711,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_dashboard") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant=String(b.tenant||"");
+      { const alw=await allowedTenants(b.token); if(alw.length && tenant && alw.indexOf(tenant)<0) return denyTenant(me,"hr_rc_dashboard",tenant); }
       let rows:any[]=[];
       for(let off=0; off<20000; off+=1000){
         const { data: pg } = await sb.from("hr_claim_requests").select("id,claim_no,amount,status,claim_date,department,warnings, hr_claim_types(name), hr_employees(name,dept)").eq("tenant_id",tenant).neq("status","Draft").neq("status","Cancelled").order("id").range(off, off+999);
@@ -4720,7 +4726,12 @@ Deno.serve(async (req)=>{
       const alerts=rows.filter(r=>Array.isArray(r.warnings)&&r.warnings.length).slice(0,20).map(r=>({claim_no:r.claim_no, amount:Number(r.amount)||0, warnings:r.warnings, name:r.hr_employees&&r.hr_employees.name}));
       // by claim type — aggregate from line items (falls back to header type for item-less claims)
       const cids=rows.map((r:any)=>r.id);
-      const { data: dItems } = cids.length ? await sb.from("hr_claim_items").select("claim_id,amount, hr_claim_types(name,is_mileage)").in("claim_id",cids) : { data:[] } as any;
+      // Chunk claim_ids (a multi-thousand .in() list blows the PostgREST URL limit → the query errored + was
+      // silently dropped, making by_type wrong) AND paginate past the 1000-item cap.
+      const dItems:any[]=[];
+      for(let i=0;i<cids.length;i+=300){ const chunk=cids.slice(i,i+300);
+        for(let off=0; off<50000; off+=1000){ const { data: pg } = await sb.from("hr_claim_items").select("claim_id,amount, hr_claim_types(name,is_mileage)").in("claim_id",chunk).range(off,off+999); dItems.push(...(pg||[])); if(!pg || pg.length<1000) break; }
+      }
       const withItems=new Set((dItems||[]).map((x:any)=>x.claim_id)); const tm:any={};
       // it.amount is server-computed at save (mileage = km×rate + parking + toll) — recomputing km×rate here dropped parking/toll.
       (dItems||[]).forEach((it:any)=>{ const t=it.hr_claim_types||{}; const a=Number(it.amount)||0; const k=t.name||"—"; tm[k]=(tm[k]||0)+a; });
@@ -4783,6 +4794,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_grid_save",tenant); }
       // Bulk-replace THIS company's month entries only (scope delete to the tenant's employees).
       const empT = await sb.from("hr_employees").select("id").eq("tenant_id",tenant);
       const empTIds = (empT.data||[]).map((e:any)=>e.id);
@@ -4861,7 +4873,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v107 leave-admin-tools: hr_leave_apply admin apply-on-behalf + auto_approve(record MC, deduct once); hr_leave_flow_steps.approver_employee_id → approval levels can name a specific employee (approver_type employee|manager|role); hr_leave_balance_save(admin adjust entitled/taken per type incl Medical/MC); hr_payroll_data returns leaveBalances→payslip prints remaining paid-leave days; hr_leave_admin returns employees+leave_types. prior v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
+    return j({ ok:true, hint:"portal v108 audit-hardening: tenant-pin payroll(finalise/grid_save/data)+leave-on-behalf(apply/my)+rc_dashboard (partial-company admins can no longer touch other cos) + hr_rc_export_accounting/hr_rc_dashboard paginate+chunk claims&items (1000-row cap silently dropped export lines & by_type) + leave-decide employee-step status label. frontend: removed duplicate hrDecideLeave (admin approve/reject was broken) + LVA/RC.cfg/HR_CALC reset on company switch + loader err-guards (no infinite retry) + O2O custom-commission line re-pricing + Today/Smart honest group scope + CFO feature grantable + tenantsRefresh rebuilds company dropdown + overview/approvals surface errors. prior v107 leave-admin-tools: hr_leave_apply admin apply-on-behalf + auto_approve(record MC, deduct once); hr_leave_flow_steps.approver_employee_id → approval levels can name a specific employee (approver_type employee|manager|role); hr_leave_balance_save(admin adjust entitled/taken per type incl Medical/MC); hr_payroll_data returns leaveBalances→payslip prints remaining paid-leave days; hr_leave_admin returns employees+leave_types. prior v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

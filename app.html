@@ -1244,7 +1244,7 @@ function logout(){storageRemove('ctg_portal_token');location.href='index.html';}
 
 function roleLabel(r){return r==='admin'?'Admin':r==='approver'?'Approver':'Viewer';}
 
-const ALL_FEATURES=['overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon'];
+const ALL_FEATURES=['cfo','overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon'];
 function fallbackPerms(){
   // Used only if my_perms can't be reached — keeps the user from being locked out.
   const appr=ME.role==='admin'||ME.role==='approver';
@@ -1888,6 +1888,7 @@ async function renderOverview(){
   spin('overview');
   if(!OV_RANGE){
     const r=await call({api:'overview'});
+    if(r&&r.ok===false){ document.getElementById('overview').innerHTML=ovHeader()+'<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(r.error||'Could not load overview')+'</div></div>'; return; }
     if(!r||!r.companies){ document.getElementById('overview').innerHTML=ovHeader()+'<div class="empty"><div class="empty-ico">📭</div><div>No data available</div></div>'; return; }
     const filter=curCo();
     let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
@@ -2150,6 +2151,7 @@ function ovChartsRender(){
 async function renderApprovals(){
   spin('approvals');
   const r=await call({api:'pending'});
+  if(r&&r.ok===false){ document.getElementById('approvals').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(r.error||'Could not load approvals')+'</div></div>';return; }
   if(!r||!r.bills){
     document.getElementById('approvals').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div>No data</div></div>';return;
   }
@@ -2810,9 +2812,19 @@ async function o2oEnrichWithPharmacyMaster(){
     // otherwise zero the discount and invoice the pharmacy at full gross price.
     var mRate = (match && match.commission_rate!=null && match.commission_rate!=='') ? Number(match.commission_rate) : NaN;
     if(match && isFinite(mRate) && mRate>0 && mRate!=O2O_DISCOUNT_RATE){
-      p.lines.forEach(function(l){ l.discount_rate = mRate; });
       p.commission = Math.round((p.total_sales*mRate/100)*100)/100;
       p.total = Math.round((p.total_sales-p.commission)*100)/100;
+      // Re-price EACH line at the custom rate too — not just the header. Previously only discount_rate was
+      // relabelled while l.amount stayed at the 19.2% figure, so the invoice billed the wrong rate.
+      p.lines.forEach(function(l){
+        if(l.discount_rate!=null && l.amount!=null){
+          var gross=l.amount/(1-(l.discount_rate||0)/100); // recover gross from the current (default-rate) amount
+          l.discount_rate=mRate;
+          l.amount=Math.round(gross*(1-mRate/100)*100)/100;
+        } else if(/commission/i.test(l.package||'')){
+          l.unit_price=-p.commission; l.amount=-p.commission; l.package='Commission -'+(Math.round(mRate*10)/10)+'%'; // fallback single-line model
+        }
+      });
     }
   });
   // Recompute grand total in case rates changed
@@ -4150,13 +4162,14 @@ async function recvLoad(){
 
 /* ---- Today (cockpit) ---- */
 function renderToday(){
-  document.getElementById('today').innerHTML='<div class="panel"><div class="panel-hd"><h3>Today · finance cockpit</h3><button class="btn p" onclick="todayLoad()">↻ Refresh</button></div><div id="today_out" class="muted">Loading…</div></div>';
+  document.getElementById('today').innerHTML='<div class="panel"><div class="panel-hd"><h3>Today · finance cockpit <span class="muted" style="font-size:12px;font-weight:400">· all companies</span></h3><button class="btn p" onclick="todayLoad()">↻ Refresh</button></div><div id="today_out" class="muted">Loading…</div></div>';
   loaded.today=true; todayLoad();
 }
 async function todayLoad(){
   document.getElementById('today_out').innerHTML='<div class="load"><span class="spin"></span>Gathering…</div>';
   try{
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables', tenant:curCo()||undefined})]);
+    // Group cockpit: overview + pending are group-only RPCs, so receivables is group-wide too (consistent, not per-company).
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
     var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var cash=0,np=0; if(ov&&ov.companies){ ov.companies.forEach(function(c){cash+=+c.bank;np+=+c.net_profit;}); }
     var bills=(pend&&pend.bills)?pend.bills:[]; var od=(recv&&recv.items)?recv.items.filter(function(i){return i.days_overdue>0;}):[];
@@ -4358,6 +4371,7 @@ async function userSave(){
 
 /* ---- Roles & permissions ---- */
 var FEATURE_META=[
+  ['cfo','🎯 CFO Cockpit'],
   ['overview','📊 Overview'],['approvals','✅ Approvals'],['collections','📨 Collections'],
   ['upload','⬆ Upload'],['o2o','💊 O2O Billing'],['qinv','🧾 Quick Invoice'],
   ['recv','💰 Receivables'],['today','☀️ Today'],['smart','🧠 Smart'],
@@ -4534,8 +4548,8 @@ async function tenantsRefresh(){
     }
     if(out) out.innerHTML = lines.join('');
     toast('Refreshed '+r.total+' companies · '+r.renamed.length+' renamed');
-    // Re-render the header pill (if it shows a name) — cheapest: reload the app menu.
-    if(typeof buildTabs === 'function') try{ buildTabs(); }catch(_e){}
+    // Rebuild the top company selector in place with the refreshed names (buildTabs never existed → dropdown stayed stale).
+    try{ var _sel=document.getElementById('company'); if(_sel){ var _cur=_sel.value; _sel.innerHTML='<option value="">— All Companies —</option>'+COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join(''); _sel.value=_cur; } }catch(_e){}
   }catch(e){ toast(e.message,true); if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
   finally { if(btn){ btn.disabled=false; btn.textContent='↻ Refresh from Xero /connections'; } }
 }
@@ -4783,13 +4797,14 @@ async function arRunCollections(){
 
 /* ---- Smart checks & insights (rule-based, no key needed) ---- */
 function renderSmart(){
-  document.getElementById('smart').innerHTML='<div class="panel"><div class="panel-hd"><h3>🧠 Smart checks &amp; insights</h3><button class="btn p" onclick="smartLoad()">↻ Run analysis</button></div><div id="smart_out" class="muted">Scanning your bills, cash &amp; receivables…</div></div>';
+  document.getElementById('smart').innerHTML='<div class="panel"><div class="panel-hd"><h3>🧠 Smart checks &amp; insights <span class="muted" style="font-size:12px;font-weight:400">· all companies</span></h3><button class="btn p" onclick="smartLoad()">↻ Run analysis</button></div><div id="smart_out" class="muted">Scanning your bills, cash &amp; receivables…</div></div>';
   loaded.smart=true; smartLoad();
 }
 async function smartLoad(){
   document.getElementById('smart_out').innerHTML='<div class="load"><span class="spin"></span>Analysing your live data…</div>';
   try{
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables', tenant:curCo()||undefined})]);
+    // Group insights: overview + pending are group-only, so receivables is group-wide too (consistent scope).
+    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
     var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
     var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
     var alerts=[];
