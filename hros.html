@@ -1324,10 +1324,9 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  // Employee mode allowed views: clock (part-timers only), leave, expenses.
+  // Employee mode allowed views: clock (all employees), leave, expenses, payslip.
   if(HR_EMP_MODE){ var canClk=hrNeedsClock(RC.me&&RC.me.employee);
-    if(HR.view==='clock' && !canClk) HR.view='expenses';
-    if(['clock','leave','expenses'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
+    if(['clock','leave','expenses','payslip'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
   if(!HR_MASTER && HR.view==='access') HR.view='dashboard';   // only the Master Admin can reach the role manager
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
