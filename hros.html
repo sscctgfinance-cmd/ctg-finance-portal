@@ -3162,8 +3162,15 @@ function hrExpCp8d(fmt){
 
 /* ── boot ── */
 (function(){
-  if(TOKEN){ enterApp(); }
-  else { var l=document.getElementById('login'); if(l) l.classList.remove('hide'); }
+  var showLogin=function(){ var l=document.getElementById('login'); if(l) l.classList.remove('hide'); };
+  if(TOKEN){
+    // Re-establish the authenticated user (incl. access role) from the stored token so reloads keep
+    // the right mode — admin / viewer / employee — instead of defaulting to the admin view.
+    call({api:'me'}).then(function(r){
+      if(r&&r.ok&&r.user){ ME=r.user; COMPANIES=r.companies||COMPANIES; enterApp(); }
+      else { storageRemove('ctg_portal_token'); showLogin(); }
+    }).catch(function(){ enterApp(); });   // network hiccup: fall back to the app rather than lock out
+  } else { showLogin(); }
 })();
 </script>
 </body>
