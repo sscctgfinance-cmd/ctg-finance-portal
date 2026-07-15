@@ -915,6 +915,9 @@ select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus
 .skel{ border-radius:var(--r-md); background:linear-gradient(90deg,var(--hairline),var(--surface-3),var(--hairline)); background-size:220% 100%; animation:hrshim 1.4s ease-in-out infinite; }
 @keyframes hrshim{ 0%{background-position:220% 0} 100%{background-position:-220% 0} }
 @media(prefers-reduced-motion:reduce){ .skel{animation:none} }
+/* Viewer (read-only) — hide commit CTAs (backend also blocks all writes) */
+.viewer-mode .btn.p,.viewer-mode .btn.d,.viewer-mode .hr-write{ display:none !important; }
+.viewer-badge{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:var(--w-semi); background:var(--info-bg); color:var(--info-soft); }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -988,7 +991,9 @@ var ICONS={
  search:'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/>',
  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
- collapse:'<path d="M15 18l-6-6 6-6M20 6v12"/>'
+ collapse:'<path d="M15 18l-6-6 6-6M20 6v12"/>',
+ shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+ eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>'
 };
 function ic(n,s){ s=s||18; var d=ICONS[n]; if(!d) return ''; return '<svg class="ic" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'; }
 /* ── v9: canonical empty / loading / skeleton helpers ── */
@@ -1139,10 +1144,15 @@ function enterApp(){
   // v9: apply saved theme label + collapse state on the shell
   hrApplyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');
   try{ if(storageGet('hros_nav_collapsed')==='1'){ var s=document.querySelector('.side'); if(s) s.classList.add('collapsed'); } }catch(_e){}
-  if(ME && ME.role && ME.role!=='admin'){ hrEmpBoot(); return; }   // employee / approver self-service mode
+  HR_VIEWER = !!(ME && ME.role==='viewer');   // read-only access role
+  if(HR_VIEWER && a) a.classList.add('viewer-mode');
+  // Employees / approvers → self-service. Admin (Master Admin) + Viewer → full admin views (viewer is read-only).
+  if(ME && ME.role && ME.role!=='admin' && ME.role!=='viewer'){ hrEmpBoot(); return; }
   hrBootCompanies();
 }
 var HR_EMP_MODE=false;
+var HR_VIEWER=false;
+function hrRW(html){ return HR_VIEWER ? '' : html; }   // hide write-only controls from viewers
 // Employee / approver mode: no hr_bootstrap (admin-only) — identity + config come from hr_rc_config; only the Reimbursement module is shown.
 async function hrEmpBoot(){
   HR_EMP_MODE=true;
@@ -1284,7 +1294,8 @@ var HR_NAV=[
   ['expenses','expenses','Reimbursement','People','Employee expense claims, receipts & multi-level approval'],
   ['payroll','payroll','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
   ['calculator','calculator','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
-  ['yearend','yearend','Year-end','Payroll','Borang EA, Form E and CP8D statements']
+  ['yearend','yearend','Year-end','Payroll','Borang EA, Form E and CP8D statements'],
+  ['access','shield','Access & Roles','Admin','Manage who can sign in to HR OS and their access level']
 ];
 // Employee self-service: Time Clock (part-timers only) + Leave + Reimbursement.
 var HR_EMP_NAV=[
@@ -1298,7 +1309,7 @@ function hrEmpNav(){ if(hrNeedsClock(RC.me&&RC.me.employee)) return HR_EMP_NAV; 
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  (HR_EMP_MODE ? hrEmpNav() : HR_NAV).forEach(function(t){
+  (HR_EMP_MODE ? hrEmpNav() : HR_NAV.filter(function(t){ return !(t[0]==='access' && HR_VIEWER); })).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')" title="'+esc(t[2])+'">'+ic(t[1],19)+'<span class="lbl">'+esc(t[2])+'</span></button>';
@@ -1312,11 +1323,13 @@ function hrRender(){
     if(HR.view==='clock' && !canClk) HR.view='expenses';
     if(['clock','leave','expenses'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
+  if(HR_VIEWER && HR.view==='access') HR.view='dashboard';   // viewers can't reach the role manager
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
-  var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta"><span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
+  var badge=HR_VIEWER?'<span class="viewer-badge">'+ic('eye',12)+' View only</span>':'';
+  var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta">'+badge+'<span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
   var body='';
   if(HR.view==='dashboard') body=hrDashboard();
-  else if(HR.view==='employees') body=(HR.editEmp!==null)?hrEmpForm():hrEmployees();
+  else if(HR.view==='employees') body=(HR.editEmp!==null && !HR_VIEWER)?hrEmpForm():hrEmployees();
   else if(HR.view==='attendance') body=hrAttendance();
   else if(HR.view==='clock') body=hrClock();
   else if(HR.view==='payroll') body=hrPayroll();
@@ -1325,7 +1338,61 @@ function hrRender(){
   else if(HR.view==='leave') body=(HR_EMP_MODE?hrEmpLeave():hrLeave());
   else if(HR.view==='claims') body=hrClaims();
   else if(HR.view==='expenses') body=hrRC();
+  else if(HR.view==='access') body=hrAccess();
   el.innerHTML=head+body;
+}
+// ===== 🛡 Access & Roles (Master Admin only) =====
+var HRA={ data:null, loading:false, err:null };
+function hrRoleLabel(r){ return r==='admin'?'Master Admin':r==='viewer'?'Viewer':r==='approver'?'Approver':r==='employee'?'Employee':r; }
+function hrRolePill(r){ var c=r==='admin'?'pill-ok':r==='viewer'?'pill-info':'pill-neu'; return '<span class="pill '+c+'">'+esc(hrRoleLabel(r))+'</span>'; }
+function hrAccess(){
+  if(HR_VIEWER) return hrEmpty('shield','This area is for the Master Admin only.');
+  if(!HRA.data && !HRA.loading && !HRA.err){ HRA.loading=true; setTimeout(hrAccessLoad,0); }
+  if(HRA.loading && !HRA.data) return hrLoad('Loading users…');
+  if(HRA.err && !HRA.data) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(HRA.err)+' — <a onclick="HRA.err=null;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
+  return hrAccessRender();
+}
+async function hrAccessLoad(){
+  try{ var r=await call({api:'hr_users_list'}); if(r&&r.ok){ HRA.data=r; HRA.err=null; } else HRA.err=(r&&r.error)||'Failed to load users'; }
+  catch(e){ HRA.err=e.message||String(e); }
+  finally{ HRA.loading=false; }
+  if(HR.view==='access' && !HR_VIEWER) hrRender();
+}
+function hrAccessRender(){
+  var d=HRA.data, users=d.users||[];
+  var S='padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px';
+  var rows=users.map(function(u){
+    var roleSel='<select onchange="hrUserRoleSet(\''+u.id+'\',this.value)" style="'+S+'">'+
+      ['admin','viewer','approver','employee'].map(function(r){ return '<option value="'+r+'"'+(u.role===r?' selected':'')+'>'+esc(hrRoleLabel(r))+'</option>'; }).join('')+'</select>';
+    return '<tr><td><b>'+esc(u.name||'—')+'</b>'+(u.self?' <span class="pill pill-neu" style="font-size:9px">you</span>':'')+'</td>'+
+      '<td class="muted">'+esc(u.email||'')+'</td>'+
+      '<td>'+(u.self?hrRolePill(u.role):roleSel)+'</td>'+
+      '<td class="muted">'+esc(u.employee||'—')+'</td></tr>';
+  }).join('')||'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">No users</td></tr>';
+  var table='<div class="panel"><div class="panel-hd"><h3>Users &amp; access ('+users.length+')</h3></div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:10px;line-height:1.55"><b>'+ic('shield',13)+' Master Admin</b> = full control (edit, approve, run payroll, manage users). &nbsp;<b>'+ic('eye',13)+' Viewer</b> = sees everything but changes nothing. You can’t change the last Master Admin, and you can’t change your own role here.</div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Email</th><th>Access role</th><th>HR employee</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  var inv='<div class="panel" style="max-width:580px"><div class="panel-hd"><h3>Invite a user</h3></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Email</label><input id="hra_email" placeholder="name@company.com" style="'+S+';width:100%"></div>'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Name</label><input id="hra_name" placeholder="Full name" style="'+S+';width:100%"></div>'+
+    '</div>'+
+    '<div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label><select id="hra_role" style="'+S+';width:100%"><option value="viewer">Viewer (read-only)</option><option value="admin">Master Admin (full control)</option></select></div>'+
+    '<button class="btn p sm" onclick="hrUserInvite()">Create login</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">Creates a login (HR OS + Finance Portal) and shows a one-time password to share.</div></div>';
+  return table+inv;
+}
+async function hrUserRoleSet(uid,role){
+  var u=((HRA.data&&HRA.data.users)||[]).find(function(x){return x.id===uid;})||{};
+  if(!confirm('Change '+(u.name||u.email||'this user')+' to '+hrRoleLabel(role)+'?')){ hrRender(); return; }
+  var r=await call({api:'hr_user_role_set',user_id:uid,role:role});
+  if(r&&r.ok){ toast('Access role updated ✓'); HRA.data=null; hrAccessLoad(); } else { toast((r&&r.error)||'Failed',true); hrRender(); }
+}
+async function hrUserInvite(){
+  var email=((document.getElementById('hra_email')||{}).value||'').trim(); var name=((document.getElementById('hra_name')||{}).value||'').trim(); var role=(document.getElementById('hra_role')||{}).value||'viewer';
+  if(!email){ toast('Enter an email',true); return; }
+  var r=await call({api:'hr_user_invite',email:email,name:name,role:role});
+  if(r&&r.ok){ hrShowCreds([{name:name||email,email:r.email,temp_password:r.temp_password}]); HRA.data=null; hrAccessLoad(); } else toast((r&&r.error)||'Failed',true);
 }
 // ===== 📊 HR OS Analytics Dashboard (Overview / Headcount / Payroll / Attendance / Cost) =====
 var HR_DASH={ month:0, year:0, page:'overview', data:null, loading:false, steps:0, tenant:'' };
@@ -1828,9 +1895,9 @@ function hrEmpCard(x){
     (gone?'':(x.user_id
       ? '<span class="pill pill-ok" style="font-size:9.5px" title="Has an HR OS login">'+ic('check',12)+' login</span>'
       : (x.email
-          ? '<button class="btn xs" onclick="hrEnableLogin(\''+x.id+'\')" title="Create an HR OS login so this employee can apply leave, submit claims & clock in">Enable login</button>'
+          ? hrRW('<button class="btn xs" onclick="hrEnableLogin(\''+x.id+'\')" title="Create an HR OS login so this employee can apply leave, submit claims & clock in">Enable login</button>')
           : '<span class="pill pill-warn" style="font-size:9.5px" title="Add an email on the profile first">no email</span>')))+
-    '<button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button>'+
+    hrRW('<button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button>')+
     (gone?' <button class="btn xs d" onclick="hrEmpDelete(\''+x.id+'\')" title="Delete this resigned employee">Delete</button>':'')+
   '</div>';
 }
@@ -1861,7 +1928,7 @@ function hrEmployees(){
   var noLogin=act.filter(function(x){return !x.user_id && x.email;}).length;
   var noEmail=act.filter(function(x){return !x.email;}).length;
   var banner=(noLogin||noEmail)?'<div class="muted" style="font-size:11.5px;margin-bottom:12px;padding:9px 12px;background:var(--surface-3);border-radius:var(--r-sm);line-height:1.5">'+ic('employees',14)+' <b>'+noLogin+'</b> employee(s) have an email but <b>no HR OS login yet</b> — they can’t apply leave / claims / clock in until you enable one.'+(noEmail?' &nbsp;·&nbsp; <b>'+noEmail+'</b> have no email on file — add one first.':'')+'</div>':'';
-  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+(noLogin?'<button class="btn sm" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div></div>';
+  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
   return '<div class="panel">'+hd+banner+toolbar+'<div id="hr_emp_results">'+hrEmpResultsHtml()+'</div></div>';
 }
 async function hrEnableLogin(id){
@@ -2235,10 +2302,10 @@ function hrLeaveAdminRender(){
   // ── requests table ──
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0;
     var col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--coral-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
-    var act=(!fin)?('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrDecideLeave(\''+x.id+'\',\'reject\')">Reject</button>'):'';
+    var act=(!fin)?hrRW('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrDecideLeave(\''+x.id+'\',\'reject\')">Reject</button>'):'';
     return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Leave requests</h3><button class="btn xs" onclick="LVA.data=null;hrRender()">↻</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
-  return bar+applyPanel+balPanel+flowPanel+table;
+  return (HR_VIEWER ? '' : (bar+applyPanel+balPanel+flowPanel)) + table;
 }
 function hrLeaveBalPanelHtml(){
   var d=LVA.data; var emps=(d&&d.employees)||[];
