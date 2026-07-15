@@ -1705,13 +1705,60 @@ function hrEmployees(){
       typePill(x.employment_type)+
       '<div class="emp-sal"><div class="v">'+M(x.basic_salary)+'</div><div class="l">+ '+M(x.fixed_allowance)+' allow</div></div>'+
       statusPill(x.status)+
+      (gone?'':(x.user_id
+        ? '<span class="pill pill-green" style="font-size:9.5px" title="Has an HR OS login — can apply leave / claims / clock in">✓ login</span>'
+        : (x.email
+            ? '<button class="btn xs" onclick="hrEnableLogin(\''+x.id+'\')" title="Create an HR OS login so this employee can apply leave, submit claims & clock in">🔑 Enable login</button>'
+            : '<span class="pill" style="font-size:9.5px;color:var(--amber)" title="Add an email on the profile first, then you can enable a login">⚠ no email</span>')))+
       '<button class="btn xs" onclick="hrEditEmp(\''+x.id+'\')">Edit</button>'+
       (gone?' <button class="btn xs d" onclick="hrEmpDelete(\''+x.id+'\')" title="Delete this resigned employee">Delete</button>':'')+
     '</div>';
   }).join('');
   var body=e.length?'<div class="emp-list">'+cards+'</div>':'<div class="empty"><div class="empty-ico">👤</div>No employees yet — add your first team member.</div>';
-  return '<div class="panel"><div class="panel-hd"><h3>Workforce ('+e.length+')</h3><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div>'+body+'</div>';
+  var act=e.filter(function(x){return !hrIsResigned(x);});
+  var noLogin=act.filter(function(x){return !x.user_id && x.email;}).length;
+  var noEmail=act.filter(function(x){return !x.email;}).length;
+  var banner=(noLogin||noEmail)?'<div class="muted" style="font-size:11.5px;margin-bottom:12px;padding:9px 12px;background:var(--panel-2);border-radius:8px;line-height:1.5">🔑 <b>'+noLogin+'</b> employee(s) have an email but <b>no HR OS login yet</b> — they can’t apply leave / claims / clock in until you enable one.'+(noEmail?' &nbsp;·&nbsp; ⚠ <b>'+noEmail+'</b> have no email on file — add one first.':'')+' Use "Enable login" on each card, or "Enable all logins" above.</div>':'';
+  var hd='<div class="panel-hd"><h3>Workforce ('+e.length+')</h3><div style="display:flex;gap:8px">'+(noLogin?'<button class="btn sm" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee that has an email but no login yet">🔑 Enable all logins</button>':'')+'<button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button></div></div>';
+  return '<div class="panel">'+hd+banner+body+'</div>';
 }
+async function hrEnableLogin(id){
+  var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
+  if(!e.email){ toast('Add an email on this employee first',true); return; }
+  if(!confirm('Create an HR OS login for '+(e.name||'this employee')+' ('+e.email+')?\n\nThey’ll use it to apply leave, submit claims & clock in. You’ll get a one-time temporary password to share with them.')) return;
+  var r=await call({api:'hr_rc_enable_login',employee_id:id});
+  if(r&&r.ok){
+    if(r.already){ toast((e.name||'Employee')+' already has a login'); HR.data=null; renderHR(); return; }
+    hrShowCreds([{name:r.name||e.name,email:r.email,temp_password:r.temp_password}]);
+    HR.data=null; renderHR();
+  } else toast((r&&r.error)||'Failed',true);
+}
+async function hrEnableLoginBulk(){
+  if(!confirm('Create HR OS logins for ALL active employees who have an email but no login yet?\n\nEmployees without an email are skipped. You’ll get a list of one-time temporary passwords to share.')) return;
+  var r=await call({api:'hr_rc_enable_login_bulk',tenant:HR.tenant});
+  if(r&&r.ok){
+    if(!(r.created&&r.created.length)){ toast('No new logins created'+(r.skipped&&r.skipped.length?(' · '+r.skipped.length+' skipped'):'')); return; }
+    hrShowCreds(r.created, r.skipped);
+    HR.data=null; renderHR();
+  } else toast((r&&r.error)||'Failed',true);
+}
+function hrShowCreds(created, skipped){
+  var url='https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html';
+  var rows=created.map(function(c){ return '<tr><td>'+esc(c.name||'')+'</td><td>'+esc(c.email||'')+'</td><td style="font-family:monospace"><b>'+esc(c.temp_password||'')+'</b></td></tr>'; }).join('');
+  var skipHtml=(skipped&&skipped.length)?'<div class="muted" style="font-size:11px;margin-top:8px">Skipped ('+skipped.length+'): '+skipped.map(function(s){return esc(s.name)+' — '+esc(s.reason);}).join('; ')+'</div>':'';
+  var txt='HR OS login: '+url+'\n\n'+created.map(function(c){return (c.name||'')+'\t'+(c.email||'')+'\t'+(c.temp_password||'');}).join('\n');
+  var wrap=document.createElement('div');
+  wrap.innerHTML='<div id="hr_creds_modal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'+
+    '<div style="background:var(--panel);border:1px solid var(--border);border-radius:14px;max-width:660px;width:100%;max-height:85vh;overflow:auto;padding:20px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><h3 style="margin:0">🔑 HR OS logins created ('+created.length+')</h3><button class="btn sm" onclick="document.getElementById(\'hr_creds_modal\').remove()">✕</button></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:10px;line-height:1.5">Give each person their <b>email + temporary password</b>. They sign in at <b>'+esc(url)+'</b> and should change the password after. <b style="color:var(--coral-soft)">Passwords are shown only once — copy or print now.</b></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Email (login)</th><th>Temp password</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+skipHtml+
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn p sm" onclick="hrCredsCopy()">📋 Copy all</button><button class="btn sm" onclick="window.print()">🖨 Print</button></div>'+
+    '<textarea id="hr_creds_txt" style="position:absolute;left:-9999px;top:0">'+esc(txt)+'</textarea>'+
+    '</div></div>';
+  document.body.appendChild(wrap.firstChild);
+}
+function hrCredsCopy(){ var t=document.getElementById('hr_creds_txt'); if(t){ t.select(); try{ document.execCommand('copy'); toast('Copied ✓'); }catch(e){ toast('Copy failed — select manually',true); } } }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
 function hrIsResigned(x){ var s=String((x&&x.status)||'').toLowerCase(); return s==='resigned'||s==='inactive'||s==='terminated'||s==='left'||!!(x&&x.resign_date); }
 async function hrEmpDelete(id){
