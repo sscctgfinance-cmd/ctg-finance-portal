@@ -3873,6 +3873,7 @@ Deno.serve(async (req)=>{
         epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
         marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
         date_of_birth:f.dob||null,
+        join_date:f.joinDate||null,
         epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
         manager_id:f.managerId||null,
