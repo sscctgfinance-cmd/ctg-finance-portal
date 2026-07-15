@@ -985,6 +985,8 @@ var ICONS={
  claims:'<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
  expenses:'<rect x="2" y="7" width="20" height="13" rx="1.5"/><path d="M2 11h20M6 3h12"/>',
  payroll:'<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+ payslip:'<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>',
+ download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
  calculator:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>',
  yearend:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
@@ -1303,11 +1305,13 @@ var HR_NAV=[
 var HR_EMP_NAV=[
   ['clock','clock','Time Clock','Me','Clock in / out and see your hours'],
   ['leave','leave','Leave','Me','Apply for leave and check your balance'],
-  ['expenses','expenses','Reimbursement','Me','Submit and track your expense claims']
+  ['expenses','expenses','Reimbursement','Me','Submit and track your expense claims'],
+  ['payslip','payslip','Payslip','Me','View and download your monthly payslips']
 ];
-// Only part-timers punch: Part-time employment OR hourly/daily pay. Full-time monthly staff don't clock.
+// hrNeedsClock = payroll auto-fills basic from clocked hours (hourly/daily/part-time) AND drives the default
+// landing view. Every employee can still open Time Clock to punch attendance — the nav shows it for all.
 function hrNeedsClock(e){ e=e||{}; return e.employment_type==='Part-time' || e.pay_type==='hourly' || e.pay_type==='daily'; }
-function hrEmpNav(){ if(hrNeedsClock(RC.me&&RC.me.employee)) return HR_EMP_NAV; return HR_EMP_NAV.filter(function(t){return t[0]!=='clock';}); }
+function hrEmpNav(){ return HR_EMP_NAV; }
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
@@ -1340,6 +1344,7 @@ function hrRender(){
   else if(HR.view==='leave') body=(HR_EMP_MODE?hrEmpLeave():hrLeave());
   else if(HR.view==='claims') body=hrClaims();
   else if(HR.view==='expenses') body=hrRC();
+  else if(HR.view==='payslip') body=hrEmpPayslips();
   else if(HR.view==='access') body=hrAccess();
   el.innerHTML=head+body;
 }
@@ -2244,6 +2249,55 @@ function hrLeaveStepPills(x){
     var ic=done?'✓':rej?'✕':isCur?'⏳':'○';
     return '<span style="font-size:10px;color:'+col+';margin-right:9px;white-space:nowrap" title="'+esc(s.status||'')+'">'+ic+' '+esc(s.name||s.approver_role||'')+'</span>';
   }).join('');
+}
+// ===== 🧾 Employee Payslips (self-service: list finalised payslips + download PDF) =====
+var EPS={ data:null, loading:false, err:null };
+function hrEmpPayslips(){
+  if(!EPS.data && !EPS.loading && !EPS.err){ EPS.loading=true; setTimeout(hrEmpPayslipsLoad,0); }
+  if(EPS.loading && !EPS.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
+  return hrEmpPayslipsRender();
+}
+async function hrEmpPayslipsLoad(){
+  try{ var r=await call({api:'hr_my_payslips'}); if(r&&r.ok){ EPS.data=r; EPS.err=null; } else EPS.err=(r&&r.error)||'Failed'; }
+  catch(e){ EPS.err=e.message||e; }
+  finally{ EPS.loading=false; }
+  if(HR.view==='payslip' && HR_EMP_MODE) hrRender();
+}
+function hrEmpPayslipsRender(){
+  var d=EPS.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(EPS.err||'Could not load payslips')+' — <a onclick="EPS.data=null;EPS.err=null;EPS.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
+  var slips=d.payslips||[];
+  if(!slips.length) return hrEmpty('payslip','No payslips yet — they’ll appear here once a month’s payroll is finalised by HR.');
+  var dedTot=function(s){ return (Number(s.p.epfEe)||0)+(Number(s.p.socsoEe)||0)+(Number(s.p.eisEe)||0)+(Number(s.p.pcb)||0)+((s.d&&s.d.deductions)||[]).reduce(function(a,x){return a+(Number(x.amount)||0);},0); };
+  var rows=slips.map(function(s,i){ var label=HR_MONTHS[s.month]+' '+s.year;
+    return '<tr><td><b>'+esc(label)+'</b></td>'+
+      '<td class="amt">'+M(s.p.gross)+'</td>'+
+      '<td class="amt" style="color:var(--red-soft)">'+M(dedTot(s))+'</td>'+
+      '<td class="amt"><b style="color:var(--green-soft)">'+M(s.p.net)+'</b></td>'+
+      '<td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="hrEmpPayslipDownload('+i+')">'+ic('download',13)+' PDF</button></td></tr>';
+  }).join('');
+  var latest=slips[0];
+  var hero='<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:14px">'+
+    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(latest.p.net)+'</div><div class="l">Latest net pay <span class="muted">· '+esc(HR_MONTHS[latest.month]+' '+latest.year)+'</span></div></div>'+
+    '<div class="card"><div class="n">'+M(latest.p.gross)+'</div><div class="l">Latest gross pay</div></div>'+
+    '<div class="card"><div class="n">'+slips.length+'</div><div class="l">Payslip'+(slips.length===1?'':'s')+' available</div></div>'+
+  '</div>';
+  return hero+'<div class="panel"><div class="panel-hd"><h3>My payslips</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Period</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;padding:10px 2px 0">Figures shown are your finalised monthly payroll. Tap <b>PDF</b> to download or print a full payslip (basic, allowances, EPF/SOCSO/EIS/PCB, net pay and leave balances).</div></div>';
+}
+function hrEmpPayslipDownload(i){
+  var d=EPS.data; if(!d||!d.payslips||!d.payslips[i]) return;
+  var s=d.payslips[i]; var emp=RC.me&&RC.me.employee;
+  if(!emp){ toast('No employee profile linked',true); return; }
+  hrLoadJsPDF(function(){
+    try{
+      var e=hrEmpView(emp); e.leaveBal=d.leaveBal||[];
+      HR_COMPANY=hrCompanyName();   // employee mode: use their own company name on the payslip header
+      var per={ month:s.month, year:s.year, label:HR_MONTHS[s.month]+' '+s.year };
+      var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+      hrDrawPayslip(doc,e,s.p,per,s.d||{});
+      doc.save('Payslip_'+(e.empNo||'EMP')+'_'+per.label.replace(' ','')+'.pdf');
+      toast('Payslip downloaded ✓');
+    }catch(err){ toast('Could not generate PDF: '+(err.message||err),true); }
+  });
 }
 var LVA={ data:null, loading:false, err:null, flowEdit:null, applyOpen:false, balOpen:false, balEmp:null, balData:null, balLoading:false };
 var LV_SS='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
