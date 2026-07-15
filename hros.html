@@ -1145,13 +1145,15 @@ function enterApp(){
   hrApplyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');
   try{ if(storageGet('hros_nav_collapsed')==='1'){ var s=document.querySelector('.side'); if(s) s.classList.add('collapsed'); } }catch(_e){}
   HR_VIEWER = !!(ME && ME.role==='viewer');   // read-only access role
+  HR_MASTER = !!(ME && ME.role==='admin');    // Master Admin — the only role that can manage users & roles
   if(HR_VIEWER && a) a.classList.add('viewer-mode');
-  // Employees / approvers → self-service. Admin (Master Admin) + Viewer → full admin views (viewer is read-only).
-  if(ME && ME.role && ME.role!=='admin' && ME.role!=='viewer'){ hrEmpBoot(); return; }
+  // Employees / approvers → self-service. Master Admin, HR Admin, Viewer → full HR views (viewer read-only, HR Admin full write minus user management).
+  if(ME && ME.role && ME.role!=='admin' && ME.role!=='hr_admin' && ME.role!=='viewer'){ hrEmpBoot(); return; }
   hrBootCompanies();
 }
 var HR_EMP_MODE=false;
 var HR_VIEWER=false;
+var HR_MASTER=false;
 function hrRW(html){ return HR_VIEWER ? '' : html; }   // hide write-only controls from viewers
 // Employee / approver mode: no hr_bootstrap (admin-only) — identity + config come from hr_rc_config; only the Reimbursement module is shown.
 async function hrEmpBoot(){
@@ -1309,7 +1311,7 @@ function hrEmpNav(){ if(hrNeedsClock(RC.me&&RC.me.employee)) return HR_EMP_NAV; 
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  (HR_EMP_MODE ? hrEmpNav() : HR_NAV.filter(function(t){ return !(t[0]==='access' && HR_VIEWER); })).forEach(function(t){
+  (HR_EMP_MODE ? hrEmpNav() : HR_NAV.filter(function(t){ return t[0]!=='access' || HR_MASTER; })).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')" title="'+esc(t[2])+'">'+ic(t[1],19)+'<span class="lbl">'+esc(t[2])+'</span></button>';
@@ -1323,7 +1325,7 @@ function hrRender(){
     if(HR.view==='clock' && !canClk) HR.view='expenses';
     if(['clock','leave','expenses'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
-  if(HR_VIEWER && HR.view==='access') HR.view='dashboard';   // viewers can't reach the role manager
+  if(!HR_MASTER && HR.view==='access') HR.view='dashboard';   // only the Master Admin can reach the role manager
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var badge=HR_VIEWER?'<span class="viewer-badge">'+ic('eye',12)+' View only</span>':'';
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta">'+badge+'<span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
@@ -1343,10 +1345,10 @@ function hrRender(){
 }
 // ===== 🛡 Access & Roles (Master Admin only) =====
 var HRA={ data:null, loading:false, err:null };
-function hrRoleLabel(r){ return r==='admin'?'Master Admin':r==='viewer'?'Viewer':r==='approver'?'Approver':r==='employee'?'Employee':r; }
-function hrRolePill(r){ var c=r==='admin'?'pill-ok':r==='viewer'?'pill-info':'pill-neu'; return '<span class="pill '+c+'">'+esc(hrRoleLabel(r))+'</span>'; }
+function hrRoleLabel(r){ return r==='admin'?'Master Admin':r==='hr_admin'?'HR Admin':r==='viewer'?'Viewer':r==='approver'?'Approver':r==='employee'?'Employee':r; }
+function hrRolePill(r){ var c=r==='admin'?'pill-ok':r==='hr_admin'?'pill-warn':r==='viewer'?'pill-info':'pill-neu'; return '<span class="pill '+c+'">'+esc(hrRoleLabel(r))+'</span>'; }
 function hrAccess(){
-  if(HR_VIEWER) return hrEmpty('shield','This area is for the Master Admin only.');
+  if(!HR_MASTER) return hrEmpty('shield','This area is for the Master Admin only.');
   if(!HRA.data && !HRA.loading && !HRA.err){ HRA.loading=true; setTimeout(hrAccessLoad,0); }
   if(HRA.loading && !HRA.data) return hrLoad('Loading users…');
   if(HRA.err && !HRA.data) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(HRA.err)+' — <a onclick="HRA.err=null;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
@@ -1356,30 +1358,30 @@ async function hrAccessLoad(){
   try{ var r=await call({api:'hr_users_list'}); if(r&&r.ok){ HRA.data=r; HRA.err=null; } else HRA.err=(r&&r.error)||'Failed to load users'; }
   catch(e){ HRA.err=e.message||String(e); }
   finally{ HRA.loading=false; }
-  if(HR.view==='access' && !HR_VIEWER) hrRender();
+  if(HR.view==='access' && HR_MASTER) hrRender();
 }
 function hrAccessRender(){
   var d=HRA.data, users=d.users||[];
   var S='padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px';
   var rows=users.map(function(u){
     var roleSel='<select onchange="hrUserRoleSet(\''+u.id+'\',this.value)" style="'+S+'">'+
-      ['admin','viewer','approver','employee'].map(function(r){ return '<option value="'+r+'"'+(u.role===r?' selected':'')+'>'+esc(hrRoleLabel(r))+'</option>'; }).join('')+'</select>';
+      ['admin','hr_admin','viewer','approver','employee'].map(function(r){ return '<option value="'+r+'"'+(u.role===r?' selected':'')+'>'+esc(hrRoleLabel(r))+'</option>'; }).join('')+'</select>';
     return '<tr><td><b>'+esc(u.name||'—')+'</b>'+(u.self?' <span class="pill pill-neu" style="font-size:9px">you</span>':'')+'</td>'+
       '<td class="muted">'+esc(u.email||'')+'</td>'+
       '<td>'+(u.self?hrRolePill(u.role):roleSel)+'</td>'+
       '<td class="muted">'+esc(u.employee||'—')+'</td></tr>';
   }).join('')||'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">No users</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Users &amp; access ('+users.length+')</h3></div>'+
-    '<div class="muted" style="font-size:11.5px;margin-bottom:10px;line-height:1.55"><b>'+ic('shield',13)+' Master Admin</b> = full control (edit, approve, run payroll, manage users). &nbsp;<b>'+ic('eye',13)+' Viewer</b> = sees everything but changes nothing. You can’t change the last Master Admin, and you can’t change your own role here.</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:10px;line-height:1.55"><b>'+ic('shield',13)+' Master Admin</b> = full control incl. managing users. &nbsp;<b>'+ic('shield',13)+' HR Admin</b> = full HR management (no user management, no Finance Portal). &nbsp;<b>'+ic('eye',13)+' Viewer</b> = sees everything but changes nothing. HR Admin, Viewer &amp; Employee logins have <b>no access to the Finance Portal</b>. You can’t change the last Master Admin, or your own role here.</div>'+
     '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Email</th><th>Access role</th><th>HR employee</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   var inv='<div class="panel" style="max-width:580px"><div class="panel-hd"><h3>Invite a user</h3></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
       '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Email</label><input id="hra_email" placeholder="name@company.com" style="'+S+';width:100%"></div>'+
       '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Name</label><input id="hra_name" placeholder="Full name" style="'+S+';width:100%"></div>'+
     '</div>'+
-    '<div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label><select id="hra_role" style="'+S+';width:100%"><option value="viewer">Viewer (read-only)</option><option value="admin">Master Admin (full control)</option></select></div>'+
+    '<div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label><select id="hra_role" style="'+S+';width:100%"><option value="hr_admin">HR Admin (full HR, no Finance)</option><option value="viewer">Viewer (read-only)</option><option value="admin">Master Admin (full control)</option></select></div>'+
     '<button class="btn p sm" onclick="hrUserInvite()">Create login</button></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">Creates a login (HR OS + Finance Portal) and shows a one-time password to share.</div></div>';
+    '<div class="muted" style="font-size:11px;margin-top:8px">Creates an HR OS login and shows a one-time password to share. Only <b>Master Admin</b> can also open the Finance Portal.</div></div>';
   return table+inv;
 }
 async function hrUserRoleSet(uid,role){

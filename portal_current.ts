@@ -101,9 +101,14 @@ async function meFromToken(token){
 function isAdmin(me){ const r = me && me.user && me.user.role; return me && me.ok && (r==="admin" || r==="approver"); }
 function superAdmin(me){ return me && me.ok && me.user && me.user.role==="admin"; }
 function hrViewer(me){ return me && me.ok && me.user && me.user.role==="viewer"; }        // read-only HR access
-function hrCanView(me){ return superAdmin(me) || hrViewer(me); }                          // may READ hr data
+function hrManage(me){ return superAdmin(me) || (me && me.ok && me.user && me.user.role==="hr_admin"); } // full HR write (admin or hr_admin), NO finance
+function hrCanView(me){ return hrManage(me) || hrViewer(me); }                            // may READ hr data (admin / hr_admin / viewer)
 // HR actions a read-only Viewer is allowed to call; every other hr_/attendance_/clock_ action is blocked for viewers.
 const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","attendance_list","hr_dashboard","hr_payroll_data","hr_leave_admin","hr_leave_pending","hr_leave_flow_get","hr_rc_config","hr_rc_list","hr_rc_get","hr_rc_dashboard","hr_annual","hr_calc_history","sbi_accounts"]);
+// HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
+const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
+function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
+const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","totp_setup","totp_verify","totp_disable","totp_status"]);
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return Array.isArray(data) ? data : []; } catch (_e) { return []; } }
 // Tenant pin for by-id actions (v103): the central guard only sees b.tenant in the request body, so an
@@ -194,7 +199,7 @@ async function rcValidate(claim, type, empId){
   return { errors: errs, warnings: warns };
 }
 async function rcMe(me){
-  const isAdmin = superAdmin(me); let employee:any=null, roles:string[]=[], is_manager=false;
+  const isAdmin = hrManage(me); let employee:any=null, roles:string[]=[], is_manager=false;   // admin OR hr_admin = full HR admin
   const uid = me && me.user && me.user.id;
   if(uid){ const { data:e } = await sb.from("hr_employees").select("*").eq("user_id",uid).maybeSingle(); employee=e||null; }
   if(employee){
@@ -1942,6 +1947,13 @@ Deno.serve(async (req)=>{
     } catch (_e) {}
   }
   try {
+    // App separation: HR-only roles (employee / viewer / hr_admin) have NO Finance Portal access — block every non-HR action.
+    if (typeof b.token === "string" && b.token && !isHrNamespace(api) && !AUTH_BASIC_ACTIONS.has(api)) {
+      const _u = await meFromToken(b.token);
+      if (_u && _u.ok && _u.user && HR_ONLY_ROLES.has(_u.user.role)) {
+        return j({ ok:false, error:"This login is HR-only — it has no access to the Finance Portal." }, 403);
+      }
+    }
     if (api === "cron_sync") {
       const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
       if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
@@ -3703,7 +3715,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const uid=String(b.user_id||""); const role=String(b.role||"").toLowerCase();
       if(!uid) return j({ ok:false, error:"No user specified." });
-      if(["admin","viewer","approver","employee"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
+      if(["admin","hr_admin","viewer","approver","employee"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
       const { data: target } = await sb.from("portal_users").select("id,role,email").eq("id",uid).maybeSingle();
       if(!target) return j({ ok:false, error:"User not found." });
       if(target.role==="admin" && role!=="admin"){ // never leave the org without a Master Admin
@@ -3719,7 +3731,7 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const email=String(b.email||"").trim().toLowerCase(); const name=String(b.name||"").trim()||email; const role=String(b.role||"viewer").toLowerCase();
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return j({ ok:false, error:"Enter a valid email address." });
-      if(["admin","viewer"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
+      if(["admin","hr_admin","viewer"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
       const { data: existing } = await sb.from("portal_users").select("id").eq("email",email).maybeSingle();
       if(existing) return j({ ok:false, error:"A user with that email already exists — change their role in the list instead." });
       const pass = "Ctg"+Math.random().toString(36).slice(2,7)+Math.floor(Math.random()*90+10)+"!";
@@ -3752,7 +3764,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_banks_save") {
       // Add / rename / (de)activate a bank — future additions are data-only, no code change (spec).
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const row = b.row||{};
       const code = String(row.code||"").trim().toUpperCase().replace(/[^A-Z0-9_]/g,"_");
       const name = String(row.name||"").trim();
@@ -3842,7 +3854,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "attendance_save") {
       // Admin add/correct a punch. Computes hours from in/out.
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const p = b.punch||{}; const empId = String(p.employee_id||"");
       if(!empId) return j({ ok:false, error:"employee required" });
       const { data: emp } = await sb.from("hr_employees").select("id,tenant_id").eq("id",empId).maybeSingle();
@@ -3862,7 +3874,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, punch: res.data });
     }
     if (api === "attendance_delete") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data: rec } = await sb.from("hr_timeclock").select("tenant_id").eq("id",String(b.id)).maybeSingle();
       if(rec){ const alw = await allowedTenants(b.token); if (alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
       await sb.from("hr_timeclock").delete().eq("id",String(b.id));
@@ -3903,7 +3915,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, started:true });
     }
     if (api === "hr_emp_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const f = b.emp||{};
       // Bank: store the master-list CODE as source of truth; resolve the canonical display name from it
       // (keeps the payroll BIC file + vouchers working). Legacy records with no code keep their typed name.
@@ -3959,7 +3971,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_emp_delete") {
       // Permanently delete a RESIGNED employee. Most child rows CASCADE at the DB; hr_payslips is RESTRICT,
       // so an employee with payroll history is protected unless the caller explicitly forces it.
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const id = String(b.id||""); if (!id) return j({ ok:false, error:"No employee specified." });
       const { data: emp } = await sb.from("hr_employees").select("id,name,status,resign_date,tenant_id").eq("id",id).maybeSingle();
       if (!emp) return j({ ok:false, error:"Employee not found." });
@@ -4106,7 +4118,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, requests, flow: flow||[], employees: empQ.data||[], leave_types: types||[] });
     }
     if (api === "hr_leave_flow_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const steps = Array.isArray(b.steps) ? b.steps : [];
       const clean = steps.map((s:any,i:number)=>{
         const t = s.approver_type==="employee" ? "employee" : (s.approver_type==="manager" ? "manager" : "role");
@@ -4127,7 +4139,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_leave_balance_save") {
       // Admin adjusts an employee's leave entitlement / taken for a given year & type (Annual, Medical/MC, …).
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const empId = String(b.employee_id||""); const ltId = String(b.leave_type_id||"");
       const year = Number(b.year)|| new Date(Date.now()+8*3600*1000).getUTCFullYear();
       if (!empId || !ltId) return j({ ok:false, error:"employee and leave type are required" });
@@ -4196,7 +4208,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, status:"Approved", final:true });
     }
     if (api === "hr_claim_decide") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       { const { data: rec } = await sb.from("hr_claims").select("tenant_id").eq("id",String(b.id)).maybeSingle();
         const alw = await allowedTenants(b.token); if (rec && alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",String(b.id));
@@ -4244,7 +4256,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, employees:emp.data||[], rates:(rt.data&&rt.data.rates)||null, adjustments:adj.data||[], run:run.data||null, payslips, attendance, leaveBalances });
     }
     if (api === "hr_adj_add") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const a=b.adj||{};
       const { error } = await sb.from("hr_payroll_adjustments").insert({ employee_id:String(a.employeeId), period_month:Number(a.month), period_year:Number(a.year), kind:a.kind, label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epfSubject!==false });
       if (error) return j({ ok:false, error:error.message });
@@ -4252,13 +4264,13 @@ Deno.serve(async (req)=>{
       return j({ ok:true });
     }
     if (api === "hr_adj_del") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { error } = await sb.from("hr_payroll_adjustments").delete().eq("id",String(b.id));
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true });
     }
     if (api === "hr_payroll_finalise") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
       { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_finalise",tenant); }
@@ -4296,7 +4308,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, me:meOut, tenant_name:tenantName, claim_types:types.data||[], mileage_rates:rates.data||[], cost_centers:ccs.data||[], employees: who.employee?[{id:who.employee.id,emp_no:who.employee.emp_no,name:who.employee.name}]:[] });
     }
     if (api === "hr_rc_enable_login") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data:e } = await sb.from("hr_employees").select("*").eq("id",b.employee_id).maybeSingle();
       if(!e) return j({ ok:false, error:"employee not found" });
       { const alw=await allowedTenants(b.token); if(alw.length && e.tenant_id && alw.indexOf(e.tenant_id)<0) return denyTenant(me,"hr_rc_enable_login",e.tenant_id); }
@@ -4311,7 +4323,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_rc_enable_login_bulk") {
       // Enable an HR OS login for EVERY active employee of a company that has an email but no login yet.
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant=String(b.tenant||""); if(!tenant) return j({ ok:false, error:"no company selected" });
       { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_rc_enable_login_bulk",tenant); }
       const { data:emps } = await sb.from("hr_employees").select("id,name,email,user_id,tenant_id").eq("tenant_id",tenant).eq("status","active").order("emp_no");
@@ -4759,7 +4771,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, claim:cl, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:(who.isAdmin||who.roles.indexOf("finance")>=0), is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const kind=String(b.kind||""); const row=b.row||{};
       if(kind==="claim_type"){ if(row.id){ await sb.from("hr_claim_types").update({...row, updated_at:new Date().toISOString()}).eq("id",row.id);} else { await sb.from("hr_claim_types").insert(row);} }
       else if(kind==="claim_type_del"){ await sb.from("hr_claim_types").update({active:false}).eq("id",row.id); }
@@ -4819,7 +4831,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, data, month:mo, year:yr });
     }
     if (api === "hr_dash_refresh") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
       const tenant = String(b.tenant||"");
       const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:tenant, p_month:mo, p_year:yr });
@@ -4836,7 +4848,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, data, insights:ins.length, refreshedAt:new Date().toISOString() });
     }
     if (api === "hr_calc_log") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (b.overridden && !String(b.reason||"").trim()) return j({ ok:false, error:"a reason is required for an override" });
       const row = {
         tenant_id:String(b.tenant||""), employee_id:b.employeeId?String(b.employeeId):null, employee_name:b.employeeName||null,
@@ -4855,7 +4867,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, rows:data||[] });
     }
     if (api === "hr_rates_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const rates = b.rates||{};
       const { error } = await sb.from("hr_statutory_rates").upsert({ id:1, rates }, { onConflict:"id" });
       if (error) return j({ ok:false, error:error.message });
@@ -4863,7 +4875,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true });
     }
     if (api === "hr_payroll_grid_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
       { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_grid_save",tenant); }
@@ -4908,7 +4920,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, annual:map, employer:ei.data||{ name:"I PROCARE MALAYSIA SDN BHD", employer_no:"", address:"" } });
     }
     if (api === "hr_post_xero") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const runId = String(b.runId||""); if (!runId) return j({ ok:false, error:"missing runId" });
       const tenantId = String(b.tenantId||"99911869-9e91-4572-b7dc-4db51b45b6a9");
       // Safety: portal only ever posts payroll journals as DRAFT (never auto-POSTED), mirroring the
@@ -4928,7 +4940,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, result:r });
     }
     if (api === "hr_send_payslip") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const p = b.payload||{};
       if (!p.to || !p.pdfBase64) return j({ ok:false, error:"missing recipient or attachment" });
       const base = Deno.env.get("SUPABASE_URL")!; const srk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -4945,7 +4957,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v110 access-roles: Viewer (role='viewer') read-only HR OS — dispatch guard blocks every mutating hr_/attendance_/clock_ action for viewers (403), read actions accept hrCanView(admin|viewer); new hr_users_list/hr_user_role_set(last-admin guard)/hr_user_invite (Master Admin role manager). + Form E join_date persisted in hr_emp_save. prior v109 employee-login: hr_rc_enable_login now guards double-enable + tenant-pin + returns name; new hr_rc_enable_login_bulk (create HR OS logins for all active employees with an email, per company, returns credentials + skipped). Fixes the gap where NO employee could apply leave (0/19 linked, action was orphaned/unwired). Frontend: Employees page has per-card 'Enable login' / '✓ login' / '⚠ no email' + 'Enable all logins' + a credentials modal (copy/print, one-time passwords). prior v108 audit-hardening: tenant-pin payroll(finalise/grid_save/data)+leave-on-behalf(apply/my)+rc_dashboard (partial-company admins can no longer touch other cos) + hr_rc_export_accounting/hr_rc_dashboard paginate+chunk claims&items (1000-row cap silently dropped export lines & by_type) + leave-decide employee-step status label. frontend: removed duplicate hrDecideLeave (admin approve/reject was broken) + LVA/RC.cfg/HR_CALC reset on company switch + loader err-guards (no infinite retry) + O2O custom-commission line re-pricing + Today/Smart honest group scope + CFO feature grantable + tenantsRefresh rebuilds company dropdown + overview/approvals surface errors. prior v107 leave-admin-tools: hr_leave_apply admin apply-on-behalf + auto_approve(record MC, deduct once); hr_leave_flow_steps.approver_employee_id → approval levels can name a specific employee (approver_type employee|manager|role); hr_leave_balance_save(admin adjust entitled/taken per type incl Medical/MC); hr_payroll_data returns leaveBalances→payslip prints remaining paid-leave days; hr_leave_admin returns employees+leave_types. prior v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
+    return j({ ok:true, hint:"portal v111 app-separation: HR-only roles (employee|viewer|hr_admin) are BLOCKED from the Finance Portal — a top-of-dispatch guard 403s every non-HR/non-auth action for them (isHrNamespace+AUTH_BASIC_ACTIONS allow-list). NEW role hr_admin ('HR Admin') = full HR write (hrManage=admin||hr_admin) across all hr_/attendance_ mutations (banks/emp/attendance/leave-flow/leave-balance/claim-decide/adj/payroll-finalise/grid/rates/enable-login/dash-refresh/calc-log/rc-admin/post-xero/send-payslip) but CANNOT manage users (hr_users_list/hr_user_role_set/hr_user_invite stay superAdmin=Master-Admin-only) and has NO Finance Portal. Viewer features now [] (HR-only, read via hrCanView). hr_user_invite/role_set accept hr_admin. app.html shows an 'HR OS access only' gate + link to hros.html for these roles; hros.html routes admin|hr_admin|viewer to full HR views (HR_MASTER=admin gates Access&Roles nav/view, HR_VIEWER=viewer read-only). prior v110 access-roles: Viewer (role='viewer') read-only HR OS — dispatch guard blocks every mutating hr_/attendance_/clock_ action for viewers (403), read actions accept hrCanView(admin|viewer); new hr_users_list/hr_user_role_set(last-admin guard)/hr_user_invite (Master Admin role manager). + Form E join_date persisted in hr_emp_save. prior v109 employee-login: hr_rc_enable_login now guards double-enable + tenant-pin + returns name; new hr_rc_enable_login_bulk (create HR OS logins for all active employees with an email, per company, returns credentials + skipped). Fixes the gap where NO employee could apply leave (0/19 linked, action was orphaned/unwired). Frontend: Employees page has per-card 'Enable login' / '✓ login' / '⚠ no email' + 'Enable all logins' + a credentials modal (copy/print, one-time passwords). prior v108 audit-hardening: tenant-pin payroll(finalise/grid_save/data)+leave-on-behalf(apply/my)+rc_dashboard (partial-company admins can no longer touch other cos) + hr_rc_export_accounting/hr_rc_dashboard paginate+chunk claims&items (1000-row cap silently dropped export lines & by_type) + leave-decide employee-step status label. frontend: removed duplicate hrDecideLeave (admin approve/reject was broken) + LVA/RC.cfg/HR_CALC reset on company switch + loader err-guards (no infinite retry) + O2O custom-commission line re-pricing + Today/Smart honest group scope + CFO feature grantable + tenantsRefresh rebuilds company dropdown + overview/approvals surface errors. prior v107 leave-admin-tools: hr_leave_apply admin apply-on-behalf + auto_approve(record MC, deduct once); hr_leave_flow_steps.approver_employee_id → approval levels can name a specific employee (approver_type employee|manager|role); hr_leave_balance_save(admin adjust entitled/taken per type incl Medical/MC); hr_payroll_data returns leaveBalances→payslip prints remaining paid-leave days; hr_leave_admin returns employees+leave_types. prior v106 emp-lifecycle: hr_emp_save persists status(active|resigned)+resign_date; hr_emp_delete(superAdmin, tenant-guarded, resigned-only) hard-deletes an employee — DB cascades leave/claims/balances/attendance/timeclock/adjustments; hr_payslips is RESTRICT so payroll history blocks delete unless {force:true} (then payslips wiped first). prior v105 leave-approval-chain: hr_leave multi-level workflow (hr_leave_flow_steps config manager→HR→director; per-request hr_leave_approval_steps; apply builds chain+notifies step1; decide step-aware advance/finalise+balance-deduct-once+reject; hr_leave_pending approver queue; hr_leave_admin all+steps+flow; hr_leave_flow_get/save superAdmin; hr_leave_my attaches steps; cancel allows in-progress; email at each step) — prior v104 time-clock: clock_in/out/status(self, geo, one-open-guard) + attendance_list/save/delete(admin punch log + hours summary + est pay) + hr_attendance table + employee pay_type/hourly_rate/daily_rate/shift + payroll auto-fills hourly/daily basic from clocked hours + cron_clock_reminders(shift-time email, per-day dedup) + employment-type selector. prior v103 audit-wave: sync-5min(delta cron every 5m, watchdog 25m stall + 15m cadence, quiet cron_delta audit) + rc-fixes(mileage amount keeps parking/toll, decide status-gate no Paid-regression, export month-end Feb-safe + error surfaced, attach no-phantom-receipt, paid_date MYT) + tenant-pin(by-id: rc decide/paid/cancel/set_gl, sbi list/get/approve/void, leave/claim decide) + dedup-policy(L3/L4 heuristic → needs_review not auto-reject; only same-invoice-no rejects) + pagination(hr_annual, sync_audit, xero_diagnose, rc_dashboard, inv_meta+pharmacy contacts past 1000-row cap) + rpc-errors-surfaced(group_dashboard/fin_analytics/ap_inbox/calendar/cashflow/pharmacy/company_docs 500 not silent-empty) + ilike-escape(resolveContact) + partial-fetch-flag(receivables/bank_reconcile warn on truncation) + rebuild-watermark-reset + batch-upsert-error-retry + emp_no-numeric — prior: v102 sr-suite + tenant-isolation + HR suite + self-billed + fin-analytics" });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

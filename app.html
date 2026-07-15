@@ -2408,7 +2408,26 @@ async function doChangePw(){
 }
 
 /* ── Enter app respecting forced password change ── */
+// HR-only logins (employees, HR Admin, view-only) have NO access to the Finance Portal — they belong in HR OS.
+var HR_ONLY_ROLES_FE=['employee','viewer','hr_admin'];
+function showHrOnlyGate(){
+  try{ document.getElementById('login').classList.add('hide'); }catch(_e){}
+  try{ document.getElementById('app').classList.add('hide'); }catch(_e){}
+  var nm=(ME&&ME.name)?ME.name:'there';
+  var g=document.getElementById('hr-only-gate');
+  if(!g){ g=document.createElement('div'); g.id='hr-only-gate';
+    g.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg,#12100f)';
+    document.body.appendChild(g); }
+  g.innerHTML='<div style="max-width:440px;width:100%;text-align:center;background:var(--card,#1b1817);border:1px solid rgba(232,93,60,.28);border-radius:18px;padding:38px 32px;box-shadow:0 24px 60px rgba(0,0,0,.45)">'+
+    '<div style="font-size:44px;line-height:1;margin-bottom:14px">🔒</div>'+
+    '<h2 style="margin:0 0 8px;font-size:20px;color:var(--text,#f5f0ee)">HR OS access only</h2>'+
+    '<p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:var(--text-soft,#b7aca7)">Hi '+esc(nm)+', your login is for the <b>HR OS</b> — it doesn’t include the Finance Portal. Head over to HR OS to manage leave, claims, payslips and your profile.</p>'+
+    '<a href="hros.html" style="display:inline-block;background:linear-gradient(135deg,#e85d3c,#d24a2c);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:12px">👥 Go to HR OS →</a>'+
+    '<div style="margin-top:18px"><a href="#" onclick="logout();return false;" style="color:var(--text-soft,#8a807b);font-size:12.5px;text-decoration:underline">Sign out</a></div>'+
+    '</div>';
+}
 function enterApp(){
+  if(ME && HR_ONLY_ROLES_FE.indexOf(ME.role)>=0){ showHrOnlyGate(); return; }
   if(ME && ME.must_change_pw){
     document.getElementById('login').classList.add('hide');
     document.getElementById('app').classList.add('hide');
