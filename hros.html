@@ -15,16 +15,20 @@
   --bg:#0C1421;
   --surface:#131C2D;
   --surface2:#0F1827;
+  --surface-1:#131C2D; --surface-2:#0F1827; --surface-3:#182236;
   --border:#1E2A40;
   --border-strong:#2A3A56;
+  --hairline:rgba(255,255,255,.07);
   --panel:#141E30;
   --panel-2:#0E1826;
   --text:#E8EEF7;
   --text-soft:#A8B5CC;
-  --muted:#6B7A93;
+  --muted:#8494AE;
   --coral:#E85D3C;
   --coral-deep:#C04A2E;
   --coral-soft:#F08570;
+  --coral-tint:rgba(232,93,60,.14);
+  --accent:#E85D3C; --accent-soft:#F08570;
   --sky:#5B9BD5;
   --sky-soft:#8FB8DC;
   --green:#16b97a;
@@ -32,7 +36,23 @@
   --red:#ef4444;
   --red-soft:#fca5a5;
   --amber:#f59e0b;
+  /* semantic status — alias to the theme colors (auto-follow light/dark) + paired translucent bg */
+  --ok:var(--green); --ok-soft:var(--green-soft); --ok-bg:rgba(22,185,122,.16);
+  --warn:var(--amber); --warn-soft:#fbbf24; --warn-bg:rgba(245,158,11,.16);
+  --err:var(--red); --err-soft:var(--red-soft); --err-bg:rgba(239,68,68,.15);
+  --info:var(--sky); --info-soft:var(--sky-soft); --info-bg:rgba(91,155,213,.16);
+  --neu:var(--muted); --neu-bg:rgba(132,148,174,.16);
   --shadow:0 30px 80px rgba(0,0,0,.7);
+  --elev-1:0 1px 0 rgba(255,255,255,.04) inset,0 8px 24px -16px rgba(0,0,0,.5);
+  --elev-2:0 1px 0 rgba(255,255,255,.05) inset,0 18px 40px -24px rgba(0,0,0,.6);
+  --elev-3:0 1px 0 rgba(255,255,255,.06) inset,0 40px 80px -20px rgba(0,0,0,.75);
+  --fs-2xs:10px; --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:15px; --fs-lg:18px; --fs-xl:23px; --fs-2xl:28px;
+  --w-reg:400; --w-med:500; --w-semi:600; --w-bold:700;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
+  --r-sm:8px; --r-md:12px; --r-lg:16px; --r-pill:999px;
+  --dur-fast:120ms; --dur:160ms; --dur-slow:240ms; --ease:cubic-bezier(.2,.7,.2,1);
+  --focus:0 0 0 2px var(--bg),0 0 0 4px rgba(232,93,60,.55);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
 }
 *{box-sizing:border-box}
 body{
@@ -794,6 +814,15 @@ table[data-list] tbody tr:hover input[type=text]{
   --sky:#3A7CC0; --sky-soft:#3A7CC0; --green:#0E9D67; --green-soft:#0E9D67;
   --red:#DC2626; --red-soft:#DC2626; --amber:#C2700A;
   --shadow:0 18px 50px rgba(21,35,63,.16);
+  /* v9 tokens — light values */
+  --surface-1:#FFFFFF; --surface-2:#F6F9FC; --surface-3:#EDF2F9;
+  --hairline:rgba(21,35,63,.09);
+  --accent:#E04E2B; --accent-soft:#CF4A28; --coral-tint:rgba(224,78,43,.10);
+  --warn-soft:#C2700A; --neu-bg:rgba(21,35,63,.06);
+  --ok-bg:rgba(14,157,103,.12); --warn-bg:rgba(194,112,10,.12); --err-bg:rgba(220,38,38,.10); --info-bg:rgba(58,124,192,.12);
+  --elev-1:0 1px 0 rgba(255,255,255,.6) inset,0 6px 18px -12px rgba(21,35,63,.22);
+  --elev-2:0 1px 0 rgba(255,255,255,.7) inset,0 14px 34px -18px rgba(21,35,63,.26);
+  --elev-3:0 1px 0 rgba(255,255,255,.8) inset,0 30px 60px -16px rgba(21,35,63,.30);
 }
 :root[data-theme="light"] body{
   background:
@@ -848,6 +877,44 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .side-link.on{ background:linear-gradient(90deg,rgba(232,93,60,.13),rgba(232,93,60,.03)); color:var(--coral-deep); }
 :root[data-theme="light"] .btn.p{ background:linear-gradient(135deg,var(--coral),var(--coral-deep)); color:#fff; border:none; }
 .theme-btn{ font-size:15px; line-height:1; }
+/* ============ v9 professional layer (2026-07 overhaul · token-driven, works in light + dark) ============ */
+.btn:focus-visible,.side-link:focus-visible,.side-foot-btn:focus-visible,.tab:focus-visible,.tab-cat:focus-visible,
+.emp-card:focus-visible,.card:focus-visible,.notif-item:focus-visible,.page-chip:focus-visible,
+select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus-visible,[role="button"]:focus-visible{ outline:none; box-shadow:var(--focus); }
+/* Data tables — stronger separators, sticky header, tabular figures */
+.tbl-wrap{ overflow-x:auto; border:1px solid var(--border-strong); border-radius:var(--r-md); }
+.bigtable th{ position:sticky; top:0; z-index:2; letter-spacing:.07em; text-transform:uppercase; font-size:var(--fs-2xs); font-weight:var(--w-bold); color:var(--muted); border-bottom:1px solid var(--border-strong); }
+.bigtable td{ border-bottom:1px solid var(--hairline); }
+.bigtable tbody tr{ transition:background var(--dur-fast); }
+.bigtable tbody tr:hover td{ background:var(--coral-tint); }
+.bigtable td.amt,.bigtable th.amt{ font-variant-numeric:tabular-nums; }
+/* Semantic status pills (additive names) */
+.pill.pill-ok{ background:var(--ok-bg); color:var(--ok-soft); }
+.pill.pill-warn{ background:var(--warn-bg); color:var(--warn-soft); }
+.pill.pill-err{ background:var(--err-bg); color:var(--err-soft); }
+.pill.pill-info{ background:var(--info-bg); color:var(--info-soft); }
+.pill.pill-neu{ background:var(--neu-bg); color:var(--text-soft); }
+/* Inline SVG icons */
+.ic{ display:inline-flex; align-items:center; vertical-align:middle; flex-shrink:0; }
+.side-link .ic{ opacity:.9; } .side-link.on .ic,.side-link:hover .ic{ opacity:1; }
+/* Sidebar collapse (desktop rail) */
+.side.collapsed{ width:66px; }
+.side.collapsed .side-brand-sub,.side.collapsed .side-co .co-meta,.side.collapsed .side-company,
+.side.collapsed .side-group,.side.collapsed .side-link .lbl,.side.collapsed .side-foot-btn .lbl{ display:none; }
+.side.collapsed .side-link{ justify-content:center; padding:var(--sp-2); }
+.side.collapsed .side-foot-btn{ justify-content:center; text-align:center; padding:8px; }
+.side.collapsed .side-co{ justify-content:center; }
+/* Company switcher identity chip (per-tenant accent) */
+.side-co{ display:flex; align-items:center; gap:9px; padding:2px 4px 8px; }
+.side-co .chip{ width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-weight:800; font-size:12px; color:#fff; background:var(--accent); flex-shrink:0; box-shadow:0 5px 14px -5px var(--accent); }
+.side-co .co-name{ font-size:12.5px; font-weight:700; color:var(--text); line-height:1.2; }
+.side-co .co-role{ font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-top:1px; }
+.side-tools{ display:flex; gap:6px; }
+.side-tools .side-foot-btn{ flex:1; justify-content:center; text-align:center; padding:8px; }
+/* Skeleton shimmer */
+.skel{ border-radius:var(--r-md); background:linear-gradient(90deg,var(--hairline),var(--surface-3),var(--hairline)); background-size:220% 100%; animation:hrshim 1.4s ease-in-out infinite; }
+@keyframes hrshim{ 0%{background-position:220% 0} 100%{background-position:-220% 0} }
+@media(prefers-reduced-motion:reduce){ .skel{animation:none} }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -878,8 +945,12 @@ table[data-list] tbody tr:hover input[type=text]{
     </div>
     <nav id="hr_nav" class="side-nav"></nav>
     <div class="side-foot">
-      <button class="side-foot-btn accent" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← Finance OS</button>
-      <button class="side-foot-btn" onclick="logout()">Sign out</button>
+      <div class="side-tools">
+        <button class="side-foot-btn" id="hr_theme_btn" onclick="hrToggleTheme()" title="Switch light / dark theme"></button>
+        <button class="side-foot-btn" onclick="hrToggleNav()" title="Collapse / expand the sidebar">↔</button>
+      </div>
+      <button class="side-foot-btn accent" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← <span class="lbl">Finance OS</span></button>
+      <button class="side-foot-btn" onclick="logout()"><span class="lbl">Sign out</span></button>
     </div>
   </aside>
   <main style="flex:1;min-width:0;padding:28px 34px 64px">
@@ -902,6 +973,33 @@ let TOKEN = STORAGE_OK ? (localStorage.getItem("ctg_portal_token")||"") : "";
 // Safe wrappers so the rest of the code can blindly call storage.
 function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
 function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }
+/* ── v9: inline-SVG icon set (Lucide-style, inherits currentColor) ── */
+var ICONS={
+ dashboard:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>',
+ employees:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ leave:'<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/><path d="M12 6v6"/>',
+ claims:'<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+ expenses:'<rect x="2" y="7" width="20" height="13" rx="1.5"/><path d="M2 11h20M6 3h12"/>',
+ payroll:'<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+ calculator:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>',
+ yearend:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
+ bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+ search:'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/>',
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+ moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
+ collapse:'<path d="M15 18l-6-6 6-6M20 6v12"/>'
+};
+function ic(n,s){ s=s||18; var d=ICONS[n]; if(!d) return ''; return '<svg class="ic" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'; }
+/* ── v9: canonical empty / loading / skeleton helpers ── */
+function hrEmpty(icon,msg,cta){ return '<div class="empty"><div class="empty-ico">'+(ICONS[icon]?ic(icon,34):esc(icon||'📭'))+'</div><div>'+esc(msg)+'</div>'+(cta?'<div style="margin-top:16px">'+cta+'</div>':'')+'</div>'; }
+function hrLoad(m){ return '<div class="load"><span class="spin"></span> '+esc(m||'Loading…')+'</div>'; }
+function hrSkel(n){ var o=''; for(var i=0;i<(n||4);i++) o+='<div class="skel" style="height:62px;margin-bottom:10px"></div>'; return o; }
+/* ── v9: light / dark theme toggle (default = current light) ── */
+function hrApplyTheme(t){ var d=document.documentElement; d.setAttribute('data-theme', t==='dark'?'dark':'light'); var b=document.getElementById('hr_theme_btn'); if(b) b.innerHTML=ic(t==='dark'?'sun':'moon',15)+'<span class="lbl">'+(t==='dark'?'Light mode':'Dark mode')+'</span>'; }
+function hrToggleTheme(){ var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; var t=(cur==='dark')?'light':'dark'; storageSet('hros_theme',t); hrApplyTheme(t); }
+function hrToggleNav(){ var s=document.querySelector('.side'); if(!s) return; var c=s.classList.toggle('collapsed'); storageSet('hros_nav_collapsed', c?'1':''); }
+(function(){ try{ if(storageGet('hros_theme')==='dark') document.documentElement.setAttribute('data-theme','dark'); }catch(_e){} })();
 function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
@@ -1038,6 +1136,9 @@ function logout(){storageRemove('ctg_portal_token');location.reload();}
 function enterApp(){
   var l=document.getElementById('login'); if(l) l.classList.add('hide');
   var a=document.getElementById('app'); if(a) a.classList.remove('hide');
+  // v9: apply saved theme label + collapse state on the shell
+  hrApplyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');
+  try{ if(storageGet('hros_nav_collapsed')==='1'){ var s=document.querySelector('.side'); if(s) s.classList.add('collapsed'); } }catch(_e){}
   if(ME && ME.role && ME.role!=='admin'){ hrEmpBoot(); return; }   // employee / approver self-service mode
   hrBootCompanies();
 }
@@ -1175,21 +1276,21 @@ async function renderHR(){
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
 var HR_NAV=[
-  ['dashboard','📊','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
-  ['employees','👤','Employees','People','Your workforce master — profiles, pay & statutory setup'],
-  ['attendance','🕐','Attendance','People','Clock-in records, hours & timesheet corrections'],
-  ['leave','🌴','Leave','People','Review and approve leave requests'],
-  ['claims','🧾','Claims','People','Review and approve expense claims'],
-  ['expenses','💳','Reimbursement','People','Employee expense claims, receipts & multi-level approval'],
-  ['payroll','💰','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
-  ['calculator','🧮','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
-  ['yearend','📅','Year-end','Payroll','Borang EA, Form E and CP8D statements']
+  ['dashboard','dashboard','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
+  ['employees','employees','Employees','People','Your workforce master — profiles, pay & statutory setup'],
+  ['attendance','clock','Attendance','People','Clock-in records, hours & timesheet corrections'],
+  ['leave','leave','Leave','People','Review and approve leave requests'],
+  ['claims','claims','Claims','People','Review and approve expense claims'],
+  ['expenses','expenses','Reimbursement','People','Employee expense claims, receipts & multi-level approval'],
+  ['payroll','payroll','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
+  ['calculator','calculator','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
+  ['yearend','yearend','Year-end','Payroll','Borang EA, Form E and CP8D statements']
 ];
 // Employee self-service: Time Clock (part-timers only) + Leave + Reimbursement.
 var HR_EMP_NAV=[
-  ['clock','⏱','Time Clock','Me','Clock in / out and see your hours'],
-  ['leave','🌴','Leave','Me','Apply for leave and check your balance'],
-  ['expenses','💳','Reimbursement','Me','Submit and track your expense claims']
+  ['clock','clock','Time Clock','Me','Clock in / out and see your hours'],
+  ['leave','leave','Leave','Me','Apply for leave and check your balance'],
+  ['expenses','expenses','Reimbursement','Me','Submit and track your expense claims']
 ];
 // Only part-timers punch: Part-time employment OR hourly/daily pay. Full-time monthly staff don't clock.
 function hrNeedsClock(e){ e=e||{}; return e.employment_type==='Part-time' || e.pay_type==='hourly' || e.pay_type==='daily'; }
@@ -1200,7 +1301,7 @@ function hrSidebar(){
   (HR_EMP_MODE ? hrEmpNav() : HR_NAV).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
-    html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')"><span class="ic">'+t[1]+'</span>'+t[2]+'</button>';
+    html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')" title="'+esc(t[2])+'">'+ic(t[1],19)+'<span class="lbl">'+esc(t[2])+'</span></button>';
   });
   nav.innerHTML=html;
 }
