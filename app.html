@@ -2362,8 +2362,10 @@ async function finish2faEnroll(){
 }
 async function disable2fa(){
   if(!confirm('Disable two-factor authentication? Your account will only require a password.')) return;
+  var pw=prompt('Confirm your current password to turn off two-factor authentication:');
+  if(pw==null||pw==='') return;
   try{
-    var r=await call({api:'totp_disable'});
+    var r=await call({api:'totp_disable',password:pw});
     if(r&&r.ok){ if(ME) ME.totp_enabled=false; closeSecurityModal(); toast('Two-factor disabled'); }
     else toast((r&&r.error)||'Failed',true);
   }catch(e){ toast(e.message,true); }
