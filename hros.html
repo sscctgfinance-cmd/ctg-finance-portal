@@ -327,6 +327,12 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   body.hr-emp #emp-mobnav{display:flex}
   body.hr-emp #hr_main{padding:66px 14px calc(80px + env(safe-area-inset-bottom,0px)) !important}
   body.hr-emp .page-head{margin-top:2px}
+  /* Payslip list: drop the Gross + Deductions columns on phones (both are in the summary cards up top
+     and the PDF); keep Period + Net pay + the PDF button, so no sideways scrolling. */
+  body.hr-emp .pay-tbl th:nth-child(2),body.hr-emp .pay-tbl td:nth-child(2),
+  body.hr-emp .pay-tbl th:nth-child(3),body.hr-emp .pay-tbl td:nth-child(3){display:none}
+  /* Redundant company chip in the page header (the top bar already shows it) */
+  body.hr-emp .page-chip{display:none}
 }
 
 /* ===== Professional UI polish ===== */
@@ -2398,7 +2404,7 @@ function hrEmpPayslipsRender(){
     var yr=years.map(function(y){ var o=byYear[y]; return '<tr><td><b>'+y+'</b> <span class="muted">· '+o.n+' mth</span></td><td class="amt">'+M(o.gross)+'</td><td class="amt" style="color:var(--red-soft)">'+M(o.ded)+'</td><td class="amt"><b style="color:var(--green-soft)">'+M(o.net)+'</b></td></tr>'; }).join('');
     yearPanel='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Earnings by year</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Year</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Take-home</th></tr></thead><tbody>'+yr+'</tbody></table></div></div>';
   }
-  return hero+yearPanel+'<div class="panel"><div class="panel-hd"><h3>My payslips</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Period</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+rows+'</tbody><tfoot>'+tfoot+'</tfoot></table></div><div class="muted" style="font-size:11px;padding:10px 2px 0">Totals are your finalised monthly payroll (take-home = net pay after EPF/SOCSO/EIS/PCB & deductions). Tap <b>PDF</b> to download or print any month’s full payslip.</div></div>';
+  return hero+yearPanel+'<div class="panel"><div class="panel-hd"><h3>My payslips</h3></div><div class="tbl-wrap"><table class="bigtable pay-tbl"><thead><tr><th>Period</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+rows+'</tbody><tfoot>'+tfoot+'</tfoot></table></div><div class="muted" style="font-size:11px;padding:10px 2px 0">Totals are your finalised monthly payroll (take-home = net pay after EPF/SOCSO/EIS/PCB & deductions). Tap <b>PDF</b> to download or print any month’s full payslip.</div></div>';
 }
 function hrEmpPayslipDownload(i){
   var d=EPS.data; if(!d||!d.payslips||!d.payslips[i]) return;
