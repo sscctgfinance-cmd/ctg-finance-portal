@@ -2706,14 +2706,26 @@ function hrApvWfStepSel(s,i){
   var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
   return '<select onchange="hrApvWfStepSet('+i+',this.value)" style="'+APV_MINI+';min-width:230px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
 }
-function hrApvWfStepSet(i,v){ var w=APV.wfEdit; if(!w||!w.steps[i])return;
+// Editing steps re-renders the whole form, so capture the header inputs into state first — otherwise
+// a half-typed name / amount / priority would be wiped every time a step is changed, added or removed.
+function hrApvWfSyncInputs(){ var w=APV.wfEdit; if(!w)return; var gv=function(id){var el=document.getElementById(id);return el?el.value:undefined;};
+  var n=gv('apv_wf_name'); if(n!==undefined) w.name=n;
+  var mn=gv('apv_wf_min'); if(mn!==undefined) w.min_amount=mn;
+  var mx=gv('apv_wf_max'); if(mx!==undefined) w.max_amount=mx;
+  var pr=gv('apv_wf_prio'); if(pr!==undefined) w.priority=pr;
+  var sc=gv('apv_wf_scope'); if(sc!==undefined) w.tenant_id=(sc==='all'?null:HR.tenant);
+  var dp=gv('apv_wf_dept'); if(dp!==undefined) w.match_department=dp;
+  var ty=gv('apv_wf_type'); if(ty!==undefined) w.match_claim_type_id=ty;
+  var ac=document.getElementById('apv_wf_active'); if(ac) w.active=ac.checked;
+}
+function hrApvWfStepSet(i,v){ var w=APV.wfEdit; if(!w||!w.steps[i])return; hrApvWfSyncInputs();
   if(v&&v.indexOf('emp:')===0){ var id=v.slice(4); var e=hrApvEmps().find(function(x){return x.id===id;}); w.steps[i]={approver_type:'user',approver_employee_id:id,name:(e&&e.name)||'Employee'}; }
   else if(v==='manager'){ w.steps[i]={approver_type:'manager',approver_role:'manager',name:'Direct Manager'}; }
   else if(v&&v.indexOf('role:')===0){ var role=v.slice(5); var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[role]||role; w.steps[i]={approver_type:'role',approver_role:role,name:nm}; }
   hrRender();
 }
-function hrApvWfStepAdd(){ var w=APV.wfEdit; if(!w)return; w.steps.push({approver_type:'role',approver_role:'hr',name:'HR'}); hrRender(); }
-function hrApvWfStepDel(i){ var w=APV.wfEdit; if(!w)return; w.steps.splice(i,1); hrRender(); }
+function hrApvWfStepAdd(){ var w=APV.wfEdit; if(!w)return; hrApvWfSyncInputs(); w.steps.push({approver_type:'role',approver_role:'hr',name:'HR'}); hrRender(); }
+function hrApvWfStepDel(i){ var w=APV.wfEdit; if(!w)return; hrApvWfSyncInputs(); w.steps.splice(i,1); hrRender(); }
 function hrApvWfForm(){
   var w=APV.wfEdit; var cfg=APV.rc||{};
   var typeOpts='<option value="">any type</option>'+(cfg.claim_types||[]).map(function(t){return '<option value="'+esc(t.id)+'"'+(String(w.match_claim_type_id)===String(t.id)?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
