@@ -1029,6 +1029,7 @@ var ICONS={
  payroll:'<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
  payslip:'<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>',
  user:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+ flow:'<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>',
  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
  calculator:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>',
  yearend:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
@@ -1297,6 +1298,7 @@ function hrPickCompany(tid){
   if(typeof RC!=='undefined'){ RC.accounts=null; RC.accLoading=false; RC.loading=false; RC.cfg=null; RC.list=[]; RC.err=null; }
   // Leave-admin state (requests, employee pickers, approval-flow edits) is per-company — must not leak.
   if(typeof LVA!=='undefined'){ LVA.data=null; LVA.loading=false; LVA.err=null; LVA.flowEdit=null; LVA.applyOpen=false; LVA.balOpen=false; LVA.balEmp=null; LVA.balData=null; LVA.balLoading=false; }
+  if(typeof APV!=='undefined'){ APV.leave=null; APV.leaveFlow=null; APV.rc=null; APV.wfEdit=null; APV.loading=false; APV.err=null; }
   if(typeof HR_CALC!=='undefined'){ HR_CALC.empId=''; HR_CALC.result=null; }
   renderHR();
 }
@@ -1390,6 +1392,7 @@ var HR_NAV=[
   ['payroll','payroll','Payroll','Payroll','Run monthly payroll, statutory files & payslips'],
   ['calculator','calculator','Calculator','Payroll','Quick Malaysia salary & statutory calculator'],
   ['yearend','yearend','Year-end','Payroll','Borang EA, Form E and CP8D statements'],
+  ['approvals','flow','Approvals','Admin','Configure the multi-level approval chain for leave & reimbursement'],
   ['access','shield','Access & Roles','Admin','Manage who can sign in to HR OS and their access level']
 ];
 // Employee self-service: Time Clock (part-timers only) + Leave + Reimbursement.
@@ -1407,7 +1410,7 @@ function hrEmpNav(){ return HR_EMP_NAV; }
 function hrSidebar(){
   var nav=document.getElementById('hr_nav'); if(!nav) return;
   var html='', lastG=null;
-  (HR_EMP_MODE ? hrEmpNav() : HR_NAV.filter(function(t){ return t[0]!=='access' || HR_MASTER; })).forEach(function(t){
+  (HR_EMP_MODE ? hrEmpNav() : HR_NAV.filter(function(t){ return (t[0]!=='access' || HR_MASTER) && (t[0]!=='approvals' || !HR_VIEWER); })).forEach(function(t){
     if(t[3]&&t[3]!==lastG){ html+='<div class="side-group">'+esc(t[3])+'</div>'; lastG=t[3]; }
     var on=HR.view===t[0];
     html+='<button class="side-link'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')" title="'+esc(t[2])+'">'+ic(t[1],19)+'<span class="lbl">'+esc(t[2])+'</span></button>';
@@ -1434,6 +1437,7 @@ function hrRender(){
     if(['clock','leave','expenses','payslip','profile'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
   if(!HR_MASTER && HR.view==='access') HR.view='dashboard';   // only the Master Admin can reach the role manager
+  if(HR_VIEWER && HR.view==='approvals') HR.view='dashboard';  // approval config is write-only territory
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
   var badge=HR_VIEWER?'<span class="viewer-badge">'+ic('eye',12)+' View only</span>':'';
   var head='<div class="page-head"><div><div class="page-eyebrow">'+esc(cur[3]||'HR OS')+'</div><h2 class="page-title">'+esc(cur[2])+'</h2>'+(cur[4]?'<div class="page-sub">'+esc(cur[4])+'</div>':'')+'</div><div class="page-meta">'+badge+'<span class="page-chip"><span class="dot"></span>'+esc(hrCompanyName())+'</span></div></div>';
@@ -1450,6 +1454,7 @@ function hrRender(){
   else if(HR.view==='expenses') body=hrRC();
   else if(HR.view==='payslip') body=hrEmpPayslips();
   else if(HR.view==='profile') body=hrEmpProfile();
+  else if(HR.view==='approvals') body=hrApprovals();
   else if(HR.view==='access') body=hrAccess();
   el.innerHTML=head+body;
   hrRenderMobileChrome();
@@ -2603,6 +2608,152 @@ function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; var emps=(LVA.data&&LV
 function hrLeaveFlowDel(i){ LVA.flowEdit.splice(i,1); hrRender(); }
 async function hrLeaveFlowSave(){ var r=await call({api:'hr_leave_flow_save',steps:LVA.flowEdit||[]}); if(r&&r.ok){ toast('Approval flow saved ✓'); LVA.data=null; LVA.flowEdit=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
 async function hrDecideLeave(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
+// ===== 🔀 Approvals — unified multi-level approval control (leave + reimbursement) =====
+var APV={ tab:'leave', loading:false, err:null, leave:null, leaveFlow:null, rc:null, wfEdit:null };
+var APV_S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+var APV_MINI='padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
+function hrApprovals(){
+  if(HR_VIEWER) return hrEmpty('flow','Approval configuration is available to admins only.');
+  if(!APV.leave && !APV.rc && !APV.loading && !APV.err){ APV.loading=true; setTimeout(hrApprovalsLoad,0); }
+  if(APV.loading && !APV.leave && !APV.rc) return hrLoad('Loading approval settings…');
+  if(APV.err && !APV.leave && !APV.rc) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(APV.err)+' — <a onclick="APV.err=null;APV.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
+  return hrApprovalsRender();
+}
+async function hrApprovalsLoad(){
+  try{
+    var res=await Promise.all([ call({api:'hr_leave_admin',tenant:HR.tenant}), call({api:'hr_rc_config',tenant:HR.tenant}) ]);
+    var lv=res[0], rc=res[1];
+    if(lv&&lv.ok){ APV.leave=lv; APV.leaveFlow=(lv.flow||[]).map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role,approver_employee_id:s.approver_employee_id};}); }
+    if(rc&&rc.ok){ APV.rc=rc; }
+    if(!(lv&&lv.ok)&&!(rc&&rc.ok)){ APV.err=(lv&&lv.error)||(rc&&rc.error)||'Failed to load'; } else { APV.err=null; }
+  }catch(e){ APV.err=e.message||String(e); }
+  finally{ APV.loading=false; }
+  if(HR.view==='approvals') hrRender();
+}
+async function hrApprovalsReload(){ try{ var rc=await call({api:'hr_rc_config',tenant:HR.tenant}); if(rc&&rc.ok) APV.rc=rc; }catch(_e){} if(HR.view==='approvals') hrRender(); }
+function hrApvEmps(){ return (APV.leave&&APV.leave.employees)||(APV.rc&&APV.rc.employees)||[]; }
+function hrApprovalsRender(){
+  var tabs='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'+
+    [['leave','🌴 Leave approval'],['rc','🧾 Reimbursement approval']].map(function(t){var on=APV.tab===t[0];return '<button class="btn sm'+(on?' p':'')+'" onclick="APV.tab=\''+t[0]+'\';APV.wfEdit=null;hrRender()">'+t[1]+'</button>';}).join('')+'</div>';
+  var intro='<div class="muted" style="font-size:12px;margin-bottom:14px;max-width:660px;line-height:1.55">One place to control <b>who approves</b> — and in what order — for every leave request and expense claim in '+esc(hrCompanyName())+'. Changes apply to <b>future</b> submissions; requests already in flight keep their original chain.</div>';
+  return '<div>'+intro+tabs+(APV.tab==='leave'?hrApvLeave():hrApvRc())+'</div>';
+}
+// ---- Leave approval flow (reuses hr_leave_flow_save) ----
+function hrApvFlowSel(s,i){
+  var emps=hrApvEmps();
+  var val = s.approver_type==='employee' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
+  var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
+  var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+  return '<select onchange="hrApvLeaveSet('+i+',this.value)" style="'+APV_MINI+';min-width:230px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
+}
+function hrApvLeave(){
+  var fe=APV.leaveFlow||[];
+  var rows=fe.map(function(s,i){ return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span class="pill pill-neu" style="min-width:30px;text-align:center">'+(i+1)+'</span>'+hrApvFlowSel(s,i)+hrRW('<a onclick="hrApvLeaveDel('+i+')" style="cursor:pointer;color:var(--coral-soft);font-size:12px">remove</a>')+'</div>'; }).join('');
+  var chain=fe.length?fe.map(function(s){return esc(s.name||s.approver_role);}).join(' → '):'No levels — leave goes straight to any admin.';
+  return '<div class="panel" style="max-width:560px"><div class="panel-hd"><h3>Leave approval levels</h3><span class="muted" style="font-size:11px">every leave request passes through these, in order</span></div>'+
+    '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:14px">Current chain: <b>'+chain+'</b></div>'+
+    rows+
+    '<div style="display:flex;gap:8px;margin-top:6px">'+hrRW('<button class="btn xs" onclick="hrApvLeaveAdd()">+ Add level</button><button class="btn p xs" onclick="hrApvLeaveSave()">💾 Save leave flow</button>')+'</div>'+
+    '<div class="muted" style="font-size:11px;margin-top:10px">Pick a specific person, the applicant’s <b>direct manager</b> (resolves per employee), or a role (HR / Finance / Director → whoever holds it). Set role holders in the Reimbursement tab → Role approvers.</div></div>';
+}
+function hrApvLeaveSet(i,v){ if(!APV.leaveFlow||!APV.leaveFlow[i])return;
+  if(v&&v.indexOf('emp:')===0){ var id=v.slice(4); var e=hrApvEmps().find(function(x){return x.id===id;}); APV.leaveFlow[i]={name:(e&&e.name)||'Employee',approver_type:'employee',approver_employee_id:id}; }
+  else if(v==='manager'){ APV.leaveFlow[i]={name:'Direct Manager',approver_type:'manager',approver_role:'manager'}; }
+  else if(v&&v.indexOf('role:')===0){ var role=v.slice(5); var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[role]||role; APV.leaveFlow[i]={name:nm,approver_type:'role',approver_role:role}; }
+  hrRender();
+}
+function hrApvLeaveAdd(){ APV.leaveFlow=APV.leaveFlow||[]; var emps=hrApvEmps(); if(emps.length) APV.leaveFlow.push({name:emps[0].name,approver_type:'employee',approver_employee_id:emps[0].id}); else APV.leaveFlow.push({name:'HR',approver_type:'role',approver_role:'hr'}); hrRender(); }
+function hrApvLeaveDel(i){ APV.leaveFlow.splice(i,1); hrRender(); }
+async function hrApvLeaveSave(){ var r=await call({api:'hr_leave_flow_save',steps:APV.leaveFlow||[]}); if(r&&r.ok){ toast('Leave approval flow saved ✓'); } else toast((r&&r.error)||'Failed',true); }
+// ---- Reimbursement approval workflows (reuses hr_rc_admin_save kind=workflow; step approver_type: role|manager|user) ----
+function hrApvRc(){
+  if(APV.wfEdit) return hrApvWfForm();
+  var cfg=APV.rc||{};
+  var stepsByWf={}; (cfg.workflow_steps||[]).forEach(function(s){ (stepsByWf[s.workflow_id]=stepsByWf[s.workflow_id]||[]).push(s); });
+  var wfRows=(cfg.workflows||[]).map(function(w){
+    var st=(stepsByWf[w.id]||[]).sort(function(a,b){return a.step_order-b.step_order;});
+    var chain=st.map(function(s){return esc(s.name||s.approver_role);}).join(' → ')||'—';
+    var rng='RM'+(w.min_amount||0)+(w.max_amount!=null?('–'+w.max_amount):'+');
+    var scope=w.tenant_id?'this company':'all companies';
+    return '<tr><td><b>'+esc(w.name)+'</b><br><span class="muted" style="font-size:10.5px">'+scope+' · priority '+(w.priority||0)+'</span></td><td class="muted">'+esc(rng)+'</td><td style="font-size:12px">'+chain+'</td><td>'+(w.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td><td style="white-space:nowrap">'+hrRW('<button class="btn xs" onclick="hrApvWfEdit(\''+w.id+'\')">Edit</button> '+(w.active?'<button class="btn xs d" onclick="hrApvWfDel(\''+w.id+'\')">off</button>':''))+'</td></tr>';
+  }).join('')||'<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">No workflows yet — claims fall back to a single Finance approval. Add one to build a multi-level chain.</td></tr>';
+  var wfPanel='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Reimbursement approval workflows</h3>'+hrRW('<button class="btn p sm" onclick="hrApvWfNew()">+ New workflow</button>')+'</div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Workflow</th><th>Amount</th><th>Approval chain</th><th>Status</th><th></th></tr></thead><tbody>'+wfRows+'</tbody></table></div>'+
+    '<div class="muted" style="font-size:11px;margin-top:8px">A claim routes to the <b>highest-priority active</b> workflow whose amount range (and optional department / type filter) match. If none match, it goes to Finance. “Manager” resolves to the employee’s direct manager.</div></div>';
+  var byRole={}; (cfg.role_approvers||[]).forEach(function(a){ (byRole[a.role]=byRole[a.role]||[]).push(a); });
+  var empName=function(id){ var e=hrApvEmps().find(function(x){return x.id===id;}); return e?e.name:id; };
+  var roles=[['manager','Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+  var emps=hrApvEmps();
+  var apRows=roles.map(function(r){
+    var list=(byRole[r[0]]||[]).map(function(a){return '<span class="pill pill-coral" style="margin-right:5px">'+esc(empName(a.employee_id))+' '+hrRW('<a onclick="hrApvApproverDel(\''+a.id+'\')" style="cursor:pointer">✕</a>')+'</span>';}).join('')||'<span class="muted" style="font-size:12px">none — an admin approves this level until you assign someone</span>';
+    var addSel=hrRW('<select id="apv_addapp_'+r[0]+'" style="'+APV_MINI+';max-width:180px"><option value="">+ add person…</option>'+emps.map(function(e){return '<option value="'+esc(e.id)+'">'+esc(e.name)+'</option>';}).join('')+'</select> <button class="btn xs" onclick="hrApvApproverAdd(\''+r[0]+'\')">add</button>');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap"><div style="width:130px;font-weight:600;font-size:13px">'+r[1]+'</div><div style="flex:1;min-width:160px">'+list+'</div><div>'+addSel+'</div></div>';
+  }).join('');
+  var apPanel='<div class="panel"><div class="panel-hd"><h3>Role approvers</h3><span class="muted" style="font-size:11px">who holds each role — used by both leave &amp; reimbursement</span></div>'+apRows+'</div>';
+  return wfPanel+apPanel;
+}
+function hrApvWfNew(){ APV.wfEdit={ id:null, name:'', tenant_id:HR.tenant, min_amount:'', max_amount:'', priority:10, active:true, match_department:'', match_claim_type_id:'', steps:[{approver_type:'role',approver_role:'finance',name:'Finance'}] }; hrRender(); }
+function hrApvWfEdit(id){ var cfg=APV.rc||{}; var w=(cfg.workflows||[]).find(function(x){return x.id===id;}); if(!w)return;
+  var st=(cfg.workflow_steps||[]).filter(function(s){return s.workflow_id===id;}).sort(function(a,b){return a.step_order-b.step_order;}).map(function(s){return {approver_type:s.approver_type||'role',approver_role:s.approver_role,approver_employee_id:s.approver_employee_id,name:s.name};});
+  APV.wfEdit={ id:w.id, name:w.name, tenant_id:w.tenant_id, min_amount:(w.min_amount==null?'':w.min_amount), max_amount:(w.max_amount==null?'':w.max_amount), priority:w.priority||0, active:w.active!==false, match_department:w.match_department||'', match_claim_type_id:w.match_claim_type_id||'', steps:(st.length?st:[{approver_type:'role',approver_role:'finance',name:'Finance'}]) };
+  hrRender();
+}
+function hrApvWfCancel(){ APV.wfEdit=null; hrRender(); }
+function hrApvWfStepSel(s,i){
+  var emps=hrApvEmps();
+  var val = s.approver_type==='user' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
+  var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
+  var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+  return '<select onchange="hrApvWfStepSet('+i+',this.value)" style="'+APV_MINI+';min-width:230px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
+}
+function hrApvWfStepSet(i,v){ var w=APV.wfEdit; if(!w||!w.steps[i])return;
+  if(v&&v.indexOf('emp:')===0){ var id=v.slice(4); var e=hrApvEmps().find(function(x){return x.id===id;}); w.steps[i]={approver_type:'user',approver_employee_id:id,name:(e&&e.name)||'Employee'}; }
+  else if(v==='manager'){ w.steps[i]={approver_type:'manager',approver_role:'manager',name:'Direct Manager'}; }
+  else if(v&&v.indexOf('role:')===0){ var role=v.slice(5); var nm={hr:'HR',finance:'Finance',director:'Director / Boss'}[role]||role; w.steps[i]={approver_type:'role',approver_role:role,name:nm}; }
+  hrRender();
+}
+function hrApvWfStepAdd(){ var w=APV.wfEdit; if(!w)return; w.steps.push({approver_type:'role',approver_role:'hr',name:'HR'}); hrRender(); }
+function hrApvWfStepDel(i){ var w=APV.wfEdit; if(!w)return; w.steps.splice(i,1); hrRender(); }
+function hrApvWfForm(){
+  var w=APV.wfEdit; var cfg=APV.rc||{};
+  var typeOpts='<option value="">any type</option>'+(cfg.claim_types||[]).map(function(t){return '<option value="'+esc(t.id)+'"'+(String(w.match_claim_type_id)===String(t.id)?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
+  var g=function(l,el){return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};
+  var stepRows=(w.steps||[]).map(function(s,i){ return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span class="pill pill-neu" style="min-width:30px;text-align:center">'+(i+1)+'</span>'+hrApvWfStepSel(s,i)+(w.steps.length>1?'<a onclick="hrApvWfStepDel('+i+')" style="cursor:pointer;color:var(--coral-soft);font-size:12px">remove</a>':'')+'</div>'; }).join('');
+  var chain=(w.steps||[]).map(function(s){return esc(s.name||s.approver_role);}).join(' → ')||'—';
+  return '<div class="panel" style="max-width:640px"><div class="panel-hd"><h3>'+(w.id?'Edit workflow':'New workflow')+'</h3><button class="btn sm" onclick="hrApvWfCancel()">✕ Close</button></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'+
+      g('Workflow name','<input id="apv_wf_name" value="'+esc(w.name)+'" placeholder="e.g. Claims above RM1,000" style="'+APV_S+'">')+
+      g('Applies to','<select id="apv_wf_scope" style="'+APV_S+'"><option value="tenant"'+(w.tenant_id?' selected':'')+'>This company only</option><option value="all"'+(w.tenant_id?'':' selected')+'>All companies</option></select>')+
+      g('Min amount (RM)','<input id="apv_wf_min" type="number" step="0.01" value="'+esc(w.min_amount)+'" placeholder="0" style="'+APV_S+'">')+
+      g('Max amount (RM, blank = no cap)','<input id="apv_wf_max" type="number" step="0.01" value="'+esc(w.max_amount)+'" placeholder="∞" style="'+APV_S+'">')+
+      g('Only for claim type','<select id="apv_wf_type" style="'+APV_S+'">'+typeOpts+'</select>')+
+      g('Only for department (blank = any)','<input id="apv_wf_dept" value="'+esc(w.match_department)+'" placeholder="any" style="'+APV_S+'">')+
+      g('Priority (higher wins)','<input id="apv_wf_prio" type="number" value="'+esc(w.priority)+'" style="'+APV_S+'">')+
+      g('&nbsp;','<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;padding-top:8px"><input type="checkbox" id="apv_wf_active"'+(w.active?' checked':'')+' style="accent-color:var(--coral)"> Active</label>')+
+    '</div>'+
+    '<div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Approval steps (in order)</div>'+
+    '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:12px">Chain: <b>'+chain+'</b></div>'+
+    stepRows+
+    '<div style="display:flex;gap:8px;margin-top:6px"><button class="btn xs" onclick="hrApvWfStepAdd()">+ Add step</button></div>'+
+    '<div style="margin-top:16px;display:flex;gap:8px"><button class="btn p sm" onclick="hrApvWfSave()">💾 Save workflow</button><button class="btn sm" onclick="hrApvWfCancel()">Cancel</button></div></div>';
+}
+async function hrApvWfSave(){
+  var w=APV.wfEdit; if(!w)return;
+  var gv=function(id){var el=document.getElementById(id);return el?el.value:'';};
+  var name=gv('apv_wf_name').trim(); if(!name){ toast('Give the workflow a name',true); return; }
+  if(!w.steps||!w.steps.length){ toast('Add at least one approval step',true); return; }
+  var scope=gv('apv_wf_scope');
+  var row={ id:w.id||undefined, name:name, tenant_id:(scope==='all'?null:HR.tenant),
+    min_amount:(gv('apv_wf_min')===''?0:Number(gv('apv_wf_min'))), max_amount:(gv('apv_wf_max')===''?null:Number(gv('apv_wf_max'))),
+    priority:Number(gv('apv_wf_prio'))||0, active:(document.getElementById('apv_wf_active')||{}).checked!==false,
+    match_department:gv('apv_wf_dept').trim()||null, match_claim_type_id:gv('apv_wf_type')||null,
+    steps:w.steps.map(function(s){return {name:s.name,approver_type:s.approver_type,approver_role:s.approver_role||null,approver_employee_id:s.approver_employee_id||null};}) };
+  var r=await call({api:'hr_rc_admin_save',kind:'workflow',row:row});
+  if(r&&r.ok){ toast('Workflow saved ✓'); APV.wfEdit=null; APV.rc=null; hrApprovalsReload(); } else toast((r&&r.error)||'Failed',true);
+}
+async function hrApvWfDel(id){ if(!confirm('Turn this workflow off? Claims already in flight keep their chain; new claims use another matching workflow (or Finance).'))return; var r=await call({api:'hr_rc_admin_save',kind:'workflow_del',row:{id:id}}); if(r&&r.ok){ toast('Workflow turned off'); APV.rc=null; hrApprovalsReload(); } else toast((r&&r.error)||'Failed',true); }
+function hrApvApproverAdd(role){ var sel=document.getElementById('apv_addapp_'+role); var id=sel?sel.value:''; if(!id){ toast('Pick a person',true); return; } call({api:'hr_rc_admin_save',kind:'role_approver',row:{role:role,employee_id:id,tenant_id:HR.tenant}}).then(function(r){ if(r&&r.ok){ toast('Added'); APV.rc=null; hrApprovalsReload(); } else toast((r&&r.error)||'Failed',true); }); }
+function hrApvApproverDel(id){ call({api:'hr_rc_admin_save',kind:'role_approver_del',row:{id:id}}).then(function(r){ if(r&&r.ok){ toast('Removed'); APV.rc=null; hrApprovalsReload(); } else toast('Failed',true); }); }
 function hrClaims(){
   var cl=HR.data.claims||[];
   var rows=cl.map(function(x){ var st=x.status,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':'var(--amber)';
