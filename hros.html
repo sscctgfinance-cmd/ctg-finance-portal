@@ -953,6 +953,7 @@ select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus
         <button class="side-foot-btn" onclick="hrToggleNav()" title="Collapse / expand the sidebar">↔</button>
       </div>
       <button class="side-foot-btn accent" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← <span class="lbl">Finance OS</span></button>
+      <button class="side-foot-btn" onclick="hrPwModal(false)" title="Change your sign-in password">🔑 <span class="lbl">Change password</span></button>
       <button class="side-foot-btn" onclick="logout()"><span class="lbl">Sign out</span></button>
     </div>
   </aside>
@@ -1141,8 +1142,50 @@ async function submit2fa(){
 function logout(){storageRemove('ctg_portal_token');location.reload();}
 
 /* ── HR OS shell glue ── */
+// ── Change password (all roles) + forced first-login change (must_change_pw) ──
+var PW_FORCED=false;
+function hrPwValid(p){ return typeof p==='string' && p.length>=8 && /[a-zA-Z]/.test(p) && /[0-9]/.test(p); }
+function hrPwModal(forced){
+  PW_FORCED=!!forced;
+  var ex=document.getElementById('pw_overlay'); if(ex) ex.remove();
+  var html='<div class="overlay" id="pw_overlay"><div class="modal" style="width:400px">'+
+    '<div class="modal-hd"><h3>🔑 '+(PW_FORCED?'Set a new password':'Change password')+'</h3></div>'+
+    (PW_FORCED?'<p class="muted" style="font-size:12.5px;margin:0 0 14px;line-height:1.6">You signed in with a <b>temporary password</b> — set your own before continuing. Enter the temporary password as your current one.</p>':'')+
+    '<div class="fld"><label>Current password</label><input id="pw_old" type="password" autocomplete="current-password"></div>'+
+    '<div class="fld"><label>New password <span class="muted" style="font-weight:400">(min 8 chars, letters + numbers)</span></label><input id="pw_new" type="password" autocomplete="new-password"></div>'+
+    '<div class="fld"><label>Confirm new password</label><input id="pw_cfm" type="password" autocomplete="new-password"></div>'+
+    '<div class="lerr hide" id="pw_err"></div>'+
+    '<div class="modal-ft">'+(PW_FORCED?'':'<button class="btn" onclick="hrPwClose()">Cancel</button>')+'<button class="btn p" id="pw_btn" onclick="hrPwSave()">Save password</button></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  setTimeout(function(){ var i=document.getElementById('pw_old'); if(i){ i.focus(); ['pw_old','pw_new','pw_cfm'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener('keydown', function(e){ if(e.key==='Enter') hrPwSave(); }); }); } },30);
+}
+function hrPwClose(){ if(PW_FORCED) return; var o=document.getElementById('pw_overlay'); if(o) o.remove(); }
+async function hrPwSave(){
+  var v=function(id){ var el=document.getElementById(id); return el?el.value:''; };
+  var er=document.getElementById('pw_err'), btn=document.getElementById('pw_btn');
+  var oldp=v('pw_old'), np=v('pw_new'), nc=v('pw_cfm');
+  var fail=function(m){ er.textContent=m; er.classList.remove('hide'); };
+  er.classList.add('hide');
+  if(!oldp||!np){ fail('All fields are required'); return; }
+  if(!hrPwValid(np)){ fail('New password must be at least 8 characters and include letters and numbers'); return; }
+  if(np===oldp){ fail('New password must be different from the current one'); return; }
+  if(np!==nc){ fail('Passwords do not match'); return; }
+  btn.disabled=true; btn.textContent='Saving…';
+  var r=null; try{ r=await call({api:'changepw', old:oldp, neu:np}); }catch(_e){}
+  btn.disabled=false; btn.textContent='Save password';
+  if(r&&r.ok){
+    if(ME) ME.must_change_pw=false;
+    var o=document.getElementById('pw_overlay'); if(o) o.remove();
+    toast('Password updated ✓');
+    if(PW_FORCED){ PW_FORCED=false; enterApp(); }
+    return;
+  }
+  fail((r&&r.error)||'Current password is incorrect');
+}
 function enterApp(){
   var l=document.getElementById('login'); if(l) l.classList.add('hide');
+  // First login with a temporary password → must set their own before anything else.
+  if(ME && ME.must_change_pw){ var a0=document.getElementById('app'); if(a0) a0.classList.add('hide'); hrPwModal(true); return; }
   var a=document.getElementById('app'); if(a) a.classList.remove('hide');
   // v9: apply saved theme label + collapse state on the shell
   hrApplyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');
@@ -2367,7 +2410,12 @@ function hrEmpProfile(){
     '<button class="btn p sm" id="pf_save" onclick="hrEmpProfileSave()">Save my details</button>'+
     '<span class="muted" style="font-size:11px;margin-left:10px">Marital status &amp; children affect your monthly PCB (tax); your bank details are used for salary payment — please double-check them.</span>'+
   '</div>';
-  return roCard+form;
+  var sec='<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>Security</h3></div>'+
+    '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">'+
+      '<button class="btn sm" onclick="hrPwModal(false)">🔑 Change password</button>'+
+      '<span class="muted" style="font-size:11.5px">Your password signs you in to HR OS. Use at least 8 characters with letters and numbers.</span>'+
+    '</div></div>';
+  return roCard+form+sec;
 }
 async function hrEmpProfileSave(){
   if(EPRO.saving) return;
