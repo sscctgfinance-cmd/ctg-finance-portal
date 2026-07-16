@@ -302,6 +302,32 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
 @media(max-width:440px){
   .cards{grid-template-columns:1fr}
 }
+/* ── Employee mobile app chrome (bottom tab bar + slim top bar) ── */
+#emp-mobtop,#emp-mobnav{display:none}
+#emp-mobtop{position:fixed;top:0;left:0;right:0;height:52px;z-index:80;display:none;align-items:center;justify-content:space-between;padding:0 14px;
+  background:var(--surface-1,#12100f);border-bottom:1px solid var(--hairline,rgba(255,255,255,.08));backdrop-filter:saturate(140%) blur(6px)}
+.emp-mobtop-brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px;color:var(--text);min-width:0}
+.emp-mobtop-brand #emp-mobtop-co{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62vw;font-size:13.5px;font-weight:700}
+.emp-mobtop-mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#e85d3c,#d24a2c);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.emp-mobtop-actions{display:flex;gap:4px;flex-shrink:0}
+.emp-mobtop-actions button{width:38px;height:38px;border:none;background:transparent;color:var(--text-soft);font-size:18px;border-radius:9px;cursor:pointer}
+.emp-mobtop-actions button:active{background:var(--surface-2,rgba(255,255,255,.06))}
+#emp-mobnav{position:fixed;bottom:0;left:0;right:0;z-index:80;display:none;
+  background:var(--surface-1,#12100f);border-top:1px solid var(--hairline,rgba(255,255,255,.08));
+  padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));box-shadow:0 -6px 24px rgba(0,0,0,.28)}
+#emp-mobnav .mob-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  background:transparent;border:none;color:var(--text-soft);font-size:10px;font-weight:600;padding:6px 2px;border-radius:11px;cursor:pointer;min-height:52px;line-height:1.1}
+#emp-mobnav .mob-tab .mt-ic{width:23px;height:23px;display:flex;align-items:center;justify-content:center}
+#emp-mobnav .mob-tab.on{color:var(--accent,#e85d3c)}
+#emp-mobnav .mob-tab.on .mt-ic{transform:translateY(-1px)}
+#emp-mobnav .mob-tab:active{background:var(--surface-2,rgba(255,255,255,.05))}
+@media(max-width:640px){
+  body.hr-emp #hr_side{display:none}
+  body.hr-emp #emp-mobtop{display:flex}
+  body.hr-emp #emp-mobnav{display:flex}
+  body.hr-emp #hr_main{padding:66px 14px calc(80px + env(safe-area-inset-bottom,0px)) !important}
+  body.hr-emp .page-head{margin-top:2px}
+}
 
 /* ===== Professional UI polish ===== */
 body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
@@ -957,9 +983,18 @@ select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus
       <button class="side-foot-btn" onclick="logout()"><span class="lbl">Sign out</span></button>
     </div>
   </aside>
-  <main style="flex:1;min-width:0;padding:28px 34px 64px">
+  <main id="hr_main" style="flex:1;min-width:0;padding:28px 34px 64px">
     <div id="hr"></div>
   </main>
+  <!-- Employee mobile chrome: slim top bar + fixed bottom tab nav (shown only on small screens in employee mode) -->
+  <header id="emp-mobtop">
+    <div class="emp-mobtop-brand"><span class="emp-mobtop-mark">👥</span><span id="emp-mobtop-co">HR OS</span></div>
+    <div class="emp-mobtop-actions">
+      <button id="emp-mobtop-theme" onclick="hrToggleTheme()" title="Light / dark">🌙</button>
+      <button onclick="logout()" title="Sign out">⎋</button>
+    </div>
+  </header>
+  <nav id="emp-mobnav"></nav>
 </div>
 
 <div id="toast"></div>
@@ -1006,7 +1041,7 @@ function hrLoad(m){ return '<div class="load"><span class="spin"></span> '+esc(m
 function hrSkel(n){ var o=''; for(var i=0;i<(n||4);i++) o+='<div class="skel" style="height:62px;margin-bottom:10px"></div>'; return o; }
 /* ── v9: light / dark theme toggle (default = current light) ── */
 function hrApplyTheme(t){ var d=document.documentElement; d.setAttribute('data-theme', t==='dark'?'dark':'light'); var b=document.getElementById('hr_theme_btn'); if(b) b.innerHTML=ic(t==='dark'?'sun':'moon',15)+'<span class="lbl">'+(t==='dark'?'Light mode':'Dark mode')+'</span>'; }
-function hrToggleTheme(){ var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; var t=(cur==='dark')?'light':'dark'; storageSet('hros_theme',t); hrApplyTheme(t); }
+function hrToggleTheme(){ var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; var t=(cur==='dark')?'light':'dark'; storageSet('hros_theme',t); hrApplyTheme(t); if(typeof hrRenderMobileChrome==='function') hrRenderMobileChrome(); }
 function hrToggleNav(){ var s=document.querySelector('.side'); if(!s) return; var c=s.classList.toggle('collapsed'); storageSet('hros_nav_collapsed', c?'1':''); }
 (function(){ try{ if(storageGet('hros_theme')==='dark') document.documentElement.setAttribute('data-theme','dark'); }catch(_e){} })();
 function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
@@ -1373,6 +1408,19 @@ function hrSidebar(){
   });
   nav.innerHTML=html;
 }
+// Employee mobile chrome: slim top bar (company + theme + sign out) and a fixed bottom tab bar.
+// Only affects small screens in employee mode (gated by CSS on body.hr-emp + @media); no-op otherwise.
+var HR_MOB_SHORT={clock:'Clock',leave:'Leave',expenses:'Claims',payslip:'Payslip',profile:'Profile'};
+function hrRenderMobileChrome(){
+  document.body.classList.toggle('hr-emp', !!HR_EMP_MODE);
+  if(!HR_EMP_MODE) return;
+  var co=document.getElementById('emp-mobtop-co'); if(co) co.textContent=hrCompanyName();
+  var tb=document.getElementById('emp-mobtop-theme'); if(tb) tb.textContent=(document.documentElement.getAttribute('data-theme')==='dark'?'☀️':'🌙');
+  var nav=document.getElementById('emp-mobnav'); if(!nav) return;
+  nav.innerHTML=hrEmpNav().map(function(t){ var on=HR.view===t[0];
+    return '<button class="mob-tab'+(on?' on':'')+'" onclick="hrNav(\''+t[0]+'\')" aria-label="'+esc(t[2])+'"><span class="mt-ic">'+ic(t[1],22)+'</span>'+esc(HR_MOB_SHORT[t[0]]||t[2])+'</button>';
+  }).join('');
+}
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
   // Employee mode allowed views: clock (all employees), leave, expenses, payslip, profile.
@@ -1398,6 +1446,7 @@ function hrRender(){
   else if(HR.view==='profile') body=hrEmpProfile();
   else if(HR.view==='access') body=hrAccess();
   el.innerHTML=head+body;
+  hrRenderMobileChrome();
 }
 // ===== 🛡 Access & Roles (Master Admin only) =====
 var HRA={ data:null, loading:false, err:null };
