@@ -952,7 +952,7 @@ select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus
         <button class="side-foot-btn" id="hr_theme_btn" onclick="hrToggleTheme()" title="Switch light / dark theme"></button>
         <button class="side-foot-btn" onclick="hrToggleNav()" title="Collapse / expand the sidebar">↔</button>
       </div>
-      <button class="side-foot-btn accent" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← <span class="lbl">Finance OS</span></button>
+      <button class="side-foot-btn accent" id="hr_finance_btn" style="display:none" onclick="location.href='app.html'" title="Back to Finance OS (same login)">← <span class="lbl">Finance OS</span></button>
       <button class="side-foot-btn" onclick="hrPwModal(false)" title="Change your sign-in password">🔑 <span class="lbl">Change password</span></button>
       <button class="side-foot-btn" onclick="logout()"><span class="lbl">Sign out</span></button>
     </div>
@@ -1192,6 +1192,9 @@ function enterApp(){
   try{ if(storageGet('hros_nav_collapsed')==='1'){ var s=document.querySelector('.side'); if(s) s.classList.add('collapsed'); } }catch(_e){}
   HR_VIEWER = !!(ME && ME.role==='viewer');   // read-only access role
   HR_MASTER = !!(ME && ME.role==='admin');    // Master Admin — the only role that can manage users & roles
+  // Only the Master Admin also has the Finance Portal — hide the "← Finance OS" jump for HR-only roles
+  // (employee / hr_admin / viewer), who would otherwise land on the "HR OS access only" gate.
+  var _fb=document.getElementById('hr_finance_btn'); if(_fb) _fb.style.display=HR_MASTER?'':'none';
   if(HR_VIEWER && a) a.classList.add('viewer-mode');
   // Employees / approvers → self-service. Master Admin, HR Admin, Viewer → full HR views (viewer read-only, HR Admin full write minus user management).
   if(ME && ME.role && ME.role!=='admin' && ME.role!=='hr_admin' && ME.role!=='viewer'){ hrEmpBoot(); return; }
@@ -1204,6 +1207,9 @@ function hrRW(html){ return HR_VIEWER ? '' : html; }   // hide write-only contro
 // Employee / approver mode: no hr_bootstrap (admin-only) — identity + config come from hr_rc_config; only the Reimbursement module is shown.
 async function hrEmpBoot(){
   HR_EMP_MODE=true;
+  // Employees work in a single company — hide the whole company picker box (not just the <select>,
+  // which left a dangling "COMPANY" header).
+  var cbox=document.querySelector('.side-company'); if(cbox) cbox.style.display='none';
   var sel=document.getElementById('hr_company'); if(sel) sel.style.display='none';
   var el=document.getElementById('hr'); if(el) el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading…</div></div>';
   try{
