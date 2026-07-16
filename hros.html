@@ -986,6 +986,7 @@ var ICONS={
  expenses:'<rect x="2" y="7" width="20" height="13" rx="1.5"/><path d="M2 11h20M6 3h12"/>',
  payroll:'<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
  payslip:'<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>',
+ user:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
  calculator:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>',
  yearend:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
@@ -1306,7 +1307,8 @@ var HR_EMP_NAV=[
   ['clock','clock','Time Clock','Me','Clock in / out and see your hours'],
   ['leave','leave','Leave','Me','Apply for leave and check your balance'],
   ['expenses','expenses','Reimbursement','Me','Submit and track your expense claims'],
-  ['payslip','payslip','Payslip','Me','View and download your monthly payslips']
+  ['payslip','payslip','Payslip','Me','View and download your monthly payslips'],
+  ['profile','user','My Profile','Me','View and update your personal details']
 ];
 // hrNeedsClock = payroll auto-fills basic from clocked hours (hourly/daily/part-time) AND drives the default
 // landing view. Every employee can still open Time Clock to punch attendance — the nav shows it for all.
@@ -1324,9 +1326,9 @@ function hrSidebar(){
 }
 function hrRender(){
   var el=document.getElementById('hr'); if(!el||!HR.data) return;
-  // Employee mode allowed views: clock (all employees), leave, expenses, payslip.
+  // Employee mode allowed views: clock (all employees), leave, expenses, payslip, profile.
   if(HR_EMP_MODE){ var canClk=hrNeedsClock(RC.me&&RC.me.employee);
-    if(['clock','leave','expenses','payslip'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
+    if(['clock','leave','expenses','payslip','profile'].indexOf(HR.view)<0) HR.view=(canClk?'clock':'expenses'); }
   hrSidebar();
   if(!HR_MASTER && HR.view==='access') HR.view='dashboard';   // only the Master Admin can reach the role manager
   var cur=((HR_EMP_MODE?HR_EMP_NAV:HR_NAV).find(function(t){return t[0]===HR.view;})||['','','HR','HR OS','']);
@@ -1344,6 +1346,7 @@ function hrRender(){
   else if(HR.view==='claims') body=hrClaims();
   else if(HR.view==='expenses') body=hrRC();
   else if(HR.view==='payslip') body=hrEmpPayslips();
+  else if(HR.view==='profile') body=hrEmpProfile();
   else if(HR.view==='access') body=hrAccess();
   el.innerHTML=head+body;
 }
@@ -2314,6 +2317,80 @@ function hrEmpPayslipDownload(i){
       toast('Payslip downloaded ✓');
     }catch(err){ toast('Could not generate PDF: '+(err.message||err),true); }
   });
+}
+// ===== 👤 My Profile (self-service: employee edits their own personal details on the MASTER record) =====
+var EPRO={ banks:null, saving:false };
+function hrEmpProfile(){
+  var emp=RC.me&&RC.me.employee;
+  if(!emp) return hrEmpty('user','Your login isn’t linked to an employee profile yet — ask HR to enable your access.');
+  if(EPRO.banks===null){ EPRO.banks=false; call({api:'hr_banks_list'}).then(function(r){ EPRO.banks=(r&&r.ok&&r.banks)?r.banks.filter(function(b){return b.active!==false;}):[]; if(HR.view==='profile') hrRender(); }).catch(function(){ EPRO.banks=[]; }); }
+  var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+  var g=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+  var inp=function(id,val,ph){ return '<input id="'+id+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'" style="'+S+'">'; };
+  var ro=function(l,v){ return '<div><div class="muted" style="font-size:11px;margin-bottom:2px">'+l+'</div><div style="font-size:13px;font-weight:600">'+esc(v==null||v===''?'—':v)+'</div></div>'; };
+  // Read-only employment card — HR-managed master fields
+  var roCard='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Employment</h3><span class="pill pill-neu" style="font-size:10px">HR-managed</span></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">'+
+      ro('Employee no', emp.emp_no)+ro('Name', emp.name)+ro('Company', hrCompanyName())+ro('Department', emp.dept)+ro('Position', emp.position)+
+      ro('Employment type', emp.employment_type||'Full-time')+ro('Join date', emp.join_date)+ro('Login email', emp.email)+
+    '</div><div class="muted" style="font-size:11px;margin-top:10px">These are maintained by HR — contact HR if anything here is wrong (including your login email).</div></div>';
+  var ms=String(emp.marital_status||'single').toLowerCase();
+  var bankOpts='<option value="">— select bank —</option>'+((EPRO.banks||[]).map(function(b){ return '<option value="'+esc(b.code)+'"'+(emp.bank_code===b.code?' selected':'')+'>'+esc(b.name)+'</option>'; }).join(''));
+  var form='<div class="panel"><div class="panel-hd"><h3>My details</h3></div>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:12px">Updates save straight into your official HR record (the same master data HR and payroll use). Every change is logged.</div>'+
+    '<div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Personal</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">'+
+      g('IC number',inp('pf_ic',emp.ic_no,'e.g. 901231-07-1234'))+
+      g('Date of birth','<input type="date" id="pf_dob" value="'+esc(emp.date_of_birth||'')+'" style="'+S+'">')+
+      g('Gender','<select id="pf_gender" style="'+S+'"><option value=""'+(!emp.gender?' selected':'')+'>—</option><option'+(emp.gender==='Male'?' selected':'')+'>Male</option><option'+(emp.gender==='Female'?' selected':'')+'>Female</option></select>')+
+      g('Nationality',inp('pf_nat',emp.nationality,'e.g. Malaysian'))+
+      g('Marital status','<select id="pf_ms" style="'+S+'">'+['single','married','divorced','widowed'].map(function(x){return '<option value="'+x+'"'+(ms===x?' selected':'')+'>'+x.charAt(0).toUpperCase()+x.slice(1)+'</option>';}).join('')+'</select>')+
+      g('Children','<input type="number" id="pf_kids" min="0" max="20" value="'+(Number(emp.num_children)||0)+'" style="'+S+'">')+
+      g('&nbsp;','<label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding-top:8px"><input type="checkbox" id="pf_sw"'+(emp.spouse_working?' checked':'')+' style="accent-color:var(--coral)"> Spouse is working</label>')+
+    '</div>'+
+    '<div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Contact</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">'+
+      g('Phone',inp('pf_phone',emp.phone,'e.g. 012-3456789'))+
+      g('Emergency contact name',inp('pf_ename',emp.emergency_name))+
+      g('Emergency contact phone',inp('pf_ephone',emp.emergency_phone))+
+    '</div>'+
+    '<div style="margin-bottom:14px">'+g('Home address','<textarea id="pf_addr" rows="2" style="'+S+';resize:vertical">'+esc(emp.address||'')+'</textarea>')+'</div>'+
+    '<div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Bank &amp; statutory</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">'+
+      g('Bank','<select id="pf_bank" style="'+S+'">'+bankOpts+'</select>')+
+      g('Account holder name',inp('pf_holder',emp.bank_holder))+
+      g('Account number',inp('pf_acct',emp.bank_account,'digits only'))+
+      g('EPF (KWSP) no',inp('pf_epf',emp.epf_no))+
+      g('SOCSO (PERKESO) no',inp('pf_socso',emp.socso_no))+
+      g('Income tax (TIN) no',inp('pf_tax',emp.tax_no))+
+    '</div>'+
+    '<button class="btn p sm" id="pf_save" onclick="hrEmpProfileSave()">Save my details</button>'+
+    '<span class="muted" style="font-size:11px;margin-left:10px">Marital status &amp; children affect your monthly PCB (tax); your bank details are used for salary payment — please double-check them.</span>'+
+  '</div>';
+  return roCard+form;
+}
+async function hrEmpProfileSave(){
+  if(EPRO.saving) return;
+  var v=function(id){ var el=document.getElementById(id); return el?el.value:''; };
+  var acct=String(v('pf_acct')||'').replace(/\D/g,'');
+  if(v('pf_acct') && !acct){ toast('Account number should be digits',true); return; }
+  var btn=document.getElementById('pf_save'); EPRO.saving=true; if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    var r=await call({api:'hr_my_profile_save', profile:{
+      ic:v('pf_ic'), dob:v('pf_dob'), gender:v('pf_gender'), nationality:v('pf_nat'),
+      maritalStatus:v('pf_ms'), numChildren:v('pf_kids'), spouseWorking:!!(document.getElementById('pf_sw')||{}).checked,
+      phone:v('pf_phone'), address:v('pf_addr'), emergencyName:v('pf_ename'), emergencyPhone:v('pf_ephone'),
+      bankCode:v('pf_bank'), bankHolder:v('pf_holder'), bankAccount:acct,
+      epfNo:v('pf_epf'), socsoNo:v('pf_socso'), taxNo:v('pf_tax')
+    }});
+    if(r&&r.ok){
+      if(r.employee) RC.me.employee=r.employee;
+      toast(r.unchanged?'No changes to save':'Profile updated ✓ ('+((r.changed||[]).length)+' field'+(((r.changed||[]).length)===1?'':'s')+')');
+      hrRender(); return;
+    }
+    toast((r&&r.error)||'Save failed',true);
+  }catch(e){ toast(e.message||e,true); }
+  finally{ EPRO.saving=false; var b2=document.getElementById('pf_save'); if(b2){b2.disabled=false;b2.textContent='Save my details';} }
 }
 var LVA={ data:null, loading:false, err:null, flowEdit:null, applyOpen:false, balOpen:false, balEmp:null, balData:null, balLoading:false };
 var LV_SS='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
