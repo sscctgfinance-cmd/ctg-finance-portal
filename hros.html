@@ -2267,6 +2267,14 @@ function hrEmpPayslipsRender(){
   var slips=d.payslips||[];
   if(!slips.length) return hrEmpty('payslip','No payslips yet — they’ll appear here once a month’s payroll is finalised by HR.');
   var dedTot=function(s){ return (Number(s.p.epfEe)||0)+(Number(s.p.socsoEe)||0)+(Number(s.p.eisEe)||0)+(Number(s.p.pcb)||0)+((s.d&&s.d.deductions)||[]).reduce(function(a,x){return a+(Number(x.amount)||0);},0); };
+  // ── totals: how much has this employee actually earned (per year + all-time) ──
+  var byYear={};
+  slips.forEach(function(s){ var o=byYear[s.year]||(byYear[s.year]={year:s.year,gross:0,ded:0,net:0,n:0}); o.gross+=Number(s.p.gross)||0; o.ded+=dedTot(s); o.net+=Number(s.p.net)||0; o.n++; });
+  var years=Object.keys(byYear).map(Number).sort(function(a,b){return b-a;});
+  var curY=years[0], cur=byYear[curY];
+  var allGross=slips.reduce(function(a,s){return a+(Number(s.p.gross)||0);},0);
+  var allNet=slips.reduce(function(a,s){return a+(Number(s.p.net)||0);},0);
+  var allDed=slips.reduce(function(a,s){return a+dedTot(s);},0);
   var rows=slips.map(function(s,i){ var label=HR_MONTHS[s.month]+' '+s.year;
     return '<tr><td><b>'+esc(label)+'</b></td>'+
       '<td class="amt">'+M(s.p.gross)+'</td>'+
@@ -2274,13 +2282,22 @@ function hrEmpPayslipsRender(){
       '<td class="amt"><b style="color:var(--green-soft)">'+M(s.p.net)+'</b></td>'+
       '<td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="hrEmpPayslipDownload('+i+')">'+ic('download',13)+' PDF</button></td></tr>';
   }).join('');
-  var latest=slips[0];
-  var hero='<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:14px">'+
-    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(latest.p.net)+'</div><div class="l">Latest net pay <span class="muted">· '+esc(HR_MONTHS[latest.month]+' '+latest.year)+'</span></div></div>'+
-    '<div class="card"><div class="n">'+M(latest.p.gross)+'</div><div class="l">Latest gross pay</div></div>'+
+  var tfoot='<tr style="border-top:2px solid var(--border-strong)"><td><b>Total ('+slips.length+' month'+(slips.length===1?'':'s')+')</b></td>'+
+    '<td class="amt"><b>'+M(allGross)+'</b></td><td class="amt" style="color:var(--red-soft)"><b>'+M(allDed)+'</b></td>'+
+    '<td class="amt"><b style="color:var(--green-soft)">'+M(allNet)+'</b></td><td></td></tr>';
+  var hero='<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:14px">'+
+    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(cur.net)+'</div><div class="l">Take-home '+curY+' <span class="muted">· '+cur.n+' mth</span></div></div>'+
+    '<div class="card"><div class="n">'+M(cur.gross)+'</div><div class="l">Gross pay '+curY+'</div></div>'+
+    '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(allNet)+'</div><div class="l">Total take-home <span class="muted">· all time</span></div></div>'+
     '<div class="card"><div class="n">'+slips.length+'</div><div class="l">Payslip'+(slips.length===1?'':'s')+' available</div></div>'+
   '</div>';
-  return hero+'<div class="panel"><div class="panel-hd"><h3>My payslips</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Period</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;padding:10px 2px 0">Figures shown are your finalised monthly payroll. Tap <b>PDF</b> to download or print a full payslip (basic, allowances, EPF/SOCSO/EIS/PCB, net pay and leave balances).</div></div>';
+  // per-year breakdown (only worth showing when the history spans more than one year)
+  var yearPanel='';
+  if(years.length>1){
+    var yr=years.map(function(y){ var o=byYear[y]; return '<tr><td><b>'+y+'</b> <span class="muted">· '+o.n+' mth</span></td><td class="amt">'+M(o.gross)+'</td><td class="amt" style="color:var(--red-soft)">'+M(o.ded)+'</td><td class="amt"><b style="color:var(--green-soft)">'+M(o.net)+'</b></td></tr>'; }).join('');
+    yearPanel='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Earnings by year</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Year</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Take-home</th></tr></thead><tbody>'+yr+'</tbody></table></div></div>';
+  }
+  return hero+yearPanel+'<div class="panel"><div class="panel-hd"><h3>My payslips</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Period</th><th class="amt">Gross</th><th class="amt">Deductions</th><th class="amt">Net pay</th><th></th></tr></thead><tbody>'+rows+'</tbody><tfoot>'+tfoot+'</tfoot></table></div><div class="muted" style="font-size:11px;padding:10px 2px 0">Totals are your finalised monthly payroll (take-home = net pay after EPF/SOCSO/EIS/PCB & deductions). Tap <b>PDF</b> to download or print any month’s full payslip.</div></div>';
 }
 function hrEmpPayslipDownload(i){
   var d=EPS.data; if(!d||!d.payslips||!d.payslips[i]) return;
