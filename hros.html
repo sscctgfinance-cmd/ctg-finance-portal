@@ -1930,7 +1930,7 @@ function hrRCSettings(){
   } else if(tab==='approvers'){
     var byRole={}; (cfg.role_approvers||[]).forEach(function(a){ (byRole[a.role]=byRole[a.role]||[]).push(a); });
     var empName=function(id){ var e=(cfg.employees||[]).find(function(x){return x.id===id;}); return e?e.name:id; };
-    var roles=[['manager','Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+    var roles=[['hr','HR'],['director','Director / Boss']];   // Manager & Finance retired per operator
     body='<div class="panel"><div class="panel-hd"><h3>Role Approvers</h3></div><div class="muted" style="font-size:11.5px;margin-bottom:10px">Assign who approves at each role level. (Until assigned, an admin can approve any step.)</div>'+roles.map(function(r){ var list=(byRole[r[0]]||[]).map(function(a){return '<span class="pill pill-coral" style="margin-right:4px">'+esc(empName(a.employee_id))+' <a onclick="hrRCDelApprover(\''+a.id+'\')" style="cursor:pointer">✕</a></span>';}).join('')||'<span class="muted" style="font-size:12px">none</span>'; return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><div style="width:120px;font-weight:600;font-size:13px">'+r[1]+'</div><div style="flex:1">'+list+'</div><button class="btn xs" onclick="hrRCAddApprover(\''+r[0]+'\')">+ add</button></div>';}).join('')+'</div>';
   }
   return tabs+body;
@@ -2552,7 +2552,7 @@ function hrLeaveAdminRender(){
   var flowSel=function(s,i){
     var val = s.approver_type==='employee' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
     var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
-    var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+    var rl=[['role:hr','Any HR'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
     return '<select onchange="hrLeaveFlowSet('+i+',this.value)" style="'+LV_MINI+';min-width:210px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
   };
   var flowRows=fe.map(function(s,i){
@@ -2561,7 +2561,7 @@ function hrLeaveAdminRender(){
   var flowPanel='<div class="panel" style="margin-bottom:14px;max-width:520px"><div class="panel-hd"><h3>Approval flow</h3><span class="muted" style="font-size:11px">levels every leave request passes through</span></div>'+
     (flowRows||'<div class="muted" style="font-size:12px;margin-bottom:6px">No levels — leave goes straight to any admin.</div>')+
     '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn xs" onclick="hrLeaveFlowAdd()">+ Add level</button><button class="btn p xs" onclick="hrLeaveFlowSave()">💾 Save flow</button></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">Pick a specific person (by name) for each level, or use a role: "Applicant’s direct manager" resolves per employee; HR / Finance / Director resolve to whoever holds that role. Applies to future requests.</div></div>';
+    '<div class="muted" style="font-size:11px;margin-top:8px">Pick a specific person (by name) for each level, or use a role — HR / Director resolve to whoever holds that role. Applies to future requests.</div></div>';
   // ── requests table ──
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0;
     var col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--coral-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
@@ -2643,7 +2643,7 @@ function hrApvFlowSel(s,i){
   var emps=hrApvEmps();
   var val = s.approver_type==='employee' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
   var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
-  var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+  var rl=[['role:hr','Any HR'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
   return '<select onchange="hrApvLeaveSet('+i+',this.value)" style="'+APV_MINI+';min-width:230px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
 }
 function hrApvLeave(){
@@ -2682,7 +2682,7 @@ function hrApvRc(){
     '<div class="muted" style="font-size:11px;margin-top:8px">A claim routes to the <b>highest-priority active</b> workflow whose amount range (and optional department / type filter) match. If none match, it goes to Finance. “Manager” resolves to the employee’s direct manager.</div></div>';
   var byRole={}; (cfg.role_approvers||[]).forEach(function(a){ (byRole[a.role]=byRole[a.role]||[]).push(a); });
   var empName=function(id){ var e=hrApvEmps().find(function(x){return x.id===id;}); return e?e.name:id; };
-  var roles=[['manager','Manager'],['hr','HR'],['finance','Finance'],['director','Director / Boss']];
+  var roles=[['hr','HR'],['director','Director / Boss']];   // Manager & Finance retired per operator
   var emps=hrApvEmps();
   var apRows=roles.map(function(r){
     var list=(byRole[r[0]]||[]).map(function(a){return '<span class="pill pill-coral" style="margin-right:5px">'+esc(empName(a.employee_id))+' '+hrRW('<a onclick="hrApvApproverDel(\''+a.id+'\')" style="cursor:pointer">✕</a>')+'</span>';}).join('')||'<span class="muted" style="font-size:12px">none — an admin approves this level until you assign someone</span>';
@@ -2703,7 +2703,7 @@ function hrApvWfStepSel(s,i){
   var emps=hrApvEmps();
   var val = s.approver_type==='user' ? ('emp:'+(s.approver_employee_id||'')) : s.approver_type==='manager' ? 'manager' : ('role:'+(s.approver_role||''));
   var ppl=emps.map(function(e){return '<option value="emp:'+esc(e.id)+'"'+(val==='emp:'+e.id?' selected':'')+'>'+esc(e.name)+'</option>';}).join('');
-  var rl=[['manager','Applicant’s direct manager'],['role:hr','Any HR'],['role:finance','Any Finance'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
+  var rl=[['role:hr','Any HR'],['role:director','Any Director']].map(function(o){return '<option value="'+o[0]+'"'+(val===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
   return '<select onchange="hrApvWfStepSet('+i+',this.value)" style="'+APV_MINI+';min-width:230px">'+(ppl?('<optgroup label="People">'+ppl+'</optgroup>'):'')+'<optgroup label="Roles">'+rl+'</optgroup></select>';
 }
 // Editing steps re-renders the whole form, so capture the header inputs into state first — otherwise
