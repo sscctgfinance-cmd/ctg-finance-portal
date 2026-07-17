@@ -3052,6 +3052,7 @@ function hrEmployerPanel(){
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'+
       g('Company name',inp('name',e.name,'e.g. I PROCARE MALAYSIA SDN BHD'))+
       g('SSM registration no',inp('reg_no',e.reg_no,'e.g. 201901000123 (1234567-A)'))+
+      g('Company code <span style="opacity:.7">— prefixes claim numbers</span>',inp('doc_code',e.doc_code,'e.g. IPC')+'<div class="muted" style="font-size:10.5px;margin-top:3px">Claims are numbered <b>'+esc(String(e.doc_code||'IPC').toUpperCase())+'-'+(new Date().getFullYear())+String(new Date().getMonth()+1).padStart(2,'0')+'-0001</b>, restarting each month. 2–6 letters/digits, unique per company. Changing it only affects new claims.</div>')+
       g('LHDN employer no (E)',inp('employer_no',e.employer_no,'E 1234567890'))+
       g('EPF employer no',inp('epf_employer_no',e.epf_employer_no,''))+
       g('SOCSO employer no',inp('socso_employer_no',e.socso_employer_no,''))+
@@ -3063,7 +3064,7 @@ function hrEmployerPanel(){
     '<div style="margin-top:8px"><input type="file" id="emp_logo_file" accept="image/png,image/jpeg" style="font-size:12px" onchange="hrEmployerLogoPick(this)"><span class="muted" style="font-size:10.5px;margin-left:6px">PNG/JPG · shown top-left on documents · auto-resized</span></div></div>'+
     '<div style="margin-top:16px"><button class="btn p sm" onclick="hrEmployerSave()">💾 Save company details</button></div></div>';
 }
-function hrEmployerSyncInputs(){ if(!HR_EMP_EDIT)return; var v=function(id){var el=document.getElementById('emp_'+id);return el?el.value:undefined;}; ['name','reg_no','employer_no','epf_employer_no','socso_employer_no','phone','email','address'].forEach(function(k){ var val=v(k); if(val!==undefined) HR_EMP_EDIT[k]=val; }); }
+function hrEmployerSyncInputs(){ if(!HR_EMP_EDIT)return; var v=function(id){var el=document.getElementById('emp_'+id);return el?el.value:undefined;}; ['name','reg_no','doc_code','employer_no','epf_employer_no','socso_employer_no','phone','email','address'].forEach(function(k){ var val=v(k); if(val!==undefined) HR_EMP_EDIT[k]=val; }); }
 function hrEmployerLogoClear(){ hrEmployerSyncInputs(); if(HR_EMP_EDIT) HR_EMP_EDIT.logo=null; hrRender(); }
 function hrEmployerLogoPick(input){
   var f=input&&input.files&&input.files[0]; if(!f)return;
@@ -3085,6 +3086,9 @@ function hrEmployerLogoPick(input){
 async function hrEmployerSave(){
   hrEmployerSyncInputs(); if(!HR_EMP_EDIT)return;
   if(!String(HR_EMP_EDIT.name||'').trim()){ toast('Company name is required',true); return; }
+  var dc=String(HR_EMP_EDIT.doc_code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(dc.length<2||dc.length>6){ toast('Company code must be 2–6 letters or digits (e.g. IPC)',true); return; }
+  HR_EMP_EDIT.doc_code=dc;
   var r=await call({api:'hr_employer_save', tenant:HR.tenant, employer:HR_EMP_EDIT});
   if(r&&r.ok){ toast('Company details saved ✓'); if(HR.data) HR.data.employer=r.employer; HR_EMPLOYER=r.employer||null; HR_COMPANY=hrCompanyName(); HR.pay.showEmployer=false; hrRender(); }
   else toast((r&&r.error)||'Save failed',true);

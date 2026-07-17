@@ -268,6 +268,22 @@ async function attachAssignees(steps:any[], tenantId:any){
     else if(s.approver_role) s.assignee_name = ((roleNames[s.approver_role]||[]).join(" / "))||null;
   });
 }
+// Claim numbers are <COMPANY CODE>-YYYYMM-0001, restarting at 0001 each month for each company.
+// The counter lives in Postgres (hr_next_doc_no, atomic upsert) rather than a max()+1 here, because
+// claim_no is globally UNIQUE — two people submitting at the same moment would otherwise compute the
+// same number and one of them would hit a duplicate-key error on insert.
+async function rcNextClaimNo(tenantId:string){
+  const { data: ei } = await sb.from("hr_employer_info").select("doc_code").eq("tenant_id",tenantId).maybeSingle();
+  const code = String((ei&&ei.doc_code)||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,6) || "CLM";
+  // Number by the Malaysian month, not UTC: a claim filed at 02:00 MYT on the 1st is still the
+  // previous day in UTC and would otherwise be numbered into the month that just closed.
+  const myt = new Date(Date.now() + 8*3600*1000);
+  const period = myt.getUTCFullYear()+String(myt.getUTCMonth()+1).padStart(2,"0");
+  const scope = code+"-"+period;
+  const { data:n, error } = await sb.rpc("hr_next_doc_no",{ p_scope: scope });
+  if(error || n==null) throw new Error("Could not allocate a claim number"+(error?(": "+error.message):"")+". Nothing was saved — try again.");
+  return scope+"-"+String(n).padStart(4,"0");
+}
 async function rcApproverQueue(tenant:string, who:any){
   const PEND=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
   const { data:claims } = await sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).in("status",PEND).order("created_at",{ascending:false}).limit(500);
@@ -4546,7 +4562,8 @@ Deno.serve(async (req)=>{
         await sb.from("hr_claim_requests").update(row).eq("id",c.id);
       } else {
         row.status="Draft"; row.created_by=(me.user&&me.user.id)||null;
-        const now=new Date(); row.claim_no="CLM-"+now.getUTCFullYear()+String(now.getUTCMonth()+1).padStart(2,"0")+"-"+String(Date.now()).slice(-6);
+        try { row.claim_no = await rcNextClaimNo(tenant); }
+        catch(e:any){ return j({ ok:false, error:String((e&&e.message)||e) }); }
         const { data: ins, error } = await sb.from("hr_claim_requests").insert(row).select("id").single();
         if(error) return j({ ok:false, error:error.message });
         claimId=ins.id; await rcAuditLog(claimId,"create",me,null,"Draft",{});
@@ -5063,11 +5080,22 @@ Deno.serve(async (req)=>{
       else if (typeof e.logo==="string" && e.logo.indexOf("data:image/")===0){ if(e.logo.length>400000) return j({ ok:false, error:"Logo image is too large — use one under ~250 KB." }); logo=e.logo; }
       const patch:any = { tenant_id:tenant, name:s(e.name,200), employer_no:s(e.employer_no,40), reg_no:s(e.reg_no,60), address:s(e.address,400), phone:s(e.phone,60), email:s(e.email,120), epf_employer_no:s(e.epf_employer_no,40), socso_employer_no:s(e.socso_employer_no,40), updated_at:new Date().toISOString() };
       if (logo!==undefined) patch.logo = logo;
+      // doc_code prefixes this company's claim numbers (IPC-202607-0001). Absent = keep the current one:
+      // an older client that doesn't send the field must not blank it and silently reset numbering.
+      if (e.doc_code!==undefined) {
+        const dc = String(e.doc_code||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,6);
+        if (!dc) return j({ ok:false, error:"Company code is required — it prefixes this company's claim numbers." });
+        patch.doc_code = dc;
+      }
       const { data: existing } = await sb.from("hr_employer_info").select("id").eq("tenant_id",tenant).maybeSingle();
       const res:any = existing ? await sb.from("hr_employer_info").update(patch).eq("id",existing.id).select().single()
                                : await sb.from("hr_employer_info").insert(patch).select().single();
-      if (res.error) return j({ ok:false, error:res.error.message });
-      await logAudit(me,"hr_employer_save",tenant,{ name:patch.name, logo_changed: logo!==undefined });
+      if (res.error) {
+        if (String(res.error.message||"").indexOf("hr_employer_info_doc_code_key")>=0)
+          return j({ ok:false, error:"Company code \""+patch.doc_code+"\" is already used by another company — codes must be unique." });
+        return j({ ok:false, error:res.error.message });
+      }
+      await logAudit(me,"hr_employer_save",tenant,{ name:patch.name, doc_code:patch.doc_code, logo_changed: logo!==undefined });
       return j({ ok:true, employer: res.data });
     }
     if (api === "hr_payroll_grid_save") {
@@ -5153,7 +5181,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v120 segregation-of-duties: fixes one person approving every level of a chain. rcCanActStep no longer short-circuits on isAdmin — being an admin does NOT satisfy a step, only the configured approver (employee id or claim role) may act. New sodViolation(): nobody may act on two steps of the same request, and nobody may approve their own. Enforced in rcDecideOne + hr_leave_decide, and mirrored into hr_rc_get.can_act / rcApproverQueue / hr_leave_pending so the button hides instead of 403-ing. canActOrUnassigned() keeps a narrow admin fallback for steps with NO assignable approver (empty chain, or manager-type step where the employee has no manager_id) — otherwise those would deadlock forever. Also v119 company-branding: hr_employer_save + employer row returned by hr_my_payslips/hr_rc_get for logo + company details on the payslip and claim form." });
+    return j({ ok:true, hint:"portal v121 claim numbering: claim_no is now <COMPANY CODE>-YYYYMM-0001 (e.g. IPC-202607-0001), restarting at 0001 each MYT month per company — was CLM-YYYYMM-<last 6 digits of epoch ms>. New rcNextClaimNo() allocates via the hr_next_doc_no(scope) RPC (atomic upsert on hr_doc_counters); claim_no is globally UNIQUE so a max()+1 in JS would collide on concurrent submits. Company code lives in hr_employer_info.doc_code, editable in HR OS -> Payroll -> Company, unique across companies, 2-6 alnum. DB fixes: hr_employer_info had id integer DEFAULT 1 + CHECK (id=1) — a single-row table — so any 2nd company row failed on the primary key; now a real sequence with tenant_id unique. Also v120 segregation-of-duties (admin is not an approver; nobody approves two levels or their own; canActOrUnassigned keeps the no-assignee deadlock escape) and v119 company-branding (hr_employer_save + employer row on payslip / claim form)." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
