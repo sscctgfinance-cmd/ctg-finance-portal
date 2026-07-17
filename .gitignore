@@ -1,0 +1,12 @@
+# Unrelated projects that happen to live under this folder — never publish them.
+# This repo is PUBLIC (GitHub Pages), so anything committed here is world-readable.
+/ar-recon/
+/ctg-bep-website/
+/CTG_SSC_FINANCE_AUTOMATION/
+/CTG-Finance-Portal-Package/
+/.claude/
+
+# Local scratch
+*.log
+.DS_Store
+Thumbs.db
