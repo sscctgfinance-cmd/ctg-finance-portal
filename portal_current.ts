@@ -235,15 +235,20 @@ async function sodViolation(table:string, idField:string, reqId:string, stepId:a
 }
 // Resolve the portal-user id in each step's actor field → a display name (employee name preferred,
 // else portal user name/email), attached as nameField. Used by the leave & reimbursement timelines.
-async function attachActorNames(steps:any[], idField:string, nameField:string){
+// withSig also attaches the actor's signature image as <nameField>_sig. Opt-in: the leave list calls
+// this for hundreds of requests at once, and repeating the same ~15 KB image per step would turn a
+// small JSON response into megabytes. Only the single-claim view needs it.
+async function attachActorNames(steps:any[], idField:string, nameField:string, withSig?:boolean){
   const ids = Array.from(new Set((steps||[]).map((s:any)=>s[idField]).filter(Boolean)));
   if(!ids.length) return;
-  const nameById:any={};
-  const { data: eA } = await sb.from("hr_employees").select("user_id,name").in("user_id",ids);
-  (eA||[]).forEach((e:any)=>{ if(e.user_id) nameById[e.user_id]=e.name; });
+  const nameById:any={}; const sigById:any={};
+  const { data: eA } = await sb.from("hr_employees").select("user_id,name"+(withSig?",signature":"")).in("user_id",ids);
+  (eA||[]).forEach((e:any)=>{ if(e.user_id){ nameById[e.user_id]=e.name; if(withSig && e.signature) sigById[e.user_id]=e.signature; } });
   const missing = ids.filter((id:any)=>!nameById[id]);
   if(missing.length){ const { data: uA } = await sb.from("portal_users").select("id,name,email").in("id",missing); (uA||[]).forEach((u:any)=>{ nameById[u.id]=u.name||u.email; }); }
-  (steps||[]).forEach((s:any)=>{ if(s[idField]) s[nameField]=nameById[s[idField]]||null; });
+  // The actor's signature image rides along so the claim form can stamp it above the signature line.
+  // Only for people who actually acted on this request — not a directory of everyone's signature.
+  (steps||[]).forEach((s:any)=>{ if(s[idField]){ s[nameField]=nameById[s[idField]]||null; if(sigById[s[idField]]) s[nameField+"_sig"]=sigById[s[idField]]; } });
 }
 // Attach `assignee_name` = the EXPECTED approver of each step: the specific employee assigned
 // (approver_employee_id, an hr_employees.id — also the resolved direct-manager), else whoever holds
@@ -4457,6 +4462,35 @@ Deno.serve(async (req)=>{
       return j({ ok:true, runId:run.id });
     }
     // ===== Reimbursement / Claim module (hr_rc_*) =====
+    if (api === "hr_signature_save") {
+      // Your own handwritten signature, stamped on the reimbursement form next to your name.
+      // Self-service only by default: a signature is forgeable by anyone who can print the form, so
+      // one person must not be able to install another person's. hrManage may set one for an employee
+      // with no login yet (E002/E009/E010/E011 etc) — that is audited as on_behalf.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      let empId = who.employee && who.employee.id;
+      let onBehalf = false;
+      if (b.employee_id && String(b.employee_id)!==String(empId||"")) {
+        if (!who.isAdmin) return j({ ok:false, error:"You can only set your own signature." }, 403);
+        const { data: te } = await sb.from("hr_employees").select("id,tenant_id,user_id").eq("id",String(b.employee_id)).maybeSingle();
+        if (!te) return j({ ok:false, error:"employee not found" });
+        if (te.user_id) return j({ ok:false, error:"That employee has a login — they must add their own signature." }, 403);
+        const alw = await allowedTenants(b.token); if (alw.length && te.tenant_id && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_signature_save",te.tenant_id);
+        empId = te.id; onBehalf = true;
+      }
+      if (!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
+      let sig:any = undefined;
+      if (b.signature===null) sig = null;
+      else if (typeof b.signature==="string" && b.signature.indexOf("data:image/")===0) {
+        if (b.signature.length>200000) return j({ ok:false, error:"Signature image is too large — draw it again or use a smaller file." });
+        sig = b.signature;
+      } else return j({ ok:false, error:"invalid signature image" });
+      const { error } = await sb.from("hr_employees").update({ signature:sig, signature_updated_at:new Date().toISOString() }).eq("id",empId);
+      if (error) return j({ ok:false, error:error.message });
+      await logAudit(me,"hr_signature_save",String(empId),{ cleared: sig===null, on_behalf:onBehalf });
+      return j({ ok:true, signature:sig });
+    }
     if (api === "hr_rc_config") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
@@ -4933,7 +4967,7 @@ Deno.serve(async (req)=>{
         sb.from("hr_claim_declarations").select("*").eq("claim_id",id).order("declared_at",{ascending:false}).limit(1)
       ]);
       const cl:any=claimR.data; const allSteps:any[]=steps.data||[];
-      await attachActorNames(allSteps, "acted_by", "acted_by_name");   // who actually approved each step
+      await attachActorNames(allSteps, "acted_by", "acted_by_name", true);   // who approved each step (+ their signature)
       await attachAssignees(allSteps, cl&&cl.tenant_id);               // who is EXPECTED to approve each step
       if(cl){ const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(cl.tenant_id) < 0) return j({ ok:false, error:"forbidden" }, 403); }
       if(!who.isAdmin){
@@ -4951,7 +4985,9 @@ Deno.serve(async (req)=>{
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
       const { data: rcEmployer } = cl ? await sb.from("hr_employer_info").select("*").eq("tenant_id",cl.tenant_id).maybeSingle() : { data:null } as any;
-      return j({ ok:true, claim:cl, employer: rcEmployer||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:(who.isAdmin||who.roles.indexOf("finance")>=0), is_admin:who.isAdmin });
+      // The claimant's own signature — goes above "Prepared by" on the form.
+      const { data: rcSigner } = cl ? await sb.from("hr_employees").select("signature").eq("id",cl.employee_id).maybeSingle() : { data:null } as any;
+      return j({ ok:true, claim:cl, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:(who.isAdmin||who.roles.indexOf("finance")>=0), is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -5181,7 +5217,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v121 claim numbering: claim_no is now <COMPANY CODE>-YYYYMM-0001 (e.g. IPC-202607-0001), restarting at 0001 each MYT month per company — was CLM-YYYYMM-<last 6 digits of epoch ms>. New rcNextClaimNo() allocates via the hr_next_doc_no(scope) RPC (atomic upsert on hr_doc_counters); claim_no is globally UNIQUE so a max()+1 in JS would collide on concurrent submits. Company code lives in hr_employer_info.doc_code, editable in HR OS -> Payroll -> Company, unique across companies, 2-6 alnum. DB fixes: hr_employer_info had id integer DEFAULT 1 + CHECK (id=1) — a single-row table — so any 2nd company row failed on the primary key; now a real sequence with tenant_id unique. Also v120 segregation-of-duties (admin is not an approver; nobody approves two levels or their own; canActOrUnassigned keeps the no-assignee deadlock escape) and v119 company-branding (hr_employer_save + employer row on payslip / claim form)." });
+    return j({ ok:true, hint:"portal v122 signatures: hr_employees.signature/signature_updated_at (data URI). New hr_signature_save - SELF-SERVICE ONLY (a stored signature is forgeable by anyone who can print the form, so one person must not install another persons); hrManage may set one only for an employee with NO login yet, audited as on_behalf; 200KB cap; null clears. hr_rc_get returns signer_sig (claimant) and, via attachActorNames(withSig=true), acted_by_name_sig per step. withSig is opt-in because the leave list resolves hundreds of steps and would repeat the same ~15KB image into a multi-MB response. Claim form signature block now stamps the image over the line plus name + timestamp, so it stays an auditable record when nobody uploaded one; Received by prints the payment/bank reference and keeps a blank line. Frontend: canvas signature pad (mouse/touch) + upload, auto-trimmed to the ink bounds; My Profile added to the ADMIN nav too (it was employee-mode only, so approvers had no way to save the signature they sign with). Also v121 claim numbering (CODE-YYYYMM-0001 via atomic hr_next_doc_no), v120 segregation-of-duties, v119 company branding." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
