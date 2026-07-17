@@ -209,9 +209,30 @@ async function rcMe(me){
     const { count } = await sb.from("hr_employees").select("id",{count:"exact",head:true}).eq("manager_id",employee.id);
     is_manager = !!count;
   }
-  return { isAdmin, employee, roles, is_manager };
+  return { isAdmin, employee, roles, is_manager, uid: uid||null };
 }
-function rcCanActStep(who:any, step:any){ if(!step) return false; if(who.isAdmin) return true; if(!who.employee) return false; if(step.approver_employee_id && step.approver_employee_id===who.employee.id) return true; if(step.approver_role && who.roles.indexOf(step.approver_role)>=0) return true; return false; }
+// Only the person the step is actually assigned to may act on it. Being an admin does NOT satisfy a
+// step: an admin who isn't the configured approver has no say (operator policy — strict segregation of
+// duties, no override). Before v120 this began with `if(who.isAdmin) return true`, which let one admin
+// approve every level of a chain, including levels belonging to somebody else.
+function rcCanActStep(who:any, step:any){ if(!step) return false; if(!who.employee) return false; if(step.approver_employee_id && step.approver_employee_id===who.employee.id) return true; if(step.approver_role && who.roles.indexOf(step.approver_role)>=0) return true; return false; }
+// A step nobody is assigned to: no chain configured at all, or a "manager" step for an employee with no
+// manager_id. Left alone these can never be decided now that admin no longer satisfies every step, so an
+// admin may act on them — that is filling a gap, not overriding somebody else's level.
+function stepUnassigned(step:any){ return !step || (!step.approver_employee_id && !step.approver_role); }
+function canActOrUnassigned(who:any, step:any){ return rcCanActStep(who, step) || (who.isAdmin && stepUnassigned(step)); }
+// Segregation of duties: one human may not approve two levels of the same request, and nobody may
+// approve their own. Returns an error string to refuse with, or null when the actor is clear.
+// actorField is the step table's actor column ("acted_by" for claims, "decided_by" for leave).
+async function sodViolation(table:string, idField:string, reqId:string, stepId:any, actorUserId:string, actorEmpId:any, requesterEmpId:any, actorField:string){
+  if(actorEmpId && requesterEmpId && String(actorEmpId)===String(requesterEmpId)) return "You cannot approve your own request.";
+  if(!actorUserId) return null;
+  let q = sb.from(table).select("step_order,name").eq(idField,reqId).eq(actorField,actorUserId);
+  if(stepId) q = q.neq("id",stepId);   // re-deciding the same step (e.g. after Need More Info) is fine
+  const { data: prior } = await q;
+  if(prior && prior.length) return "You already acted on step "+prior[0].step_order+" ("+(prior[0].name||"")+") of this request. A different person must approve this level.";
+  return null;
+}
 // Resolve the portal-user id in each step's actor field → a display name (employee name preferred,
 // else portal user name/email), attached as nameField. Used by the leave & reimbursement timelines.
 async function attachActorNames(steps:any[], idField:string, nameField:string){
@@ -251,9 +272,18 @@ async function rcApproverQueue(tenant:string, who:any){
   const PEND=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
   const { data:claims } = await sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).in("status",PEND).order("created_at",{ascending:false}).limit(500);
   const ids=(claims||[]).map((c:any)=>c.id); if(!ids.length) return [];
-  const { data:steps } = await sb.from("hr_claim_approval_steps").select("claim_id,step_order,approver_role,approver_employee_id,status").in("claim_id",ids);
-  const byClaim:any={}; (steps||[]).forEach((s:any)=>{ (byClaim[s.claim_id]=byClaim[s.claim_id]||{})[s.step_order]=s; });
-  return (claims||[]).filter((c:any)=>{ const st=byClaim[c.id]&&byClaim[c.id][c.current_step]; return st && st.status==="Pending" && rcCanActStep(who, st); });
+  const { data:steps } = await sb.from("hr_claim_approval_steps").select("claim_id,step_order,approver_role,approver_employee_id,status,acted_by").in("claim_id",ids);
+  const byClaim:any={}; const actedOn:any={};
+  (steps||[]).forEach((s:any)=>{ (byClaim[s.claim_id]=byClaim[s.claim_id]||{})[s.step_order]=s; if(s.acted_by) (actedOn[s.claim_id]=actedOn[s.claim_id]||[]).push(String(s.acted_by)); });
+  return (claims||[]).filter((c:any)=>{
+    const st=byClaim[c.id]&&byClaim[c.id][c.current_step];
+    if(!(st && st.status==="Pending" && canActOrUnassigned(who, st))) return false;
+    // Segregation of duties — same rule the decide path enforces, applied here so the queue never
+    // offers something that would be refused on click.
+    if(who.employee && String(c.employee_id)===String(who.employee.id)) return false;
+    if(who.uid && (actedOn[c.id]||[]).indexOf(String(who.uid))>=0) return false;
+    return true;
+  });
 }
 // ── Reimbursement email notifications (best-effort; reuse Gmail SMTP / Resend like the AP module). ──
 async function rcSendEmail(toEmail:string, subject:string, body:string){
@@ -364,8 +394,10 @@ async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:str
   const { data: inst } = await sb.from("hr_claim_approval_instances").select("*").eq("claim_id",id).maybeSingle();
   if(!inst) return { ok:false, error:"no approval in progress" };
   const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
-  if(!rcCanActStep(who, step)) return { ok:false, error:"You are not the approver for this step.", forbidden:true };
+  if(!canActOrUnassigned(who, step)) return { ok:false, error:"You are not the approver for this step.", forbidden:true };
   const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
+  const sodErr = await sodViolation("hr_claim_approval_steps","instance_id",inst.id,step&&step.id,actor,who.employee&&who.employee.id,claim.employee_id,"acted_by");
+  if(sodErr) return { ok:false, error:sodErr, forbidden:true };
   if(decision==="reject"){
     if(!String(comment||"").trim()) return { ok:false, error:"a rejection reason is required" };
     if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
@@ -4188,7 +4220,9 @@ Deno.serve(async (req)=>{
       return j({ ok:true });
     }
     if (api === "hr_leave_pending") {
-      // Approver queue: leave requests whose CURRENT step is this caller's (manager / their role), or all for admin.
+      // Approver queue: leave requests whose CURRENT step is this caller's (manager / their role). An admin
+      // only sees steps nobody is assigned to — since v120 admin no longer satisfies somebody else's level,
+      // so listing the rest here would just hand them a 403 on click.
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
       if(!who.employee && !who.isAdmin) return j({ ok:true, requests:[] });
@@ -4198,8 +4232,10 @@ Deno.serve(async (req)=>{
       for(const r of pend){
         const { data: step } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",r.id).eq("step_order",r.current_step||1).maybeSingle();
         if(!step) { if(who.isAdmin) out.push({ ...r, current_step_name:"(no chain)" }); continue; }
-        const mine = who.isAdmin || (step.approver_employee_id && who.employee && step.approver_employee_id===who.employee.id) || (step.approver_role && who.roles && who.roles.indexOf(step.approver_role)>=0);
-        if(mine) out.push({ ...r, current_step_name: step.name||step.approver_role });
+        if(!canActOrUnassigned(who, step)) continue;
+        // Hide what this caller already acted on earlier in the same chain, or raised themselves.
+        if(await sodViolation("hr_leave_approval_steps","leave_request_id",r.id,step.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,r.employee_id,"decided_by")) continue;
+        out.push({ ...r, current_step_name: step.name||step.approver_role||"(unassigned)" });
       }
       return j({ ok:true, requests: out });
     }
@@ -4285,9 +4321,10 @@ Deno.serve(async (req)=>{
       if (!req) return j({ ok:false, error:"not found" });
       if(["Approved","Rejected","Cancelled"].indexOf(String(req.status))>=0) return j({ ok:false, error:"Already handled — this request is "+req.status+"." });
       const { data: step } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",id).eq("step_order",req.current_step||1).maybeSingle();
-      const canAct = who.isAdmin || (step && ((step.approver_employee_id && who.employee && step.approver_employee_id===who.employee.id) || (step.approver_role && who.roles && who.roles.indexOf(step.approver_role)>=0)));
-      if(!canAct) return j({ ok:false, error:"You are not the approver for this step." }, 403);
+      if(!canActOrUnassigned(who, step)) return j({ ok:false, error:"You are not the approver for this step." }, 403);
       const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString(); const comment=String(b.comment||"").slice(0,500);
+      const sodErr = await sodViolation("hr_leave_approval_steps","leave_request_id",id,step&&step.id,actor,who.employee&&who.employee.id,req.employee_id,"decided_by");
+      if(sodErr) return j({ ok:false, error:sodErr }, 403);
       const { data: emp } = await sb.from("hr_employees").select("name,email").eq("id",req.employee_id).maybeSingle();
       if(decision==="reject"){
         if(step) await sb.from("hr_leave_approval_steps").update({ status:"Rejected", decided_by:actor, decided_at:nowIso, comment }).eq("id",step.id);
@@ -4889,7 +4926,10 @@ Deno.serve(async (req)=>{
         if(!isOwner && !isAppr) return j({ ok:false, error:"forbidden" }, 403);
       }
       const curStep = allSteps.find((s:any)=>cl && s.step_order===cl.current_step);
-      const canAct = rcCanActStep(who, curStep) && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
+      // Mirror the decide-time segregation-of-duties rule here so the Approve button hides instead of
+      // erroring on click for someone who already acted on an earlier level (or owns the claim).
+      const sodOut = (curStep&&curStep.instance_id) ? await sodViolation("hr_claim_approval_steps","instance_id",curStep.instance_id,curStep.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,cl&&cl.employee_id,"acted_by") : null;
+      const canAct = canActOrUnassigned(who, curStep) && !sodOut && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
       const canPost = (who.isAdmin || who.roles.indexOf("finance")>=0) && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
@@ -5113,7 +5153,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v119 company-branding: hr_employer_info extended (reg_no, phone, email, logo data-URI) + new hr_employer_save action (hrManage-gated, tenant-pinned, logo <=400KB data:image/ only, undefined=keep / null=clear, audited). hr_my_payslips + hr_rc_get now return the tenant employer row so the payslip PDF and the Reimbursement Claim Form render the company logo, name, Reg/Employer No and address. HR OS Payroll gains a company editor (client-side resize to 260px, PNG->JPEG fallback)." });
+    return j({ ok:true, hint:"portal v120 segregation-of-duties: fixes one person approving every level of a chain. rcCanActStep no longer short-circuits on isAdmin — being an admin does NOT satisfy a step, only the configured approver (employee id or claim role) may act. New sodViolation(): nobody may act on two steps of the same request, and nobody may approve their own. Enforced in rcDecideOne + hr_leave_decide, and mirrored into hr_rc_get.can_act / rcApproverQueue / hr_leave_pending so the button hides instead of 403-ing. canActOrUnassigned() keeps a narrow admin fallback for steps with NO assignable approver (empty chain, or manager-type step where the employee has no manager_id) — otherwise those would deadlock forever. Also v119 company-branding: hr_employer_save + employer row returned by hr_my_payslips/hr_rc_get for logo + company details on the payslip and claim form." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
