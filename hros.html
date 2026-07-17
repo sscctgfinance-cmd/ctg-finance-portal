@@ -1723,6 +1723,76 @@ function hrRCVoucher(){ var d=RC.detail; if(!d||!d.claim){return;} var c=d.claim
     '</body></html>';
   var w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print the voucher',true); return; } w.document.write(html); w.document.close(); w.focus(); setTimeout(function(){ try{w.print();}catch(_e){} },350);
 }
+// ── Reimbursement form + merged receipts → one downloadable PDF (form page(s) then every attachment) ──
+function hrLoadPdfLib(cb){
+  if(window.PDFLib) return cb();
+  if(HR._pdfLibLoading){ HR._pdfLibLoading.push(cb); return; }
+  HR._pdfLibLoading=[cb];
+  var s=document.createElement('script'); s.src='pdf-lib.min.js';
+  s.onload=function(){ var q=HR._pdfLibLoading; HR._pdfLibLoading=null; q.forEach(function(f){try{f();}catch(_e){}}); };
+  s.onerror=function(){ HR._pdfLibLoading=null; toast('Could not load the PDF merge engine (pdf-lib.min.js).',true); };
+  document.head.appendChild(s);
+}
+// Draw the reimbursement claim form from the submitted data → returns the PDF as bytes (jsPDF).
+function hrRCBuildFormPdf(d){
+  var c=d.claim||{}, emp=c.hr_employees||{}, items=d.items||[], pay=d.payment||{}, steps=d.steps||[];
+  var tname=(typeof hrCompanyName==='function'?hrCompanyName():'');
+  var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var W=210,m=16,y=18;
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Reimbursement Claim Form',m,y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Claim No: '+(c.claim_no||''),W-m,15,{align:'right'}); doc.text('Date: '+String(c.claim_date||'').slice(0,10),W-m,20,{align:'right'});
+  y+=6; doc.setFontSize(9.5); doc.text(String(tname||''),m,y); y+=9;
+  var row=function(l,v){ doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text(l,m,y); doc.setFont('helvetica','normal'); doc.text(String(v||'—'),m+40,y); y+=6.2; };
+  row('Employee',(emp.name||'')+'  ('+(emp.emp_no||'')+')'); row('Department',emp.dept||'—'); row('Status',c.status||''); row('Bank',(emp.bank_name||'')+'  '+(emp.bank_account||'')); y+=3;
+  doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+  doc.text('Type',m,y); doc.text('Date',m+52,y); doc.text('Description',m+80,y); doc.text('Amount (RM)',W-m,y,{align:'right'});
+  y+=1.5; doc.setDrawColor(150); doc.line(m,y,W-m,y); y+=5; doc.setFont('helvetica','normal');
+  var list=items.length?items.map(function(it){return {type:(it.hr_claim_types&&it.hr_claim_types.name)||'',date:String(it.item_date||'').slice(0,10),desc:it.description||'',amt:Number(it.amount)||0};}):[{type:'',date:String(c.claim_date||'').slice(0,10),desc:c.description||'',amt:Number(c.amount)||0}];
+  list.forEach(function(r){ if(y>270){doc.addPage();y=20;} doc.text(String(r.type).slice(0,24),m,y); doc.text(r.date,m+52,y); var dsc=doc.splitTextToSize(String(r.desc||''),58); doc.text(dsc[0]||'',m+80,y); doc.text(r.amt.toFixed(2),W-m,y,{align:'right'}); y+=6; });
+  doc.setDrawColor(150); doc.line(m,y-2,W-m,y-2); doc.setFont('helvetica','bold'); doc.text('TOTAL',m+80,y+3); doc.text((Number(c.amount)||0).toFixed(2),W-m,y+3,{align:'right'}); y+=12;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  if(pay&&pay.paid_date){ doc.text('Paid on '+pay.paid_date+' · '+(pay.payment_method||'')+(pay.payment_reference?(' · ref '+pay.payment_reference):''),m,y); y+=6; }
+  if(c.xero_bill_id){ doc.text('Posted to Xero · ref '+(c.xero_reference||c.claim_no||''),m,y); y+=6; }
+  if(steps&&steps.length){ y+=2; doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('Approval',m,y); y+=5; doc.setFont('helvetica','normal'); doc.setFontSize(8.8);
+    steps.forEach(function(s){ if(y>276){doc.addPage();y=20;} var ln=(s.step_order)+'. '+(s.name||s.approver_role||''); if(s.decision==='approve') ln+=' — Approved'+(s.acted_by_name?(' by '+s.acted_by_name):'')+(s.acted_at?(' on '+(typeof hrDT==='function'?hrDT(s.acted_at):s.acted_at)):''); else if(s.decision==='reject') ln+=' — Rejected'+(s.acted_by_name?(' by '+s.acted_by_name):''); else ln+=' — '+(s.status||'Pending')+(s.assignee_name?(' ('+s.assignee_name+')'):''); doc.text(doc.splitTextToSize(ln,W-2*m)[0],m,y); y+=5; }); }
+  if(y<252) y=262; else if(y>276){ doc.addPage(); y=262; }
+  doc.setFontSize(9); doc.setDrawColor(80); var sx=[m,W/2-12,W-m-44];
+  ['Prepared by','Approved by','Received by'].forEach(function(lbl,i){ doc.line(sx[i],y,sx[i]+42,y); doc.text(lbl,sx[i],y+5); });
+  return new Uint8Array(doc.output('arraybuffer'));
+}
+function hrRCFormAndReceipts(){
+  var d=RC.detail; if(!d||!d.claim){ toast('Open a claim first',true); return; }
+  toast('Building form + merging receipts…');
+  hrLoadJsPDF(function(){ hrLoadPdfLib(function(){ (async function(){
+    try{
+      var PDFLib=window.PDFLib;
+      var merged=await PDFLib.PDFDocument.create();
+      var formDoc=await PDFLib.PDFDocument.load(hrRCBuildFormPdf(d));
+      (await merged.copyPages(formDoc, formDoc.getPageIndices())).forEach(function(p){ merged.addPage(p); });
+      var atts=(d.attachments||[]).filter(function(a){return a.url;});
+      var added=0, failed=0;
+      for(var i=0;i<atts.length;i++){ var a=atts[i];
+        try{
+          var resp=await fetch(a.url); var buf=new Uint8Array(await resp.arrayBuffer());
+          var name=String(a.file_name||'').toLowerCase(); var mime=(resp.headers.get('content-type')||'').toLowerCase();
+          if(name.endsWith('.pdf')||mime.indexOf('pdf')>=0){
+            var src=await PDFLib.PDFDocument.load(buf, {ignoreEncryption:true});
+            (await merged.copyPages(src, src.getPageIndices())).forEach(function(p){ merged.addPage(p); });
+          } else {
+            var img=(name.endsWith('.png')||mime.indexOf('png')>=0)?await merged.embedPng(buf):await merged.embedJpg(buf);
+            var pg=merged.addPage([595.28,841.89]); var maxW=595.28-40, maxH=841.89-40;
+            var sc=Math.min(maxW/img.width, maxH/img.height, 1); var w=img.width*sc, h=img.height*sc;
+            pg.drawImage(img,{x:(595.28-w)/2,y:(841.89-h)/2,width:w,height:h});
+          }
+          added++;
+        }catch(e){ failed++; }
+      }
+      var out=await merged.save(); var blob=new Blob([out],{type:'application/pdf'}); var url=URL.createObjectURL(blob);
+      var link=document.createElement('a'); link.href=url; link.download='Reimbursement_'+(d.claim.claim_no||'claim').replace(/[^A-Za-z0-9_-]/g,'_')+'.pdf';
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(function(){URL.revokeObjectURL(url);},2000);
+      toast(added?('Form + '+added+' receipt'+(added===1?'':'s')+' merged ✓'+(failed?(' · '+failed+' couldn’t be read'):'')):'Form generated ✓ (no receipts attached)');
+    }catch(e){ toast('Could not build the PDF: '+(e.message||e),true); }
+  })(); }); });
+}
 var RC_TD='padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
 function hrRCDefRate(){ var r=(RC.cfg&&RC.cfg.mileage_rates||[]).find(function(x){return x.is_default;}); return r?r.rate:''; }
 function hrRCCcOpts(sel){ var cfg=RC.cfg||{}; return '<option value="">— cost center —</option>'+(cfg.cost_centers||[]).filter(function(c){return c.active;}).map(function(c){return '<option value="'+esc(c.code)+'"'+(String(sel||'')===String(c.code)?' selected':'')+'>'+esc(c.code+' — '+c.name)+'</option>';}).join(''); }
@@ -1875,7 +1945,7 @@ function hrRCDetail(){
   else if(d.can_post){ xeroBlock='<div class="panel"><div class="panel-hd"><h3>📤 Post to Xero</h3></div><div class="muted" style="font-size:12px;margin-bottom:8px">Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.</div><button class="btn p sm" onclick="hrRCPostXero()">Post to Xero →</button></div>'; }
   var decPanel='';
   if(d.declaration){ var dd=d.declaration; decPanel='<div class="panel"><div class="panel-hd"><h3>Declaration</h3></div>'+[['business_purpose','Claim is for business purpose'],['not_claimed_before','Not claimed before'],['receipts_valid','Receipts / invoices are valid'],['understand_disciplinary','Understands false claims → disciplinary action']].map(function(x){ return '<div style="font-size:12px;padding:2px 0;color:'+(dd[x[0]]?'var(--green-soft)':'var(--coral-soft)')+'">'+(dd[x[0]]?'✓':'✗')+' <span style="color:var(--text-soft)">'+x[1]+'</span></div>'; }).join('')+'<div class="muted" style="font-size:10.5px;margin-top:4px">Declared '+esc(String(dd.declared_at||'').slice(0,16).replace('T',' '))+'</div></div>'; }
-  var editRow='<button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
+  var editRow='<button class="btn xs" onclick="hrRCFormAndReceipts()">📄 Form + receipts (PDF)</button> <button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
   if(['Draft','Need More Info'].indexOf(c.status)>=0) editRow+='<button class="btn sm" onclick="hrRCEdit()">Edit</button> <button class="btn p sm" onclick="hrRCResubmit()">'+(c.status==='Need More Info'?'Resubmit →':'Submit →')+'</button> ';
   if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
   return head+warns+mile+decPanel+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
