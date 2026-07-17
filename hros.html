@@ -1380,7 +1380,7 @@ async function renderHR(){
     var r=await call({api:'hr_bootstrap',tenant:reqTenant});
     if(HR.tenant!==reqTenant){ renderHR(); return; } // stale — reload for the newly selected company
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc((r&&r.error)||'Failed to load HR')+'</div></div></div>'; return; }
-    HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); hrRender();
+    HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); HR_EMPLOYER=(HR.data&&HR.data.employer)||null; hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
 function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
@@ -1736,11 +1736,27 @@ function hrLoadPdfLib(cb){
 // Draw the reimbursement claim form from the submitted data → returns the PDF as bytes (jsPDF).
 function hrRCBuildFormPdf(d){
   var c=d.claim||{}, emp=c.hr_employees||{}, items=d.items||[], pay=d.payment||{}, steps=d.steps||[];
-  var tname=(typeof hrCompanyName==='function'?hrCompanyName():'');
+  var co=d.employer||(typeof HR_EMPLOYER!=='undefined'&&HR_EMPLOYER)||{};
+  var tname=co.name||(typeof hrCompanyName==='function'?hrCompanyName():'');
   var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var W=210,m=16,y=18;
+  var hx=m, hy=15;
+  if(co.logo){ try{ var ip=doc.getImageProperties(co.logo); var lh=15, lw=lh*(ip.width/ip.height); if(lw>34){ lw=34; lh=lw*(ip.height/ip.width); } doc.addImage(co.logo, /jpe?g/i.test(ip.fileType||'')?'JPEG':'PNG', hx, hy-4, lw, lh); hx=m+lw+6; }catch(_e){} }
+  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(String(tname||''),hx,hy+1);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(95,95,95);
+  var hl=[], hm=[];
+  if(co.reg_no) hm.push('Reg No: '+co.reg_no); if(co.employer_no) hm.push('Employer No: '+co.employer_no);
+  if(hm.length) hl.push(hm.join('   ·   '));
+  if(co.address) hl.push(String(co.address).replace(/\s*\n\s*/g,', '));
+  var hc=[]; if(co.phone) hc.push('Tel: '+co.phone); if(co.email) hc.push(co.email);
+  if(hc.length) hl.push(hc.join('   ·   '));
+  var hyy=hy+5.4;
+  hl.forEach(function(t){ var ln=doc.splitTextToSize(String(t),W-hx-m); for(var i=0;i<Math.min(ln.length,2);i++){ doc.text(ln[i],hx,hyy); hyy+=3.5; } });
+  var htop=Math.max(hyy+1,hy+13);
+  doc.setDrawColor(185); doc.line(m,htop,W-m,htop);
+  doc.setTextColor(20,20,20); y=htop+8;
   doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Reimbursement Claim Form',m,y);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Claim No: '+(c.claim_no||''),W-m,15,{align:'right'}); doc.text('Date: '+String(c.claim_date||'').slice(0,10),W-m,20,{align:'right'});
-  y+=6; doc.setFontSize(9.5); doc.text(String(tname||''),m,y); y+=9;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Claim No: '+(c.claim_no||''),W-m,y-4,{align:'right'}); doc.text('Date: '+String(c.claim_date||'').slice(0,10),W-m,y+1,{align:'right'});
+  y+=9;
   var row=function(l,v){ doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text(l,m,y); doc.setFont('helvetica','normal'); doc.text(String(v||'—'),m+40,y); y+=6.2; };
   row('Employee',(emp.name||'')+'  ('+(emp.emp_no||'')+')'); row('Department',emp.dept||'—'); row('Status',c.status||''); row('Bank',(emp.bank_name||'')+'  '+(emp.bank_account||'')); y+=3;
   doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
@@ -2500,7 +2516,7 @@ function hrEmpPayslipDownload(i){
   hrLoadJsPDF(function(){
     try{
       var e=hrEmpView(emp); e.leaveBal=d.leaveBal||[];
-      HR_COMPANY=hrCompanyName();   // employee mode: use their own company name on the payslip header
+      HR_EMPLOYER=(d&&d.employer)||null; HR_COMPANY=(HR_EMPLOYER&&HR_EMPLOYER.name)||hrCompanyName();   // employee mode: use their own company header
       var per={ month:s.month, year:s.year, label:HR_MONTHS[s.month]+' '+s.year };
       var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
       hrDrawPayslip(doc,e,s.p,per,s.d||{});
@@ -3010,16 +3026,69 @@ function hrPayroll(){
     '<th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>'+
     '<th colspan="6" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Payroll grid — '+HR_MONTHS[p.month]+' '+p.year+(finalised?' <span class="pill pill-green" style="font-size:10px">FINALISED</span>':'')+'</h3>'+
-    '<span style="display:flex;gap:6px"><button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button><button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button></span></div>'+
+    '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+hrRW('<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button>')+'</span></div>'+
     '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
     '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt">PCB</th><th class="amt">Net</th></tr></thead><tbody>'+trs+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
+  var employerPanel = p.showEmployer ? hrEmployerPanel() : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
   var exp=hrPayHub(tot,finalised,p);
   var dedPanel = p.dedEmp ? hrDedPanel(p.dedEmp) : '';
-  return picker+ratesPanel+table+sum+exp+dedPanel;
+  return picker+employerPanel+ratesPanel+table+sum+exp+dedPanel;
 }
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
+// ── 🏢 Company details editor (per company) — printed on payslips, the reimbursement form & year-end ──
+var HR_EMP_EDIT=null;   // working copy of the employer record while the panel is open
+function hrEmployerToggle(){ HR.pay.showEmployer=!HR.pay.showEmployer; if(HR.pay.showEmployer){ var e=(HR.data&&HR.data.employer)||{}; HR_EMP_EDIT={ name:e.name||hrCompanyName(), reg_no:e.reg_no||'', employer_no:e.employer_no||'', epf_employer_no:e.epf_employer_no||'', socso_employer_no:e.socso_employer_no||'', address:e.address||'', phone:e.phone||'', email:e.email||'', logo:e.logo||null }; } hrRender(); }
+function hrEmployerPanel(){
+  var e=HR_EMP_EDIT||{}; var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+  var g=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+  var inp=function(id,val,ph){ return '<input id="emp_'+id+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'" style="'+S+'">'; };
+  var logoBox = e.logo
+    ? '<div style="display:flex;align-items:center;gap:12px"><img src="'+esc(e.logo)+'" style="max-height:60px;max-width:180px;border:1px solid var(--border);border-radius:6px;background:#fff;padding:4px"><button class="btn xs d" onclick="hrEmployerLogoClear()">Remove logo</button></div>'
+    : '<div class="muted" style="font-size:12px">No logo set.</div>';
+  return '<div class="panel" style="max-width:720px;border-color:var(--coral-soft);margin-bottom:14px"><div class="panel-hd"><h3>🏢 Company details — '+esc(hrCompanyName())+'</h3><button class="btn sm" onclick="hrEmployerToggle()">✕ Close</button></div>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:12px">These print on <b>payslips</b>, the <b>reimbursement form</b>, and the <b>year-end (EA / Form E / CP8D)</b>. Set once per company.</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'+
+      g('Company name',inp('name',e.name,'e.g. I PROCARE MALAYSIA SDN BHD'))+
+      g('SSM registration no',inp('reg_no',e.reg_no,'e.g. 201901000123 (1234567-A)'))+
+      g('LHDN employer no (E)',inp('employer_no',e.employer_no,'E 1234567890'))+
+      g('EPF employer no',inp('epf_employer_no',e.epf_employer_no,''))+
+      g('SOCSO employer no',inp('socso_employer_no',e.socso_employer_no,''))+
+      g('Phone',inp('phone',e.phone,'e.g. 03-1234 5678'))+
+      g('Email',inp('email',e.email,'hr@company.com'))+
+    '</div>'+
+    g('Address','<textarea id="emp_address" rows="2" placeholder="Business address" style="'+S+';resize:vertical">'+esc(e.address||'')+'</textarea>')+
+    '<div style="margin-top:14px"><label class="muted" style="font-size:11px;display:block;margin-bottom:5px">Company logo</label>'+logoBox+
+    '<div style="margin-top:8px"><input type="file" id="emp_logo_file" accept="image/png,image/jpeg" style="font-size:12px" onchange="hrEmployerLogoPick(this)"><span class="muted" style="font-size:10.5px;margin-left:6px">PNG/JPG · shown top-left on documents · auto-resized</span></div></div>'+
+    '<div style="margin-top:16px"><button class="btn p sm" onclick="hrEmployerSave()">💾 Save company details</button></div></div>';
+}
+function hrEmployerSyncInputs(){ if(!HR_EMP_EDIT)return; var v=function(id){var el=document.getElementById('emp_'+id);return el?el.value:undefined;}; ['name','reg_no','employer_no','epf_employer_no','socso_employer_no','phone','email','address'].forEach(function(k){ var val=v(k); if(val!==undefined) HR_EMP_EDIT[k]=val; }); }
+function hrEmployerLogoClear(){ hrEmployerSyncInputs(); if(HR_EMP_EDIT) HR_EMP_EDIT.logo=null; hrRender(); }
+function hrEmployerLogoPick(input){
+  var f=input&&input.files&&input.files[0]; if(!f)return;
+  if(f.size>4*1024*1024){ toast('Image too large — pick one under 4 MB',true); return; }
+  hrEmployerSyncInputs();
+  var reader=new FileReader();
+  reader.onload=function(ev){ var img=new Image(); img.onload=function(){
+    // resize to max 260px wide (keeps the stored data URI small)
+    var maxW=260, sc=Math.min(1, maxW/img.width); var w=Math.round(img.width*sc), h=Math.round(img.height*sc);
+    var cv=document.createElement('canvas'); cv.width=w; cv.height=h; var ctx=cv.getContext('2d');
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+    var out=cv.toDataURL('image/png');
+    if(out.length>380000){ out=cv.toDataURL('image/jpeg',0.85); }
+    if(out.length>380000){ toast('Logo still too large after resize — try a simpler image',true); return; }
+    if(HR_EMP_EDIT){ HR_EMP_EDIT.logo=out; } hrRender();
+  }; img.onerror=function(){ toast('Could not read that image',true); }; img.src=ev.target.result; };
+  reader.readAsDataURL(f);
+}
+async function hrEmployerSave(){
+  hrEmployerSyncInputs(); if(!HR_EMP_EDIT)return;
+  if(!String(HR_EMP_EDIT.name||'').trim()){ toast('Company name is required',true); return; }
+  var r=await call({api:'hr_employer_save', tenant:HR.tenant, employer:HR_EMP_EDIT});
+  if(r&&r.ok){ toast('Company details saved ✓'); if(HR.data) HR.data.employer=r.employer; HR_EMPLOYER=r.employer||null; HR_COMPANY=hrCompanyName(); HR.pay.showEmployer=false; hrRender(); }
+  else toast((r&&r.error)||'Save failed',true);
+}
 function hrRatesPanel(cfg){
   var f=function(v){ return (v==null?'':v); };
   var pct=function(v){ return (v==null?'':(Math.round(Number(v)*100000)/1000)); }; // store as %, e.g. 0.11 -> 11
@@ -3137,13 +3206,20 @@ function hrCurRows(){ var lb=(HR.pay.data&&HR.pay.data.leaveBalances)||{}; retur
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
 var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
+var HR_EMPLOYER=null;   // { name, reg_no, employer_no, address, phone, email, logo(dataURI) } — printed on payslips/forms
 function hrCompanyName(){ var e=HR.data&&HR.data.employer; if(e&&e.name) return e.name; var c=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); return c?c.tenant_name:'I PROCARE MALAYSIA SDN BHD'; }
 var HR_INK=[18,33,27],HR_GREEN=[11,107,79],HR_MUTED=[94,110,103],HR_LINE=[227,232,228],HR_RED=[176,69,59],HR_NETBG=[231,241,236],HR_GREEN2=[77,191,148];
 function hrDrawPayslip(doc,e,p,period,d){
   d=d||{}; var W=210,m=18;
   doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,32,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(HR_COMPANY,m,15);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(184,204,194); doc.text('Payslip  ·  Confidential',m,21);
+  var _emp=HR_EMPLOYER||{}; var tx=m;
+  if(_emp.logo){ try{ var ip=doc.getImageProperties(_emp.logo); var lh=15, lw=lh*(ip.width/ip.height); if(lw>34){ lw=34; lh=lw*(ip.height/ip.width); } var ly=(32-lh)/2; doc.setFillColor(255,255,255); doc.roundedRect(m-2,ly-2,lw+4,lh+4,1.8,1.8,'F'); doc.addImage(_emp.logo, /jpe?g/i.test(ip.fileType||'')?'JPEG':'PNG', m, ly, lw, lh); tx=m+lw+7; }catch(_e){} }
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(_emp.logo?13:15); doc.text(HR_COMPANY,tx,13);
+  doc.setFont('helvetica','normal'); doc.setTextColor(184,204,194); doc.setFontSize(7.4);
+  var _meta=[]; if(_emp.reg_no)_meta.push('Reg '+_emp.reg_no); if(_emp.employer_no)_meta.push('E '+_emp.employer_no);
+  var _yy=17.5; if(_meta.length){ doc.text(_meta.join('    '),tx,_yy); _yy+=3.6; }
+  if(_emp.address){ doc.text((doc.splitTextToSize(String(_emp.address).replace(/\s*\n\s*/g,', '),115)[0]||''),tx,_yy); _yy+=3.6; }
+  doc.setFontSize(8); doc.text('Payslip · Confidential',tx,Math.min(_yy+0.5,28));
   doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(period.label,W-m,15,{align:'right'});
   var lastDay=new Date(period.year, period.month, 0).getDate(); // real month end — "31 February" was printed on short months
   doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: '+lastDay+' '+period.label,W-m,21,{align:'right'});
