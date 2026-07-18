@@ -3621,6 +3621,7 @@ function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
 }
 function gwConvertPayex(fmt,refField,wantPayout,wantFee){
   var rows=[], f=GW.payex, A=GW.audit;
+  // Money-in: one line per transaction (gross the customer paid into the clearing account).
   if(f.txn) f.txn.rows.forEach(function(r){
     A.txnRead++;
     var d=gwParseDate(gwPick(r,'Date')); if(!d){A.txnNoDate++; return;}
@@ -3628,18 +3629,29 @@ function gwConvertPayex(fmt,refField,wantPayout,wantFee){
     if(net===0){A.txnZero++; return;}
     A.txnConv++;
     if(String(gwPick(r,'SettlementDate')||'').trim()) A.pxSettled++; else { A.pxUnsettled++; A.pxUnsettledAmt+=net; }
-    var txid=String(gwPick(r,'TransactionId')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:'SHOPIFY',desc:txid,ref:ref,kind:net<0?'out':'in'});
+    var cust=String(gwPick(r,'CustomerName')||'').trim()||'Payex customer';
+    var method=String(gwPick(r,'TransactionType')||'payment').trim();
+    rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:cust,desc:'Payex '+method,ref:ref,kind:net<0?'out':'in'});
   });
+  // Settlement: consolidate per SettlementDate, but keep NetPayex and NetOthers as SEPARATE lines — for
+  // both the payout and the MDR fee. A row's stream is Payex when NetPayex is non-zero, else Others
+  // (SettledBy=Payex ⟺ NetPayex>0, verified); MDR is attributed to whichever stream the row settled under.
   if(f.set){
-    var byDate={};
+    var byDate={}, rnd=function(x){return Math.round(x*100)/100;};
     f.set.rows.forEach(function(r){ A.poRead++; var d=gwParseDate(gwPick(r,'SettlementDate')); if(!d){A.poNoDate++; return;} var k=gwFmtDate(d,'ymd');
-      if(!byDate[k]) byDate[k]={d:d,mdr:0,npx:0,noth:0};
-      byDate[k].mdr+=gwNum(gwPick(r,'MDR')); byDate[k].npx+=gwNum(gwPick(r,'NetPayex')); byDate[k].noth+=gwNum(gwPick(r,'NetOthers')); });
-    Object.keys(byDate).forEach(function(k){ var b=byDate[k], netPay=b.npx+b.noth;
-      if(wantPayout && netPay){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-netPay,payee:'Payex Settlement',desc:'Settlement payout to bank (Payex '+b.npx.toFixed(2)+' + Others '+b.noth.toFixed(2)+')',ref:'PAYEX-SETTLE-'+k,kind:'out'}); }
-      if(wantFee && b.mdr) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-b.mdr,payee:'Payex',desc:'MDR merchant fees',ref:'PAYEX-MDR-'+k,kind:'fee'}); });
+      if(!byDate[k]) byDate[k]={d:d,npx:0,noth:0,mdrPx:0,mdrOth:0};
+      var npx=gwNum(gwPick(r,'NetPayex')), noth=gwNum(gwPick(r,'NetOthers')), mdr=gwNum(gwPick(r,'MDR'));
+      var isPayex = npx!==0 ? true : (noth!==0 ? false : String(gwPick(r,'SettledBy')||'').trim()==='Payex');
+      byDate[k].npx+=npx; byDate[k].noth+=noth;
+      if(isPayex) byDate[k].mdrPx+=mdr; else byDate[k].mdrOth+=mdr;
+    });
+    Object.keys(byDate).forEach(function(k){ var b=byDate[k];
+      if(wantPayout && rnd(b.npx)){  A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.npx), payee:'Payex',desc:'Payex settlement payout - NetPayex',  ref:'PAYOUT-PAYEX-'+k,  kind:'out'}); }
+      if(wantPayout && rnd(b.noth)){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.noth),payee:'Payex',desc:'Payex settlement payout - NetOthers', ref:'PAYOUT-OTHERS-'+k, kind:'out'}); }
+      if(wantFee && rnd(b.mdrPx))    rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.mdrPx), payee:'Payex',desc:'Payex MDR fee - NetPayex',  ref:'MDR-PAYEX-'+k,  kind:'fee'});
+      if(wantFee && rnd(b.mdrOth))   rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.mdrOth),payee:'Payex',desc:'Payex MDR fee - NetOthers', ref:'MDR-OTHERS-'+k, kind:'fee'});
+    });
   }
   return rows;
 }
