@@ -5010,13 +5010,17 @@ Deno.serve(async (req)=>{
       // erroring on click for someone who already acted on an earlier level (or owns the claim).
       const sodOut = (curStep&&curStep.instance_id) ? await sodViolation("hr_claim_approval_steps","instance_id",curStep.instance_id,curStep.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,cl&&cl.employee_id,"acted_by") : null;
       const canAct = canActOrUnassigned(who, curStep) && !sodOut && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
-      const canPost = (who.isAdmin || who.roles.indexOf("finance")>=0) && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
+      // Finance capability must match the server-side money gates (superAdmin OR finance role), NOT
+      // who.isAdmin (which folds in hr_admin) — otherwise an hr_admin sees Pay / Post-to-Xero buttons
+      // that then 403 on click. hr_admin = "full HR write, NO finance".
+      const canFinance = superAdmin(me) || who.roles.indexOf("finance")>=0;
+      const canPost = canFinance && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
       const { data: rcEmployer } = cl ? await sb.from("hr_employer_info").select("*").eq("tenant_id",cl.tenant_id).maybeSingle() : { data:null } as any;
       // The claimant's own signature — goes above "Prepared by" on the form.
       const { data: rcSigner } = cl ? await sb.from("hr_employees").select("signature").eq("id",cl.employee_id).maybeSingle() : { data:null } as any;
-      return j({ ok:true, claim:cl, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:(who.isAdmin||who.roles.indexOf("finance")>=0), is_admin:who.isAdmin });
+      return j({ ok:true, claim:cl, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -5249,7 +5253,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v123 pre-launch access-control hardening (multi-tenant). (1) TENANT FAIL-OPEN CLOSED: portal_allowed_tenants now returns a non-matching sentinel UUID (not []) for an invalid token or a user with no company assignment, and allowedTenants() returns the sentinel on error — so all ~30 tenant guards fail CLOSED (a full-scope admin still gets the full real list). (2) LEAVE cross-tenant holes closed: hr_leave_decide / hr_leave_cancel / hr_leave_pending had NO tenant pin, so a scoped admin or a role approver whose role name collided across companies could read all companies pending leave (+PII) and approve/reject/cancel other companies leave by id. Added leaveTenantOk() + scoped the pending query. (3) hr_rc_decide/_bulk now pin tenants for EVERYONE (was admins-only), closing the same role-name collision on claims. (4) hr_admin (role = full HR write, NO finance) removed from the 5 reimbursement MONEY gates (set_gl / mark_paid / mark_paid_bulk / post_xero / export_accounting) — now superAdmin OR finance-role only. (5) approver removed from isAdmin(): it silently made a portal_users.role=approver a full Finance admin (issue AUTHORISED Xero invoices, bank reconcile). (6) hr_post_xero now pins b.tenantId (camelCase escaped the central guard). Verified: company-doc RPCs already tenant-scoped + fail-closed. Also v122 signatures, v121 numbering, v120 segregation-of-duties, v119 company branding." });
+    return j({ ok:true, hint:"portal v124 access-control: v123 hardening (tenant fail-open closed via sentinel; leave decide/cancel/pending tenant-pinned; rc decide pins for everyone; hr_admin removed from the 5 reimbursement money gates; approver removed from isAdmin; hr_post_xero pins tenantId) plus this follow-up: hr_rc_get can_post / can_finance now key off superAdmin OR finance-role (not who.isAdmin, which folds in hr_admin) so the Pay and Post-to-Xero buttons are hidden from an hr_admin instead of 403-ing on click. Company-doc RPCs verified already tenant-scoped. Live-tested: cross-tenant read/pay denied, hr_admin finance denied, full admin unaffected." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
