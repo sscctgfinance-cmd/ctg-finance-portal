@@ -3250,7 +3250,7 @@ function hrPayroll(){
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
 // ── 🏢 Company details editor (per company) — printed on payslips, the reimbursement form & year-end ──
 var HR_EMP_EDIT=null;   // working copy of the employer record while the panel is open
-function hrEmployerToggle(){ HR.pay.showEmployer=!HR.pay.showEmployer; if(HR.pay.showEmployer){ var e=(HR.data&&HR.data.employer)||{}; HR_EMP_EDIT={ name:e.name||hrCompanyName(), reg_no:e.reg_no||'', employer_no:e.employer_no||'', epf_employer_no:e.epf_employer_no||'', socso_employer_no:e.socso_employer_no||'', address:e.address||'', phone:e.phone||'', email:e.email||'', logo:e.logo||null }; } hrRender(); }
+function hrEmployerToggle(){ HR.pay.showEmployer=!HR.pay.showEmployer; if(HR.pay.showEmployer){ var e=(HR.data&&HR.data.employer)||{}; HR_EMP_EDIT={ name:e.name||hrCompanyName(), reg_no:e.reg_no||'', doc_code:e.doc_code||'', employer_no:e.employer_no||'', epf_employer_no:e.epf_employer_no||'', socso_employer_no:e.socso_employer_no||'', address:e.address||'', phone:e.phone||'', email:e.email||'', logo:e.logo||null }; } hrRender(); }
 function hrEmployerPanel(){
   var e=HR_EMP_EDIT||{}; var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
   var g=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
@@ -3298,8 +3298,8 @@ async function hrEmployerSave(){
   hrEmployerSyncInputs(); if(!HR_EMP_EDIT)return;
   if(!String(HR_EMP_EDIT.name||'').trim()){ toast('Company name is required',true); return; }
   var dc=String(HR_EMP_EDIT.doc_code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  if(dc.length<2||dc.length>6){ toast('Company code must be 2–6 letters or digits (e.g. IPC)',true); return; }
-  HR_EMP_EDIT.doc_code=dc;
+  if(dc && (dc.length<2||dc.length>6)){ toast('Company code must be 2–6 letters or digits (e.g. IPC), or leave it blank to keep the current one',true); return; }
+  HR_EMP_EDIT.doc_code=dc;   // blank = keep the existing code (backend won't overwrite)
   var r=await call({api:'hr_employer_save', tenant:HR.tenant, employer:HR_EMP_EDIT});
   if(r&&r.ok){ toast('Company details saved ✓'); if(HR.data) HR.data.employer=r.employer; HR_EMPLOYER=r.employer||null; HR_COMPANY=hrCompanyName(); HR.pay.showEmployer=false; hrRender(); }
   else toast((r&&r.error)||'Save failed',true);

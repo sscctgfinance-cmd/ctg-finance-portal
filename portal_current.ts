@@ -5293,10 +5293,11 @@ Deno.serve(async (req)=>{
       if (logo!==undefined) patch.logo = logo;
       // doc_code prefixes this company's claim numbers (IPC-202607-0001). Absent = keep the current one:
       // an older client that doesn't send the field must not blank it and silently reset numbering.
+      // doc_code prefixes this company's claim numbers. Only overwrite when a non-empty value is sent —
+      // a blank field means "keep the existing code", so it never blocks saving the other details.
       if (e.doc_code!==undefined) {
         const dc = String(e.doc_code||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,6);
-        if (!dc) return j({ ok:false, error:"Company code is required — it prefixes this company's claim numbers." });
-        patch.doc_code = dc;
+        if (dc) patch.doc_code = dc;
       }
       const { data: existing } = await sb.from("hr_employer_info").select("id").eq("tenant_id",tenant).maybeSingle();
       const res:any = existing ? await sb.from("hr_employer_info").update(patch).eq("id",existing.id).select().single()
@@ -5395,7 +5396,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v127 clock-in/out reminders + self-serve schedule: hr_shift_save now SELF-SERVICE (a part-timer sets their own shift_start/shift_end/work_days; admin may still set others, tenant-pinned) and persists shift_end. clockin_reminder_run reminds to clock IN (start arrived, no punch) AND clock OUT (end arrived, still an open punch); one of each kind per day via hr_push_reminder_log (PK employee_id+work_date+kind). Employee Time Clock view gets a My work schedule card. sw.js message is neutral (clock in OR out) since payloadless push has fixed text. Also v126 phase-2, v125 phase-1." });
+    return j({ ok:true, hint:"portal v128 fix: hr_employer_save no longer rejects a blank Company code — a blank doc_code now means keep the existing one (was: hard error, which blocked saving the whole company-details panel incl. logo/address when the code field was empty; the frontend seed was also missing doc_code so the field never pre-filled). Also v127 clock-in/out reminders + self-serve schedule." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
