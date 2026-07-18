@@ -140,14 +140,14 @@ async function vapidConfig(){
   _vapid = { pub:data.vapid_public, jwk:data.vapid_private, subject:data.subject||"mailto:ssc.ctgfinance@gmail.com", key:null as any };
   return _vapid;
 }
-function b64urlBytes(bytes:Uint8Array){ let s=""; for(const b of bytes) s+=String.fromCharCode(b); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
-function b64urlJson(obj:any){ return b64urlBytes(new TextEncoder().encode(JSON.stringify(obj))); }
+function b64urlBytesPush(bytes:Uint8Array){ let s=""; for(const b of bytes) s+=String.fromCharCode(b); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function vapidB64Json(obj:any){ return b64urlBytesPush(new TextEncoder().encode(JSON.stringify(obj))); }
 async function vapidJwt(aud:string){
   const cfg = await vapidConfig(); if(!cfg) throw new Error("push not configured");
   if(!cfg.key) cfg.key = await crypto.subtle.importKey("jwk", cfg.jwk, {name:"ECDSA", namedCurve:"P-256"}, false, ["sign"]);
-  const signingInput = b64urlJson({typ:"JWT",alg:"ES256"}) + "." + b64urlJson({ aud, exp:Math.floor(Date.now()/1000)+12*3600, sub:cfg.subject });
+  const signingInput = vapidB64Json({typ:"JWT",alg:"ES256"}) + "." + vapidB64Json({ aud, exp:Math.floor(Date.now()/1000)+12*3600, sub:cfg.subject });
   const sig = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, cfg.key, new TextEncoder().encode(signingInput));
-  return signingInput + "." + b64urlBytes(new Uint8Array(sig));   // Web Crypto ECDSA already gives raw r||s
+  return signingInput + "." + b64urlBytesPush(new Uint8Array(sig));   // Web Crypto ECDSA already gives raw r||s
 }
 // Fire one payloadless push. gone=true → the subscription is dead and should be deleted.
 async function webPushSend(endpoint:string){
