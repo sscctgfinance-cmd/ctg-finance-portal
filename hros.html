@@ -2252,6 +2252,8 @@ function hrEmpForm(){
   var scatOpts=[['','Auto (Cat 1, or Cat 2 if 60+)'],['1','Category 1 (EE + ER)'],['2','Category 2 (ER only)']];
   var dob=x.date_of_birth?String(x.date_of_birth).slice(0,10):'';
   var joinDate=x.join_date?String(x.join_date).slice(0,10):'';
+  var wdArr=Array.isArray(x.work_days)?x.work_days.map(Number):[];
+  var wdHtml=[['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['7','Sun']].map(function(d){ return '<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="hr_wd'+d[0]+'"'+(wdArr.indexOf(Number(d[0]))>=0?' checked':'')+' style="accent-color:var(--coral)"> '+d[1]+'</label>'; }).join('');
   return '<div class="panel" style="max-width:900px"><div class="panel-hd"><h3>'+(x.id?'Edit':'New')+' employee</h3><button class="btn sm" onclick="hrNav(\'employees\')">✕ Close</button></div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Personal &amp; pay</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">'+
@@ -2277,11 +2279,12 @@ function hrEmpForm(){
       g('Hourly rate (RM/hr)',inp('hourlyRate','0.00',x.hourly_rate,'type="number" step="0.01" min="0"'))+
       g('Daily rate (RM/day)',inp('dailyRate','0.00',x.daily_rate,'type="number" step="0.01" min="0"'))+
       g('Shift start (for reminder)',inp('shiftStart','',x.shift_start?String(x.shift_start).slice(0,5):'','type="time"'))+
-      g('Shift end (for reminder)',inp('shiftEnd','',x.shift_end?String(x.shift_end).slice(0,5):'','type="time"'))+
+      g('Shift end',inp('shiftEnd','',x.shift_end?String(x.shift_end).slice(0,5):'','type="time"'))+
       g('&nbsp;','<div></div>')+
     '</div>'+
-    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">'+ck('clockReminder','Email clock-in/out reminders at shift times',!!x.clock_reminder)+'</div>'+
-    '<div class="muted" style="font-size:11px;margin-bottom:12px">Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. Monthly = fixed salary (uses Basic salary above). Reminders need this box ticked + shift times + an email on file.</div>'+
+    '<div style="margin-bottom:8px"><label class="muted" style="font-size:11px;display:block;margin-bottom:5px">Work days (for the reminder)</label><div style="display:flex;gap:14px;flex-wrap:wrap">'+wdHtml+'</div></div>'+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">'+ck('clockReminder','🔔 Send a phone reminder to clock in at the shift start time',x.reminders_on!==false)+'</div>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:12px">Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. The clock-in reminder pushes at <b>Shift start</b> on the ticked <b>Work days</b>, only if they haven’t clocked in yet, and only to phones where they’ve enabled reminders (Time Clock → Enable). One push per day.</div>'+
     '<button class="btn p sm" onclick="hrSaveEmp()">'+(x.id?'Save changes':'Add employee')+'</button></div>';
 }
 async function hrSaveEmp(){
@@ -2303,7 +2306,14 @@ async function hrSaveEmp(){
     status:v('status')||'active', resignDate:v('resignDate')||null,
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
   var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
-  if(r&&r.ok){ toast('Employee saved'); HR.editEmp=null; renderHR(); } else toast((r&&r.error)||'Save failed',true);
+  if(!r||!r.ok){ toast((r&&r.error)||'Save failed',true); return; }
+  // Persist the clock-in reminder schedule (shift start + work days + on/off) via its own action.
+  var eid=(r&&(r.id||r.employee_id))||(HR.editEmp&&HR.editEmp.id);
+  if(eid){
+    var wdays=[1,2,3,4,5,6,7].filter(function(n){ var e=document.getElementById('hr_wd'+n); return e&&e.checked; });
+    await call({api:'hr_shift_save', tenant:HR.tenant, employee_id:eid, shift_start:(v('shiftStart')||null), work_days:wdays, reminders_on:chk('clockReminder')});
+  }
+  toast('Employee saved'); HR.editEmp=null; renderHR();
 }
 // ===== ⏱ Time Clock (employee self-service) + 🕐 Attendance (admin) =====
 var CLK={ data:null, loading:false, acting:false, err:null };
