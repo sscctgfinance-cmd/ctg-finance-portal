@@ -98,7 +98,11 @@ async function meFromToken(token){
   if (data && data.ok && token){ try { sb.rpc("portal_touch_session", { p_token: token }).then(()=>{}, ()=>{}); } catch (_e) {} }
   return data;
 }
-function isAdmin(me){ const r = me && me.user && me.user.role; return me && me.ok && (r==="admin" || r==="approver"); }
+// isAdmin gates Finance-Portal operational actions. 'approver' was folded in here, which silently made
+// any portal_users.role='approver' a full Finance admin (could issue AUTHORISED Xero invoices, reconcile
+// banks). The HR approver model is separate (hr_claim_role_approvers), so a Finance super-user was never
+// intended — admin only. (No 'approver' accounts exist, so this is zero-impact today, closes it for launch.)
+function isAdmin(me){ const r = me && me.user && me.user.role; return me && me.ok && r==="admin"; }
 function superAdmin(me){ return me && me.ok && me.user && me.user.role==="admin"; }
 function hrViewer(me){ return me && me.ok && me.user && me.user.role==="viewer"; }        // read-only HR access
 function hrManage(me){ return superAdmin(me) || (me && me.ok && me.user && me.user.role==="hr_admin"); } // full HR write (admin or hr_admin), NO finance
@@ -110,7 +114,12 @@ const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
 const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","totp_setup","totp_verify","totp_disable","totp_status","changepw"]); // changepw: every role may change its own password (RPC re-verifies the old one)
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
-async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return Array.isArray(data) ? data : []; } catch (_e) { return []; } }
+// Returns the tenant_ids this caller may touch. FAIL-CLOSED: the RPC returns a non-matching sentinel
+// UUID (not []) for an invalid token or a user with no company assignment, and on any error here we
+// return that same sentinel — so a guard `alw.indexOf(realTenant) < 0` denies rather than opening up.
+// A genuine full-scope admin gets the full real tenant list from the RPC, never the sentinel.
+const NO_TENANT = "00000000-0000-0000-0000-000000000000";
+async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return (Array.isArray(data) && data.length) ? data : [NO_TENANT]; } catch (_e) { return [NO_TENANT]; } }
 // Tenant pin for by-id actions (v103): the central guard only sees b.tenant in the request body, so an
 // action that takes only an id could act on another company's record. Call with the FETCHED record's
 // tenant_id; returns false when the caller's allowed list doesn't include it. Apply on admin paths —
@@ -401,6 +410,18 @@ async function rcEmailActionPage(token:string){
   return page("Approve "+c.claim_no, inner);
 }
 // ── Factored single-claim decision (used by hr_rc_decide + hr_rc_decide_bulk). Returns {ok,status,error,claim,advanced,final}. ──
+// Confirm the caller is entitled to a leave request's company. The leave decide/cancel/list paths never
+// got the tenant pin the claim path did (v103), so a scoped admin — or a role approver whose role name
+// ("hr"/"manager"/…) collides with another company's flow — could act on another company's leave by id.
+// Applies to EVERYONE (admins scoped by allowedTenants; a role approver's own tenant is their only entry).
+async function leaveTenantOk(token:string, req:any){
+  if(!req) return false;
+  let tid = req.tenant_id;
+  if(!tid && req.employee_id){ const { data:e } = await sb.from("hr_employees").select("tenant_id").eq("id",req.employee_id).maybeSingle(); tid = e && e.tenant_id; }
+  if(!tid) return true;                         // tenant unresolvable (shouldn't happen) — don't hard-block
+  const alw = await allowedTenants(token);
+  return alw.indexOf(String(tid)) >= 0;         // allowedTenants is fail-closed, so this denies by default
+}
 async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:string, overrideAmount:any, overrideReason:string, pinTenants:any=null){
   const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
   if(!claim) return { ok:false, error:"claim not found" };
@@ -4235,6 +4256,7 @@ Deno.serve(async (req)=>{
       const { data: req } = await sb.from("hr_leave_requests").select("*").eq("id",String(b.id)).maybeSingle();
       if(!req) return j({ ok:false, error:"not found" });
       if(!who.isAdmin && (!who.employee || req.employee_id!==who.employee.id)) return j({ ok:false, error:"forbidden" }, 403);
+      if(!await leaveTenantOk(b.token, req)) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403);
       if(["Approved","Rejected","Cancelled"].indexOf(String(req.status))>=0) return j({ ok:false, error:"This request is already "+req.status+" and can’t be cancelled." });
       await sb.from("hr_leave_requests").update({ status:"Cancelled" }).eq("id",String(b.id));
       await logAudit(me,"hr_leave_cancel",String(b.id),{ employee_id:req.employee_id, from:req.status, dates:req.date_from+"→"+req.date_to });
@@ -4247,8 +4269,14 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
       if(!who.employee && !who.isAdmin) return j({ ok:true, requests:[] });
+      // Fail-closed tenant scope: only pending leave from companies the caller belongs to. Without this
+      // the query spanned ALL tenants and leaked every company's pending leave + PII (names, MC reasons)
+      // to any admin or role approver. allowedTenants is now fail-closed (sentinel on error/misconfig).
+      const alwPend = await allowedTenants(b.token);
+      const { data: scopeEmps } = await sb.from("hr_employees").select("id").in("tenant_id", alwPend);
+      const scopeSet = new Set((scopeEmps||[]).map((e:any)=>String(e.id)));
       const { data: reqs } = await sb.from("hr_leave_requests").select("*, hr_employees(name,emp_no,dept)").order("date_from",{ascending:false}).limit(300);
-      const pend=(reqs||[]).filter((r:any)=>["Approved","Rejected","Cancelled"].indexOf(String(r.status))<0);
+      const pend=(reqs||[]).filter((r:any)=>["Approved","Rejected","Cancelled"].indexOf(String(r.status))<0 && scopeSet.has(String(r.employee_id)));
       const out:any[]=[];
       for(const r of pend){
         const { data: step } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",r.id).eq("step_order",r.current_step||1).maybeSingle();
@@ -4340,6 +4368,7 @@ Deno.serve(async (req)=>{
       if(["approve","reject"].indexOf(decision)<0) return j({ ok:false, error:"invalid decision" });
       const { data:req } = await sb.from("hr_leave_requests").select("*").eq("id",id).maybeSingle();
       if (!req) return j({ ok:false, error:"not found" });
+      if(!await leaveTenantOk(b.token, req)) return j({ ok:false, error:"You do not have access to this company's leave." }, 403);
       if(["Approved","Rejected","Cancelled"].indexOf(String(req.status))>=0) return j({ ok:false, error:"Already handled — this request is "+req.status+"." });
       const { data: step } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",id).eq("step_order",req.current_step||1).maybeSingle();
       if(!canActOrUnassigned(who, step)) return j({ ok:false, error:"You are not the approver for this step." }, 403);
@@ -4728,7 +4757,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_decide") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
-      const pin = who.isAdmin ? await allowedTenants(b.token) : null;
+      const pin = await allowedTenants(b.token);   // pin for EVERYONE — a non-admin role approver is scoped to their own tenant, closing cross-company decide by id
       const res = await rcDecideOne(who, me, b.id, String(b.decision||""), String(b.comment||""), b.override_amount, String(b.override_reason||""), pin);
       if(!res.ok) return j({ ok:false, error:res.error }, res.forbidden?403:200);
       await rcNotifyDecision(res);
@@ -4741,7 +4770,7 @@ Deno.serve(async (req)=>{
       const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,200) : [];
       if(!ids.length) return j({ ok:false, error:"no claims selected" });
       if((decision==="reject"||decision==="request_info") && !comment.trim()) return j({ ok:false, error:"a reason / message is required for reject or request-info" });
-      const pin = who.isAdmin ? await allowedTenants(b.token) : null;
+      const pin = await allowedTenants(b.token);   // pin for EVERYONE — a non-admin role approver is scoped to their own tenant, closing cross-company decide by id
       let done=0; const results:any[]=[];
       for(const id of ids){ const r=await rcDecideOne(who, me, id, decision, comment, null, "", pin); if(r.ok){ done++; try{ await rcNotifyDecision(r); }catch(_e){} } results.push({ id, ok:r.ok, status:r.status, error:r.error }); }
       return j({ ok:true, done, total:ids.length, results });
@@ -4749,7 +4778,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_set_gl") {
       // Finance/admin change an expense line's GL account — reason REQUIRED, audited (spec §5/§9/§15).
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can change the GL account." }, 403);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can change the GL account." }, 403);
       const reason=String(b.reason||"").trim(); if(!reason) return j({ ok:false, error:"A reason is required to change the GL account." });
       const gl=String(b.gl_account||"").trim(); if(!gl) return j({ ok:false, error:"gl_account required" });
       const { data: c } = await sb.from("hr_claim_requests").select("id,claim_no,status,xero_bill_id,tenant_id").eq("id",b.id).maybeSingle();
@@ -4769,7 +4798,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_export_accounting") {
       // Finance accounting export (spec §5/§12): one row per expense LINE with GL / tax / SST / CC / payment — CSV-ready.
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
       const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
       let mFrom="", mTo="";
       if(month){
@@ -4829,7 +4858,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_rc_mark_paid") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
       const {data:c}=await sb.from("hr_claim_requests").select("*").eq("id",b.id).maybeSingle();
       if(!c) return j({ ok:false, error:"not found" });
       { const alw = await allowedTenants(b.token); if (alw.length && c.tenant_id && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
@@ -4842,7 +4871,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_rc_mark_paid_bulk") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);
       const ids:any[] = Array.isArray(b.ids) ? b.ids.slice(0,500) : [];
       if(!ids.length) return j({ ok:false, error:"no claims selected" });
       const paidDate = b.paid_date||new Date(Date.now()+8*3600*1000).toISOString().slice(0,10);
@@ -4865,7 +4894,7 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_post_xero") {
       // Post an approved reimbursement to Xero as an ACCPAY bill (SUBMITTED, never AUTHORISED — payment stays a human click in Xero).
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
-      const who = await rcMe(me); if(!who.isAdmin && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can post claims to Xero." }, 403);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can post claims to Xero." }, 403);
       const id=b.id;
       const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(name,emp_no)").eq("id",id).maybeSingle();
       if(!c) return j({ ok:false, error:"claim not found" });
@@ -5183,6 +5212,9 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const runId = String(b.runId||""); if (!runId) return j({ ok:false, error:"missing runId" });
       const tenantId = String(b.tenantId||"99911869-9e91-4572-b7dc-4db51b45b6a9");
+      // This action reads b.tenantId (camelCase), so the central guard — which only inspects b.tenant —
+      // never fired. Pin it: a scoped HR admin must not drive a payroll post into a company they don't hold.
+      { const alw = await allowedTenants(b.token); if (alw.indexOf(tenantId) < 0) return denyTenant(me, "hr_post_xero", tenantId); }
       // Safety: portal only ever posts payroll journals as DRAFT (never auto-POSTED), mirroring the
       // "Xero stops at SUBMITTED / human authorises" rule for AP bills.
       const base = Deno.env.get("SUPABASE_URL")!; const srk = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -5217,7 +5249,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v122 signatures: hr_employees.signature/signature_updated_at (data URI). New hr_signature_save - SELF-SERVICE ONLY (a stored signature is forgeable by anyone who can print the form, so one person must not install another persons); hrManage may set one only for an employee with NO login yet, audited as on_behalf; 200KB cap; null clears. hr_rc_get returns signer_sig (claimant) and, via attachActorNames(withSig=true), acted_by_name_sig per step. withSig is opt-in because the leave list resolves hundreds of steps and would repeat the same ~15KB image into a multi-MB response. Claim form signature block now stamps the image over the line plus name + timestamp, so it stays an auditable record when nobody uploaded one; Received by prints the payment/bank reference and keeps a blank line. Frontend: canvas signature pad (mouse/touch) + upload, auto-trimmed to the ink bounds; My Profile added to the ADMIN nav too (it was employee-mode only, so approvers had no way to save the signature they sign with). Also v121 claim numbering (CODE-YYYYMM-0001 via atomic hr_next_doc_no), v120 segregation-of-duties, v119 company branding." });
+    return j({ ok:true, hint:"portal v123 pre-launch access-control hardening (multi-tenant). (1) TENANT FAIL-OPEN CLOSED: portal_allowed_tenants now returns a non-matching sentinel UUID (not []) for an invalid token or a user with no company assignment, and allowedTenants() returns the sentinel on error — so all ~30 tenant guards fail CLOSED (a full-scope admin still gets the full real list). (2) LEAVE cross-tenant holes closed: hr_leave_decide / hr_leave_cancel / hr_leave_pending had NO tenant pin, so a scoped admin or a role approver whose role name collided across companies could read all companies pending leave (+PII) and approve/reject/cancel other companies leave by id. Added leaveTenantOk() + scoped the pending query. (3) hr_rc_decide/_bulk now pin tenants for EVERYONE (was admins-only), closing the same role-name collision on claims. (4) hr_admin (role = "full HR write, NO finance") removed from the 5 reimbursement MONEY gates (set_gl / mark_paid / mark_paid_bulk / post_xero / export_accounting) — now superAdmin OR finance-role only. (5) approver removed from isAdmin(): it silently made a portal_users.role=approver a full Finance admin (issue AUTHORISED Xero invoices, bank reconcile). (6) hr_post_xero now pins b.tenantId (camelCase escaped the central guard). Verified: company-doc RPCs already tenant-scoped + fail-closed. Also v122 signatures, v121 numbering, v120 segregation-of-duties, v119 company branding." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
