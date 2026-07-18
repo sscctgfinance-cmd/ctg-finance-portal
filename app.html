@@ -3593,36 +3593,38 @@ function gwConvert(){
 // payouts = Net Payout Amount from the payout file.
 function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
   var rows=[], f=GW.hitpay, A=GW.audit;
-  if(f.txn){
-    var feeByDate={};
-    f.txn.rows.forEach(function(r){
-      A.txnRead++;
-      var d=gwParseDate(gwPick(r,'Completed Date')); if(!d){A.txnNoDate++; return;}
-      var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
-      var fee=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
-      if(gross===0 && !fee){A.txnZero++; return;}
-      var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
-      var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
-      var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
-      if(gross!==0){ A.txnConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'}); }
-      if(fee){ var k=gwFmtDate(d,'ymd'); (feeByDate[k]=feeByDate[k]||{d:d,fee:0,n:0}); feeByDate[k].fee+=fee; feeByDate[k].n++; }
-    });
-    if(wantFee) Object.keys(feeByDate).forEach(function(k){ var b=feeByDate[k]; var fee=Math.round(b.fee*100)/100;
-      if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay processing fees ('+b.n+' txn, incl. Stripe)',ref:'HITPAY-FEE-'+k,kind:'fee'}); });
-  }
-  // Payout: consolidate the Net Payout Amount per Payout Date into one line (multiple payouts on the
-  // same day merge). Fees are already summed per day above. (HitPay payouts include prior-month
-  // settlements, so payout total won't tie to this period's transactions — the clearing float is normal.)
-  if(f.payout && wantPayout){
+  // Money-in: one line per transaction (gross MYR). Also accumulate the effective HitPay fee rate
+  // (fee ÷ gross) from the transaction report — the settlement report has no fee column, so the MDR
+  // fee must be derived by grossing-up each net payout, then dated on the settlement (Payout) date.
+  var grossSum=0, feeSum=0;
+  if(f.txn) f.txn.rows.forEach(function(r){
+    A.txnRead++;
+    var d=gwParseDate(gwPick(r,'Completed Date')); if(!d){A.txnNoDate++; return;}
+    var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
+    if(gross===0){A.txnZero++; return;}
+    grossSum+=gross; feeSum+=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
+    A.txnConv++;
+    var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
+    var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
+    var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
+    rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'});
+  });
+  var feeRate = grossSum>0 ? (feeSum/grossSum) : 0.015;   // effective HitPay rate; fallback 1.5% if no txn file
+  A.hpFeeRate=feeRate;
+  // Payout + MDR fee, BOTH consolidated per Payout Date and dated on the settlement date. Payout net
+  // comes straight from the settlement report; the fee = grossed-up net − net (what HitPay deducted).
+  if(f.payout){
     var poByDate={};
     f.payout.rows.forEach(function(r){ A.poRead++;
       var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
       var k=gwFmtDate(d,'ymd');
-      if(!poByDate[k]) poByDate[k]={d:d,amt:0,n:0};
-      poByDate[k].amt+=gwNum(gwPick(r,'Net Payout Amount')); poByDate[k].n++;
+      if(!poByDate[k]) poByDate[k]={d:d,net:0,n:0};
+      poByDate[k].net+=gwNum(gwPick(r,'Net Payout Amount')); poByDate[k].n++;
     });
-    Object.keys(poByDate).forEach(function(k){ var b=poByDate[k], amt=Math.round(b.amt*100)/100;
-      if(amt){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-amt,payee:'HitPay',desc:'HitPay settlement payout to bank'+(b.n>1?(' ('+b.n+' payouts)'):''),ref:'HITPAY-PAYOUT-'+k,kind:'out'}); }
+    Object.keys(poByDate).forEach(function(k){ var b=poByDate[k], net=Math.round(b.net*100)/100;
+      if(wantPayout && net){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-net,payee:'HitPay',desc:'HitPay settlement payout to bank'+(b.n>1?(' ('+b.n+' payouts)'):''),ref:'HITPAY-PAYOUT-'+k,kind:'out'}); }
+      if(wantFee){ var gross=(feeRate<1)? net/(1-feeRate) : net; var fee=Math.round((gross-net)*100)/100;
+        if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay MDR fee ('+(feeRate*100).toFixed(2)+'% of settled gross)',ref:'HITPAY-MDR-'+k,kind:'fee'}); }
     });
   }
   return rows;
