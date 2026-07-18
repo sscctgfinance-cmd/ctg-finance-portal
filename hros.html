@@ -1877,14 +1877,7 @@ function hrRCForm(){
   return '<div class="panel" style="max-width:940px"><div class="panel-hd"><h3>'+(f.id?'Edit reimbursement form':'New reimbursement form')+'</h3><button class="btn sm" onclick="hrRCNav(\'list\')">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+g('Employee *','<select id="rc_emp" style="'+RC_SEL+'">'+empOpts+'</select>')+g('Form date *',inp('date','',f.claim_date||todayLocalISO(),'type="date"'))+g('Claim month',inp('month','',f.claim_month||String(f.claim_date||todayLocalISO()).slice(0,7),'type="month"'))+g('Department',inp('dept','',f.department))+g('Cost center','<select id="rc_cc" style="'+RC_SEL+'">'+hrRCCcOpts(f.cost_center)+'</select>')+g('Project',inp('project','',f.project))+'</div>'+
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
-    // 📷 Scan: capture="environment" opens the phone's rear camera directly (desktop → file picker).
-    // Wired to the receipt OCR — reads amount/date/vendor into a new line AND keeps the photo attached.
-    '<div style="margin:14px 0 4px;padding:12px;border:1px dashed var(--coral-soft);border-radius:10px;background:var(--panel-2);display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
-      '<label class="btn p" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:14px;padding:11px 18px;white-space:nowrap">📷 Scan receipt'+
-        '<input type="file" accept="image/*" capture="environment" style="display:none" onchange="if(this.files&&this.files[0]){hrRCScanFile(this.files[0]);this.value=\'\';}"></label>'+
-      '<span class="muted" style="font-size:11.5px;line-height:1.4;flex:1;min-width:150px">Snap a photo of your receipt — it reads the <b>amount, date &amp; vendor</b> into a new line and attaches the photo. Always check the amount before submitting.</span>'+
-    '</div>'+
-    '<div style="margin:12px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
+    '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
     '<div>'+rows+'</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
@@ -1929,16 +1922,15 @@ async function hrRCSave(submit){
   var cid=r.id; RC.form.id=cid;
   var fi=document.getElementById('rc_file');
   if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, await hrRCPrepImage(fi.files[i])); } }
-  if(RC.form._scanFiles&&RC.form._scanFiles.length){ for(var sj=0;sj<RC.form._scanFiles.length;sj++){ await hrRCUpload(cid, RC.form._scanFiles[sj]); } RC.form._scanFiles=[]; }
   if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid,declarations:dec}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
   else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
   hrRender();
 }
 function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'image/jpeg'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
-// Shrink a phone photo before OCR/upload. A raw camera shot is several MB — too heavy for the vision
-// call and wasteful to store as base64. Images → max 1600px longest side, JPEG q0.82; PDFs / small
-// files pass through untouched. Always resolves (never rejects) so a capture is never lost.
+// Shrink a phone photo before upload. A raw camera shot is several MB — wasteful to store as base64.
+// Images → max 1600px longest side, JPEG q0.82; PDFs / already-small files pass through untouched.
+// Always resolves (never rejects) so an upload is never lost.
 function hrRCPrepImage(file){ return new Promise(function(res){
   if(!file || !/^image\//.test(file.type||'')){ res(file); return; }
   var rd=new FileReader();
@@ -1963,30 +1955,6 @@ function hrRCPrepImage(file){ return new Promise(function(res){
   rd.onerror=function(){ res(file); };
   rd.readAsDataURL(file);
 });}
-async function hrRCScanFile(file){
-  if(!file)return; hrRCSyncItems();
-  if(!Array.isArray(RC.form.items))RC.form.items=[];
-  var prepped=await hrRCPrepImage(file);
-  toast('📷 Reading receipt…'); var b64=await hrRCFileB64(prepped); if(!b64){ toast('Could not read the photo',true); return; }
-  var r=await call({api:'hr_rc_ocr',file_b64:b64,file_type:prepped.type||file.type});
-  // Keep the photo as an attachment no matter what — even if OCR can't read it, the receipt is captured.
-  if(!RC.form._scanFiles)RC.form._scanFiles=[]; RC.form._scanFiles.push(prepped);
-  if(!r||!r.ok){
-    var msg=String((r&&r.error)||'');
-    var friendly = /enabled|credit balance|api key|billing/i.test(msg)
-      ? 'Auto-read is temporarily off — your photo is attached, just type the amount below.'
-      : 'Couldn’t auto-read that one — your photo is attached, just type the amount below.';
-    if(!RC.form.items.length) RC.form.items.push({ claim_type_id:'', item_date:(RC.form.claim_date||todayLocalISO()), description:'', amount:'', total_km:'', mileage_rate:hrRCDefRate() });
-    toast(friendly,true); hrRender(); return;
-  }
-  var ex=r.extracted||{};
-  var row={ claim_type_id:r.claim_type_id||'', item_date:(ex.date||RC.form.claim_date||todayLocalISO()), description:(ex.description||ex.vendor||''), amount:((Number(ex.total)||0)>0?Number(ex.total):''), total_km:'', mileage_rate:hrRCDefRate() };
-  var items=RC.form.items, first=items[0];
-  if(items.length===1 && first && !first.claim_type_id && !first.amount && !first.total_km && !first.description){ items[0]=row; }
-  else items.push(row);
-  toast('Receipt read ✓ — '+((ex.vendor||'').slice(0,24)||'expense')+(ex.confidence?(' · '+ex.confidence+' confidence, check the amount'):''));
-  hrRender();
-}
 async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender();
   try{ var r=await call({api:'hr_rc_get',id:id}); if(r&&r.ok){ RC.detail=r; RC.page='detail'; } else toast((r&&r.error)||'Load failed',true); }
   catch(e){ toast(e.message||e,true); }
