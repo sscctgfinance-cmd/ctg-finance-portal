@@ -3657,28 +3657,37 @@ function gwConvertPayex(fmt,refField,wantPayout,wantFee){
 }
 function gwConvertAtome(fmt,refField,wantPayout,wantFee){
   var rows=[], f=GW.atome, A=GW.audit;
+  // Money-in: one line per transaction (gross the customer purchased via Atome BNPL).
   if(f.txn) f.txn.rows.forEach(function(r){
     A.txnRead++;
     var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d){A.txnNoDate++; return;}
     var amt=gwNum(gwPick(r,'Transaction Amount'));
     if(amt===0){A.txnZero++; return;}
     A.txnConv++;
-    var oid=String(gwPick(r,'Atome Order ID')||'').trim();
     var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'SHOPIFY',desc:oid,ref:ref,kind:amt<0?'out':'in'});
+    var plan=String(gwPick(r,"Customer's Payment Plan")||gwPick(r,'Transaction Type')||'').trim();
+    rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'Atome',desc:('Atome'+(plan?(' '+plan):'')),ref:ref,kind:amt<0?'out':'in'});
   });
-  if(f.payout) f.payout.rows.forEach(function(r){
-    A.poRead++;
-    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
-    var payoutAmt=gwNum(gwPick(r,'Payout Amount')), totalSales=gwNum(gwPick(r,'Total Sales'));
-    // self-check: Total Sales + all fees/SST/rebates must equal Payout Amount
-    var expect=totalSales+gwNum(gwPick(r,'All Atome Fees'))+gwNum(gwPick(r,'All Atome Fees SST'))+gwNum(gwPick(r,'All Rebates'))+gwNum(gwPick(r,'All Rebates SST'));
-    A.reconTot++; var diff=Math.abs(expect-payoutAmt); if(diff>A.reconMax)A.reconMax=diff; if(diff<=0.02)A.reconOk++;
-    var pid=String(gwPick(r,'Payout ID')||'').trim();
-    var feeAmt=Math.round((payoutAmt-totalSales)*100)/100;
-    if(wantPayout && payoutAmt){ A.poConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:-payoutAmt,payee:'Atome Payout',desc:'Payout to bank',ref:pid||('ATOME-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'}); }
-    if(wantFee && feeAmt) rows.push({d:d,date:gwFmtDate(d,fmt),amount:feeAmt,payee:'Atome',desc:'Atome fees & charges (MDR+SST'+(gwNum(gwPick(r,'All Rebates'))?'+rebates':'')+')',ref:(pid||('ATOME-'+gwFmtDate(d,'ymd')))+'-FEE',kind:'fee'});
-  });
+  // Settlement: consolidate per Payout Date — ONE payout line (−total net) + ONE fee line (all Atome
+  // fees summed) per date. Multiple payout batches on the same day merge into a single line each.
+  if(f.payout){
+    var byDate={}, rnd=function(x){return Math.round(x*100)/100;};
+    f.payout.rows.forEach(function(r){ A.poRead++;
+      var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
+      var payoutAmt=gwNum(gwPick(r,'Payout Amount')), totalSales=gwNum(gwPick(r,'Total Sales'));
+      // per-row self-check: Total Sales + all fees/SST/rebates should equal Payout Amount
+      var expect=totalSales+gwNum(gwPick(r,'All Atome Fees'))+gwNum(gwPick(r,'All Atome Fees SST'))+gwNum(gwPick(r,'All Rebates'))+gwNum(gwPick(r,'All Rebates SST'));
+      A.reconTot++; var diff=Math.abs(expect-payoutAmt); if(diff>A.reconMax)A.reconMax=diff; if(diff<=0.02)A.reconOk++;
+      var k=gwFmtDate(d,'ymd');
+      if(!byDate[k]) byDate[k]={d:d,payout:0,fee:0};
+      byDate[k].payout+=payoutAmt;
+      byDate[k].fee+=(payoutAmt-totalSales);   // negative = the Atome fee (MDR + SST + rebates) for that payout
+    });
+    Object.keys(byDate).forEach(function(k){ var b=byDate[k];
+      if(wantPayout && rnd(b.payout)){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.payout),payee:'Atome',desc:'Atome settlement payout to bank',ref:'ATOME-PAYOUT-'+k,kind:'out'}); }
+      if(wantFee && rnd(b.fee)) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:rnd(b.fee),payee:'Atome',desc:'Atome MDR & fees (MDR + SST + rebates)',ref:'ATOME-MDR-'+k,kind:'fee'});
+    });
+  }
   return rows;
 }
 function gwRenderResult(){
