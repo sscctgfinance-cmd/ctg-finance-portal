@@ -2361,7 +2361,31 @@ function hrClockRender(){
   var todayCard='<div class="panel"><div class="panel-hd"><h3>Today</h3><span class="muted" style="font-size:11.5px">This week: <b>'+Number(d.week_hours||0).toFixed(2)+' h</b>'+wkPay+'</span></div>'+(today.length?('<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>In</th><th>Out</th><th class="amt">Hours</th></tr></thead><tbody>'+rows+'</tbody></table></div>'):'<div class="muted" style="padding:12px">No punches today yet.</div>')+'</div>';
   var tip='<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.</div>';
   setTimeout(hrClkTick,30);
-  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+hrPushCard()+tip+'</div>';
+  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+hrSchedCard(emp)+hrPushCard()+tip+'</div>';
+}
+// ===== 🗓️ My work schedule (part-timer self-service) — drives the clock-in/out reminders =====
+function hrSchedCard(emp){
+  if(!emp || !hrNeedsClock(emp)) return '';   // schedule + reminders are for part-timers only
+  var st=emp.shift_start?String(emp.shift_start).slice(0,5):'', en=emp.shift_end?String(emp.shift_end).slice(0,5):'';
+  var wd=Array.isArray(emp.work_days)?emp.work_days.map(Number):[];
+  var days=[['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat'],['7','Sun']].map(function(d){
+    return '<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="sch_wd'+d[0]+'"'+(wd.indexOf(Number(d[0]))>=0?' checked':'')+' style="accent-color:var(--coral)"> '+d[1]+'</label>'; }).join('');
+  var S='padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
+  return '<div class="panel" style="margin-top:12px"><div class="panel-hd"><h3>🗓️ My work schedule</h3></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:10px">Set the days &amp; times you usually work. Reminders fire at your <b>Start time</b> (to clock in) and your <b>End time</b> (to clock out) on the ticked days — only if you haven’t already.</div>'+
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Start time (clock in)</label><input type="time" id="sch_start" value="'+esc(st)+'" style="'+S+'"></div>'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">End time (clock out)</label><input type="time" id="sch_end" value="'+esc(en)+'" style="'+S+'"></div>'+
+    '</div>'+
+    '<div style="margin-bottom:12px"><label class="muted" style="font-size:11px;display:block;margin-bottom:5px">Work days</label><div style="display:flex;gap:14px;flex-wrap:wrap">'+days+'</div></div>'+
+    '<button class="btn p sm" onclick="hrSchedSave()">Save my schedule</button></div>';
+}
+async function hrSchedSave(){
+  var v=function(id){var e=document.getElementById(id);return e?e.value:'';};
+  var wd=[1,2,3,4,5,6,7].filter(function(n){var e=document.getElementById('sch_wd'+n);return e&&e.checked;});
+  var r=await call({api:'hr_shift_save', shift_start:(v('sch_start')||null), shift_end:(v('sch_end')||null), work_days:wd, reminders_on:true});
+  if(r&&r.ok){ toast('Schedule saved ✓'); if(RC.me&&RC.me.employee){ RC.me.employee.shift_start=v('sch_start')||null; RC.me.employee.shift_end=v('sch_end')||null; RC.me.employee.work_days=wd; RC.me.employee.reminders_on=true; } hrRender(); }
+  else toast((r&&r.error)||'Could not save schedule',true);
 }
 // ===== 🔔 Web Push: clock-in reminders (employee self-service, per device) =====
 var PUSH={ supported:('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window), reg:null, sub:null, busy:false };

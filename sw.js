@@ -7,8 +7,10 @@ self.addEventListener('install', function(){ self.skipWaiting(); });
 self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });
 
 self.addEventListener('push', function(event){
-  var title = '⏰ Clock-in reminder';
-  var body  = 'Your shift is starting — please remember to clock in.';
+  // Payloadless push can't carry different text per event, so the message is neutral: it covers both
+  // the shift-start (clock in) and shift-end (clock out) reminders. Opening the app shows the right button.
+  var title = '⏰ Time Clock reminder';
+  var body  = 'Open HR OS to clock in or out for your shift.';
   // If a payload ever is sent, use it; otherwise fall back to the fixed reminder text.
   try { if (event.data){ var d = event.data.json(); if (d && d.title) title = d.title; if (d && d.body) body = d.body; } } catch (_e) {}
   event.waitUntil(self.registration.showNotification(title, {

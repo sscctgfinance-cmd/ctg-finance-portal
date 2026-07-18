@@ -4562,23 +4562,32 @@ Deno.serve(async (req)=>{
       return j({ ok:true, ...res });
     }
     if (api === "hr_shift_save") {
-      // Admin sets a part-timer's usual start time + work days, which drive the clock-in reminder.
-      const me = await meFromToken(b.token); if(!hrManage(me)) return j({ ok:false, error:"unauthorized" },401);
-      const empId = String(b.employee_id||""); if(!empId) return j({ ok:false, error:"no employee" });
-      const { data: te } = await sb.from("hr_employees").select("tenant_id").eq("id",empId).maybeSingle();
-      if(!te) return j({ ok:false, error:"employee not found" });
-      { const alw=await allowedTenants(b.token); if(te.tenant_id && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_shift_save",te.tenant_id); }
-      const st = (b.shift_start===null||b.shift_start==="") ? null : String(b.shift_start).slice(0,5);   // 'HH:MM'
+      // A part-timer arranges their OWN timetable (shift start/end + work days) — drives the clock-in
+      // AND clock-out reminders. Self-service by default; an admin (hrManage) may set another employee's
+      // schedule, tenant-pinned. (It only affects reminders, no pay impact, so self-service is safe.)
+      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
+      const who = await rcMe(me);
+      let empId = String(b.employee_id||""); if(!empId) empId = (who.employee && who.employee.id) || "";
+      if(!empId) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
+      const isSelf = !!(who.employee && String(who.employee.id)===String(empId));
+      if(!isSelf){
+        if(!hrManage(me)) return j({ ok:false, error:"You can only set your own schedule." },403);
+        const { data: te } = await sb.from("hr_employees").select("tenant_id").eq("id",empId).maybeSingle();
+        if(!te) return j({ ok:false, error:"employee not found" });
+        const alw=await allowedTenants(b.token); if(te.tenant_id && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_shift_save",te.tenant_id);
+      }
+      const hhmm=(v:any)=> (v===null||v==="")?null:String(v).slice(0,5);   // 'HH:MM'
       const wd = Array.isArray(b.work_days) ? Array.from(new Set(b.work_days.map((x:any)=>Number(x)).filter((n:number)=>n>=1&&n<=7))) : null;
-      const patch:any = { shift_start: st, work_days: wd, reminders_on: b.reminders_on!==false };
+      const patch:any = { shift_start: hhmm(b.shift_start), shift_end: hhmm(b.shift_end), work_days: wd, reminders_on: b.reminders_on!==false };
       const { error } = await sb.from("hr_employees").update(patch).eq("id",empId);
       if(error) return j({ ok:false, error:error.message });
-      await logAudit(me,"hr_shift_save",empId,{ shift_start:st, work_days:wd, reminders_on:patch.reminders_on });
+      await logAudit(me,"hr_shift_save",empId,{ shift_start:patch.shift_start, shift_end:patch.shift_end, work_days:wd, reminders_on:patch.reminders_on, self:isSelf });
       return j({ ok:true });
     }
     if (api === "clockin_reminder_run") {
-      // Called by pg_cron (no user token) — authenticated by a shared secret. Pushes part-timers who are
-      // scheduled today, whose start time has arrived, and who haven't clocked in yet. Idempotent per day.
+      // Called by pg_cron (no user token) — authenticated by a shared secret. Reminds part-timers to
+      // clock IN (start arrived, not clocked in) and clock OUT (end arrived, still clocked in). One
+      // reminder of each kind per employee per day (hr_push_reminder_log PK employee_id+work_date+kind).
       const { data: cfgRow } = await sb.from("hr_push_config").select("cron_secret").eq("id",1).maybeSingle();
       const secret = cfgRow && cfgRow.cron_secret;
       if(!secret || String(b.secret||"")!==secret) return j({ ok:false, error:"forbidden" },403);
@@ -4586,26 +4595,43 @@ Deno.serve(async (req)=>{
       const today = myt.toISOString().slice(0,10);
       const weekday = ((myt.getUTCDay()+6)%7)+1;                 // 1=Mon .. 7=Sun (MYT)
       const minsNow = myt.getUTCHours()*60 + myt.getUTCMinutes();
+      const toMin=(t:any)=>{ const hm=String(t).slice(0,5).split(":"); return Number(hm[0])*60+Number(hm[1]); };
+      const alreadyLogged=async(id:any,kind:string)=>{ const { data }=await sb.from("hr_push_reminder_log").select("employee_id").eq("employee_id",id).eq("work_date",today).eq("kind",kind).maybeSingle(); return !!data; };
       const { data: emps } = await sb.from("hr_employees")
-        .select("id,tenant_id,shift_start,work_days,employment_type,pay_type")
-        .not("shift_start","is",null).eq("reminders_on",true);
-      let pushed=0, due=0;
+        .select("id,tenant_id,shift_start,shift_end,work_days,employment_type,pay_type")
+        .eq("reminders_on",true);
+      let pushedIn=0, pushedOut=0, dueIn=0, dueOut=0;
       for(const e of (emps||[])){
         const isPT = e.employment_type==="Part-time" || e.pay_type==="hourly" || e.pay_type==="daily";
         if(!isPT) continue;
         const wd = Array.isArray(e.work_days)?e.work_days:[];
         if(wd.indexOf(weekday)<0) continue;
-        const hm = String(e.shift_start).slice(0,5).split(":"); const shiftMin = Number(hm[0])*60 + Number(hm[1]);
-        if(minsNow < shiftMin-5 || minsNow > shiftMin+180) continue;   // only within the start window
-        due++;
-        const { data: punch } = await sb.from("hr_timeclock").select("id").eq("employee_id",e.id).eq("work_date",today).limit(1);
-        if(punch && punch.length) continue;                            // already clocked in
-        const { data: log } = await sb.from("hr_push_reminder_log").select("employee_id").eq("employee_id",e.id).eq("work_date",today).maybeSingle();
-        if(log) continue;                                              // already reminded today
-        const res = await pushToEmployee(e.id);
-        if(res.sent>0){ pushed++; await sb.from("hr_push_reminder_log").insert({ employee_id:e.id, work_date:today }); }
+        // CLOCK-IN: start time arrived (within a 3h window), no punch today yet
+        if(e.shift_start){
+          const sMin=toMin(e.shift_start);
+          if(minsNow>=sMin-5 && minsNow<=sMin+180){
+            dueIn++;
+            const { data: punch } = await sb.from("hr_timeclock").select("id").eq("employee_id",e.id).eq("work_date",today).limit(1);
+            if(!(punch && punch.length) && !(await alreadyLogged(e.id,"in"))){
+              const res=await pushToEmployee(e.id); if(res.sent>0){ pushedIn++; await sb.from("hr_push_reminder_log").insert({ employee_id:e.id, work_date:today, kind:"in" }); }
+            }
+          }
+        }
+        // CLOCK-OUT: end time arrived (within a 3h window), still clocked in (an open punch today)
+        if(e.shift_end){
+          const eMin=toMin(e.shift_end);
+          if(minsNow>=eMin-5 && minsNow<=eMin+180){
+            const { data: open } = await sb.from("hr_timeclock").select("id").eq("employee_id",e.id).eq("work_date",today).eq("status","open").limit(1);
+            if(open && open.length){
+              dueOut++;
+              if(!(await alreadyLogged(e.id,"out"))){
+                const res=await pushToEmployee(e.id); if(res.sent>0){ pushedOut++; await sb.from("hr_push_reminder_log").insert({ employee_id:e.id, work_date:today, kind:"out" }); }
+              }
+            }
+          }
+        }
       }
-      return j({ ok:true, today, weekday, minsNow, candidates:(emps||[]).length, due, pushed });
+      return j({ ok:true, today, weekday, minsNow, candidates:(emps||[]).length, dueIn, dueOut, pushedIn, pushedOut });
     }
     if (api === "hr_signature_save") {
       // Your own handwritten signature, stamped on the reimbursement form next to your name.
@@ -5369,7 +5395,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v126 clock-in reminders phase 2: per-employee shift_start + work_days (1=Mon..7=Sun) + reminders_on on hr_employees; hr_shift_save (admin, tenant-pinned). clockin_reminder_run (pg_cron, secret-gated via hr_push_config.cron_secret) pushes part-timers scheduled today whose start time arrived and who have not clocked in (hr_timeclock check), one push/day via hr_push_reminder_log. Employee editor gains work-day checkboxes + a push-reminder toggle. Also v125 web-push phase 1." });
+    return j({ ok:true, hint:"portal v127 clock-in/out reminders + self-serve schedule: hr_shift_save now SELF-SERVICE (a part-timer sets their own shift_start/shift_end/work_days; admin may still set others, tenant-pinned) and persists shift_end. clockin_reminder_run reminds to clock IN (start arrived, no punch) AND clock OUT (end arrived, still an open punch); one of each kind per day via hr_push_reminder_log (PK employee_id+work_date+kind). Employee Time Clock view gets a My work schedule card. sw.js message is neutral (clock in OR out) since payloadless push has fixed text. Also v126 phase-2, v125 phase-1." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
