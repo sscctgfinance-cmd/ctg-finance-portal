@@ -3610,13 +3610,21 @@ function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
     if(wantFee) Object.keys(feeByDate).forEach(function(k){ var b=feeByDate[k]; var fee=Math.round(b.fee*100)/100;
       if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay processing fees ('+b.n+' txn, incl. Stripe)',ref:'HITPAY-FEE-'+k,kind:'fee'}); });
   }
-  if(f.payout && wantPayout) f.payout.rows.forEach(function(r){
-    A.poRead++;
-    var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
-    var amt=gwNum(gwPick(r,'Net Payout Amount'));
-    var pid=String(gwPick(r,'Payout ID')||'').trim();
-    if(amt){ A.poConv++; rows.push({d:d,date:gwFmtDate(d,fmt),amount:-amt,payee:'HitPay Payout',desc:'Payout to bank',ref:pid||('HITPAY-PAYOUT-'+gwFmtDate(d,'ymd')),kind:'out'}); }
-  });
+  // Payout: consolidate the Net Payout Amount per Payout Date into one line (multiple payouts on the
+  // same day merge). Fees are already summed per day above. (HitPay payouts include prior-month
+  // settlements, so payout total won't tie to this period's transactions — the clearing float is normal.)
+  if(f.payout && wantPayout){
+    var poByDate={};
+    f.payout.rows.forEach(function(r){ A.poRead++;
+      var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
+      var k=gwFmtDate(d,'ymd');
+      if(!poByDate[k]) poByDate[k]={d:d,amt:0,n:0};
+      poByDate[k].amt+=gwNum(gwPick(r,'Net Payout Amount')); poByDate[k].n++;
+    });
+    Object.keys(poByDate).forEach(function(k){ var b=poByDate[k], amt=Math.round(b.amt*100)/100;
+      if(amt){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-amt,payee:'HitPay',desc:'HitPay settlement payout to bank'+(b.n>1?(' ('+b.n+' payouts)'):''),ref:'HITPAY-PAYOUT-'+k,kind:'out'}); }
+    });
+  }
   return rows;
 }
 function gwConvertPayex(fmt,refField,wantPayout,wantFee){
