@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HR OS · CTG</title><!-- build:v87-multi-line-claims -->
+<!-- PWA / Web Push (clock-in reminders). On iPhone, notifications only work once the app is added to the Home Screen. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b1220">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="HR OS">
+<link rel="apple-touch-icon" href="logo.png">
 <style>
 /* ════════════════════════════════════════════
    CTG Finance Portal · v6 — CTG Brand Dark Theme
@@ -2307,6 +2313,8 @@ function hrClkTick(){ var el=document.getElementById('clk_elapsed'); if(!el||!CL
 function hrGetGeo(){ return new Promise(function(res){ if(!navigator.geolocation){res({});return;} var done=false,t=setTimeout(function(){if(!done){done=true;res({});}},4000); try{ navigator.geolocation.getCurrentPosition(function(pos){if(done)return;done=true;clearTimeout(t);res({lat:pos.coords.latitude,lng:pos.coords.longitude});},function(){if(done)return;done=true;clearTimeout(t);res({});},{enableHighAccuracy:false,timeout:3500,maximumAge:60000}); }catch(_e){ if(!done){done=true;clearTimeout(t);res({});} } }); }
 function hrClock(){
   if(!HR._clkTimer){ HR._clkTimer=setInterval(hrClkTick,1000); }
+  // Register the notifier once and learn whether this device is already subscribed, then repaint the card.
+  if(PUSH.supported && !PUSH._init){ PUSH._init=true; pushInitSW().then(function(){ if(HR.view==='clock') hrRender(); }); }
   if(!CLK.data && !CLK.loading && !CLK.err){ CLK.loading=true; setTimeout(hrClockLoad,0); }
   if(CLK.loading && !CLK.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrClockRender();
@@ -2343,7 +2351,55 @@ function hrClockRender(){
   var todayCard='<div class="panel"><div class="panel-hd"><h3>Today</h3><span class="muted" style="font-size:11.5px">This week: <b>'+Number(d.week_hours||0).toFixed(2)+' h</b>'+wkPay+'</span></div>'+(today.length?('<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>In</th><th>Out</th><th class="amt">Hours</th></tr></thead><tbody>'+rows+'</tbody></table></div>'):'<div class="muted" style="padding:12px">No punches today yet.</div>')+'</div>';
   var tip='<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.</div>';
   setTimeout(hrClkTick,30);
-  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+tip+'</div>';
+  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+hrPushCard()+tip+'</div>';
+}
+// ===== 🔔 Web Push: clock-in reminders (employee self-service, per device) =====
+var PUSH={ supported:('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window), reg:null, sub:null, busy:false };
+function pushB64ToU8(base64){ var pad='='.repeat((4-base64.length%4)%4); var b=(base64+pad).replace(/-/g,'+').replace(/_/g,'/'); var raw=atob(b); var arr=new Uint8Array(raw.length); for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i); return arr; }
+function pushIsIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent); }
+function pushStandalone(){ return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone===true; }
+async function pushInitSW(){
+  if(!PUSH.supported) return null;
+  try{ PUSH.reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready; PUSH.sub = await PUSH.reg.pushManager.getSubscription(); return PUSH.reg; }
+  catch(_e){ return null; }
+}
+async function pushEnable(){
+  if(PUSH.busy) return;
+  if(!PUSH.supported){ toast('This browser can’t show notifications',true); return; }
+  if(pushIsIOS() && !pushStandalone()){ toast('On iPhone: Share → Add to Home Screen, open it from there, then enable.',true); hrRender(); return; }
+  PUSH.busy=true; hrRender();
+  try{
+    var perm = await Notification.requestPermission();
+    if(perm!=='granted'){ toast('Notifications not allowed — turn them on in your phone/browser settings.',true); PUSH.busy=false; hrRender(); return; }
+    if(!PUSH.reg) await pushInitSW();
+    if(!PUSH.reg){ toast('Couldn’t start the notifier',true); PUSH.busy=false; hrRender(); return; }
+    var pk = await call({api:'push_pubkey'}); if(!pk||!pk.ok||!pk.publicKey){ toast('Push isn’t set up yet — tell HR.',true); PUSH.busy=false; hrRender(); return; }
+    PUSH.sub = await PUSH.reg.pushManager.getSubscription();
+    if(!PUSH.sub) PUSH.sub = await PUSH.reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: pushB64ToU8(pk.publicKey) });
+    var r = await call({api:'push_subscribe', subscription:PUSH.sub.toJSON(), ua:navigator.userAgent.slice(0,200)});
+    if(r&&r.ok){ toast('Reminders on ✓ — sending a test…'); PUSH.busy=false; hrRender(); setTimeout(pushTest,600); }
+    else { toast((r&&r.error)||'Could not turn on reminders',true); PUSH.busy=false; hrRender(); }
+  }catch(e){ toast('Setup failed: '+((e&&e.message)||e),true); PUSH.busy=false; hrRender(); }
+}
+async function pushDisable(){
+  try{ if(PUSH.sub){ var ep=PUSH.sub.endpoint; try{ await PUSH.sub.unsubscribe(); }catch(_e){} await call({api:'push_unsubscribe', endpoint:ep}); PUSH.sub=null; } toast('Reminders off for this device'); }catch(_e){}
+  hrRender();
+}
+async function pushTest(){ var r=await call({api:'push_test'}); if(r&&r.ok) toast('Test sent — check your notifications'); else toast((r&&r.error)||'Test failed',true); }
+function hrPushCard(){
+  if(!PUSH.supported) return '';
+  var on=!!PUSH.sub, iosNeedsInstall=(pushIsIOS() && !pushStandalone());
+  var body;
+  if(on){
+    body='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="pill pill-ok" style="font-size:11px">🔔 On for this device</span>'+
+      '<button class="btn sm" onclick="pushTest()">Send test</button><button class="btn sm d" onclick="pushDisable()">Turn off</button></div>';
+  } else if(iosNeedsInstall){
+    body='<div class="muted" style="font-size:12px;line-height:1.5">📱 <b>On iPhone</b>, first tap <b>Share → Add to Home Screen</b>, then open HR OS from that new icon and turn reminders on here.</div>';
+  } else {
+    body='<button class="btn p sm"'+(PUSH.busy?' disabled':'')+' onclick="pushEnable()">'+(PUSH.busy?'Enabling…':'🔔 Enable clock-in reminders')+'</button>';
+  }
+  return '<div class="panel" style="margin-top:12px"><div class="panel-hd"><h3>🔔 Clock-in reminders</h3></div>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:10px">Get a notification on this phone when it’s time to clock in. Set it up once on each phone you use.</div>'+body+'</div>';
 }
 async function hrClockAction(dir){
   if(CLK.acting) return; CLK.acting=true; if(HR.view==='clock')hrRender();

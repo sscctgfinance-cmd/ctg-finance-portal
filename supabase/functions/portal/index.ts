@@ -112,7 +112,7 @@ const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","
 // HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
 const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
-const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","totp_setup","totp_verify","totp_disable","totp_status","changepw"]); // changepw: every role may change its own password (RPC re-verifies the old one)
+const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 // Returns the tenant_ids this caller may touch. FAIL-CLOSED: the RPC returns a non-matching sentinel
 // UUID (not []) for an invalid token or a user with no company assignment, and on any error here we
@@ -130,6 +130,46 @@ async function tenantPinned(token, tenantId){
   return allowed.indexOf(String(tenantId)) >= 0;
 }
 async function denyTenant(me, action, tenant){ await logAudit(me, "tenant_access_denied", String(tenant||""), { action }); return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
+
+// ===== Web Push (clock-in reminders) — payloadless VAPID push (RFC 8292), no AES-GCM payload crypto =====
+let _vapid:any = null;
+async function vapidConfig(){
+  if(_vapid) return _vapid;
+  const { data } = await sb.from("hr_push_config").select("*").eq("id",1).maybeSingle();
+  if(!data) return null;
+  _vapid = { pub:data.vapid_public, jwk:data.vapid_private, subject:data.subject||"mailto:ssc.ctgfinance@gmail.com", key:null as any };
+  return _vapid;
+}
+function b64urlBytes(bytes:Uint8Array){ let s=""; for(const b of bytes) s+=String.fromCharCode(b); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function b64urlJson(obj:any){ return b64urlBytes(new TextEncoder().encode(JSON.stringify(obj))); }
+async function vapidJwt(aud:string){
+  const cfg = await vapidConfig(); if(!cfg) throw new Error("push not configured");
+  if(!cfg.key) cfg.key = await crypto.subtle.importKey("jwk", cfg.jwk, {name:"ECDSA", namedCurve:"P-256"}, false, ["sign"]);
+  const signingInput = b64urlJson({typ:"JWT",alg:"ES256"}) + "." + b64urlJson({ aud, exp:Math.floor(Date.now()/1000)+12*3600, sub:cfg.subject });
+  const sig = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, cfg.key, new TextEncoder().encode(signingInput));
+  return signingInput + "." + b64urlBytes(new Uint8Array(sig));   // Web Crypto ECDSA already gives raw r||s
+}
+// Fire one payloadless push. gone=true → the subscription is dead and should be deleted.
+async function webPushSend(endpoint:string){
+  const cfg = await vapidConfig(); if(!cfg) return { ok:false, status:0, gone:false };
+  let aud:string; try{ aud = new URL(endpoint).origin; }catch(_e){ return { ok:false, status:0, gone:true }; }
+  try{
+    const jwt = await vapidJwt(aud);
+    const r = await fetch(endpoint, { method:"POST", headers:{ "Authorization":"vapid t="+jwt+", k="+cfg.pub, "TTL":"3600", "Content-Length":"0" } });
+    return { ok:r.status>=200&&r.status<300, status:r.status, gone:(r.status===404||r.status===410) };
+  }catch(_e){ return { ok:false, status:0, gone:false }; }
+}
+// Push to every device an employee has subscribed; prunes dead subscriptions as it goes.
+async function pushToEmployee(employeeId:any){
+  const { data: subs } = await sb.from("hr_push_subscriptions").select("id,endpoint").eq("employee_id",employeeId);
+  let sent=0, dead=0;
+  for(const s of (subs||[])){
+    const res = await webPushSend(s.endpoint);
+    if(res.ok){ sent++; await sb.from("hr_push_subscriptions").update({ last_ok_at:new Date().toISOString(), fail_count:0 }).eq("id",s.id); }
+    else if(res.gone){ dead++; await sb.from("hr_push_subscriptions").delete().eq("id",s.id); }
+  }
+  return { sent, dead, total:(subs||[]).length };
+}
 
 // ===== Reimbursement / Claim engine helpers =====
 function rcStatusForRole(role){ return role==="manager"?"Pending Manager Approval":role==="hr"?"Pending HR Approval":role==="finance"?"Pending Finance Approval":role==="director"?"Pending Director Approval":"Submitted"; }
@@ -4491,6 +4531,36 @@ Deno.serve(async (req)=>{
       return j({ ok:true, runId:run.id });
     }
     // ===== Reimbursement / Claim module (hr_rc_*) =====
+    if (api === "push_pubkey") {
+      const cfg = await vapidConfig();
+      return j({ ok:!!cfg, publicKey: cfg?cfg.pub:null });
+    }
+    if (api === "push_subscribe") {
+      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
+      const who = await rcMe(me); if(!who.employee) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
+      const sub = b.subscription||{}; const endpoint = String(sub.endpoint||""); if(!endpoint) return j({ ok:false, error:"no endpoint" });
+      const keys = sub.keys||{};
+      const row:any = { employee_id:who.employee.id, user_id:(me.user&&me.user.id)||null, tenant_id:who.employee.tenant_id||null,
+        endpoint, p256dh:keys.p256dh||null, auth:keys.auth||null, user_agent:String(b.ua||"").slice(0,300), fail_count:0 };
+      const { data:ex } = await sb.from("hr_push_subscriptions").select("id").eq("endpoint",endpoint).maybeSingle();
+      if(ex) await sb.from("hr_push_subscriptions").update(row).eq("id",ex.id);
+      else { const { error } = await sb.from("hr_push_subscriptions").insert(row); if(error) return j({ ok:false, error:error.message }); }
+      await logAudit(me,"push_subscribe",String(who.employee.id),{});
+      return j({ ok:true });
+    }
+    if (api === "push_unsubscribe") {
+      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
+      const endpoint=String(b.endpoint||""); if(endpoint) await sb.from("hr_push_subscriptions").delete().eq("endpoint",endpoint);
+      return j({ ok:true });
+    }
+    if (api === "push_test") {
+      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
+      const who = await rcMe(me); if(!who.employee) return j({ ok:false, error:"no employee profile" });
+      const res = await pushToEmployee(who.employee.id);
+      if(res.total===0) return j({ ok:false, error:"No device is subscribed yet — tap “Enable reminders” first." });
+      if(res.sent===0) return j({ ok:false, error:"Couldn’t deliver to your device — try re-enabling reminders." });
+      return j({ ok:true, ...res });
+    }
     if (api === "hr_signature_save") {
       // Your own handwritten signature, stamped on the reimbursement form next to your name.
       // Self-service only by default: a signature is forgeable by anyone who can print the form, so
@@ -5253,7 +5323,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v124 access-control: v123 hardening (tenant fail-open closed via sentinel; leave decide/cancel/pending tenant-pinned; rc decide pins for everyone; hr_admin removed from the 5 reimbursement money gates; approver removed from isAdmin; hr_post_xero pins tenantId) plus this follow-up: hr_rc_get can_post / can_finance now key off superAdmin OR finance-role (not who.isAdmin, which folds in hr_admin) so the Pay and Post-to-Xero buttons are hidden from an hr_admin instead of 403-ing on click. Company-doc RPCs verified already tenant-scoped. Live-tested: cross-tenant read/pay denied, hr_admin finance denied, full admin unaffected." });
+    return j({ ok:true, hint:"portal v125 web-push (clock-in reminders phase 1): payloadless VAPID push (RFC 8292) built on Web Crypto, no AES-GCM payload needed. New tables hr_push_config (VAPID keypair, RLS deny) + hr_push_subscriptions (per-device, RLS deny). Actions push_pubkey / push_subscribe / push_unsubscribe / push_test (all in AUTH_BASIC_ACTIONS so employees may self-serve). webPushSend signs a per-endpoint VAPID JWT and POSTs with empty body; 404/410 prunes the dead subscription. Frontend: service worker sw.js + manifest.json (PWA, needed for iOS home-screen install), an Enable-reminders card in the employee Time Clock view, send-test. Phase 2 (next): per-employee usual-start-time + work-days + pg_cron runner that pushes part-timers who have not clocked in. Also v124 finance display flags, v123 access-control hardening." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
