@@ -4853,7 +4853,7 @@ Deno.serve(async (req)=>{
       }
       if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
       let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
-      if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo." });
+      if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo.", _debug:{ provider:used, rawlen:txt.length, raw:String(txt).slice(0,600) } });
       let typeId:any=null;
       if(parsed.category_guess){ const hit=(types||[]).find((t:any)=>String(t.name).toLowerCase()===String(parsed.category_guess).toLowerCase()); if(hit) typeId=hit.id; }
       await logAudit(me,"hr_rc_ocr",String(parsed.vendor||"(receipt)"),{ total:parsed.total, confidence:parsed.confidence, provider:used });
