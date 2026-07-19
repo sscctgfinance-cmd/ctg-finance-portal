@@ -4764,6 +4764,7 @@ Deno.serve(async (req)=>{
           amount+=amt; if(t.taxable) anyTaxable=true;
           normItems.push({ claim_type_id:it.claim_type_id||null, item_date:it.item_date||c.claim_date||null, amount:amt, description:it.description||"",
             vendor_name:it.vendor_name||null, receipt_no:(String(it.receipt_no||"").trim()||null), invoice_no:(String(it.invoice_no||"").trim()||null),
+            is_einvoice:!!it.is_einvoice, supplier_tin:(String(it.supplier_tin||"").trim()||null), einvoice_uuid:(String(it.einvoice_uuid||"").trim()||null), einvoice_validation_url:(String(it.einvoice_validation_url||"").trim()||null),
             tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0, gl_account:(String(it.gl_account||"").trim()||null),
             cost_center:(String(it.cost_center||"").trim()||null), project:it.project||null, remarks:it.remarks||null,
             start_location:t.is_mileage?(it.start_location||null):null, end_location:t.is_mileage?(it.end_location||null):null,
@@ -4830,7 +4831,7 @@ Deno.serve(async (req)=>{
       const isPdf = mime.indexOf("pdf")>=0;
       const { data: types } = await sb.from("hr_claim_types").select("id,name").eq("active",true).order("sort_order");
       const typeNames = (types||[]).map((t:any)=>t.name);
-      const sys = "You are reading an employee EXPENSE RECEIPT for a Malaysian company. Reply ONLY with a single JSON object — no prose, no markdown fences. Schema: { vendor: string, date: 'YYYY-MM-DD'|null, total: number, currency: 'MYR'|'USD'|'SGD'|string, description: string, category_guess: string, confidence: 'high'|'medium'|'low' }. 'total' = final amount paid (include tax & service charge). 'description' = short, e.g. 'Lunch — Starbucks KLCC'. 'category_guess' MUST be exactly one of these claim types: "+JSON.stringify(typeNames)+". If a value can't be read use null (strings) or 0 (total). MYR (Ringgit) is the most common currency; dates in Malaysia are usually DD/MM/YYYY — normalise to YYYY-MM-DD.";
+      const sys = "You are reading an employee EXPENSE RECEIPT or a Malaysian MyInvois e-invoice for a Malaysian company. Reply ONLY with a single JSON object — no prose, no markdown fences. Schema: { vendor: string, date: 'YYYY-MM-DD'|null, total: number, tax: number, sst: number, currency: 'MYR'|'USD'|'SGD'|string, description: string, category_guess: string, invoice_no: string|null, is_einvoice: boolean, supplier_tin: string|null, einvoice_uuid: string|null, einvoice_validation_url: string|null, confidence: 'high'|'medium'|'low' }. 'total' = final amount paid (include tax & service charge). 'tax' = GST/other tax shown (0 if none). 'sst' = Malaysian SST/service tax shown (0 if none). 'description' = short, e.g. 'Lunch — Starbucks KLCC'. 'invoice_no' = the receipt or invoice/e-invoice document number. 'category_guess' MUST be exactly one of these claim types: "+JSON.stringify(typeNames)+". E-INVOICE DETECTION: a validated Malaysian MyInvois e-invoice shows a Supplier TIN (e.g. 'C1234567890' or 'IG...'), a Unique Identifier / UUID (long alphanumeric ~26+ chars) and usually a QR code linking to myinvois.hasil.gov.my — if you see these set is_einvoice=true and extract supplier_tin, einvoice_uuid and any printed validation URL; otherwise is_einvoice=false and those three are null. If a value can't be read use null (strings), 0 (numbers), false (booleans). MYR (Ringgit) is the most common currency; dates in Malaysia are usually DD/MM/YYYY — normalise to YYYY-MM-DD.";
       const media = isPdf ? { type:"document", source:{ type:"base64", media_type:"application/pdf", data:b64 } } : { type:"image", source:{ type:"base64", media_type:mime, data:b64 } };
       const body = { model:"claude-haiku-4-5-20251001", max_tokens:800, system:sys, messages:[{ role:"user", content:[ media, { type:"text", text:"Extract the receipt fields per the schema. JSON only." } ] }] };
       try {
@@ -5074,7 +5075,10 @@ Deno.serve(async (req)=>{
           const t:any=it.hr_claim_types||{}; const gl=String(it.gl_account||t.gl_account||"").trim(); // per-line Finance override wins over the type default
           if(!gl){ const nm=t.name||"(unnamed type)"; if(missing.indexOf(nm)<0) missing.push(nm); continue; }
           const km = t.is_mileage ? (" · "+(it.total_km||0)+"km × RM"+(it.mileage_rate||0)+((Number(it.parking_amount)||0)||(Number(it.toll_amount)||0)?(" + parking/toll"):"")) : "";
-          lines.push({ Description:String((it.description||t.name||"Expense")+km).slice(0,4000), Quantity:1, UnitAmount:Number(it.amount)||0, AccountCode:gl });
+          // Carry the supplier's e-invoice identifiers into the Xero line so the finance team (and Xero's
+          // MyInvois submission) has the source e-invoice on record.
+          const einv = it.is_einvoice ? (" · e-Invoice"+(it.invoice_no?(" "+it.invoice_no):"")+(it.supplier_tin?(" · Supplier TIN "+it.supplier_tin):"")+(it.einvoice_uuid?(" · UUID "+it.einvoice_uuid):"")) : (it.invoice_no?(" · Inv "+it.invoice_no):"");
+          lines.push({ Description:String((it.description||t.name||"Expense")+km+einv).slice(0,4000), Quantity:1, UnitAmount:Number(it.amount)||0, AccountCode:gl });
         }
       } else {
         const { data: t } = await sb.from("hr_claim_types").select("name,gl_account").eq("id",c.claim_type_id).maybeSingle();
@@ -5418,7 +5422,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v129: company display names now track the live Xero Organisation Name — tenants_refresh + nightly cron pull GET /Organisation per tenant (the /connections tenantName is a stale connect-time snapshot and no longer overwrites on reconnect). Also v128 blank-doc_code fix." });
+    return j({ ok:true, hint:"portal v130: reimbursement OCR now also extracts Malaysian MyInvois e-invoice fields (supplier TIN, e-invoice no/UUID, validation URL, tax/SST); hr_rc_save persists them and hr_rc_post_xero carries them into the Xero bill line. Also v129 Xero org-name sync." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
