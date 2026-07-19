@@ -1995,7 +1995,7 @@ function hrRCScanModal(){
   ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:14px';
   ov.innerHTML='<div style="background:var(--panel,#1b1817);border:1px solid var(--border);border-radius:14px;max-width:560px;width:100%;max-height:94vh;overflow:auto;padding:16px">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:15px">📷 Crop receipt / e-invoice</b><button class="btn xs" onclick="hrRCScanCancel()">✕</button></div>'+
-    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Drag on the image to crop to just the receipt. The e-invoice QR is detected automatically (green box). “Use” saves a clean, enhanced PDF.</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Auto-cropped to the receipt (drag to adjust, ↺ Reset for the full photo). The e-invoice QR is detected automatically (green box). “Use” saves a clean, enhanced PDF, then reads it.</div>'+
     '<div style="text-align:center;background:var(--panel-2);border-radius:8px;padding:6px"><canvas id="rc-scan-cv" style="max-width:100%;touch-action:none;cursor:crosshair;border-radius:4px"></canvas></div>'+
     '<div id="rc-scan-mstatus" class="muted" style="font-size:11.5px;min-height:16px;margin-top:6px"></div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">'+
@@ -2007,7 +2007,7 @@ function hrRCScanModal(){
       '<button class="btn xs" onclick="hrRCScanCancel()">Cancel</button>'+
       '<button class="btn p sm" onclick="hrRCScanUse()">✓ Use (save PDF)</button>'+
     '</div></div>';
-  hrRCScanBuildBase(); hrRCScanDraw();
+  hrRCScanBuildBase(); hrRCScanAutoCrop(); hrRCScanDraw();
   var cv=document.getElementById('rc-scan-cv');
   cv.onpointerdown=hrRCScanDown; cv.onpointermove=hrRCScanMove; cv.onpointerup=hrRCScanUp; cv.onpointerleave=hrRCScanUp;
   hrRCScanAutoQR();   // find the e-invoice QR immediately — no button press needed
@@ -2057,6 +2057,33 @@ function hrRCScanBuildBase(){
   ctx.save(); ctx.translate(bw/2,bh/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(img,-w/2,-h/2,w,h); ctx.restore();
   s.base=cv; s.baseW=bw; s.baseH=bh; s.baseEnh=null;   // enhance cache dies with the base
 }
+// Auto-crop: snap the crop box to the receipt/document — the user shouldn't have to drag. Heuristic:
+// background = median luminance of the border ring; the receipt is the bounding box of pixels that differ
+// from it. Runs on a downscaled copy for speed; bails (leaves full-frame) when detection looks unreliable.
+function hrRCScanAutoCrop(){
+  var s=RC._scan; if(!s||!s.base) return;
+  try{
+    var bw=s.baseW, bh=s.baseH;
+    var AW=Math.min(240,bw), sc=AW/bw, AH=Math.max(1,Math.round(bh*sc));
+    var ac=document.createElement('canvas'); ac.width=AW; ac.height=AH;
+    ac.getContext('2d').drawImage(s.base,0,0,AW,AH);
+    var d=ac.getContext('2d').getImageData(0,0,AW,AH).data;
+    var lum=function(i){ return (d[i]*299+d[i+1]*587+d[i+2]*114)/1000; };
+    var bord=[];
+    for(var x=0;x<AW;x++){ bord.push(lum(x*4)); bord.push(lum(((AH-1)*AW+x)*4)); }
+    for(var y=0;y<AH;y++){ bord.push(lum((y*AW)*4)); bord.push(lum((y*AW+AW-1)*4)); }
+    bord.sort(function(a,b){return a-b;}); var bg=bord[bord.length>>1];
+    var T=28, minX=AW,minY=AH,maxX=0,maxY=0,cnt=0;
+    for(var yy=0;yy<AH;yy++){ for(var xx=0;xx<AW;xx++){ var i=(yy*AW+xx)*4; if(Math.abs(lum(i)-bg)>T){ if(xx<minX)minX=xx; if(xx>maxX)maxX=xx; if(yy<minY)minY=yy; if(yy>maxY)maxY=yy; cnt++; } } }
+    if(cnt < AW*AH*0.02) return;                          // barely any foreground → don't guess
+    var w=maxX-minX, h=maxY-minY;
+    if(w < AW*0.15 || h < AH*0.15) return;                // suspiciously tiny selection → skip
+    if(w > AW*0.96 && h > AH*0.96) return;                // already fills the frame → no crop needed
+    var px=AW*0.02, py=AH*0.02;                           // small padding so we don't shave the edges
+    minX=Math.max(0,minX-px); minY=Math.max(0,minY-py); maxX=Math.min(AW,maxX+px); maxY=Math.min(AH,maxY+py);
+    s.crop={ x:minX/sc, y:minY/sc, w:(maxX-minX)/sc, h:(maxY-minY)/sc };
+  }catch(_e){}
+}
 function hrRCScanDraw(){
   var s=RC._scan; var cv=document.getElementById('rc-scan-cv'); if(!cv||!s||!s.base) return;
   var ov=document.getElementById('rc-scan-ov'); var maxW=Math.min(520,(ov?ov.clientWidth:520)-48); if(maxW<160)maxW=160;
@@ -2082,7 +2109,7 @@ function hrRCScanDown(e){ e.preventDefault(); var p=hrRCScanPt(e); RC._scan.drag
 function hrRCScanMove(e){ if(!RC._scan||!RC._scan.drag)return; e.preventDefault(); var p=hrRCScanPt(e),d=RC._scan.drag;
   RC._scan.crop={x:Math.min(d.sx,p.x),y:Math.min(d.sy,p.y),w:Math.abs(p.x-d.sx),h:Math.abs(p.y-d.sy)}; hrRCScanDraw(); }
 function hrRCScanUp(){ if(RC._scan&&RC._scan.drag){ var c=RC._scan.crop; if(c&&(c.w<12||c.h<12))RC._scan.crop=null; RC._scan.drag=null; hrRCScanDraw(); } }
-function hrRCScanRotate(){ if(!RC._scan)return; RC._scan.rot=(RC._scan.rot+90)%360; RC._scan.crop=null; RC._scan.qr=null; RC._scan.qrLoc=null; hrRCScanBuildBase(); hrRCScanDraw(); hrRCScanAutoQR(); }
+function hrRCScanRotate(){ if(!RC._scan)return; RC._scan.rot=(RC._scan.rot+90)%360; RC._scan.crop=null; RC._scan.qr=null; RC._scan.qrLoc=null; hrRCScanBuildBase(); hrRCScanAutoCrop(); hrRCScanDraw(); hrRCScanAutoQR(); }
 function hrRCScanResetCrop(){ if(!RC._scan)return; RC._scan.crop=null; RC._scan.qr=null; hrRCScanDraw(); hrRCScanMStatus(''); }
 function hrRCScanCancel(){ var ov=document.getElementById('rc-scan-ov'); if(ov)ov.remove(); RC._scan=null; }
 function hrRCScanMStatus(t,warn){ var e=document.getElementById('rc-scan-mstatus'); if(e){ e.textContent=t||''; e.style.color=warn?'var(--amber)':'var(--green-soft)'; } }
