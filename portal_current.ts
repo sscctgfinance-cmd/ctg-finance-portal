@@ -944,7 +944,9 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
         .filter((v,i,a)=>v && a.indexOf(v)===i);
       let lastErr = "";
       for (const mdl of candidates){
-        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(mdl)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: maxTokens, responseMimeType:"application/json" } }) });
+        // thinkingBudget:0 disables 2.5-series "thinking" (it silently eats the output-token budget and
+        // returns empty text otherwise); ignored by models that don't support it. Give headroom on tokens too.
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(mdl)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: Math.max(maxTokens, 2048), responseMimeType:"application/json", thinkingConfig:{ thinkingBudget: 0 } } }) });
         const out = await r.json();
         if (r.ok){ const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || ""; return { ok:true, text: txt }; }
         lastErr = "Gemini "+r.status+" ("+mdl+"): "+JSON.stringify(out.error||out).slice(0,200);
