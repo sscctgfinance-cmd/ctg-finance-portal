@@ -1664,7 +1664,16 @@ async function hrRCBoot(){
   finally{ RC.loading=false; }
   if(HR.view==='expenses') hrRender();
 }
-function hrRCNav(p){ if(p==='form'){ RC.form={}; } RC.page=p; if(p==='list') hrRCLoadList(); if(p==='dashboard') hrRCLoadDash(); hrRender(); }
+function hrRCNav(p){
+  if(p==='form'){
+    if(RC.page==='form'){ hrRender(); return; }   // already editing — never wipe the in-progress form
+    var f=RC.form||{};
+    var unsaved = !f.id && ( (Array.isArray(f.items) && f.items.some(function(it){ return it && (it.claim_type_id||(Number(it.amount)||0)||(Number(it.total_km)||0)||it.description||it.vendor_name); })) || (Array.isArray(f._scanFiles) && f._scanFiles.length) );
+    if(unsaved && !confirm('You have an unsaved reimbursement (with scanned receipts). Discard it and start a new blank form?')){ RC.page='form'; hrRender(); return; }
+    RC.form={};
+  }
+  RC.page=p; if(p==='list') hrRCLoadList(); if(p==='dashboard') hrRCLoadDash(); hrRender();
+}
 function hrRCScope(s){ RC.scope=s; RC.sel={}; hrRCLoadList(); }
 async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tenant,scope:RC.scope}); if(r&&r.ok){ RC.list=r.claims; if(HR.view==='expenses') hrRender(); } }
 function hrRCList(){
@@ -1739,7 +1748,7 @@ function hrLoadPdfLib(cb){
   HR._pdfLibLoading=[cb];
   var s=document.createElement('script'); s.src='pdf-lib.min.js';
   s.onload=function(){ var q=HR._pdfLibLoading; HR._pdfLibLoading=null; q.forEach(function(f){try{f();}catch(_e){}}); };
-  s.onerror=function(){ HR._pdfLibLoading=null; toast('Could not load the PDF merge engine (pdf-lib.min.js).',true); };
+  s.onerror=function(){ var q=HR._pdfLibLoading; HR._pdfLibLoading=null; toast('Could not load the PDF merge engine (pdf-lib.min.js).',true); (q||[]).forEach(function(f){try{f();}catch(_e){}}); };   // still fire callbacks so awaiting code fails loudly, not forever
   document.head.appendChild(s);
 }
 // Draw the reimbursement claim form from the submitted data → returns the PDF as bytes (jsPDF).
@@ -1927,12 +1936,15 @@ function hrRCItemType(i){ hrRCSyncItems(); hrRender(); }
 function hrRCItemCalc(){ hrRCSyncItems(); var cfg=RC.cfg||{}; var total=0; RC.form.items.forEach(function(it,i){ var t=(cfg.claim_types||[]).find(function(x){return x.id===it.claim_type_id;}); var mile=t&&t.is_mileage; var amt=hrRCItemAmt(it,mile); total+=amt; var lbl=document.getElementById('rc_it_'+i+'_amtL'); if(lbl&&mile)lbl.textContent=M(amt); }); var el=document.getElementById('rc_total'); if(el)el.textContent=M(total); }
 function hrRCDecs(){ var ck=function(id){var e=document.getElementById('rc_'+id);return e?e.checked:false;}; return { business_purpose:ck('dec1'), not_claimed_before:ck('dec2'), receipts_valid:ck('dec3'), understand_disciplinary:ck('dec4') }; }
 async function hrRCSave(submit){
+  if(RC._saving) return;   // guard: a double-tap on a slow connection must not create two claims / double-upload
   hrRCSyncItems(); var f=RC.form||{}; var isEmp=RC.me&&RC.me.isAdmin===false;
   if(!isEmp && !f.employee_id){ toast('Select an employee',true); return; }
   var items=(f.items||[]).filter(function(it){ return it.claim_type_id && ((Number(it.amount)||0)>0 || (Number(it.total_km)||0)>0); });
   if(!items.length){ toast('Add at least one expense line (type + amount)',true); return; }
   var dec=hrRCDecs();
   if(submit && !(dec.business_purpose&&dec.not_claimed_before&&dec.receipts_valid&&dec.understand_disciplinary)){ toast('Please tick all four declaration statements before submitting.',true); return; }
+  RC._saving=true;
+  try{
   var claim={ id:f.id||undefined, employee_id:f.employee_id, claim_date:f.claim_date, claim_month:f.claim_month, cost_center:f.cost_center, department:f.department, project:f.project, remarks:f.remarks, description:f.description,
     items: items.map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date||f.claim_date, description:it.description, amount:Number(it.amount)||0, total_km:Number(it.total_km)||0, mileage_rate:Number(it.mileage_rate)||0,
       vendor_name:it.vendor_name||'', receipt_no:it.receipt_no||'', invoice_no:it.invoice_no||'', tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0,
@@ -1949,6 +1961,7 @@ async function hrRCSave(submit){
   if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid,declarations:dec}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
   else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
   hrRender();
+  } finally { RC._saving=false; }
 }
 function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'image/jpeg'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
@@ -3629,7 +3642,7 @@ function hrLoadJsPDF(cb){
   HR._pdfLoading=[cb];
   var s=document.createElement('script'); s.src='jspdf.umd.min.js';
   s.onload=function(){ var q=HR._pdfLoading; HR._pdfLoading=null; q.forEach(function(f){try{f();}catch(_e){}}); };
-  s.onerror=function(){ HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); };
+  s.onerror=function(){ var q=HR._pdfLoading; HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); (q||[]).forEach(function(f){try{f();}catch(_e){}}); };   // fire callbacks so awaiting code fails, not hangs
   document.head.appendChild(s);
 }
 function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankCode:e.bank_code, bankHolder:e.bank_holder, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }

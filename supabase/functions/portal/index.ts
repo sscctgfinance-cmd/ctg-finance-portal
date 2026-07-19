@@ -5017,6 +5017,9 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
       if(!String(b.comment||"").trim()) return j({ ok:false, error:"empty comment" });
+      // Tenant pin: a scoped hr_admin (or a role-approver whose role name collides across companies) must
+      // not comment on another company's claim by id. Same guard hr_rc_get uses.
+      { const { data:cc } = await sb.from("hr_claim_requests").select("tenant_id").eq("id",b.id).maybeSingle(); if(!cc) return j({ ok:false, error:"claim not found" }); const alw = await allowedTenants(b.token); if(alw.length && alw.indexOf(cc.tenant_id)<0) return j({ ok:false, error:"forbidden" }, 403); }
       if(!who.isAdmin){ if(!who.employee) return j({ ok:false, error:"forbidden" }, 403); const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",b.id).maybeSingle(); const { data:st } = await sb.from("hr_claim_approval_steps").select("approver_role,approver_employee_id").eq("claim_id",b.id); const isAppr=(st||[]).some((s:any)=>s.approver_employee_id===who.employee.id||who.roles.indexOf(s.approver_role)>=0); if(!(oc&&oc.employee_id===who.employee.id)&&!isAppr) return j({ ok:false, error:"forbidden" }, 403); }
       await sb.from("hr_claim_comments").insert({claim_id:b.id,author_id:(me.user&&me.user.id)||null,author_name:(me.user&&me.user.email)||null,comment:b.comment,kind:"comment"});
       await rcAuditLog(b.id,"comment",me,null,null,{});
@@ -5446,7 +5449,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
