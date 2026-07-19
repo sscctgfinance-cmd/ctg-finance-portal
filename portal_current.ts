@@ -4823,8 +4823,6 @@ Deno.serve(async (req)=>{
       // Read an employee expense receipt with Claude vision → prefill an expense line. Available to any logged-in employee/admin.
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!who.isAdmin && !who.employee) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
-      const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-      if (!apiKey) return j({ ok:false, error:"Receipt OCR isn’t enabled yet — set ANTHROPIC_API_KEY as a Supabase Edge secret." });
       const b64 = String(b.file_b64||b.content_base64||"").split(",").pop() || "";
       if (!b64) return j({ ok:false, error:"no image provided" });
       const mime = String(b.file_type||b.content_type||"image/jpeg");
@@ -4832,19 +4830,23 @@ Deno.serve(async (req)=>{
       const { data: types } = await sb.from("hr_claim_types").select("id,name").eq("active",true).order("sort_order");
       const typeNames = (types||[]).map((t:any)=>t.name);
       const sys = "You are reading an employee EXPENSE RECEIPT or a Malaysian MyInvois e-invoice for a Malaysian company. Reply ONLY with a single JSON object — no prose, no markdown fences. Schema: { vendor: string, date: 'YYYY-MM-DD'|null, total: number, tax: number, sst: number, currency: 'MYR'|'USD'|'SGD'|string, description: string, category_guess: string, invoice_no: string|null, is_einvoice: boolean, supplier_tin: string|null, einvoice_uuid: string|null, einvoice_validation_url: string|null, confidence: 'high'|'medium'|'low' }. 'total' = final amount paid (include tax & service charge). 'tax' = GST/other tax shown (0 if none). 'sst' = Malaysian SST/service tax shown (0 if none). 'description' = short, e.g. 'Lunch — Starbucks KLCC'. 'invoice_no' = the receipt or invoice/e-invoice document number. 'category_guess' MUST be exactly one of these claim types: "+JSON.stringify(typeNames)+". E-INVOICE DETECTION: a validated Malaysian MyInvois e-invoice shows a Supplier TIN (e.g. 'C1234567890' or 'IG...'), a Unique Identifier / UUID (long alphanumeric ~26+ chars) and usually a QR code linking to myinvois.hasil.gov.my — if you see these set is_einvoice=true and extract supplier_tin, einvoice_uuid and any printed validation URL; otherwise is_einvoice=false and those three are null. If a value can't be read use null (strings), 0 (numbers), false (booleans). MYR (Ringgit) is the most common currency; dates in Malaysia are usually DD/MM/YYYY — normalise to YYYY-MM-DD.";
-      const media = isPdf ? { type:"document", source:{ type:"base64", media_type:"application/pdf", data:b64 } } : { type:"image", source:{ type:"base64", media_type:mime, data:b64 } };
-      const body = { model:"claude-haiku-4-5-20251001", max_tokens:800, system:sys, messages:[{ role:"user", content:[ media, { type:"text", text:"Extract the receipt fields per the schema. JSON only." } ] }] };
-      try {
-        const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", headers:{ "x-api-key":apiKey, "anthropic-version":"2023-06-01", "Content-Type":"application/json" }, body: JSON.stringify(body) });
-        if (!r.ok){ const t=await r.text(); return j({ ok:false, error:"Vision API "+r.status+": "+t.slice(0,300) }); }
-        const out = await r.json(); const txt=(out.content&&out.content[0]&&out.content[0].text)||"";
-        let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
-        if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo." });
-        let typeId:any=null;
-        if(parsed.category_guess){ const hit=(types||[]).find((t:any)=>String(t.name).toLowerCase()===String(parsed.category_guess).toLowerCase()); if(hit) typeId=hit.id; }
-        await logAudit(me,"hr_rc_ocr",String(parsed.vendor||"(receipt)"),{ total:parsed.total, confidence:parsed.confidence });
-        return j({ ok:true, extracted: parsed, claim_type_id: typeId });
-      } catch(e){ return j({ ok:false, error:String(e).slice(0,300) }); }
+      // v133: multi-provider fallback so OCR keeps working without Anthropic credits — employees
+      // shouldn't have to type. Order: anthropic (best) → gemini (free tier) → openai. A provider
+      // with no key or an error (e.g. credit balance too low) falls through to the next.
+      const neutral:any[] = [ isPdf? { kind:"pdf", b64:b64 } : { kind:"image", mime:mime, b64:b64 }, { kind:"text", text:"Extract the receipt fields per the schema. JSON only." } ];
+      const tries:string[]=[]; let txt=""; let used="";
+      for (const prov of ["anthropic","gemini","openai"]){
+        const res = await callVisionLLM(prov, resolveModel(prov,""), sys, neutral, 800);
+        if (res.ok && res.text){ txt=res.text; used=prov; tries.push(prov+": ok"); break; }
+        tries.push(prov+": "+String(res.error||"failed").slice(0,80));
+      }
+      if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
+      let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
+      if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo." });
+      let typeId:any=null;
+      if(parsed.category_guess){ const hit=(types||[]).find((t:any)=>String(t.name).toLowerCase()===String(parsed.category_guess).toLowerCase()); if(hit) typeId=hit.id; }
+      await logAudit(me,"hr_rc_ocr",String(parsed.vendor||"(receipt)"),{ total:parsed.total, confidence:parsed.confidence, provider:used });
+      return j({ ok:true, extracted: parsed, claim_type_id: typeId, provider: used });
     }
     if (api === "hr_rc_submit") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -5433,7 +5435,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v132: e-invoice buyer TIN is optional — a claimer with no personal TIN (e.g. E004) falls back to the IRBM general public TIN EI00000000010 (buyer stays valid, no warning). complete = name+IC only. Plus v131 buyer=claimer + v130 supplier e-invoice OCR." });
+    return j({ ok:true, hint:"portal v133: reimbursement OCR now falls back across vision providers — anthropic then gemini (free tier) then openai via callVisionLLM, so scanning keeps auto-filling even with zero Anthropic credit once GEMINI_API_KEY is set. Response includes provider. Plus v132 general-TIN fallback." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
