@@ -938,11 +938,20 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
         if (b.kind === "pdf")   return { inline_data:{ mime_type:"application/pdf", data: b.b64 } };
         return { text:"" };
       });
-      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: maxTokens, responseMimeType:"application/json" } }) });
-      const out = await r.json();
-      if (!r.ok) return { ok:false, error:"Gemini "+r.status+": "+JSON.stringify(out.error||out).slice(0,300) };
-      const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || "";
-      return { ok:true, text: txt };
+      // Model availability + free-tier quota shift over time (some names 404 for new keys, some 429).
+      // Try the requested model, then current free-tier flash aliases, until one answers.
+      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash", "gemini-1.5-flash"]
+        .filter((v,i,a)=>v && a.indexOf(v)===i);
+      let lastErr = "";
+      for (const mdl of candidates){
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(mdl)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: maxTokens, responseMimeType:"application/json" } }) });
+        const out = await r.json();
+        if (r.ok){ const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || ""; return { ok:true, text: txt }; }
+        lastErr = "Gemini "+r.status+" ("+mdl+"): "+JSON.stringify(out.error||out).slice(0,200);
+        // 404 = model unavailable → try next; 429 = quota for this model → try next; anything else (400/403 key issues) → stop.
+        if (r.status !== 404 && r.status !== 429) return { ok:false, error: lastErr };
+      }
+      return { ok:false, error: lastErr || "Gemini: no available model" };
     }
     // default: anthropic
     const key = Deno.env.get("ANTHROPIC_API_KEY");
