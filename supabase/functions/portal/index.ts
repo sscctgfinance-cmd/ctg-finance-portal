@@ -5067,7 +5067,8 @@ Deno.serve(async (req)=>{
       if(["Approved","Paid"].indexOf(c.status)<0) return j({ ok:false, error:"Post to Xero only after the claim is fully Approved." });
       const tenant = c.tenant_id;
       const empName = (c.hr_employees&&c.hr_employees.name) || "Employee";
-      const empTin = String((c.hr_employees&&c.hr_employees.tax_no)||"").trim();   // claimer = e-invoice buyer (HR OS TIN)
+      // claimer = e-invoice buyer. No personal TIN (e.g. E004) → IRBM general public TIN, so the buyer stays valid.
+      const empTin = String((c.hr_employees&&c.hr_employees.tax_no)||"").trim() || "EI00000000010";
       // Build one Xero line per expense line, each coded to its claim type's GL account.
       const { data: items } = await sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account,is_mileage)").eq("claim_id",id).order("item_date");
       const missing:string[]=[]; const lines:any[]=[];
@@ -5194,7 +5195,10 @@ Deno.serve(async (req)=>{
       // e-Invoice BUYER = the claimer, pulled live from their HR OS employee record (single source of
       // truth — never duplicated onto the claim). Every reimbursement carries it automatically.
       const rcEmp:any = (cl && cl.hr_employees) || {};
-      const buyer = { name:rcEmp.name||"", tin:rcEmp.tax_no||"", ic:rcEmp.ic_no||"", address:rcEmp.address||"", email:rcEmp.email||"", phone:rcEmp.phone||"", complete: !!(rcEmp.name && rcEmp.tax_no && rcEmp.ic_no) };
+      // IRBM general public TIN — used for a Malaysian individual buyer who has no personal TIN
+      // (e.g. E004). So a missing TIN is NOT an error; the buyer is still valid on the e-invoice.
+      const GENERAL_TIN = "EI00000000010";
+      const buyer = { name:rcEmp.name||"", tin:rcEmp.tax_no||"", tin_effective:(rcEmp.tax_no||GENERAL_TIN), tin_general:!rcEmp.tax_no, ic:rcEmp.ic_no||"", address:rcEmp.address||"", email:rcEmp.email||"", phone:rcEmp.phone||"", complete: !!(rcEmp.name && rcEmp.ic_no) };
       return j({ ok:true, claim:cl, buyer, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
@@ -5429,7 +5433,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v131: reimbursement e-invoice BUYER = the claimer, pulled live from their HR OS employee record (name/TIN/IC/address) — hr_rc_get returns buyer{}, hr_rc_post_xero stamps the claimer TIN on the Xero bill Contact. Plus v130 supplier e-invoice OCR fields." });
+    return j({ ok:true, hint:"portal v132: e-invoice buyer TIN is optional — a claimer with no personal TIN (e.g. E004) falls back to the IRBM general public TIN EI00000000010 (buyer stays valid, no warning). complete = name+IC only. Plus v131 buyer=claimer + v130 supplier e-invoice OCR." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
