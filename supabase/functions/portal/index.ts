@@ -907,7 +907,7 @@ function resolveModel(provider, aiModel){
   provider = String(provider||"anthropic").toLowerCase();
   const m = String(aiModel||"");
   if (provider === "openai") return /^(gpt|o\d|chatgpt)/i.test(m) ? m : "gpt-4o-mini";
-  if (provider === "gemini") return /^gemini/i.test(m) ? m : "gemini-2.5-flash";
+  if (provider === "gemini") return /^gemini/i.test(m) ? m : "gemini-flash-latest";
   return /^claude/i.test(m) ? m : "claude-haiku-4-5-20251001";
 }
 async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
@@ -4849,11 +4849,11 @@ Deno.serve(async (req)=>{
       for (const prov of ["anthropic","gemini","openai"]){
         const res = await callVisionLLM(prov, resolveModel(prov,""), sys, neutral, 800);
         if (res.ok && res.text){ txt=res.text; used=prov; tries.push(prov+": ok"); break; }
-        tries.push(prov+": "+String(res.error||"failed").slice(0,400));
+        tries.push(prov+": "+String(res.error||"failed").slice(0,160));
       }
       if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
       let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
-      if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo.", _debug:{ provider:used, rawlen:txt.length, raw:String(txt).slice(0,600) } });
+      if(!parsed) return j({ ok:false, error:"Couldn’t read that receipt — try a clearer, well-lit photo." });
       let typeId:any=null;
       if(parsed.category_guess){ const hit=(types||[]).find((t:any)=>String(t.name).toLowerCase()===String(parsed.category_guess).toLowerCase()); if(hit) typeId=hit.id; }
       await logAudit(me,"hr_rc_ocr",String(parsed.vendor||"(receipt)"),{ total:parsed.total, confidence:parsed.confidence, provider:used });
@@ -5446,7 +5446,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v133: reimbursement OCR now falls back across vision providers — anthropic then gemini (free tier) then openai via callVisionLLM, so scanning keeps auto-filling even with zero Anthropic credit once GEMINI_API_KEY is set. Response includes provider. Plus v132 general-TIN fallback." });
+    return j({ ok:true, hint:"portal v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
