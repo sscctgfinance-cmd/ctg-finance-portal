@@ -1944,42 +1944,132 @@ function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new File
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
 // 📷 Scan a receipt / MyInvois e-invoice → Claude vision reads it → fills a line + captures e-invoice
 // identifiers. The scanned file is queued and attached to the claim on save.
+// 📷 Scan a receipt / MyInvois e-invoice. Images open a crop + QR + PDF modal so finance receives a clean,
+// focused PDF; the e-invoice QR is decoded client-side (no Anthropic needed) to fill the validation URL/UUID;
+// OCR (Claude vision) still fills vendor/amount/etc. PDFs skip the modal (OCR + attach directly).
+function hrLoadJsQR(cb){
+  if(window.jsQR) return cb();
+  var s=document.createElement('script'); s.src='jsqr.min.js';
+  s.onload=function(){ cb(); }; s.onerror=function(){ toast('Could not load the QR reader (jsqr.min.js).',true); cb(); };
+  document.head.appendChild(s);
+}
 function hrRCScanTrigger(){ var el=document.getElementById('rc_scan_fi'); if(el){ el.value=''; el.click(); } }
-async function hrRCScanFile(input){
+function hrRCScanFile(input){
   var file=input && input.files && input.files[0]; if(!file) return;
   hrRCSyncItems();
+  if(!/^image\//.test(file.type||'')){ hrRCScanProcess(file, file, null); return; }   // PDF etc: no crop
+  var url=URL.createObjectURL(file);
+  var img=new Image();
+  img.onload=function(){ URL.revokeObjectURL(url); RC._scan={ img:img, rot:0, crop:null, drag:null, qr:null }; hrRCScanModal(); };
+  img.onerror=function(){ URL.revokeObjectURL(url); toast('Could not open that image',true); };
+  img.src=url;
+}
+function hrRCScanModal(){
+  var ov=document.getElementById('rc-scan-ov'); if(!ov){ ov=document.createElement('div'); ov.id='rc-scan-ov'; document.body.appendChild(ov); }
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:14px';
+  ov.innerHTML='<div style="background:var(--panel,#1b1817);border:1px solid var(--border);border-radius:14px;max-width:560px;width:100%;max-height:94vh;overflow:auto;padding:16px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:15px">📷 Crop receipt / e-invoice</b><button class="btn xs" onclick="hrRCScanCancel()">✕</button></div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Drag on the image to crop to just the receipt. “Detect e-invoice QR” reads a MyInvois QR; “Use” saves a clean PDF + reads the receipt.</div>'+
+    '<div style="text-align:center;background:var(--panel-2);border-radius:8px;padding:6px"><canvas id="rc-scan-cv" style="max-width:100%;touch-action:none;cursor:crosshair;border-radius:4px"></canvas></div>'+
+    '<div id="rc-scan-mstatus" class="muted" style="font-size:11.5px;min-height:16px;margin-top:6px"></div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">'+
+      '<button class="btn xs" onclick="hrRCScanRotate()">⟳ Rotate</button>'+
+      '<button class="btn xs" onclick="hrRCScanResetCrop()">↺ Reset crop</button>'+
+      '<button class="btn xs" onclick="hrRCScanDetectQR()">🔍 Detect e-invoice QR</button>'+
+      '<div style="flex:1"></div>'+
+      '<button class="btn xs" onclick="hrRCScanCancel()">Cancel</button>'+
+      '<button class="btn p sm" onclick="hrRCScanUse()">✓ Use (save PDF)</button>'+
+    '</div></div>';
+  hrRCScanBuildBase(); hrRCScanDraw();
+  var cv=document.getElementById('rc-scan-cv');
+  cv.onpointerdown=hrRCScanDown; cv.onpointermove=hrRCScanMove; cv.onpointerup=hrRCScanUp; cv.onpointerleave=hrRCScanUp;
+}
+function hrRCScanBuildBase(){
+  var s=RC._scan, img=s.img; var iw=img.naturalWidth||img.width||1, ih=img.naturalHeight||img.height||1;
+  var mx=1800, sc=Math.min(1, mx/Math.max(iw,ih)); var w=Math.round(iw*sc), h=Math.round(ih*sc);
+  var rot=((s.rot%360)+360)%360; var bw=(rot===90||rot===270)?h:w, bh=(rot===90||rot===270)?w:h;
+  var cv=document.createElement('canvas'); cv.width=bw; cv.height=bh; var ctx=cv.getContext('2d');
+  ctx.save(); ctx.translate(bw/2,bh/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(img,-w/2,-h/2,w,h); ctx.restore();
+  s.base=cv; s.baseW=bw; s.baseH=bh;
+}
+function hrRCScanDraw(){
+  var s=RC._scan; var cv=document.getElementById('rc-scan-cv'); if(!cv||!s||!s.base) return;
+  var ov=document.getElementById('rc-scan-ov'); var maxW=Math.min(520,(ov?ov.clientWidth:520)-48); if(maxW<160)maxW=160;
+  var scale=Math.min(1, maxW/s.baseW); var dw=Math.max(1,Math.round(s.baseW*scale)), dh=Math.max(1,Math.round(s.baseH*scale));
+  cv.width=dw; cv.height=dh; s.disp=scale; var ctx=cv.getContext('2d'); ctx.drawImage(s.base,0,0,dw,dh);
+  if(s.crop){ var c=s.crop; ctx.save(); ctx.fillStyle='rgba(0,0,0,.45)';
+    ctx.fillRect(0,0,dw,c.y*scale); ctx.fillRect(0,c.y*scale,c.x*scale,c.h*scale);
+    ctx.fillRect((c.x+c.w)*scale,c.y*scale,dw-(c.x+c.w)*scale,c.h*scale); ctx.fillRect(0,(c.y+c.h)*scale,dw,dh-(c.y+c.h)*scale);
+    ctx.strokeStyle='#e85d3c'; ctx.lineWidth=2; ctx.strokeRect(c.x*scale,c.y*scale,c.w*scale,c.h*scale); ctx.restore(); }
+}
+function hrRCScanPt(e){ var cv=document.getElementById('rc-scan-cv'); var r=cv.getBoundingClientRect(); var d=RC._scan.disp||1;
+  return { x:Math.max(0,Math.min(RC._scan.baseW,(e.clientX-r.left)/d)), y:Math.max(0,Math.min(RC._scan.baseH,(e.clientY-r.top)/d)) }; }
+function hrRCScanDown(e){ e.preventDefault(); var p=hrRCScanPt(e); RC._scan.drag={sx:p.x,sy:p.y}; }
+function hrRCScanMove(e){ if(!RC._scan||!RC._scan.drag)return; e.preventDefault(); var p=hrRCScanPt(e),d=RC._scan.drag;
+  RC._scan.crop={x:Math.min(d.sx,p.x),y:Math.min(d.sy,p.y),w:Math.abs(p.x-d.sx),h:Math.abs(p.y-d.sy)}; hrRCScanDraw(); }
+function hrRCScanUp(){ if(RC._scan&&RC._scan.drag){ var c=RC._scan.crop; if(c&&(c.w<12||c.h<12))RC._scan.crop=null; RC._scan.drag=null; hrRCScanDraw(); } }
+function hrRCScanRotate(){ if(!RC._scan)return; RC._scan.rot=(RC._scan.rot+90)%360; RC._scan.crop=null; RC._scan.qr=null; hrRCScanBuildBase(); hrRCScanDraw(); }
+function hrRCScanResetCrop(){ if(!RC._scan)return; RC._scan.crop=null; RC._scan.qr=null; hrRCScanDraw(); hrRCScanMStatus(''); }
+function hrRCScanCancel(){ var ov=document.getElementById('rc-scan-ov'); if(ov)ov.remove(); RC._scan=null; }
+function hrRCScanMStatus(t,warn){ var e=document.getElementById('rc-scan-mstatus'); if(e){ e.textContent=t||''; e.style.color=warn?'var(--amber)':'var(--green-soft)'; } }
+function hrRCScanCropCanvas(){ var s=RC._scan; var c=s.crop||{x:0,y:0,w:s.baseW,h:s.baseH};
+  var out=document.createElement('canvas'); out.width=Math.max(1,Math.round(c.w)); out.height=Math.max(1,Math.round(c.h));
+  out.getContext('2d').drawImage(s.base,c.x,c.y,c.w,c.h,0,0,out.width,out.height); return out; }
+// MyInvois QR encodes a validation URL; pull out the long UUID/id if present.
+function hrRCParseEinv(text){ var url=String(text||'').trim(); var uuid='';
+  var m=url.match(/myinvois[^\s]*?\/([A-Za-z0-9]{20,})/i); if(m)uuid=m[1]; else { var m2=url.match(/([A-Za-z0-9]{26,})/); if(m2)uuid=m2[1]; }
+  return { url:url, uuid:uuid }; }
+function hrRCScanQrOn(cv){ if(!window.jsQR||!cv)return null; try{ var id=cv.getContext('2d').getImageData(0,0,cv.width,cv.height); var f=window.jsQR(id.data,cv.width,cv.height); return (f&&f.data)?hrRCParseEinv(f.data):null; }catch(_e){ return null; } }
+function hrRCScanDetectQR(){ hrRCScanMStatus('Scanning for QR…'); hrLoadJsQR(function(){
+  if(!window.jsQR){ hrRCScanMStatus('QR reader unavailable.',true); return; }
+  var found = (RC._scan.crop && hrRCScanQrOn(hrRCScanCropCanvas())) || hrRCScanQrOn(RC._scan.base);
+  if(found){ RC._scan.qr=found; hrRCScanMStatus('✓ e-invoice QR found'+(found.uuid?(' · UUID '+found.uuid.slice(0,24)):'')); }
+  else hrRCScanMStatus('No QR detected — crop tighter around the QR, or Rotate, and try again.',true); }); }
+function hrRCImgToPdf(cv){ return new Promise(function(res){ hrLoadJsPDF(function(){ try{
+  var jpeg=cv.toDataURL('image/jpeg',0.85); var pw=210,ph=297,m=8, iw=cv.width,ih=cv.height, aw=pw-2*m,ah=ph-2*m;
+  var sc=Math.min(aw/iw,ah/ih), w=iw*sc, h=ih*sc; var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+  doc.addImage(jpeg,'JPEG',(pw-w)/2,(ph-h)/2,w,h); var ab=doc.output('arraybuffer');
+  try{ res(new File([ab],'receipt.pdf',{type:'application/pdf'})); }catch(_e){ var b=new Blob([ab],{type:'application/pdf'}); try{b.name='receipt.pdf';}catch(_e2){} res(b); }
+}catch(e){ res(null); } }); }); }
+async function hrRCScanUse(){
+  if(!RC._scan)return; hrRCScanMStatus('Processing…');
+  var cc=hrRCScanCropCanvas();
+  if(!RC._scan.qr){ await new Promise(function(r){ hrLoadJsQR(function(){ RC._scan.qr = hrRCScanQrOn(cc) || hrRCScanQrOn(RC._scan.base); r(); }); }); }
+  var qr=RC._scan.qr;
+  var jpeg=await new Promise(function(res){ cc.toBlob(function(b){res(b);},'image/jpeg',0.85); });
+  var ocrB64=await hrRCFileB64(jpeg);
+  var pdf=await hrRCImgToPdf(cc);
+  var attach = pdf || (function(){ try{ return new File([jpeg],'receipt.jpg',{type:'image/jpeg'}); }catch(_e){ return jpeg; } })();
+  hrRCScanCancel();
+  await hrRCScanProcess(attach, {b64:ocrB64,type:'image/jpeg'}, qr);
+}
+// Shared: OCR the image (best-effort), fill the first blank expense line, apply QR e-invoice data, queue the
+// attachment (a clean PDF when cropped). Works even if OCR is unavailable (credits) — QR + attach still land.
+async function hrRCScanProcess(attachFile, ocrImg, qr){
   var st=document.getElementById('rc_scan_status'); var setS=function(t){ if(st)st.textContent=t; };
   setS('📷 Reading…');
-  try{
-    var small=await hrRCPrepImage(file);            // downscale images; PDFs pass through
-    var b64=await hrRCFileB64(small);
-    var r=await call({api:'hr_rc_ocr',file_b64:b64,file_type:(small.type||file.type||'image/jpeg')});
-    if(!r||!r.ok){ setS(''); toast((r&&r.error)||'Could not read that receipt',true); return; }
-    var x=r.extracted||{};
-    if(!Array.isArray(RC.form.items)) RC.form.items=[];
-    // fill the first blank line, else append a new one
-    var idx=-1;
-    for(var i=0;i<RC.form.items.length;i++){ var iu=RC.form.items[i]; if(!iu.claim_type_id && !(Number(iu.amount)||0) && !(Number(iu.total_km)||0)){ idx=i; break; } }
-    if(idx<0){ RC.form.items.push({}); idx=RC.form.items.length-1; }
-    var t=RC.form.items[idx];
-    if(r.claim_type_id) t.claim_type_id=r.claim_type_id;
-    if(x.date) t.item_date=x.date;
-    if(x.total) t.amount=x.total;
-    if(x.description) t.description=x.description;
-    if(x.vendor) t.vendor_name=x.vendor;
-    if(x.invoice_no) t.invoice_no=x.invoice_no;
-    if(x.tax) t.tax_amount=x.tax;
-    if(x.sst) t.sst_amount=x.sst;
-    t.is_einvoice=!!x.is_einvoice;
-    if(x.supplier_tin) t.supplier_tin=x.supplier_tin;
-    if(x.einvoice_uuid) t.einvoice_uuid=x.einvoice_uuid;
-    if(x.einvoice_validation_url) t.einvoice_validation_url=x.einvoice_validation_url;
-    t._open=true;
-    RC.form._scanFiles=RC.form._scanFiles||[]; RC.form._scanFiles.push(small);   // attach on save
-    setS('');
-    toast((x.is_einvoice?'e-Invoice read ✓ ':'Receipt read ✓ ')+(x.vendor||'')+' · RM'+(Number(x.total)||0).toFixed(2)+(x.confidence?(' · '+x.confidence+' confidence'):''));
-    hrRender();
-  }catch(e){ setS(''); toast('Scan failed — '+((e&&e.message)||e),true); }
+  var b64, type;
+  if(ocrImg && ocrImg.b64){ b64=ocrImg.b64; type=ocrImg.type; }
+  else { var small=await hrRCPrepImage(ocrImg); b64=await hrRCFileB64(small); type=(small.type||ocrImg.type||'image/jpeg'); }
+  var x={}, claimTypeId=null, ocrErr='';
+  try{ var r=await call({api:'hr_rc_ocr',file_b64:b64,file_type:type}); if(r&&r.ok){ x=r.extracted||{}; claimTypeId=r.claim_type_id; } else ocrErr=(r&&r.error)||''; }catch(e){ ocrErr=String((e&&e.message)||e); }
+  if(!Array.isArray(RC.form.items)) RC.form.items=[];
+  var idx=-1; for(var i=0;i<RC.form.items.length;i++){ var iu=RC.form.items[i]; if(!iu.claim_type_id && !(Number(iu.amount)||0) && !(Number(iu.total_km)||0)){ idx=i; break; } }
+  if(idx<0){ RC.form.items.push({}); idx=RC.form.items.length-1; }
+  var t=RC.form.items[idx];
+  if(claimTypeId) t.claim_type_id=claimTypeId;
+  if(x.date) t.item_date=x.date; if(x.total) t.amount=x.total; if(x.description) t.description=x.description;
+  if(x.vendor) t.vendor_name=x.vendor; if(x.invoice_no) t.invoice_no=x.invoice_no; if(x.tax) t.tax_amount=x.tax; if(x.sst) t.sst_amount=x.sst;
+  if(x.is_einvoice) t.is_einvoice=true; if(x.supplier_tin) t.supplier_tin=x.supplier_tin; if(x.einvoice_uuid) t.einvoice_uuid=x.einvoice_uuid; if(x.einvoice_validation_url) t.einvoice_validation_url=x.einvoice_validation_url;
+  if(qr && qr.url){ t.is_einvoice=true; t.einvoice_validation_url=qr.url; if(qr.uuid) t.einvoice_uuid=qr.uuid; }   // QR beats OCR for the id
+  t._open=true;
+  if(attachFile){ RC.form._scanFiles=RC.form._scanFiles||[]; RC.form._scanFiles.push(attachFile); }
+  setS('');
+  var parts=[]; if(qr&&qr.url)parts.push('e-Invoice QR ✓'); if(x.vendor)parts.push(x.vendor); if(x.total)parts.push('RM'+(Number(x.total)||0).toFixed(2));
+  if(parts.length) toast('Scan added — '+parts.join(' · ')+' (attached as PDF)');
+  else if(ocrErr) toast('Attached as PDF. OCR: '+ocrErr, true);
+  else toast('Scan attached as PDF ✓');
+  hrRender();
 }
 // Shrink a phone photo before upload. A raw camera shot is several MB — wasteful to store as base64.
 // Images → max 1600px longest side, JPEG q0.82; PDFs / already-small files pass through untouched.
