@@ -75,11 +75,26 @@ async function xeroOAuthCallback(qp){
   try {
     const cr = await fetch("https://api.xero.com/connections", { headers:{ "Authorization":"Bearer "+t.access_token, "Content-Type":"application/json" } });
     const conns = await cr.json();
-    if (Array.isArray(conns)) { tenantsMsg = conns.map((c)=>c.tenantName).join(", "); for (const c of conns) { try { await sb.from("xero_tenants").upsert({ tenant_id:c.tenantId, tenant_name:c.tenantName }, { onConflict:"tenant_id" }); } catch(_e){} } }
+    // v129: insert NEW tenants only (ignoreDuplicates) — the /connections tenantName is a stale
+    // connect-time snapshot; overwriting here would clobber the Organisation-endpoint names that
+    // tenants_refresh / the nightly cron maintain.
+    if (Array.isArray(conns)) { tenantsMsg = conns.map((c)=>c.tenantName).join(", "); for (const c of conns) { try { await sb.from("xero_tenants").upsert({ tenant_id:c.tenantId, tenant_name:c.tenantName }, { onConflict:"tenant_id", ignoreDuplicates:true }); } catch(_e){} } }
   } catch (_e) {}
   try { await sb.from("portal_secrets").delete().eq("key","oauth_state"); } catch(_e){}
   try { await sb.from("portal_audit").insert({ action:"xero_reconnect", ref:"oauth", detail:{ tenants: tenantsMsg } }); } catch(_e){}
   return htmlResp("<b style='color:#7ee0a0;font-size:19px'>âœ“ Xero reconnected</b><br><br>Connected organisations: " + (escHtml(tenantsMsg)||"(none returned)") + ".<br><br>You can close this tab and return to the portal, then open <b>Users â†’ Xero sync</b> and click <b>Full sync from Xero</b> to refill the cache.", 200);
+}
+// v129: org display names. The /connections tenantName is a connect-time snapshot — renaming the
+// organisation in Xero never propagates to it (that is how an invisible-char/stale name got stuck).
+// GET /Organisation per tenant is the authority; called from tenants_refresh and the nightly cron.
+async function xeroOrgName(access: string, tenantId: string): Promise<string> {
+  try {
+    const r = await fetch("https://api.xero.com/api.xro/2.0/Organisation", { headers:{ "Authorization":"Bearer "+access, "xero-tenant-id":tenantId, "Accept":"application/json" } });
+    if (!r.ok) return "";
+    const jj = await r.json();
+    const nm = String((jj.Organisations && jj.Organisations[0] && jj.Organisations[0].Name) || "");
+    return nm.replace(/[​‌‍⁠﻿]/g, "").trim();  // strip zero-width chars (v67 lesson: \u escapes, never literals)
+  } catch(_e){ return ""; }
 }
 async function xeroAccessToken(){
   const { data: tok, error } = await sb.from("xero_tokens").select("*").limit(1).single();
@@ -2106,7 +2121,10 @@ Deno.serve(async (req)=>{
     if (api === "cron_sync") {
       const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
       if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
-      const work = (async ()=>{ try { const access = await xeroAccessToken(); const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name"); const bf = await runBackfill(access, tenants||[]); const pr = await processPending(500); // v28: auto drift-repair after nightly backfill; up to 50 extras/tenant per run
+      const work = (async ()=>{ try { const access = await xeroAccessToken(); const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+        // v129: keep display names tracking the live Xero Organisation Name (renames propagate overnight)
+        try { for (const t of (tenants||[])) { const on = await xeroOrgName(access, t.tenant_id); if (on && on !== t.tenant_name) await sb.from("xero_tenants").update({ tenant_name: on }).eq("tenant_id", t.tenant_id); } } catch(_e){}
+        const bf = await runBackfill(access, tenants||[]); const pr = await processPending(500); // v28: auto drift-repair after nightly backfill; up to 50 extras/tenant per run
         const driftResults = []; for (const t of (tenants||[])){ try { const dr = await runDriftCheck(access, t.tenant_id); driftResults.push({ tenant: t.tenant_name, ...dr }); } catch (e) { driftResults.push({ tenant: t.tenant_name, error: String(e).slice(0,200) }); } }
         await sb.from("portal_audit").insert({ action:"cron_sync", ref:"daily", detail:{ upserted:bf.upserted, deleted:bf.deleted, processed:pr.processed, remaining:pr.remaining, drift: driftResults } });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_sync", p_status:"ok", p_detail:{ upserted:bf.upserted, deleted:bf.deleted } }); } catch (_e) {}
@@ -2622,7 +2640,11 @@ Deno.serve(async (req)=>{
       const renamed: any[] = []; const added: any[] = [];
       for (const c of conns) {
         const id = String(c.tenantId||""); if (!id) continue;
-        const name = clean(String(c.tenantName||""));
+        // v129: prefer the live Organisation Name — /connections tenantName is a connect-time
+        // snapshot that never tracks a rename done inside Xero. Fallback to it only if the
+        // Organisation call fails.
+        let name = clean(await xeroOrgName(access, id));
+        if (!name) name = clean(String(c.tenantName||""));
         if (!name) continue;
         seen.add(id);
         const prev = before.get(id);
@@ -5396,7 +5418,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v128 fix: hr_employer_save no longer rejects a blank Company code — a blank doc_code now means keep the existing one (was: hard error, which blocked saving the whole company-details panel incl. logo/address when the code field was empty; the frontend seed was also missing doc_code so the field never pre-filled). Also v127 clock-in/out reminders + self-serve schedule." });
+    return j({ ok:true, hint:"portal v129: company display names now track the live Xero Organisation Name — tenants_refresh + nightly cron pull GET /Organisation per tenant (the /connections tenantName is a stale connect-time snapshot and no longer overwrites on reconnect). Also v128 blank-doc_code fix." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
