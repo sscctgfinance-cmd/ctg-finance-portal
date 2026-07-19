@@ -5061,12 +5061,13 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can post claims to Xero." }, 403);
       const id=b.id;
-      const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(name,emp_no)").eq("id",id).maybeSingle();
+      const { data: c } = await sb.from("hr_claim_requests").select("*, hr_employees(name,emp_no,tax_no,ic_no,address)").eq("id",id).maybeSingle();
       if(!c) return j({ ok:false, error:"claim not found" });
       { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(["Approved","Paid"].indexOf(c.status)<0) return j({ ok:false, error:"Post to Xero only after the claim is fully Approved." });
       const tenant = c.tenant_id;
       const empName = (c.hr_employees&&c.hr_employees.name) || "Employee";
+      const empTin = String((c.hr_employees&&c.hr_employees.tax_no)||"").trim();   // claimer = e-invoice buyer (HR OS TIN)
       // Build one Xero line per expense line, each coded to its claim type's GL account.
       const { data: items } = await sb.from("hr_claim_items").select("*, hr_claim_types(name,gl_account,is_mileage)").eq("claim_id",id).order("item_date");
       const missing:string[]=[]; const lines:any[]=[];
@@ -5096,7 +5097,9 @@ Deno.serve(async (req)=>{
         // Already posted — refresh the Reference on the existing (editable) bill so it never goes blank.
         try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, Reference: reference }] }) }); } catch(_e){}
       } else {
-        const inv:any = { Type:"ACCPAY", Contact:{ Name:String(empName).slice(0,500) },
+        // Contact = the claimer; stamp their HR OS TIN so the e-invoice buyer identity flows to Xero/MyInvois.
+        const contact:any = { Name:String(empName).slice(0,500) }; if(empTin) contact.TaxNumber = empTin.slice(0,50);
+        const inv:any = { Type:"ACCPAY", Contact:contact,
           Reference: reference, Date: c.claim_date||undefined, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
         const idem = "rc-"+id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
         const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
@@ -5153,7 +5156,7 @@ Deno.serve(async (req)=>{
       const who = await rcMe(me);
       const id=b.id;
       const [claimR, mileage, atts, steps, comments, payment, audit, itemsR, decR] = await Promise.all([
-        sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position,bank_name,bank_account), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
+        sb.from("hr_claim_requests").select("*, hr_employees(emp_no,name,dept,position,bank_name,bank_account,tax_no,ic_no,address,email,phone), hr_claim_types(name,code,is_mileage,requires_receipt)").eq("id",id).maybeSingle(),
         sb.from("hr_mileage_claim_details").select("*").eq("claim_id",id).maybeSingle(),
         sb.from("hr_claim_attachments").select("*").eq("claim_id",id),
         sb.from("hr_claim_approval_steps").select("*").eq("claim_id",id).order("step_order"),
@@ -5188,7 +5191,11 @@ Deno.serve(async (req)=>{
       const { data: rcEmployer } = cl ? await sb.from("hr_employer_info").select("*").eq("tenant_id",cl.tenant_id).maybeSingle() : { data:null } as any;
       // The claimant's own signature — goes above "Prepared by" on the form.
       const { data: rcSigner } = cl ? await sb.from("hr_employees").select("signature").eq("id",cl.employee_id).maybeSingle() : { data:null } as any;
-      return j({ ok:true, claim:cl, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin });
+      // e-Invoice BUYER = the claimer, pulled live from their HR OS employee record (single source of
+      // truth — never duplicated onto the claim). Every reimbursement carries it automatically.
+      const rcEmp:any = (cl && cl.hr_employees) || {};
+      const buyer = { name:rcEmp.name||"", tin:rcEmp.tax_no||"", ic:rcEmp.ic_no||"", address:rcEmp.address||"", email:rcEmp.email||"", phone:rcEmp.phone||"", complete: !!(rcEmp.name && rcEmp.tax_no && rcEmp.ic_no) };
+      return j({ ok:true, claim:cl, buyer, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -5422,7 +5429,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v130: reimbursement OCR now also extracts Malaysian MyInvois e-invoice fields (supplier TIN, e-invoice no/UUID, validation URL, tax/SST); hr_rc_save persists them and hr_rc_post_xero carries them into the Xero bill line. Also v129 Xero org-name sync." });
+    return j({ ok:true, hint:"portal v131: reimbursement e-invoice BUYER = the claimer, pulled live from their HR OS employee record (name/TIN/IC/address) — hr_rc_get returns buyer{}, hr_rc_post_xero stamps the claimer TIN on the Xero bill Contact. Plus v130 supplier e-invoice OCR fields." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
