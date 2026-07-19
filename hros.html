@@ -1865,7 +1865,9 @@ function hrRCForm(){
     if(it._open){
       var extra = mile
         ? dg('From',di(i,'from','e.g. Office',it.start_location))+dg('To',di(i,'to','e.g. Client KL',it.end_location))+dg('Purpose',di(i,'pur','trip purpose',it.purpose))+dg('Parking (RM)',di(i,'park','0.00',it.parking_amount,'type="number" step="0.01" oninput="hrRCItemCalc()"'))+dg('Toll (RM)',di(i,'toll','0.00',it.toll_amount,'type="number" step="0.01" oninput="hrRCItemCalc()"'))
-        : dg('Vendor',di(i,'ven','shop / supplier',it.vendor_name))+dg('Receipt no.',di(i,'rno','',it.receipt_no))+dg('Invoice no.',di(i,'ino','',it.invoice_no))+dg('Tax (RM)',di(i,'tax','0.00',it.tax_amount,'type="number" step="0.01"'))+dg('SST (RM)',di(i,'sst','0.00',it.sst_amount,'type="number" step="0.01"'));
+        : dg('Vendor',di(i,'ven','shop / supplier',it.vendor_name))+dg('Receipt no.',di(i,'rno','',it.receipt_no))+dg('e-Invoice / Invoice no.',di(i,'ino','',it.invoice_no))+dg('Tax (RM)',di(i,'tax','0.00',it.tax_amount,'type="number" step="0.01"'))+dg('SST (RM)',di(i,'sst','0.00',it.sst_amount,'type="number" step="0.01"'))
+            +dg('Supplier TIN',di(i,'stin','MyInvois TIN',it.supplier_tin))+dg('e-Invoice UUID',di(i,'euuid','IRBM unique id',it.einvoice_uuid))
+            +dg('MyInvois e-invoice?','<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;padding-top:7px;cursor:pointer"><input type="checkbox" id="rc_it_'+i+'_einv"'+(it.is_einvoice?' checked':'')+' style="accent-color:var(--green-soft)"> validated e-invoice</label>');
       more='<div style="width:100%;display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:8px 0 4px 10px;border-left:2px solid var(--border);margin:2px 0 4px">'+extra+
         dg('Cost center','<select id="rc_it_'+i+'_cc" style="width:100%;'+RC_TD+'">'+hrRCCcOpts(it.cost_center)+'</select>')+
         dg('Line remarks',di(i,'rem','',it.remarks))+'</div>';
@@ -1875,7 +1877,8 @@ function hrRCForm(){
       '<input id="rc_it_'+i+'_date" type="date" value="'+esc((it.item_date||f.claim_date||'').slice(0,10))+'" style="width:132px;'+RC_TD+'">'+
       '<input id="rc_it_'+i+'_desc" placeholder="Description" value="'+esc(it.description||'')+'" style="flex:1;min-width:130px;'+RC_TD+'">'+
       amtCell+
-      '<button class="btn xs'+(it._open?' p':'')+'" title="'+(mile?'trip / parking / toll / cost center':'vendor / receipt no / tax / cost center')+'" onclick="hrRCItemMore('+i+')">⋯</button>'+
+      (it.is_einvoice?'<span class="pill" title="MyInvois e-invoice captured" style="font-size:9px;color:var(--green-soft);border:1px solid var(--green-soft);border-radius:5px;padding:1px 5px">e-Inv</span>':'')+
+      '<button class="btn xs'+(it._open?' p':'')+'" title="'+(mile?'trip / parking / toll / cost center':'vendor / receipt / e-invoice / tax / cost center')+'" onclick="hrRCItemMore('+i+')">⋯</button>'+
       '<button class="btn xs d" title="remove" onclick="hrRCItemDel('+i+')">✕</button>'+more+'</div>';
   }).join('');
   var decs=[['dec1','I confirm this claim is for business purpose.'],['dec2','I confirm this claim has not been claimed before.'],['dec3','I confirm all receipts / invoices attached are valid.'],['dec4','I understand false claims may result in disciplinary action.']];
@@ -1885,7 +1888,7 @@ function hrRCForm(){
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
     '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
     '<div>'+rows+'</div>'+
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px"><div style="display:flex;gap:8px;align-items:center"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><button class="btn sm" onclick="hrRCScanTrigger()" title="Snap a receipt or MyInvois e-invoice — Claude reads it and fills a line">📷 Scan receipt / e-invoice</button><input type="file" id="rc_scan_fi" accept="image/*,.pdf" capture="environment" style="display:none" onchange="hrRCScanFile(this)"><span id="rc_scan_status" class="muted" style="font-size:11px"></span></div><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
     '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipts (attach one or more)</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)"></div>'+
     decHtml+
@@ -1901,6 +1904,7 @@ function hrRCSyncItems(){
     if(el('type'))it.claim_type_id=el('type').value; if(el('date'))it.item_date=el('date').value; if(el('desc'))it.description=el('desc').value;
     if(el('km'))it.total_km=el('km').value; if(el('rate'))it.mileage_rate=el('rate').value; if(el('amt'))it.amount=el('amt').value;
     if(el('ven'))it.vendor_name=el('ven').value; if(el('rno'))it.receipt_no=el('rno').value; if(el('ino'))it.invoice_no=el('ino').value;
+    if(el('stin'))it.supplier_tin=el('stin').value; if(el('euuid'))it.einvoice_uuid=el('euuid').value; if(el('einv'))it.is_einvoice=el('einv').checked;
     if(el('tax'))it.tax_amount=el('tax').value; if(el('sst'))it.sst_amount=el('sst').value; if(el('cc'))it.cost_center=el('cc').value;
     if(el('rem'))it.remarks=el('rem').value; if(el('from'))it.start_location=el('from').value; if(el('to'))it.end_location=el('to').value;
     if(el('pur'))it.purpose=el('pur').value; if(el('park'))it.parking_amount=el('park').value; if(el('toll'))it.toll_amount=el('toll').value;
@@ -1921,6 +1925,7 @@ async function hrRCSave(submit){
   var claim={ id:f.id||undefined, employee_id:f.employee_id, claim_date:f.claim_date, claim_month:f.claim_month, cost_center:f.cost_center, department:f.department, project:f.project, remarks:f.remarks, description:f.description,
     items: items.map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date||f.claim_date, description:it.description, amount:Number(it.amount)||0, total_km:Number(it.total_km)||0, mileage_rate:Number(it.mileage_rate)||0,
       vendor_name:it.vendor_name||'', receipt_no:it.receipt_no||'', invoice_no:it.invoice_no||'', tax_amount:Number(it.tax_amount)||0, sst_amount:Number(it.sst_amount)||0,
+      is_einvoice:!!it.is_einvoice, supplier_tin:it.supplier_tin||'', einvoice_uuid:it.einvoice_uuid||'', einvoice_validation_url:it.einvoice_validation_url||'',
       gl_account:it.gl_account||'', cost_center:it.cost_center||'', project:it.project||'', remarks:it.remarks||'',
       start_location:it.start_location||'', end_location:it.end_location||'', purpose:it.purpose||'', parking_amount:Number(it.parking_amount)||0, toll_amount:Number(it.toll_amount)||0 }; }) };
   var r=await call({api:'hr_rc_save',tenant:HR.tenant,claim:claim});
@@ -1928,12 +1933,53 @@ async function hrRCSave(submit){
   var cid=r.id; RC.form.id=cid;
   var fi=document.getElementById('rc_file');
   if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, await hrRCPrepImage(fi.files[i])); } }
+  // Also attach any files scanned via OCR (the actual receipt / e-invoice image behind the extracted line).
+  if(Array.isArray(RC.form._scanFiles) && RC.form._scanFiles.length){ toast('Attaching scanned e-invoice…'); for(var s=0;s<RC.form._scanFiles.length;s++){ await hrRCUpload(cid, RC.form._scanFiles[s]); } RC.form._scanFiles=[]; }
   if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid,declarations:dec}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
   else { toast('Draft saved'); RC.page='list'; hrRCLoadList(); }
   hrRender();
 }
 function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'image/jpeg'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
+// 📷 Scan a receipt / MyInvois e-invoice → Claude vision reads it → fills a line + captures e-invoice
+// identifiers. The scanned file is queued and attached to the claim on save.
+function hrRCScanTrigger(){ var el=document.getElementById('rc_scan_fi'); if(el){ el.value=''; el.click(); } }
+async function hrRCScanFile(input){
+  var file=input && input.files && input.files[0]; if(!file) return;
+  hrRCSyncItems();
+  var st=document.getElementById('rc_scan_status'); var setS=function(t){ if(st)st.textContent=t; };
+  setS('📷 Reading…');
+  try{
+    var small=await hrRCPrepImage(file);            // downscale images; PDFs pass through
+    var b64=await hrRCFileB64(small);
+    var r=await call({api:'hr_rc_ocr',file_b64:b64,file_type:(small.type||file.type||'image/jpeg')});
+    if(!r||!r.ok){ setS(''); toast((r&&r.error)||'Could not read that receipt',true); return; }
+    var x=r.extracted||{};
+    if(!Array.isArray(RC.form.items)) RC.form.items=[];
+    // fill the first blank line, else append a new one
+    var idx=-1;
+    for(var i=0;i<RC.form.items.length;i++){ var iu=RC.form.items[i]; if(!iu.claim_type_id && !(Number(iu.amount)||0) && !(Number(iu.total_km)||0)){ idx=i; break; } }
+    if(idx<0){ RC.form.items.push({}); idx=RC.form.items.length-1; }
+    var t=RC.form.items[idx];
+    if(r.claim_type_id) t.claim_type_id=r.claim_type_id;
+    if(x.date) t.item_date=x.date;
+    if(x.total) t.amount=x.total;
+    if(x.description) t.description=x.description;
+    if(x.vendor) t.vendor_name=x.vendor;
+    if(x.invoice_no) t.invoice_no=x.invoice_no;
+    if(x.tax) t.tax_amount=x.tax;
+    if(x.sst) t.sst_amount=x.sst;
+    t.is_einvoice=!!x.is_einvoice;
+    if(x.supplier_tin) t.supplier_tin=x.supplier_tin;
+    if(x.einvoice_uuid) t.einvoice_uuid=x.einvoice_uuid;
+    if(x.einvoice_validation_url) t.einvoice_validation_url=x.einvoice_validation_url;
+    t._open=true;
+    RC.form._scanFiles=RC.form._scanFiles||[]; RC.form._scanFiles.push(small);   // attach on save
+    setS('');
+    toast((x.is_einvoice?'e-Invoice read ✓ ':'Receipt read ✓ ')+(x.vendor||'')+' · RM'+(Number(x.total)||0).toFixed(2)+(x.confidence?(' · '+x.confidence+' confidence'):''));
+    hrRender();
+  }catch(e){ setS(''); toast('Scan failed — '+((e&&e.message)||e),true); }
+}
 // Shrink a phone photo before upload. A raw camera shot is several MB — wasteful to store as base64.
 // Images → max 1600px longest side, JPEG q0.82; PDFs / already-small files pass through untouched.
 // Always resolves (never rejects) so an upload is never lost.
@@ -1979,7 +2025,7 @@ function hrRCDetail(){
       var extra=t.is_mileage?(' · '+it.total_km+'km × RM'+it.mileage_rate+((Number(it.parking_amount)||0)?(' + park '+M(it.parking_amount)):'')+((Number(it.toll_amount)||0)?(' + toll '+M(it.toll_amount)):'')+(it.start_location?(' · '+esc(it.start_location)+'→'+esc(it.end_location||'')):'')):'';
       var gl=it.gl_account||t.gl_account||''; var glCell=(gl?esc(gl):'<span style="color:var(--amber)">—</span>')+(it.gl_account?' <span class="muted" title="changed by Finance" style="font-size:10px">✎</span>':'')+(canGl?' <a onclick="hrRCSetGl(\''+it.id+'\')" title="change GL (reason required)" style="cursor:pointer;font-size:11px;color:var(--sky-soft)">edit</a>':'');
       var tax=(Number(it.tax_amount)||0)+(Number(it.sst_amount)||0);
-      return '<tr><td>'+esc(t.name||'—')+'</td><td class="muted">'+esc(String(it.item_date||'').slice(0,10))+'</td><td class="muted">'+esc(it.description||'')+extra+(it.remarks?('<div class="muted" style="font-size:10.5px">'+esc(it.remarks)+'</div>'):'')+'</td><td class="muted">'+esc(it.vendor_name||'—')+'</td><td class="muted">'+esc(it.receipt_no||it.invoice_no||'—')+'</td><td>'+glCell+'</td><td class="muted">'+esc(it.cost_center||c.cost_center||'—')+'</td><td class="amt">'+M(it.amount)+(tax?('<div class="muted" style="font-size:10px">incl tax '+M(tax)+'</div>'):'')+'</td></tr>'; }).join('');
+      return '<tr><td>'+esc(t.name||'—')+'</td><td class="muted">'+esc(String(it.item_date||'').slice(0,10))+'</td><td class="muted">'+esc(it.description||'')+extra+(it.is_einvoice?('<div style="font-size:10.5px;color:var(--green-soft)">🧾 e-Invoice'+(it.supplier_tin?(' · TIN '+esc(it.supplier_tin)):'')+(it.einvoice_uuid?(' · '+esc(String(it.einvoice_uuid).slice(0,20))+'…'):'')+'</div>'):'')+(it.remarks?('<div class="muted" style="font-size:10.5px">'+esc(it.remarks)+'</div>'):'')+'</td><td class="muted">'+esc(it.vendor_name||'—')+'</td><td class="muted">'+esc(it.receipt_no||it.invoice_no||'—')+'</td><td>'+glCell+'</td><td class="muted">'+esc(it.cost_center||c.cost_center||'—')+'</td><td class="amt">'+M(it.amount)+(tax?('<div class="muted" style="font-size:10px">incl tax '+M(tax)+'</div>'):'')+'</td></tr>'; }).join('');
     mile='<div class="panel"><div class="panel-hd"><h3>Expense lines ('+d.items.length+')</h3>'+(canGl?'<button class="btn xs" onclick="hrRCSetGl(null)">✎ Change GL (all lines)</button>':'')+'</div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Date</th><th>Description</th><th>Vendor</th><th>Receipt/Inv #</th><th>GL</th><th>CC</th><th class="amt">Amount</th></tr></thead><tbody>'+itRows+'<tr><td colspan="7" style="text-align:right;font-weight:700">Total</td><td class="amt" style="font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</td></tr></tbody></table></div></div>';
   } else {
     mile=d.mileage?'<div class="panel"><div class="panel-hd"><h3>🚗 Mileage</h3></div><div style="font-size:13px">'+esc(d.mileage.start_location||'')+' → '+esc(d.mileage.end_location||'')+' · '+d.mileage.total_km+' km × RM'+d.mileage.mileage_rate+' = <b>'+M(d.mileage.calculated_amount)+'</b></div></div>':'';
@@ -2021,6 +2067,7 @@ async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail
 function hrRCEdit(){ var c=RC.detail.claim;
   var items=(RC.detail.items||[]).map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date?String(it.item_date).slice(0,10):'', description:it.description, amount:it.amount, total_km:it.total_km, mileage_rate:it.mileage_rate,
     vendor_name:it.vendor_name, receipt_no:it.receipt_no, invoice_no:it.invoice_no, tax_amount:it.tax_amount, sst_amount:it.sst_amount, gl_account:it.gl_account, cost_center:it.cost_center, project:it.project, remarks:it.remarks,
+    is_einvoice:it.is_einvoice, supplier_tin:it.supplier_tin, einvoice_uuid:it.einvoice_uuid, einvoice_validation_url:it.einvoice_validation_url,
     start_location:it.start_location, end_location:it.end_location, purpose:it.purpose, parking_amount:it.parking_amount, toll_amount:it.toll_amount }; });
   if(!items.length){ items=[{ claim_type_id:c.claim_type_id||'', item_date:c.claim_date?String(c.claim_date).slice(0,10):'', description:c.description, amount:c.amount, total_km:(RC.detail.mileage&&RC.detail.mileage.total_km)||'', mileage_rate:(RC.detail.mileage&&RC.detail.mileage.mileage_rate)||'' }]; }
   RC.form={ id:c.id, employee_id:c.employee_id, claim_date:c.claim_date?String(c.claim_date).slice(0,10):'', claim_month:c.claim_month||'', cost_center:c.cost_center||'', department:c.department, project:c.project, remarks:c.remarks, description:c.description, items:items };
