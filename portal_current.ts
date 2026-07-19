@@ -4838,7 +4838,7 @@ Deno.serve(async (req)=>{
       for (const prov of ["anthropic","gemini","openai"]){
         const res = await callVisionLLM(prov, resolveModel(prov,""), sys, neutral, 800);
         if (res.ok && res.text){ txt=res.text; used=prov; tries.push(prov+": ok"); break; }
-        tries.push(prov+": "+String(res.error||"failed").slice(0,80));
+        tries.push(prov+": "+String(res.error||"failed").slice(0,400));
       }
       if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
       let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
