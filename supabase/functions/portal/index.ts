@@ -907,7 +907,7 @@ function resolveModel(provider, aiModel){
   provider = String(provider||"anthropic").toLowerCase();
   const m = String(aiModel||"");
   if (provider === "openai") return /^(gpt|o\d|chatgpt)/i.test(m) ? m : "gpt-4o-mini";
-  if (provider === "gemini") return /^gemini/i.test(m) ? m : "gemini-2.0-flash";
+  if (provider === "gemini") return /^gemini/i.test(m) ? m : "gemini-2.5-flash";
   return /^claude/i.test(m) ? m : "claude-haiku-4-5-20251001";
 }
 async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
