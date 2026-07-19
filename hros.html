@@ -1960,7 +1960,7 @@ function hrRCScanFile(input){
   if(!/^image\//.test(file.type||'')){ hrRCScanProcess(file, file, null); return; }   // PDF etc: no crop
   var url=URL.createObjectURL(file);
   var img=new Image();
-  img.onload=function(){ URL.revokeObjectURL(url); RC._scan={ img:img, rot:0, crop:null, drag:null, qr:null }; hrRCScanModal(); };
+  img.onload=function(){ URL.revokeObjectURL(url); RC._scan={ img:img, rot:0, crop:null, drag:null, qr:null, qrLoc:null, enhance:true }; hrRCScanModal(); };
   img.onerror=function(){ URL.revokeObjectURL(url); toast('Could not open that image',true); };
   img.src=url;
 }
@@ -1969,13 +1969,14 @@ function hrRCScanModal(){
   ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:14px';
   ov.innerHTML='<div style="background:var(--panel,#1b1817);border:1px solid var(--border);border-radius:14px;max-width:560px;width:100%;max-height:94vh;overflow:auto;padding:16px">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b style="font-size:15px">📷 Crop receipt / e-invoice</b><button class="btn xs" onclick="hrRCScanCancel()">✕</button></div>'+
-    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Drag on the image to crop to just the receipt. “Detect e-invoice QR” reads a MyInvois QR; “Use” saves a clean PDF + reads the receipt.</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Drag on the image to crop to just the receipt. The e-invoice QR is detected automatically (green box). “Use” saves a clean, enhanced PDF.</div>'+
     '<div style="text-align:center;background:var(--panel-2);border-radius:8px;padding:6px"><canvas id="rc-scan-cv" style="max-width:100%;touch-action:none;cursor:crosshair;border-radius:4px"></canvas></div>'+
     '<div id="rc-scan-mstatus" class="muted" style="font-size:11.5px;min-height:16px;margin-top:6px"></div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">'+
       '<button class="btn xs" onclick="hrRCScanRotate()">⟳ Rotate</button>'+
       '<button class="btn xs" onclick="hrRCScanResetCrop()">↺ Reset crop</button>'+
-      '<button class="btn xs" onclick="hrRCScanDetectQR()">🔍 Detect e-invoice QR</button>'+
+      '<button class="btn xs p" id="rc-scan-enh" onclick="hrRCScanToggleEnh()">✨ Enhance: ON</button>'+
+      '<button class="btn xs" onclick="hrRCScanDetectQR()">🔍 Re-scan QR</button>'+
       '<div style="flex:1"></div>'+
       '<button class="btn xs" onclick="hrRCScanCancel()">Cancel</button>'+
       '<button class="btn p sm" onclick="hrRCScanUse()">✓ Use (save PDF)</button>'+
@@ -1983,6 +1984,44 @@ function hrRCScanModal(){
   hrRCScanBuildBase(); hrRCScanDraw();
   var cv=document.getElementById('rc-scan-cv');
   cv.onpointerdown=hrRCScanDown; cv.onpointermove=hrRCScanMove; cv.onpointerup=hrRCScanUp; cv.onpointerleave=hrRCScanUp;
+  hrRCScanAutoQR();   // find the e-invoice QR immediately — no button press needed
+}
+// Auto-detect the MyInvois QR on open/rotate: green outline on the canvas + auto-fill, no tap needed.
+function hrRCScanAutoQR(){
+  if(!RC._scan) return;
+  hrRCScanMStatus('🔍 Looking for e-invoice QR…');
+  hrLoadJsQR(function(){
+    if(!RC._scan) return;
+    if(!window.jsQR){ hrRCScanMStatus('',false); return; }
+    var raw=hrRCScanQrRaw(RC._scan.base);
+    if(raw && raw.data){
+      RC._scan.qr=hrRCParseEinv(raw.data);
+      RC._scan.qrLoc=raw.location||null;
+      hrRCScanMStatus('✓ e-invoice QR detected'+(RC._scan.qr.uuid?(' · '+RC._scan.qr.uuid.slice(0,20)+'…'):''));
+    } else { RC._scan.qr=null; RC._scan.qrLoc=null; hrRCScanMStatus('No e-invoice QR on this image — that’s fine for a normal receipt.',false); }
+    hrRCScanDraw();
+  });
+}
+function hrRCScanToggleEnh(){ if(!RC._scan)return; RC._scan.enhance=!RC._scan.enhance; var b=document.getElementById('rc-scan-enh'); if(b){ b.textContent='✨ Enhance: '+(RC._scan.enhance?'ON':'OFF'); b.classList.toggle('p',RC._scan.enhance); } hrRCScanDraw(); }
+// Document-style enhancement: percentile contrast stretch (2%–98% luma) → whiter paper, darker text,
+// like a proper scanner. Pure canvas math, runs locally.
+function hrRCScanEnhance(cv){
+  try{
+    var ctx=cv.getContext('2d'); var id=ctx.getImageData(0,0,cv.width,cv.height); var d=id.data;
+    var hist=new Array(256); for(var i=0;i<256;i++)hist[i]=0;
+    var step=Math.max(4,Math.floor(d.length/4/120000)*4);
+    var n=0; for(var p=0;p<d.length;p+=step*4){ var lu=(d[p]*299+d[p+1]*587+d[p+2]*114)/1000|0; hist[lu]++; n++; }
+    var lo=0,hi=255,acc=0; for(var a=0;a<256;a++){ acc+=hist[a]; if(acc>=n*0.02){lo=a;break;} }
+    acc=0; for(var b2=255;b2>=0;b2--){ acc+=hist[b2]; if(acc>=n*0.02){hi=b2;break;} }
+    if(hi-lo<30) return cv;                      // already flat/clean — don't over-process
+    var sc=235/Math.max(1,hi-lo);                // stretch so paper→near-white, text→dark
+    for(var q=0;q<d.length;q+=4){
+      var r=(d[q]-lo)*sc+15, g=(d[q+1]-lo)*sc+15, bl=(d[q+2]-lo)*sc+15;
+      d[q]=r<0?0:r>255?255:r; d[q+1]=g<0?0:g>255?255:g; d[q+2]=bl<0?0:bl>255?255:bl;
+    }
+    var out=document.createElement('canvas'); out.width=cv.width; out.height=cv.height;
+    out.getContext('2d').putImageData(id,0,0); return out;
+  }catch(_e){ return cv; }
 }
 function hrRCScanBuildBase(){
   var s=RC._scan, img=s.img; var iw=img.naturalWidth||img.width||1, ih=img.naturalHeight||img.height||1;
@@ -1990,13 +2029,22 @@ function hrRCScanBuildBase(){
   var rot=((s.rot%360)+360)%360; var bw=(rot===90||rot===270)?h:w, bh=(rot===90||rot===270)?w:h;
   var cv=document.createElement('canvas'); cv.width=bw; cv.height=bh; var ctx=cv.getContext('2d');
   ctx.save(); ctx.translate(bw/2,bh/2); ctx.rotate(rot*Math.PI/180); ctx.drawImage(img,-w/2,-h/2,w,h); ctx.restore();
-  s.base=cv; s.baseW=bw; s.baseH=bh;
+  s.base=cv; s.baseW=bw; s.baseH=bh; s.baseEnh=null;   // enhance cache dies with the base
 }
 function hrRCScanDraw(){
   var s=RC._scan; var cv=document.getElementById('rc-scan-cv'); if(!cv||!s||!s.base) return;
   var ov=document.getElementById('rc-scan-ov'); var maxW=Math.min(520,(ov?ov.clientWidth:520)-48); if(maxW<160)maxW=160;
   var scale=Math.min(1, maxW/s.baseW); var dw=Math.max(1,Math.round(s.baseW*scale)), dh=Math.max(1,Math.round(s.baseH*scale));
-  cv.width=dw; cv.height=dh; s.disp=scale; var ctx=cv.getContext('2d'); ctx.drawImage(s.base,0,0,dw,dh);
+  cv.width=dw; cv.height=dh; s.disp=scale; var ctx=cv.getContext('2d');
+  var src=s.base; if(s.enhance){ if(!s.baseEnh) s.baseEnh=hrRCScanEnhance(s.base); src=s.baseEnh; }   // cached: drag stays smooth
+  ctx.drawImage(src,0,0,dw,dh);
+  if(s.qrLoc){ try{ var L=s.qrLoc; ctx.save(); ctx.strokeStyle='#3ddc97'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(L.topLeftCorner.x*scale,L.topLeftCorner.y*scale); ctx.lineTo(L.topRightCorner.x*scale,L.topRightCorner.y*scale);
+    ctx.lineTo(L.bottomRightCorner.x*scale,L.bottomRightCorner.y*scale); ctx.lineTo(L.bottomLeftCorner.x*scale,L.bottomLeftCorner.y*scale);
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle='#3ddc97'; ctx.font='bold 11px sans-serif';
+    ctx.fillText('e-Invoice QR ✓', Math.max(2,L.topLeftCorner.x*scale), Math.max(12,L.topLeftCorner.y*scale-6));
+    ctx.restore(); }catch(_e){} }
   if(s.crop){ var c=s.crop; ctx.save(); ctx.fillStyle='rgba(0,0,0,.45)';
     ctx.fillRect(0,0,dw,c.y*scale); ctx.fillRect(0,c.y*scale,c.x*scale,c.h*scale);
     ctx.fillRect((c.x+c.w)*scale,c.y*scale,dw-(c.x+c.w)*scale,c.h*scale); ctx.fillRect(0,(c.y+c.h)*scale,dw,dh-(c.y+c.h)*scale);
@@ -2008,23 +2056,34 @@ function hrRCScanDown(e){ e.preventDefault(); var p=hrRCScanPt(e); RC._scan.drag
 function hrRCScanMove(e){ if(!RC._scan||!RC._scan.drag)return; e.preventDefault(); var p=hrRCScanPt(e),d=RC._scan.drag;
   RC._scan.crop={x:Math.min(d.sx,p.x),y:Math.min(d.sy,p.y),w:Math.abs(p.x-d.sx),h:Math.abs(p.y-d.sy)}; hrRCScanDraw(); }
 function hrRCScanUp(){ if(RC._scan&&RC._scan.drag){ var c=RC._scan.crop; if(c&&(c.w<12||c.h<12))RC._scan.crop=null; RC._scan.drag=null; hrRCScanDraw(); } }
-function hrRCScanRotate(){ if(!RC._scan)return; RC._scan.rot=(RC._scan.rot+90)%360; RC._scan.crop=null; RC._scan.qr=null; hrRCScanBuildBase(); hrRCScanDraw(); }
+function hrRCScanRotate(){ if(!RC._scan)return; RC._scan.rot=(RC._scan.rot+90)%360; RC._scan.crop=null; RC._scan.qr=null; RC._scan.qrLoc=null; hrRCScanBuildBase(); hrRCScanDraw(); hrRCScanAutoQR(); }
 function hrRCScanResetCrop(){ if(!RC._scan)return; RC._scan.crop=null; RC._scan.qr=null; hrRCScanDraw(); hrRCScanMStatus(''); }
 function hrRCScanCancel(){ var ov=document.getElementById('rc-scan-ov'); if(ov)ov.remove(); RC._scan=null; }
 function hrRCScanMStatus(t,warn){ var e=document.getElementById('rc-scan-mstatus'); if(e){ e.textContent=t||''; e.style.color=warn?'var(--amber)':'var(--green-soft)'; } }
 function hrRCScanCropCanvas(){ var s=RC._scan; var c=s.crop||{x:0,y:0,w:s.baseW,h:s.baseH};
+  var src=s.base; if(s.enhance){ if(!s.baseEnh) s.baseEnh=hrRCScanEnhance(s.base); src=s.baseEnh; }   // the PDF gets the enhanced page
   var out=document.createElement('canvas'); out.width=Math.max(1,Math.round(c.w)); out.height=Math.max(1,Math.round(c.h));
-  out.getContext('2d').drawImage(s.base,c.x,c.y,c.w,c.h,0,0,out.width,out.height); return out; }
+  out.getContext('2d').drawImage(src,c.x,c.y,c.w,c.h,0,0,out.width,out.height); return out; }
 // MyInvois QR encodes a validation URL; pull out the long UUID/id if present.
 function hrRCParseEinv(text){ var url=String(text||'').trim(); var uuid='';
   var m=url.match(/myinvois[^\s]*?\/([A-Za-z0-9]{20,})/i); if(m)uuid=m[1]; else { var m2=url.match(/([A-Za-z0-9]{26,})/); if(m2)uuid=m2[1]; }
   return { url:url, uuid:uuid }; }
-function hrRCScanQrOn(cv){ if(!window.jsQR||!cv)return null; try{ var id=cv.getContext('2d').getImageData(0,0,cv.width,cv.height); var f=window.jsQR(id.data,cv.width,cv.height); return (f&&f.data)?hrRCParseEinv(f.data):null; }catch(_e){ return null; } }
+function hrRCScanQrRaw(cv){ if(!window.jsQR||!cv)return null; try{ var id=cv.getContext('2d').getImageData(0,0,cv.width,cv.height); return window.jsQR(id.data,cv.width,cv.height)||null; }catch(_e){ return null; } }
+function hrRCScanQrOn(cv){ var f=hrRCScanQrRaw(cv); return (f&&f.data)?hrRCParseEinv(f.data):null; }
 function hrRCScanDetectQR(){ hrRCScanMStatus('Scanning for QR…'); hrLoadJsQR(function(){
+  if(!RC._scan) return;
   if(!window.jsQR){ hrRCScanMStatus('QR reader unavailable.',true); return; }
-  var found = (RC._scan.crop && hrRCScanQrOn(hrRCScanCropCanvas())) || hrRCScanQrOn(RC._scan.base);
-  if(found){ RC._scan.qr=found; hrRCScanMStatus('✓ e-invoice QR found'+(found.uuid?(' · UUID '+found.uuid.slice(0,24)):'')); }
-  else hrRCScanMStatus('No QR detected — crop tighter around the QR, or Rotate, and try again.',true); }); }
+  var s=RC._scan, raw=null, off=null;
+  if(s.crop){ raw=hrRCScanQrRaw(hrRCScanCropCanvas()); if(raw&&raw.data) off=s.crop; else raw=null; }   // crop-space hit → offset back to base coords
+  if(!raw){ raw=hrRCScanQrRaw(s.base); off=null; }
+  if(raw && raw.data){
+    s.qr=hrRCParseEinv(raw.data);
+    var L=raw.location||null;
+    if(L && off){ try{ L=JSON.parse(JSON.stringify(L)); ['topLeftCorner','topRightCorner','bottomRightCorner','bottomLeftCorner'].forEach(function(k){ if(L[k]){ L[k].x+=off.x; L[k].y+=off.y; } }); }catch(_e){ L=null; } }
+    s.qrLoc=L;
+    hrRCScanMStatus('✓ e-invoice QR found'+(s.qr.uuid?(' · UUID '+s.qr.uuid.slice(0,24)):''));
+  } else { s.qr=null; s.qrLoc=null; hrRCScanMStatus('No QR detected — crop tighter around the QR, or Rotate, and try again.',true); }
+  hrRCScanDraw(); }); }
 function hrRCImgToPdf(cv){ return new Promise(function(res){ hrLoadJsPDF(function(){ try{
   var jpeg=cv.toDataURL('image/jpeg',0.85); var pw=210,ph=297,m=8, iw=cv.width,ih=cv.height, aw=pw-2*m,ah=ph-2*m;
   var sc=Math.min(aw/iw,ah/ih), w=iw*sc, h=ih*sc; var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
