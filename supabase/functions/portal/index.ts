@@ -667,62 +667,36 @@ function parsePnl(rep){
   expenses.sort((a,b)=>b.amount-a.amount);
   return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses };
 }
-// Parse a MULTI-PERIOD Xero ProfitAndLoss (periods=N & timeframe=MONTH) → one row per month with the
-// REAL P&L totals. Reads the per-column SummaryRow totals for Income / Cost of Sales / Operating Expenses
-// and the top-level Net Profit row. This is the authority for the dashboard (not the invoice cache).
-function parsePnlMulti(rep:any){
-  const num=(s:any)=>{ const t=String(s==null?"":s).trim(); if(!t) return 0; const neg=t.indexOf("(")>=0; const n=parseFloat(t.replace(/[(),\s]/g,"")); return isNaN(n)?0:(neg?-n:n); };
-  const names:any={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  const monthKey=(label:any)=>{ const s=String(label||"").trim(); if(!s) return null;
-    const m=s.match(/([A-Za-z]{3,})[\s-]+(\d{2,4})$/);
-    if(m){ const mo=names[m[1].slice(0,3).toLowerCase()]; let y=parseInt(m[2],10); if(y<100)y+=2000; if(mo&&y) return y+"-"+String(mo).padStart(2,"0"); }
-    const d=new Date(s); if(!isNaN(d.getTime())) return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); return null; };
-  const rows=(rep&&Array.isArray(rep.Rows))?rep.Rows:[];
-  const hdr=rows.find((r:any)=>r.RowType==="Header");
-  const cols:any[]=(hdr&&Array.isArray(hdr.Cells))? hdr.Cells.map((c:any,i:number)=> i===0?null:monthKey(c&&c.Value)) : [];
-  const nCols=cols.length;
-  const inc=new Array(nCols).fill(0), cogs=new Array(nCols).fill(0), opex=new Array(nCols).fill(0), net=new Array(nCols).fill(0);
-  const addRow=(cells:any[], arr:number[], abs:boolean)=>{ for(let i=1;i<nCols && i<cells.length;i++){ let v=num(cells[i]&&cells[i].Value); if(abs)v=Math.abs(v); arr[i]+=v; } };
-  const walk=(list:any[], sectionTitle:string)=>{
-    for(const row of (list||[])){
-      const title=String(sectionTitle||"").toLowerCase();
-      const name=String((row.Cells&&row.Cells[0]&&row.Cells[0].Value)||"").toLowerCase();
-      if(row.RowType==="Section"){ walk(row.Rows, row.Title); continue; }
-      const cells=row.Cells||[];
-      if(/net profit|net income|profit for the/.test(name)){ addRow(cells, net, false); continue; }
-      if(row.RowType==="SummaryRow"){
-        if(/total income|total revenue|total trading income|total other income/.test(name)) addRow(cells, inc, false);
-        else if(/total cost of sales/.test(name)) addRow(cells, cogs, true);
-        else if(/total operating expenses|total expenses|total overhead|total administ/.test(name)) addRow(cells, opex, true);
-        else if(/^total /.test(name)){   // fallback: classify by the enclosing section title
-          if(/income|revenue|trading/.test(title)) addRow(cells, inc, false);
-          else if(/cost of sales/.test(title)) addRow(cells, cogs, true);
-          else if(/expense|overhead|operating|administ/.test(title)) addRow(cells, opex, true);
-        }
-      }
-    }
-  };
-  walk(rows, "");
-  const out:any[]=[];
-  for(let i=1;i<nCols;i++){ if(!cols[i]) continue; out.push({ period:cols[i], income:Math.round(inc[i]*100)/100, cost_of_sales:Math.round(cogs[i]*100)/100, expenses:Math.round(opex[i]*100)/100, net_profit:Math.round(net[i]*100)/100 }); }
-  return out;
-}
-// Pull real monthly P&L from Xero for each tenant (one multi-period report call each) and cache it.
-async function refreshPnlCache(access:any, tenants:any[]){
-  const myNow=new Date(Date.now()+8*3600*1000);
-  const toDate=myNow.toISOString().slice(0,10);
-  const results:any[]=[];
+// Cache the REAL Xero P&L per tenant per CALENDAR month. Xero's multi-period report (periods+timeframe)
+// returns rolling windows ending on toDate's day-of-month (NOT calendar months) — so we call the proven
+// single-period ProfitAndLoss once per calendar month (fromDate=1st..toDate=month end / today) and parse
+// with parsePnl. Verified to match Xero exactly (ZEERO Jun income 396,682 / net 61,835.59).
+async function refreshPnlCache(access:any, tenants:any[], monthsBack?:number){
+  const nMonths = Math.max(1, Math.min(monthsBack||12, 24));
+  const myNow = new Date(Date.now()+8*3600*1000);
+  const today = myNow.toISOString().slice(0,10);
+  const periods:any[] = [];
+  for(let k=nMonths-1; k>=0; k--){
+    const y = myNow.getUTCFullYear(), m = myNow.getUTCMonth()-k;   // m may be negative → Date normalises
+    const start = new Date(Date.UTC(y, m, 1));
+    const endD  = new Date(Date.UTC(y, m+1, 0));                   // last day of that month
+    const from = start.toISOString().slice(0,10);
+    let to = endD.toISOString().slice(0,10); if(to > today) to = today;   // current month: cap at today
+    periods.push({ key: from.slice(0,7), from, to });
+  }
+  const results:any[] = [];
   for(const t of (tenants||[])){
-    try{
-      const d=await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?toDate="+toDate+"&periods=11&timeframe=MONTH");
-      const rep=(d.Reports||[])[0];
-      const months=parsePnlMulti(rep);
-      if(months.length){
-        const rows=months.map((m:any)=>({ tenant_id:t.tenant_id, period:m.period, income:m.income, cost_of_sales:m.cost_of_sales, expenses:m.expenses, net_profit:m.net_profit, refreshed_at:new Date().toISOString() }));
-        await sb.from("xero_pnl_cache").upsert(rows, { onConflict:"tenant_id,period" });
-      }
-      results.push({ tenant:t.tenant_id, months:months.length });
-    }catch(e){ results.push({ tenant:t.tenant_id, error:String(e).slice(0,150) }); }
+    let okN=0, lastErr="";
+    for(const p of periods){
+      try{
+        const d = await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?fromDate="+p.from+"&toDate="+p.to);
+        const rep = (d.Reports||[])[0];
+        const pl = parsePnl(rep);   // { revenue_total, expense_total, net_profit }
+        await sb.from("xero_pnl_cache").upsert({ tenant_id:t.tenant_id, period:p.key, income:pl.revenue_total, cost_of_sales:0, expenses:pl.expense_total, net_profit:pl.net_profit, refreshed_at:new Date().toISOString() }, { onConflict:"tenant_id,period" });
+        okN++;
+      }catch(e){ lastErr=String(e).slice(0,120); }
+    }
+    results.push({ tenant:t.tenant_id, months:okN, error:lastErr||undefined });
   }
   return results;
 }
@@ -3542,22 +3516,12 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, from, to, companies });
     }
-    if (api === "pnl_debug") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const access = await xeroAccessToken();
-      const d = await xeroGet(access, String(b.tenant||"2054b50c-a776-4d69-aecc-4cca21f34e9a"), "Reports/ProfitAndLoss?toDate="+(new Date(Date.now()+8*3600*1000).toISOString().slice(0,10))+"&periods=11&timeframe=MONTH");
-      const rep=(d.Reports||[])[0]||{};
-      const struct:any[]=[];
-      const walk=(list:any[], depth:number, sect:string)=>{ for(const r of (list||[])){ if(r.RowType==="Section"){ struct.push({t:"SECTION",title:r.Title,ncells:0}); walk(r.Rows,depth+1,r.Title); } else { const cells=(r.Cells||[]).map((c:any)=>c&&c.Value); struct.push({t:r.RowType,name:cells[0],ncols:cells.length,c1:cells[1],c2:cells[2]}); } } };
-      walk(rep.Rows||[],0,"");
-      return j({ ok:true, header:(rep.Rows||[]).find((r:any)=>r.RowType==="Header"), reportName:rep.ReportName, rowcount:struct.length, struct:struct.slice(0,60) });
-    }
     if (api === "pnl_refresh") {
       // Refresh the real-P&L cache from Xero for all tenants (used by the dashboard for accurate numbers).
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
-      const results = await refreshPnlCache(access, tn||[]);
+      const results = await refreshPnlCache(access, tn||[], Number(b.months)||12);
       await logAudit(me, "pnl_refresh", "all", { tenants:(tn||[]).length });
       return j({ ok:true, results });
     }
