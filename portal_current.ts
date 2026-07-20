@@ -2169,8 +2169,8 @@ Deno.serve(async (req)=>{
         // v129: keep display names tracking the live Xero Organisation Name (renames propagate overnight)
         try { for (const t of (tenants||[])) { const on = await xeroOrgName(access, t.tenant_id); if (on && on !== t.tenant_name) await sb.from("xero_tenants").update({ tenant_name: on }).eq("tenant_id", t.tenant_id); } } catch(_e){}
         const bf = await runBackfill(access, tenants||[]); const pr = await processPending(500); // v28: auto drift-repair after nightly backfill; up to 50 extras/tenant per run
-        // v136: refresh the REAL P&L cache (12 calendar months) so the dashboard's revenue/expenses/net stay accurate.
-        try { await refreshPnlCache(access, tenants||[], 12); await sb.rpc("refresh_overview_cache"); } catch(_e){}
+        // v136: refresh the REAL P&L cache (18 calendar months → covers This/Last month, quarter, YTD, Last year).
+        try { await refreshPnlCache(access, tenants||[], 18); await sb.rpc("refresh_overview_cache"); } catch(_e){}
         const driftResults = []; for (const t of (tenants||[])){ try { const dr = await runDriftCheck(access, t.tenant_id); driftResults.push({ tenant: t.tenant_name, ...dr }); } catch (e) { driftResults.push({ tenant: t.tenant_name, error: String(e).slice(0,200) }); } }
         await sb.from("portal_audit").insert({ action:"cron_sync", ref:"daily", detail:{ upserted:bf.upserted, deleted:bf.deleted, processed:pr.processed, remaining:pr.remaining, drift: driftResults } });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_sync", p_status:"ok", p_detail:{ upserted:bf.upserted, deleted:bf.deleted } }); } catch (_e) {}
@@ -2297,7 +2297,35 @@ Deno.serve(async (req)=>{
     if (api === "me") { const { data } = await sb.rpc("portal_me", { p_token: b.token||"" }); return j(data); }
     if (api === "my_perms") { const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401); const role=(me.user&&me.user.role)||"viewer"; const { data: r } = await sb.from("portal_roles").select("features,manage_users,label").eq("name", role).single(); return j({ ok:true, role, label:(r&&r.label)||role, features:(r&&r.features)||[], manage_users:!!(r&&r.manage_users) }); }
     if (api === "overview") { const { data } = await sb.rpc("portal_overview", { p_token: b.token||"" }); return j(data); }
-    if (api === "overview_range") { const { data, error } = await sb.rpc("portal_overview_range", { p_token: b.token||"", p_from: b.from, p_to: b.to }); if (error) return j({ ok:false, error: error.message }); return j(data); }
+    if (api === "overview_range") {
+      const from = String(b.from||""), to = String(b.to||"");
+      if(!from||!to) return j({ ok:false, error:"date range required" });
+      const { data, error } = await sb.rpc("portal_overview_range", { p_token: b.token||"", p_from: from, p_to: to });
+      if (error) return j({ ok:false, error: error.message });
+      // The cache holds whole calendar months → exact for month-aligned presets (This/Last month, quarter,
+      // YTD). For a custom PARTIAL range, or one extending before the cache window, fetch the exact range
+      // live from Xero's ProfitAndLoss so the numbers are always right.
+      const myToday = new Date(Date.now()+8*3600*1000).toISOString().slice(0,10);
+      const toD = new Date(to+"T00:00:00Z");
+      const lastDay = new Date(Date.UTC(toD.getUTCFullYear(), toD.getUTCMonth()+1, 0)).toISOString().slice(0,10);
+      const monthAligned = /^\d{4}-\d{2}-01$/.test(from) && (to===lastDay || to===myToday);
+      if (monthAligned && data && Number(data.missing_months||0)===0) return j(data);
+      try {
+        const alw = await allowedTenants(b.token);
+        const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name").in("tenant_id", alw);
+        const cntMap:any = {}; for(const c of ((data&&data.companies)||[])) cntMap[c.tenant_id]={ ar_count:c.ar_count, ap_count:c.ap_count };
+        const access = await xeroAccessToken();
+        const comps:any[] = [];
+        for (const t of (tn||[])){
+          try { const d = await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?fromDate="+from+"&toDate="+to);
+            const pl = parsePnl((d.Reports||[])[0]); const cc = cntMap[t.tenant_id]||{};
+            comps.push({ tenant_id:t.tenant_id, tenant_name:t.tenant_name, income:pl.revenue_total, expenses:pl.expense_total, net_profit:pl.net_profit, ar_count:cc.ar_count||0, ap_count:cc.ap_count||0 });
+          } catch(e){ const cc=cntMap[t.tenant_id]||{}; comps.push({ tenant_id:t.tenant_id, tenant_name:t.tenant_name, income:0, expenses:0, net_profit:0, ar_count:cc.ar_count||0, ap_count:cc.ap_count||0 }); }
+        }
+        comps.sort((a,b)=>String(a.tenant_name).localeCompare(String(b.tenant_name)));
+        return j({ ok:true, from, to, companies:comps, as_of:new Date().toISOString(), source:"live Xero P&L (exact range)" });
+      } catch(_e){ return j(data); }   // last resort: the month-sum approximation from cache
+    }
     if (api === "pending") { const { data } = await sb.rpc("portal_pending_bills", { p_token: b.token||"" }); return j(data); }
     if (api === "approve") { const { data } = await sb.rpc("portal_approve_bill", { p_token: b.token||"", p_tenant: b.tenant, p_invoice: b.invoice, p_action: b.action }); return j(data); }
     if (api === "collections") { const { data } = await sb.rpc("portal_trigger_collections", { p_token: b.token||"" }); return j(data); }
@@ -5499,7 +5527,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v137: DASHBOARD ACCURACY FIXED — portal_group_dashboard + portal_overview now read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
