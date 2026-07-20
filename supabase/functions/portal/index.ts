@@ -2169,6 +2169,8 @@ Deno.serve(async (req)=>{
         // v129: keep display names tracking the live Xero Organisation Name (renames propagate overnight)
         try { for (const t of (tenants||[])) { const on = await xeroOrgName(access, t.tenant_id); if (on && on !== t.tenant_name) await sb.from("xero_tenants").update({ tenant_name: on }).eq("tenant_id", t.tenant_id); } } catch(_e){}
         const bf = await runBackfill(access, tenants||[]); const pr = await processPending(500); // v28: auto drift-repair after nightly backfill; up to 50 extras/tenant per run
+        // v136: refresh the REAL P&L cache (12 calendar months) so the dashboard's revenue/expenses/net stay accurate.
+        try { await refreshPnlCache(access, tenants||[], 12); await sb.rpc("refresh_overview_cache"); } catch(_e){}
         const driftResults = []; for (const t of (tenants||[])){ try { const dr = await runDriftCheck(access, t.tenant_id); driftResults.push({ tenant: t.tenant_name, ...dr }); } catch (e) { driftResults.push({ tenant: t.tenant_name, error: String(e).slice(0,200) }); } }
         await sb.from("portal_audit").insert({ action:"cron_sync", ref:"daily", detail:{ upserted:bf.upserted, deleted:bf.deleted, processed:pr.processed, remaining:pr.remaining, drift: driftResults } });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_sync", p_status:"ok", p_detail:{ upserted:bf.upserted, deleted:bf.deleted } }); } catch (_e) {}
@@ -2270,6 +2272,11 @@ Deno.serve(async (req)=>{
           const since = base ? new Date(new Date(base).getTime() - 15*60*1000).toISOString() : new Date(Date.now() - 6*3600*1000).toISOString();
           const d = await runDelta(access, [t], since); totalUp += d.upserted; totalDel += d.deleted; per.push({ tenant: t.tenant_name, since, ...d.per[0] });
         }
+        // v136: keep this-month/last-month P&L fresh so dashboard revenue/expenses/net track intraday.
+        // Throttled: only when the P&L cache is >30 min old, so the 5-min delta doesn't hammer Xero reports.
+        try { const { data: pf } = await sb.from("xero_pnl_cache").select("refreshed_at").order("refreshed_at",{ascending:false}).limit(1);
+          const lastPnl = (pf && pf[0]) ? new Date(pf[0].refreshed_at).getTime() : 0;
+          if (Date.now() - lastPnl > 30*60*1000) { await refreshPnlCache(access, tenants||[], 2); await sb.rpc("refresh_overview_pnl"); } } catch(_e){}
         // 5-min cadence: only write an audit row when something actually changed (heartbeat below always records the run).
         if (totalUp + totalDel > 0) await sb.from("portal_audit").insert({ action:"cron_delta", ref:"5min", detail:{ upserted:totalUp, deleted:totalDel, per } });
         try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_delta", p_status:"ok", p_detail:{ upserted:totalUp, deleted:totalDel } }); } catch (_e) {}
@@ -3522,6 +3529,7 @@ Deno.serve(async (req)=>{
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
       const results = await refreshPnlCache(access, tn||[], Number(b.months)||12);
+      try { await sb.rpc("refresh_overview_pnl"); } catch(_e){}
       await logAudit(me, "pnl_refresh", "all", { tenants:(tn||[]).length });
       return j({ ok:true, results });
     }
