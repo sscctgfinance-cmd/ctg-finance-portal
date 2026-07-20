@@ -696,6 +696,16 @@ async function refreshPnlCache(access:any, tenants:any[], monthsBack?:number){
         okN++;
       }catch(e){ lastErr=String(e).slice(0,120); }
     }
+    // v139: also store YTD from ONE Xero range report. Summing 12 monthly reports differs from Xero's own
+    // YTD report by a ringgit or two (Xero rounds each monthly report; FX-revaluation / depreciation are
+    // period-dependent) and finance ties to the cent. Kept in its OWN table — putting a 'YTD-2026' key in
+    // xero_pnl_cache would be double-counted by the unbounded `period >= '2026-01'` month sums.
+    try{
+      const yFrom = myNow.getUTCFullYear()+"-01-01";
+      const dY = await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?fromDate="+yFrom+"&toDate="+today);
+      const plY = parsePnl((dY.Reports||[])[0]);
+      await sb.from("xero_pnl_ytd").upsert({ tenant_id:t.tenant_id, year:myNow.getUTCFullYear(), income:plY.revenue_total, expenses:plY.expense_total, net_profit:plY.net_profit, refreshed_at:new Date().toISOString() }, { onConflict:"tenant_id,year" });
+    }catch(e){ lastErr=lastErr||String(e).slice(0,120); }
     results.push({ tenant:t.tenant_id, months:okN, error:lastErr||undefined });
   }
   return results;
@@ -5527,7 +5537,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
