@@ -636,7 +636,12 @@ async function sha256HexBytes(bytes){ const buf = await crypto.subtle.digest("SH
 // Each data Row's Cells = [accountName, ..., amount]; SummaryRow holds section totals.
 function parsePnl(rep){
   const income = [], expenses = [];
+  // v140: keep Xero's SIGN. Expense sections are normally positive (a cost), but in a
+  // reversal/credit month Xero returns them negative. Math.abs() used to flip those credits
+  // into charges — the error was exactly 2x the credit balance and broke revenue-expenses=net.
+  // sawRev/sawExp/sawNet distinguish "Xero reported 0" from "no total row found".
   let revTotal = 0, expTotal = 0, net = 0;
+  let sawRev = false, sawExp = false, sawNet = false;
   const num = (s)=>{ const n = parseFloat(String(s==null?"":s).replace(/[(,\s]/g,"").replace(/\)/g,"")); return isNaN(n) ? 0 : (String(s).indexOf("(")>=0 ? -n : n); };
   if (rep && Array.isArray(rep.Rows)){
     for (const section of rep.Rows){
@@ -648,21 +653,22 @@ function parsePnl(rep){
         const cells = row.Cells || [];
         const name = cells[0] ? cells[0].Value : "";
         const amt = num(cells.length ? cells[cells.length-1].Value : 0);
-        if (/net profit|net income|profit for the/i.test(String(name))) { net = amt; continue; }
+        if (/net profit|net income|profit for the/i.test(String(name))) { net = amt; sawNet = true; continue; }
         if (row.RowType === "SummaryRow"){
-          if (isIncome) revTotal += amt; else if (isExpense) expTotal += Math.abs(amt);
+          if (isIncome) { revTotal += amt; sawRev = true; }
+          else if (isExpense) { expTotal += amt; sawExp = true; }
           continue;
         }
         if (row.RowType === "Row" && name && amt !== 0){
           if (isIncome) income.push({ name, amount: amt });
-          else if (isExpense) expenses.push({ name, amount: Math.abs(amt) });
+          else if (isExpense) expenses.push({ name, amount: amt });
         }
       }
     }
   }
-  if (!revTotal) revTotal = income.reduce((s,x)=>s+x.amount,0);
-  if (!expTotal) expTotal = expenses.reduce((s,x)=>s+x.amount,0);
-  if (!net) net = revTotal - expTotal;
+  if (!sawRev) revTotal = income.reduce((s,x)=>s+x.amount,0);
+  if (!sawExp) expTotal = expenses.reduce((s,x)=>s+x.amount,0);
+  if (!sawNet) net = revTotal - expTotal;
   income.sort((a,b)=>b.amount-a.amount);
   expenses.sort((a,b)=>b.amount-a.amount);
   return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses };
@@ -723,7 +729,7 @@ function xDate(s){
   const d = new Date(str); if (!isNaN(d.getTime())) return d.toISOString().slice(0,10);
   return null;
 }
-function invToCacheRow(tenant, iv){ const now = new Date().toISOString(); return { tenant_id: tenant, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber || null, type: iv.Type || null, status: iv.Status || null, contact_name: (iv.Contact||{}).Name || null, contact_id: (iv.Contact||{}).ContactID || null, total: Number(iv.Total||0), amount_due: Number(iv.AmountDue||0), currency: iv.CurrencyCode || null, inv_date: xDate(iv.DateString||iv.Date), due_date: xDate(iv.DueDateString||iv.DueDate), updated_at: now, last_synced_at: now }; }
+function invToCacheRow(tenant, iv){ const now = new Date().toISOString(); return { tenant_id: tenant, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber || null, type: iv.Type || null, status: iv.Status || null, contact_name: (iv.Contact||{}).Name || null, contact_id: (iv.Contact||{}).ContactID || null, total: Number(iv.Total||0), amount_due: Number(iv.AmountDue||0), currency: iv.CurrencyCode || null, currency_rate: (Number(iv.CurrencyRate) > 0 ? Number(iv.CurrencyRate) : 1), inv_date: xDate(iv.DateString||iv.Date), due_date: xDate(iv.DueDateString||iv.DueDate), updated_at: now, last_synced_at: now }; }
 // v37+: also handle PAYMENT and CREDITNOTE events — both change Invoice.AmountDue.
 // Without this, Xero payments don't reflect in the cache until next delta cron (up to 1h lag).
 async function processOneEvent(ev){
@@ -3571,6 +3577,38 @@ Deno.serve(async (req)=>{
       await logAudit(me, "pnl_refresh", "all", { tenants:(tn||[]).length });
       return j({ ok:true, results });
     }
+    if (api === "fx_backfill") {
+      // v140 one-shot: historical rows were cached before currency_rate existed, so every FX
+      // invoice sits at rate 1 and its base-currency amount equals its foreign amount.
+      // Re-fetch just the non-MYR invoices from Xero and store the real CurrencyRate.
+      // total_base / amount_due_base are generated columns, so they correct themselves.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
+      const { data: rows, error: selErr } = await sb.from("xero_invoice_cache")
+        .select("tenant_id,invoice_id").neq("currency","MYR").limit(5000);
+      if (selErr) return j({ ok:false, error:"select: "+String(selErr.message).slice(0,150) });
+      const byTenant: any = {};
+      for (const r of (rows||[])) { (byTenant[r.tenant_id] = byTenant[r.tenant_id] || []).push(r.invoice_id); }
+      let updated = 0, seen = 0; const errs: string[] = [];
+      for (const tid of Object.keys(byTenant)){
+        const ids = byTenant[tid];
+        for (let i=0; i<ids.length; i+=40){
+          const chunk = ids.slice(i, i+40);
+          try {
+            const d = await xeroGet(access, tid, "Invoices?IDs=" + chunk.join(","));
+            for (const iv of (d.Invoices||[])){
+              seen++;
+              const rate = Number(iv.CurrencyRate) > 0 ? Number(iv.CurrencyRate) : 1;
+              const { error } = await sb.from("xero_invoice_cache")
+                .update({ currency_rate: rate }).eq("tenant_id", tid).eq("invoice_id", iv.InvoiceID);
+              if (error) errs.push(String(error.message).slice(0,80)); else updated++;
+            }
+          } catch(e){ errs.push(String(e).slice(0,120)); }
+        }
+      }
+      await logAudit(me, "fx_backfill", "all", { requested:(rows||[]).length, seen, updated, errors: errs.length });
+      return j({ ok: errs.length===0, requested:(rows||[]).length, seen, updated, errors: errs.slice(0,5) });
+    }
     if (api === "ocr_extract") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -5537,7 +5575,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
