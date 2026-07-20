@@ -5693,3 +5693,5 @@ Deno.serve(async (req)=>{
 });
 
 // deploy retrigger 2026-07-10 (CI run 49 failed transiently)
+
+// v142 deploy trigger — first run after SUPABASE_ACCESS_TOKEN was added to the CTG-Business repo.
