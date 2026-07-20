@@ -3542,6 +3542,16 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, from, to, companies });
     }
+    if (api === "pnl_debug") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const access = await xeroAccessToken();
+      const d = await xeroGet(access, String(b.tenant||"2054b50c-a776-4d69-aecc-4cca21f34e9a"), "Reports/ProfitAndLoss?toDate="+(new Date(Date.now()+8*3600*1000).toISOString().slice(0,10))+"&periods=11&timeframe=MONTH");
+      const rep=(d.Reports||[])[0]||{};
+      const struct:any[]=[];
+      const walk=(list:any[], depth:number, sect:string)=>{ for(const r of (list||[])){ if(r.RowType==="Section"){ struct.push({t:"SECTION",title:r.Title,ncells:0}); walk(r.Rows,depth+1,r.Title); } else { const cells=(r.Cells||[]).map((c:any)=>c&&c.Value); struct.push({t:r.RowType,name:cells[0],ncols:cells.length,c1:cells[1],c2:cells[2]}); } } };
+      walk(rep.Rows||[],0,"");
+      return j({ ok:true, header:(rep.Rows||[]).find((r:any)=>r.RowType==="Header"), reportName:rep.ReportName, rowcount:struct.length, struct:struct.slice(0,60) });
+    }
     if (api === "pnl_refresh") {
       // Refresh the real-P&L cache from Xero for all tenants (used by the dashboard for accurate numbers).
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
