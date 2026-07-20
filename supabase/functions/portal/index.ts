@@ -635,7 +635,7 @@ async function sha256HexBytes(bytes){ const buf = await crypto.subtle.digest("SH
 // Xero report shape: Reports[0].Rows = [Header, Section{Title, Rows:[Row|SummaryRow]}, ...].
 // Each data Row's Cells = [accountName, ..., amount]; SummaryRow holds section totals.
 function parsePnl(rep){
-  const income = [], expenses = [];
+  const income = [], expenses = [], sections = [];
   // v140: keep Xero's SIGN. Expense sections are normally positive (a cost), but in a
   // reversal/credit month Xero returns them negative. Math.abs() used to flip those credits
   // into charges — the error was exactly 2x the credit balance and broke revenue-expenses=net.
@@ -646,9 +646,11 @@ function parsePnl(rep){
   if (rep && Array.isArray(rep.Rows)){
     for (const section of rep.Rows){
       if (section.RowType !== "Section") continue;
-      const title = String(section.Title||"").toLowerCase();
+      const rawTitle = String(section.Title||"");
+      const title = rawTitle.toLowerCase();
       const isIncome  = /income|revenue|turnover|trading/.test(title);
       const isExpense = /expense|cost of sales|overhead|operating|less /.test(title);
+      const secRows = [];   // v141: every account row in this section, for the P&L Analysis grid
       for (const row of (section.Rows||[])){
         const cells = row.Cells || [];
         const name = cells[0] ? cells[0].Value : "";
@@ -659,11 +661,15 @@ function parsePnl(rep){
           else if (isExpense) { expTotal += amt; sawExp = true; }
           continue;
         }
-        if (row.RowType === "Row" && name && amt !== 0){
-          if (isIncome) income.push({ name, amount: amt });
-          else if (isExpense) expenses.push({ name, amount: amt });
+        if (row.RowType === "Row" && name){
+          secRows.push({ name: String(name), amount: amt });
+          if (amt !== 0){
+            if (isIncome) income.push({ name, amount: amt });
+            else if (isExpense) expenses.push({ name, amount: amt });
+          }
         }
       }
+      if (secRows.length && rawTitle) sections.push({ title: rawTitle, rows: secRows });
     }
   }
   if (!sawRev) revTotal = income.reduce((s,x)=>s+x.amount,0);
@@ -671,7 +677,7 @@ function parsePnl(rep){
   if (!sawNet) net = revTotal - expTotal;
   income.sort((a,b)=>b.amount-a.amount);
   expenses.sort((a,b)=>b.amount-a.amount);
-  return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses };
+  return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses, sections };
 }
 // Cache the REAL Xero P&L per tenant per CALENDAR month. Xero's multi-period report (periods+timeframe)
 // returns rolling windows ending on toDate's day-of-month (NOT calendar months) — so we call the proven
@@ -699,6 +705,18 @@ async function refreshPnlCache(access:any, tenants:any[], monthsBack?:number){
         const rep = (d.Reports||[])[0];
         const pl = parsePnl(rep);   // { revenue_total, expense_total, net_profit }
         await sb.from("xero_pnl_cache").upsert({ tenant_id:t.tenant_id, period:p.key, income:pl.revenue_total, cost_of_sales:0, expenses:pl.expense_total, net_profit:pl.net_profit, refreshed_at:new Date().toISOString() }, { onConflict:"tenant_id,period" });
+        // v141: account-level rows for the P&L Analysis grid. Delete-then-insert per month so an
+        // account that disappears from Xero doesn't linger as a stale row (upsert alone can't do that).
+        try{
+          const accRows:any[] = [];
+          for (const s of (pl.sections||[])){
+            for (const r of (s.rows||[])){
+              accRows.push({ tenant_id:t.tenant_id, period:p.key, section:s.title, account:r.name, amount:r.amount, refreshed_at:new Date().toISOString() });
+            }
+          }
+          await sb.from("xero_pnl_accounts").delete().eq("tenant_id", t.tenant_id).eq("period", p.key);
+          if (accRows.length) await sb.from("xero_pnl_accounts").insert(accRows);
+        }catch(e){ lastErr = lastErr || String(e).slice(0,120); }
         okN++;
       }catch(e){ lastErr=String(e).slice(0,120); }
     }
@@ -3577,6 +3595,14 @@ Deno.serve(async (req)=>{
       await logAudit(me, "pnl_refresh", "all", { tenants:(tn||[]).length });
       return j({ ok:true, results });
     }
+    if (api === "pnl_analysis") {
+      // v141: account-level P&L grid (months across, accounts down) for the P&L Analysis tab.
+      // The RPC re-validates the token and pins p_tenant to the caller's allowed set.
+      const me = await meFromToken(b.token); if (!me) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data, error } = await sb.rpc("portal_pnl_analysis", { p_token: b.token, p_tenant: b.tenant||null, p_months: Number(b.months)||6 });
+      if (error) return j({ ok:false, error: String(error.message).slice(0,200) });   // never swallow: an empty {ok:true} renders as zeros
+      return j(data || { ok:false, error:"no data" });
+    }
     if (api === "fx_backfill") {
       // v140 one-shot: historical rows were cached before currency_rate existed, so every FX
       // invoice sits at rate 1 and its base-currency amount equals its foreign amount.
@@ -5575,7 +5601,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

@@ -126,6 +126,31 @@ textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(
 .bigtable tbody tr:hover td{background:rgba(232,93,60,.04)}
 td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600}
 
+/* ── P&L Analysis grid (sticky first column + sticky header) ── */
+.pnl-wrap{overflow:auto;max-height:72vh;border-radius:13px;border:1px solid var(--border-strong);position:relative}
+.pnl-grid{border-collapse:separate;border-spacing:0;background:linear-gradient(180deg,rgba(19,28,45,.6),rgba(12,20,33,.5));min-width:100%}
+.pnl-grid th,.pnl-grid td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;white-space:nowrap}
+.pnl-grid td.pnl-num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.pnl-grid .pnl-pct{display:block;font-size:9.5px;font-weight:400;color:var(--muted);margin-top:1px}
+/* Row tints — data cells scroll, so translucent tints are fine here. */
+.pnl-grid tr.pnl-band td{background:rgba(232,93,60,.10);color:var(--coral-soft);font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.7px}
+.pnl-grid tr.pnl-sub td{background:rgba(255,255,255,.035);font-weight:700}
+.pnl-grid tr.pnl-key td{background:rgba(14,157,103,.11);font-weight:800;font-size:13px;border-top:1px solid var(--border-strong)}
+.pnl-grid tr.pnl-blk td{background:rgba(255,255,255,.02);font-weight:700;font-size:11.5px;color:var(--text-soft)}
+.pnl-grid tbody tr:hover td{background:rgba(232,93,60,.05)}
+/* Sticky header row, sticky account column, and the corner where they meet.
+   Every sticky background MUST be fully opaque — a translucent tint lets the
+   horizontally-scrolled month cells show through the frozen column. */
+.pnl-grid thead th{position:sticky;top:0;z-index:3;color:var(--muted);font-size:10.5px;text-transform:uppercase;font-weight:700;letter-spacing:.6px;background:#0B1220;text-align:right}
+.pnl-grid tbody td.pnl-acc{position:sticky;left:0;z-index:2;background:#0E1626;min-width:260px;max-width:340px;white-space:normal;box-shadow:1px 0 0 var(--border-strong)}
+.pnl-grid tbody tr.pnl-band td.pnl-acc{background:#241D28}
+.pnl-grid tbody tr.pnl-sub  td.pnl-acc{background:#161E2E}
+.pnl-grid tbody tr.pnl-key  td.pnl-acc{background:#0E252D}
+.pnl-grid tbody tr.pnl-blk  td.pnl-acc{background:#131B2A}
+.pnl-grid tbody tr:hover    td.pnl-acc{background:#281A18}
+.pnl-grid thead th.pnl-acc{position:sticky;top:0;left:0;z-index:6;text-align:left;background:#0B1220;min-width:260px;max-width:340px;box-shadow:1px 0 0 var(--border-strong)}
+.pnl-chip{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:middle}
+
 /* ── Panel ── */
 .panel{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
 .panel-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -914,7 +939,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <!-- Dashboard -->
     <div class="tab"        data-t="cfo"      data-cat="dashboard"  onclick="tab('cfo')"        id="tab-cfo">🎯 CFO Cockpit</div>
     <div class="tab active" data-t="overview" data-cat="dashboard"  onclick="tab('overview')">📊 Overview</div>
-    <div class="tab"        data-t="today"    data-cat="dashboard"  onclick="tab('today')">☀️ Today</div>
+    <div class="tab"        data-t="pnl"      data-cat="dashboard"  onclick="tab('pnl')"        id="tab-pnl">📑 P&amp;L Analysis</div>
     <div class="tab"        data-t="smart"    data-cat="dashboard"  onclick="tab('smart')"      id="tab-smart">🧠 Smart</div>
     <div class="tab"        data-t="recv"     data-cat="dashboard"  onclick="tab('recv')"       id="tab-recv">💰 Receivables</div>
     <div class="tab"        data-t="cashflow" data-cat="dashboard"  onclick="tab('cashflow')"   id="tab-cashflow">📈 Cashflow</div>
@@ -952,7 +977,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="bankfeed"    class="hide"></div>
   <div id="salesrecon"  class="hide"></div>
   <div id="recv"        class="hide"></div>
-  <div id="today"       class="hide"></div>
+  <div id="pnl"         class="hide"></div>
   <div id="smart"       class="hide"></div>
   <div id="close"       class="hide"></div>
   <div id="recon"       class="hide"></div>
@@ -1244,12 +1269,12 @@ function logout(){storageRemove('ctg_portal_token');location.href='index.html';}
 
 function roleLabel(r){return r==='admin'?'Admin':r==='approver'?'Approver':'Viewer';}
 
-const ALL_FEATURES=['cfo','overview','approvals','collections','upload','o2o','qinv','recv','today','smart','close','recon'];
+const ALL_FEATURES=['cfo','overview','approvals','collections','upload','o2o','qinv','recv','pnl','smart','close','recon'];
 function fallbackPerms(){
   // Used only if my_perms can't be reached — keeps the user from being locked out.
   const appr=ME.role==='admin'||ME.role==='approver';
   return { role:ME.role, label:roleLabel(ME.role),
-    features: appr?ALL_FEATURES.slice():['overview','recv','today'],
+    features: appr?ALL_FEATURES.slice():['overview','recv','pnl'],
     manage_users: ME.role==='admin' };
 }
 async function showApp(){
@@ -1324,9 +1349,9 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','recv','today','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','recv','pnl','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    const asyncTabs = ['cfo','overview','approvals','collections','recv','today','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
+    const asyncTabs = ['cfo','overview','approvals','collections','recv','pnl','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -1334,14 +1359,15 @@ function tab(t){
 function reloadActive(){const a=document.querySelector('.tab.active');const t=a?a.dataset.t:'overview';loaded[t]=false;
   // Explicit refresh must also drop the panel-level caches, or the analytics under the KPIs stay stale all session.
   if(t==='cfo'){ CFO_DATA=null; FIN_DATA=null; }
+  if(t==='pnl'){ PNL_DATA=null; }
   if(t==='overview'){ try{ OV_TREND=null; }catch(_e){} }
   render(t);}
 function onCompany(){
   // Switching the top-bar company must re-scope every tenant-aware dashboard tab + drop its cached data.
-  loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.recv=false; loaded.today=false; loaded.cashflow=false;
-  CFO_DATA=null; FIN_DATA=null; try{ OV_TREND=null; }catch(_e){}
+  loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.recv=false; loaded.pnl=false; loaded.cashflow=false;
+  CFO_DATA=null; FIN_DATA=null; PNL_DATA=null; try{ OV_TREND=null; }catch(_e){}
   const a=document.querySelector('.tab.active'); const t=a?a.dataset.t:'overview';
-  const tenantAware=['overview','approvals','cfo','recv','today','cashflow'];
+  const tenantAware=['overview','approvals','cfo','recv','pnl','cashflow'];
   if(tenantAware.indexOf(t)>=0) render(t);
 }
 function curCo(){return document.getElementById('company').value;}
@@ -1362,7 +1388,7 @@ async function render(t){
     if(t==='bankfeed')   return renderBankFeed();
     if(t==='salesrecon') return renderSalesRecon();
     if(t==='recv')       return renderRecv();
-    if(t==='today')      return renderToday();
+    if(t==='pnl')        return await renderPnl();
     if(t==='smart')      return renderSmart();
     if(t==='close')      return renderClose();
     if(t==='recon')      return renderRecon();
@@ -4251,30 +4277,256 @@ async function recvLoad(){
   }catch(e){ document.getElementById('recv_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
 
-/* ---- Today (cockpit) ---- */
-function renderToday(){
-  document.getElementById('today').innerHTML='<div class="panel"><div class="panel-hd"><h3>Today · finance cockpit <span class="muted" style="font-size:12px;font-weight:400">· all companies</span></h3><button class="btn p" onclick="todayLoad()">↻ Refresh</button></div><div id="today_out" class="muted">Loading…</div></div>';
-  loaded.today=true; todayLoad();
-}
-async function todayLoad(){
-  document.getElementById('today_out').innerHTML='<div class="load"><span class="spin"></span>Gathering…</div>';
+/* ---- P&L Analysis (mirrors the CTG Xero P&L export: months across, accounts down) ---- */
+var PNL_DATA=null, PNL_MONTHS=6, PNL_SHOW_ZERO=false;
+var PNL_BLOCK_ORDER=['STAFF','CTG','BD&M','G&A','FIN','OTHER'];
+var PNL_BLOCK_COLORS={'STAFF':'#5b9bd5','CTG':'#0E9D67','BD&M':'#E0714E','G&A':'#f5a623','FIN':'#a479e2','OTHER':'#8892a6'};
+
+async function renderPnl(){
+  var el=document.getElementById('pnl'); if(!el) return;
+  var scopeCo=cfoScopeName();
+  el.innerHTML='<div class="panel"><div class="panel-hd"><h3>📑 P&amp;L Analysis · '+(scopeCo?esc(scopeCo):'all companies')+'</h3></div>'+
+    '<div class="muted" style="padding:26px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Loading profit &amp; loss for '+(scopeCo?esc(scopeCo):'all companies')+'…</div></div>';
   try{
-    // Group cockpit: overview + pending are group-only RPCs, so receivables is group-wide too (consistent, not per-company).
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
-    var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
-    var cash=0,np=0; if(ov&&ov.companies){ ov.companies.forEach(function(c){cash+=+c.bank;np+=+c.net_profit;}); }
-    var bills=(pend&&pend.bills)?pend.bills:[]; var od=(recv&&recv.items)?recv.items.filter(function(i){return i.days_overdue>0;}):[];
-    var odtot=od.reduce(function(s,i){return s+i.amount_due;},0);
-    var billrows=bills.slice(0,8).map(function(b){return '<tr><td>'+esc(b.tenant_name||'')+'</td><td>'+esc(b.contact||'')+'</td><td class="amt">'+M(b.total)+'</td></tr>';}).join('');
-    var odrows=od.slice(0,8).map(function(i){return '<tr><td>'+esc(i.contact||'')+'</td><td class="amt">'+M(i.amount_due)+'</td><td class="amt" style="color:var(--red-soft)">'+i.days_overdue+'d</td></tr>';}).join('');
-    document.getElementById('today_out').innerHTML=
-      '<div class="cards"><div class="card"><div class="n" style="color:var(--sky-soft)">'+M(cash)+'</div><div class="l">Total cash</div></div>'+
-      '<div class="card"><div class="n" style="color:var(--amber)">'+bills.length+'</div><div class="l">Bills to approve</div></div>'+
-      '<div class="card"><div class="n" style="color:var(--red-soft)">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
-      '<div class="card"><div class="n" style="color:'+(np>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(np)+'</div><div class="l">Net profit (YTD)</div></div></div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px"><div><h3 style="font-size:13px;margin:6px 0;color:var(--text)">Bills to approve</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(billrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div>'+
-      '<div><h3 style="font-size:13px;margin:6px 0;color:var(--text)">Overdue receivables</h3><div class="tbl-wrap"><table class="bigtable"><tbody>'+(odrows||'<tr><td class="muted">None ✓</td></tr>')+'</tbody></table></div></div></div>';
-  }catch(e){ document.getElementById('today_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
+    var r=await call({api:'pnl_analysis', tenant:curCo()||null, months:PNL_MONTHS});
+    if(r&&r.ok&&(r.scoped_tenant||null)!==(curCo()||null)) return; // stale — operator switched company mid-load
+    if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load the P&L')+'</div></div></div>'; return; }
+    PNL_DATA=r; loaded.pnl=true; pnlRender();
+  }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
+}
+function pnlSetMonths(n){ n=Number(n)||6; if(PNL_MONTHS===n) return; PNL_MONTHS=n; PNL_DATA=null; renderPnl(); }
+function pnlToggleZero(){ PNL_SHOW_ZERO=!PNL_SHOW_ZERO; pnlRender(); }
+
+// ── Cell accessors: an account may be missing from a month entirely → null, never NaN/0. ──
+function pnlAmt(row,m){ var c=(row&&row.by_month)?row.by_month[m]:null; if(!c||c.amount==null) return null; var v=Number(c.amount); return isFinite(v)?v:null; }
+function pnlPct(row,m){ var c=(row&&row.by_month)?row.by_month[m]:null; if(!c||c.pct==null) return null; var v=Number(c.pct); return isFinite(v)?v:null; }
+function pnlSecRows(section){ return (((PNL_DATA||{}).rows)||[]).filter(function(r){ return r.section===section; }); }
+function pnlSumAt(rows,m){ var any=false,s=0; (rows||[]).forEach(function(r){ var v=pnlAmt(r,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
+function pnlRowTotal(row,months){ var any=false,s=0; months.forEach(function(m){ var v=pnlAmt(row,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
+
+// Builds the display model once — the grid and the CSV both render from it, so the export
+// matches the screen exactly (raw numbers, so Excel can sum the cells).
+function pnlBuild(){
+  var d=PNL_DATA||{}, totals=d.totals||{};
+  var months=(d.months||[]).slice(0,PNL_MONTHS);
+  var ti=pnlSecRows('Trading Income'), cs=pnlSecRows('Cost of Sales'),
+      oi=pnlSecRows('Other Income'), oe=pnlSecRows('Operating Expenses');
+  var hasRows=!!(d.rows&&d.rows.length);
+  // % of revenue basis = Total Trading Income for that month (from rows; totals as fallback).
+  var rev={}; months.forEach(function(m){
+    var v=hasRows?pnlSumAt(ti,m):null;
+    if(v===null){ var t=totals[m]; v=t?Number(t.revenue!=null?t.revenue:t.income):null; }
+    rev[m]=(v===null||!isFinite(v))?null:v;
+  });
+  var pctOf=function(v,m){ return (v!==null&&rev[m])?(v/rev[m]):null; };
+  var band=function(label){ return {kind:'band',label:label,vals:months.map(function(){return {amt:null,pct:null};}),total:null}; };
+  var acctRows=function(rows){
+    return rows.filter(function(r){
+      if(PNL_SHOW_ZERO) return true;
+      return months.some(function(m){ var v=pnlAmt(r,m); return v!==null && Math.abs(v)>0.005; });
+    }).map(function(r){
+      return {kind:'acct',label:r.account||'—',
+        vals:months.map(function(m){ return {amt:pnlAmt(r,m),pct:pnlPct(r,m)}; }),
+        total:pnlRowTotal(r,months)};
+    });
+  };
+  var totRow=function(kind,label,rows){
+    var vals=months.map(function(m){ var v=pnlSumAt(rows,m); return {amt:v,pct:pctOf(v,m)}; });
+    var any=vals.some(function(c){ return c.amt!==null; });
+    return {kind:kind,label:label,vals:vals,total:any?vals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null};
+  };
+  var out=[];
+  out.push(band('Trading Income'));
+  out=out.concat(acctRows(ti));
+  var tiRow=totRow('sub','Total Trading Income',ti); out.push(tiRow);
+  out.push(band('Cost of Sales'));
+  out=out.concat(acctRows(cs));
+  var csRow=totRow('sub','Total Cost of Sales',cs); out.push(csRow);
+  // Gross Profit = Total Trading Income − Total Cost of Sales.
+  var gpVals=months.map(function(m,i){
+    var a=tiRow.vals[i].amt, b=csRow.vals[i].amt;
+    if(a===null&&b===null) return {amt:null,pct:null};
+    var v=(a||0)-(b||0); return {amt:v,pct:pctOf(v,m)};
+  });
+  var gpAny=gpVals.some(function(c){return c.amt!==null;});
+  out.push({kind:'key',label:'Gross Profit',vals:gpVals,total:gpAny?gpVals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null});
+  if(oi.length){
+    out.push(band('Other Income'));
+    out=out.concat(acctRows(oi));
+    out.push(totRow('sub','Total Other Income',oi));
+  }
+  out.push(band('Operating Expenses'));
+  // Group opex by CTG cost block, known blocks first, then anything else the backend sends.
+  var seen={}, order=[];
+  PNL_BLOCK_ORDER.forEach(function(b){ if(oe.some(function(r){return (r.block||'OTHER')===b;})){ order.push(b); seen[b]=1; } });
+  oe.forEach(function(r){ var b=r.block||'OTHER'; if(!seen[b]){ seen[b]=1; order.push(b); } });
+  order.forEach(function(b){
+    var brows=oe.filter(function(r){ return (r.block||'OTHER')===b; });
+    var accts=acctRows(brows);
+    if(!accts.length && !PNL_SHOW_ZERO) return;
+    out.push({kind:'blk',label:b,vals:months.map(function(){return {amt:null,pct:null};}),total:null});
+    out=out.concat(accts);
+    out.push(totRow('sub','Total '+b+' Cost',brows));
+  });
+  out.push(totRow('sub','Total Operating Expenses',oe));
+  // Net Profit is Xero's own authoritative figure — never recomputed as revenue − expenses.
+  var npVals=months.map(function(m){
+    var t=totals[m]; var v=(t&&t.net_profit!=null)?Number(t.net_profit):null;
+    if(v!==null&&!isFinite(v)) v=null;
+    return {amt:v,pct:pctOf(v,m)};
+  });
+  var npAny=npVals.some(function(c){return c.amt!==null;});
+  out.push({kind:'key',label:'Net Profit',vals:npVals,total:npAny?npVals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null});
+  return {months:months,rows:out,rev:rev,hasRows:hasRows,
+          tiRow:tiRow,csRow:csRow,gpVals:gpVals,npVals:npVals,
+          opexRow:out.filter(function(r){return r.label==='Total Operating Expenses';})[0]};
+}
+
+function pnlNum(v){ return v===null||v===undefined?'—':M(v); }
+function pnlCell(c,cls){
+  if(!c||c.amt===null||c.amt===undefined) return '<td class="pnl-num '+(cls||'')+'"><span class="muted">—</span></td>';
+  var col=c.amt<0?'color:var(--coral-soft)':'';
+  var pct=(c.pct===null||c.pct===undefined)?'':'<span class="pnl-pct">'+(c.pct*100).toFixed(1)+'%</span>';
+  return '<td class="pnl-num '+(cls||'')+'" style="'+col+'">'+M(c.amt)+pct+'</td>';
+}
+// +/-% delta chip. `inverse` flips the colour for cost lines, where "up" is the bad direction.
+function pnlChip(cur,prev,inverse){
+  if(cur===null||prev===null||cur===undefined||prev===undefined||!prev) return '';
+  var p=(cur-prev)/Math.abs(prev)*100; if(!isFinite(p)) return '';
+  var up=p>=0, good=inverse?!up:up;
+  return '<span class="pnl-chip" style="background:'+(good?'rgba(14,157,103,.16)':'rgba(232,93,60,.16)')+';color:'+(good?'var(--green-soft)':'var(--coral-soft)')+'">'+(up?'▲':'▼')+Math.abs(p).toFixed(1)+'%</span>';
+}
+
+// Stacked bars — cost blocks per month, chronological left→right, colours shared with the grid.
+function pnlBlockChart(months, blocks){
+  var ms=months.slice().reverse(), n=ms.length;
+  var list=(blocks||[]).filter(function(b){ return b && b.block; });
+  if(!n||!list.length) return '<div class="muted" style="padding:20px">No cost-block data for this period.</div>';
+  var order=[]; var seen={};
+  PNL_BLOCK_ORDER.forEach(function(b){ if(list.some(function(x){return x.block===b;})){ order.push(b); seen[b]=1; } });
+  list.forEach(function(x){ if(!seen[x.block]){ seen[x.block]=1; order.push(x.block); } });
+  var val=function(b,m){ var e=list.filter(function(x){return x.block===b;})[0]; if(!e||!e.by_month) return 0; var v=Number(e.by_month[m]); return isFinite(v)?v:0; };
+  var w=820,h=290,padL=56,padR=14,padB=46,padT=16;
+  // Negative (credit/reversal) blocks can't be stacked upward — they're clamped here for the bar
+  // height only; the tooltip and the grid still show the true signed figure.
+  var stackTot=ms.map(function(m){ return order.reduce(function(s,b){ return s+Math.max(0,val(b,m)); },0); });
+  var max=Math.max.apply(null,[1].concat(stackTot));
+  var slot=(w-padL-padR)/n, barW=Math.min(56,slot*0.6);
+  var yat=function(v){ return h-padB-(v/max)*(h-padB-padT); };
+  var grid=''; for(var k=0;k<=4;k++){ var gv=max*(4-k)/4, gy=padT+(k/4)*(h-padB-padT);
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(gv)+'</text>'; }
+  var bars=ms.map(function(m,i){
+    var cx=padL+slot*i+slot/2, x=cx-barW/2, base=h-padB, seg='';
+    order.forEach(function(b){
+      var raw=val(b,m), v=Math.max(0,raw); if(v<=0) return;
+      var bh=(v/max)*(h-padB-padT), y=base-bh; base=y;
+      seg+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+(PNL_BLOCK_COLORS[b]||'#8892a6')+'"><title>'+esc(b+' · '+m+' · '+M(raw))+'</title></rect>';
+    });
+    return seg+'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.slice(2))+'</text>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(yat(stackTot[i])-5).toFixed(1)+'" text-anchor="middle" font-size="9.5" font-weight="800" fill="var(--text)">'+cfoMk(stackTot[i])+'</text>';
+  }).join('');
+  var legend=order.map(function(b){ return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11.5px"><span style="width:11px;height:11px;border-radius:2px;background:'+(PNL_BLOCK_COLORS[b]||'#8892a6')+'"></span>'+esc(b)+'</span>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg><div style="margin-top:8px">'+legend+'</div>';
+}
+
+function pnlRender(){
+  var el=document.getElementById('pnl'); if(!el||!PNL_DATA) return;
+  var d=PNL_DATA, mdl=pnlBuild(), months=mdl.months, totals=d.totals||{};
+  var scopeCo=cfoScopeName();
+  var cur=months[0]||null, prv=months[1]||null;
+  var at=function(vals,i){ return (i>=0&&vals&&vals[i])?vals[i].amt:null; };
+  // KPI figures: prefer the row-derived subtotals, fall back to `totals` when the cache is empty.
+  var tcur=totals[cur]||{}, tprv=totals[prv]||{};
+  // mdl.rev already resolves rows-first, then totals.revenue, then totals.income.
+  var revC=(cur!==null&&mdl.rev[cur]!==undefined)?mdl.rev[cur]:null;
+  var revP=(prv!==null&&mdl.rev[prv]!==undefined)?mdl.rev[prv]:null;
+  var gpC=mdl.hasRows?at(mdl.gpVals,0):null, gpP=mdl.hasRows?at(mdl.gpVals,1):null;
+  var opC=mdl.hasRows?at(mdl.opexRow&&mdl.opexRow.vals,0):(tcur.expenses!=null?Number(tcur.expenses):null);
+  var opP=mdl.hasRows?at(mdl.opexRow&&mdl.opexRow.vals,1):(tprv.expenses!=null?Number(tprv.expenses):null);
+  var npC=at(mdl.npVals,0), npP=at(mdl.npVals,1);
+  var sub=function(txt){ return '<div class="muted" style="font-size:10.5px;margin-top:2px">'+txt+'</div>'; };
+  var col=function(v){ return v===null?'var(--muted)':(v<0?'var(--coral-soft)':'var(--text)'); };
+  var kpis='<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
+    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:'+(revC===null?'var(--muted)':(revC<0?'var(--coral-soft)':'var(--green-soft)'))+'">'+pnlNum(revC)+'</div><div class="l">Revenue '+pnlChip(revC,revP)+'</div>'+sub(cur?esc(cur):'—')+'</div>'+
+    '<div class="card"><div class="c-ico">📐</div><div class="n" style="color:'+col(gpC)+'">'+pnlNum(gpC)+'</div><div class="l">Gross Profit '+pnlChip(gpC,gpP)+'</div>'+
+      sub(gpC===null?(mdl.hasRows?'—':'needs account cache'):((revC?((gpC/revC*100).toFixed(1)+'% GP margin'):'—')))+'</div>'+
+    '<div class="card"><div class="c-ico">🧾</div><div class="n" style="color:'+(opC===null?'var(--muted)':'var(--coral)')+'">'+pnlNum(opC)+'</div><div class="l">Operating Expenses '+pnlChip(opC,opP,true)+'</div>'+
+      sub(opC!==null&&revC?((opC/revC*100).toFixed(1)+'% of revenue'):'—')+'</div>'+
+    '<div class="card '+(npC!==null&&npC>=0?'green':'red')+'"><div class="c-ico">'+(npC!==null&&npC>=0?'📈':'📉')+'</div><div class="n" style="color:'+(npC===null?'var(--muted)':(npC<0?'var(--coral-soft)':'var(--green-soft)'))+'">'+pnlNum(npC)+'</div><div class="l">Net Profit '+pnlChip(npC,npP)+'</div>'+
+      sub(npC!==null&&revC?((npC/revC*100).toFixed(1)+'% net margin'):'—')+'</div>'+
+  '</div>';
+  // ── Controls ──
+  var mbtn=function(n){ return '<button class="btn sm'+(PNL_MONTHS===n?' p':'')+'" onclick="pnlSetMonths('+n+')">'+n+' months</button>'; };
+  var controls='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 14px">'+
+    '<div class="muted" style="font-size:12.5px">'+(d.scoped_tenant?('P&amp;L · <b style="color:var(--text)">'+esc(scopeCo||'selected company')+'</b>'):('Consolidated P&amp;L · all companies'))+
+      ' · '+months.length+' months'+(d.generated_at?(' · refreshed '+esc(String(d.generated_at).replace('T',' ').slice(0,16))):'')+'</div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+mbtn(6)+mbtn(12)+
+      '<label class="muted" style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" style="width:auto;margin:0" '+(PNL_SHOW_ZERO?'checked':'')+' onchange="pnlToggleZero()"/> Show zero-value accounts</label>'+
+      '<button class="btn sm" onclick="pnlExportCsv()">⬇ Export CSV</button>'+
+      '<button class="btn sm" onclick="PNL_DATA=null;renderPnl()">↻ Refresh</button>'+
+    '</div></div>';
+  var chart='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🧱 Operating expenses by cost block</h3><span class="muted" style="font-size:11px">stacked per month · oldest → newest</span></div>'+
+    pnlBlockChart(months, d.blocks||[])+'</div>';
+  // ── The grid ──
+  var gridHtml;
+  if(!mdl.hasRows){
+    gridHtml='<div class="empty" style="padding:34px 20px"><div class="empty-ico">🗂</div>'+
+      '<div style="font-size:14px;font-weight:600;color:var(--text)">Account-level P&amp;L not cached yet — run a P&amp;L refresh.</div>'+
+      '<div class="muted" style="font-size:12.5px;margin-top:6px">Monthly totals below are live; the account breakdown appears once the backend cache job has run.</div></div>'+
+      '<div class="tbl-wrap" style="margin-top:14px"><table class="bigtable"><thead><tr><th>Month</th><th class="amt">Income</th><th class="amt">Expenses</th><th class="amt">Net profit</th></tr></thead><tbody>'+
+      (months.map(function(m){ var t=totals[m]||{};
+        var inc=(t.income!=null)?Number(t.income):null, exp=(t.expenses!=null)?Number(t.expenses):null, np=(t.net_profit!=null)?Number(t.net_profit):null;
+        return '<tr><td>'+esc(m)+'</td><td class="amt">'+pnlNum(inc)+'</td><td class="amt" style="color:var(--coral)">'+pnlNum(exp)+'</td>'+
+          '<td class="amt" style="font-weight:700;color:'+(np===null?'var(--muted)':(np<0?'var(--coral-soft)':'var(--green-soft)'))+'">'+pnlNum(np)+'</td></tr>';
+      }).join('')||'<tr><td colspan="4" class="muted">No months returned.</td></tr>')+'</tbody></table></div>';
+  } else {
+    var head='<thead><tr><th class="pnl-acc">Account</th>'+months.map(function(m){ return '<th>'+esc(m)+'</th>'; }).join('')+'<th>Total</th></tr></thead>';
+    var body=mdl.rows.map(function(r){
+      var cls=r.kind==='band'?'pnl-band':r.kind==='sub'?'pnl-sub':r.kind==='key'?'pnl-key':r.kind==='blk'?'pnl-blk':'';
+      var label=esc(r.label);
+      if(r.kind==='band'||r.kind==='blk'){
+        return '<tr class="'+cls+'"><td class="pnl-acc">'+label+'</td>'+months.map(function(){return '<td class="pnl-num"></td>';}).join('')+'<td class="pnl-num"></td></tr>';
+      }
+      var totC={amt:r.total,pct:null};
+      return '<tr class="'+cls+'"><td class="pnl-acc">'+label+'</td>'+
+        r.vals.map(function(c){ return pnlCell(c); }).join('')+pnlCell(totC)+'</tr>';
+    }).join('');
+    gridHtml='<div class="pnl-wrap"><table class="pnl-grid">'+head+'<tbody>'+body+'</tbody></table></div>'+
+      '<div class="muted" style="font-size:11px;margin-top:8px">Small figures under each amount are that account\'s share of the month\'s Total Trading Income. Negative amounts are credits/reversals as posted in Xero.</div>';
+  }
+  el.innerHTML=controls+kpis+'<div style="height:16px"></div>'+chart+
+    '<div class="panel"><div class="panel-hd"><h3>📑 Profit &amp; Loss — months across, accounts down</h3><span class="muted" style="font-size:11px">newest month first</span></div>'+gridHtml+'</div>';
+}
+
+// CSV of the grid exactly as displayed — raw numbers so the cells stay summable in Excel.
+function pnlExportCsv(){
+  if(!PNL_DATA){ toast('Nothing to export yet',true); return; }
+  try{
+    var mdl=pnlBuild(), months=mdl.months;
+    var q=function(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?('"'+s.replace(/"/g,'""')+'"'):s; };
+    var lines=[['Account'].concat(months).concat(['Total']).map(q).join(',')];
+    if(!mdl.hasRows){
+      lines=[['Month','Income','Expenses','Net profit'].map(q).join(',')];
+      months.forEach(function(m){ var t=(PNL_DATA.totals||{})[m]||{};
+        lines.push([q(m),(t.income==null?'':t.income),(t.expenses==null?'':t.expenses),(t.net_profit==null?'':t.net_profit)].join(',')); });
+    } else {
+      mdl.rows.forEach(function(r){
+        if(r.kind==='band'||r.kind==='blk'){ lines.push(q(r.label)); return; }
+        lines.push([q(r.label)].concat(r.vals.map(function(c){ return (c&&c.amt!==null&&c.amt!==undefined)?c.amt:''; }))
+          .concat([(r.total===null||r.total===undefined)?'':r.total]).join(','));
+      });
+    }
+    var co=document.getElementById('company');
+    var coName=(co&&co.selectedIndex>=0)?co.options[co.selectedIndex].text.replace(/[^A-Za-z0-9]/g,'_'):'';
+    var fn='CTG_PnL'+((coName&&coName.indexOf('All')<0)?('_'+coName):'')+'_'+months.length+'mo_'+todayLocalISO()+'.csv';
+    var blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click();
+    document.body.removeChild(a); setTimeout(function(){ URL.revokeObjectURL(url); },800);
+    toast('Exported '+fn);
+    try{ call({api:'export_log', what:'pnl', tab:'pnl', rows:Math.max(0,lines.length-1), filename:fn}).catch(function(){}); }catch(_e){}
+  }catch(e){ toast('Export failed: '+(e.message||e),true); }
 }
 
 
@@ -4465,7 +4717,7 @@ var FEATURE_META=[
   ['cfo','🎯 CFO Cockpit'],
   ['overview','📊 Overview'],['approvals','✅ Approvals'],['collections','📨 Collections'],
   ['upload','⬆ Upload'],['o2o','💊 O2O Billing'],['qinv','🧾 Quick Invoice'],
-  ['recv','💰 Receivables'],['today','☀️ Today'],['smart','🧠 Smart'],
+  ['recv','💰 Receivables'],['pnl','📑 P&L Analysis'],['smart','🧠 Smart'],
   ['close','📋 Close'],['recon','🏦 Bank Rec']
 ];
 async function rolesLoad(){
@@ -4927,6 +5179,8 @@ async function smartLoad(){
 /* ---- One-click Excel export ---- */
 function exportCurrent(){
   var a=document.querySelector('.tab.active'); var t=a?a.dataset.t:'overview';
+  // The P&L grid isn't a .bigtable (sticky layout) — it has its own raw-number CSV writer.
+  if(t==='pnl'){ pnlExportCsv(); return; }
   var panel=document.getElementById(t);
   var tables=panel?panel.querySelectorAll('table.bigtable'):[];
   if(!tables||!tables.length){ toast('Nothing to export on this tab',true); return; }
