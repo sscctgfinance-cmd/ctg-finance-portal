@@ -667,6 +667,65 @@ function parsePnl(rep){
   expenses.sort((a,b)=>b.amount-a.amount);
   return { revenue_total: Math.round(revTotal*100)/100, expense_total: Math.round(expTotal*100)/100, net_profit: Math.round(net*100)/100, income, expenses };
 }
+// Parse a MULTI-PERIOD Xero ProfitAndLoss (periods=N & timeframe=MONTH) → one row per month with the
+// REAL P&L totals. Reads the per-column SummaryRow totals for Income / Cost of Sales / Operating Expenses
+// and the top-level Net Profit row. This is the authority for the dashboard (not the invoice cache).
+function parsePnlMulti(rep:any){
+  const num=(s:any)=>{ const t=String(s==null?"":s).trim(); if(!t) return 0; const neg=t.indexOf("(")>=0; const n=parseFloat(t.replace(/[(),\s]/g,"")); return isNaN(n)?0:(neg?-n:n); };
+  const names:any={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  const monthKey=(label:any)=>{ const s=String(label||"").trim(); if(!s) return null;
+    const m=s.match(/([A-Za-z]{3,})[\s-]+(\d{2,4})$/);
+    if(m){ const mo=names[m[1].slice(0,3).toLowerCase()]; let y=parseInt(m[2],10); if(y<100)y+=2000; if(mo&&y) return y+"-"+String(mo).padStart(2,"0"); }
+    const d=new Date(s); if(!isNaN(d.getTime())) return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); return null; };
+  const rows=(rep&&Array.isArray(rep.Rows))?rep.Rows:[];
+  const hdr=rows.find((r:any)=>r.RowType==="Header");
+  const cols:any[]=(hdr&&Array.isArray(hdr.Cells))? hdr.Cells.map((c:any,i:number)=> i===0?null:monthKey(c&&c.Value)) : [];
+  const nCols=cols.length;
+  const inc=new Array(nCols).fill(0), cogs=new Array(nCols).fill(0), opex=new Array(nCols).fill(0), net=new Array(nCols).fill(0);
+  const addRow=(cells:any[], arr:number[], abs:boolean)=>{ for(let i=1;i<nCols && i<cells.length;i++){ let v=num(cells[i]&&cells[i].Value); if(abs)v=Math.abs(v); arr[i]+=v; } };
+  const walk=(list:any[], sectionTitle:string)=>{
+    for(const row of (list||[])){
+      const title=String(sectionTitle||"").toLowerCase();
+      const name=String((row.Cells&&row.Cells[0]&&row.Cells[0].Value)||"").toLowerCase();
+      if(row.RowType==="Section"){ walk(row.Rows, row.Title); continue; }
+      const cells=row.Cells||[];
+      if(/net profit|net income|profit for the/.test(name)){ addRow(cells, net, false); continue; }
+      if(row.RowType==="SummaryRow"){
+        if(/total income|total revenue|total trading income|total other income/.test(name)) addRow(cells, inc, false);
+        else if(/total cost of sales/.test(name)) addRow(cells, cogs, true);
+        else if(/total operating expenses|total expenses|total overhead|total administ/.test(name)) addRow(cells, opex, true);
+        else if(/^total /.test(name)){   // fallback: classify by the enclosing section title
+          if(/income|revenue|trading/.test(title)) addRow(cells, inc, false);
+          else if(/cost of sales/.test(title)) addRow(cells, cogs, true);
+          else if(/expense|overhead|operating|administ/.test(title)) addRow(cells, opex, true);
+        }
+      }
+    }
+  };
+  walk(rows, "");
+  const out:any[]=[];
+  for(let i=1;i<nCols;i++){ if(!cols[i]) continue; out.push({ period:cols[i], income:Math.round(inc[i]*100)/100, cost_of_sales:Math.round(cogs[i]*100)/100, expenses:Math.round(opex[i]*100)/100, net_profit:Math.round(net[i]*100)/100 }); }
+  return out;
+}
+// Pull real monthly P&L from Xero for each tenant (one multi-period report call each) and cache it.
+async function refreshPnlCache(access:any, tenants:any[]){
+  const myNow=new Date(Date.now()+8*3600*1000);
+  const toDate=myNow.toISOString().slice(0,10);
+  const results:any[]=[];
+  for(const t of (tenants||[])){
+    try{
+      const d=await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?toDate="+toDate+"&periods=11&timeframe=MONTH");
+      const rep=(d.Reports||[])[0];
+      const months=parsePnlMulti(rep);
+      if(months.length){
+        const rows=months.map((m:any)=>({ tenant_id:t.tenant_id, period:m.period, income:m.income, cost_of_sales:m.cost_of_sales, expenses:m.expenses, net_profit:m.net_profit, refreshed_at:new Date().toISOString() }));
+        await sb.from("xero_pnl_cache").upsert(rows, { onConflict:"tenant_id,period" });
+      }
+      results.push({ tenant:t.tenant_id, months:months.length });
+    }catch(e){ results.push({ tenant:t.tenant_id, error:String(e).slice(0,150) }); }
+  }
+  return results;
+}
 // Xero may return dates in two formats: ISO "2026-06-15T00:00:00" (DateString)
 // or legacy Microsoft "/Date(1718409600000+0000)/" (Date). slicing the latter to 10 chars
 // yields "/Date(1718" which Postgres rejects → the WHOLE batch upsert fails silently.
@@ -3483,6 +3542,15 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, from, to, companies });
     }
+    if (api === "pnl_refresh") {
+      // Refresh the real-P&L cache from Xero for all tenants (used by the dashboard for accurate numbers).
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
+      const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+      const results = await refreshPnlCache(access, tn||[]);
+      await logAudit(me, "pnl_refresh", "all", { tenants:(tn||[]).length });
+      return j({ ok:true, results });
+    }
     if (api === "ocr_extract") {
       const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -5449,7 +5517,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v136: dashboard accuracy — new xero_pnl_cache (real monthly Xero ProfitAndLoss per tenant) + pnl_refresh; parsePnlMulti. Dashboard revenue/expenses/net will read this instead of tax-inclusive invoice-cache sums. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
