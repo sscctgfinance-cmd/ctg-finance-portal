@@ -139,6 +139,34 @@ async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal
 // action that takes only an id could act on another company's record. Call with the FETCHED record's
 // tenant_id; returns false when the caller's allowed list doesn't include it. Apply on admin paths —
 // employee self-service flows are already record-pinned by their own ownership/approver checks.
+// v142: account-management scope. superAdmin alone was the only gate on user_update /
+// user_reset_password, so a COMPANY-SCOPED Master Admin could change the role, deactivate, or
+// reset the password of any account in the group — including a full-scope admin's.
+// Rule: the target's company set must be non-empty and a SUBSET of the caller's allowed set.
+// Subset, not intersection — portal_users.role is global, so editing a user who also belongs to
+// a company you can't see would silently change their access there too.
+// A target with NO company rows is group-wide (full-scope admin) and only another group-wide
+// admin may touch it.
+async function userWriteAllowed(token, callerId, targetUserId){
+  if (!targetUserId) return false;
+  const { data: tRows } = await sb.from("portal_user_companies").select("tenant_id").eq("user_id", targetUserId);
+  const { data: cRows } = await sb.from("portal_user_companies").select("tenant_id").eq("user_id", callerId);
+  const callerGroupWide = !((cRows||[]).length);
+  const targetTenants = (tRows||[]).map((r)=> String(r.tenant_id));
+  if (!targetTenants.length) return callerGroupWide;
+  if (callerGroupWide) return true;
+  const alw = await allowedTenants(token);
+  return targetTenants.every((t)=> alw.indexOf(t) >= 0);
+}
+// Companies a caller is allowed to ASSIGN someone to (blocks widening a user's scope past your own).
+async function tenantsAssignable(token, callerId, tenantIds){
+  const ids = (tenantIds||[]).map((t)=> String(t)).filter(Boolean);
+  if (!ids.length) return true;
+  const { data: cRows } = await sb.from("portal_user_companies").select("tenant_id").eq("user_id", callerId);
+  if (!((cRows||[]).length)) return true;                 // group-wide admin may assign anywhere
+  const alw = await allowedTenants(token);
+  return ids.every((t)=> alw.indexOf(t) >= 0);
+}
 async function tenantPinned(token, tenantId){
   if(!tenantId) return true;
   const allowed = await allowedTenants(token);
@@ -2772,14 +2800,38 @@ Deno.serve(async (req)=>{
     }
     if (api === "users_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v142: Access & Roles is now tenant-scoped. It used to return EVERY user and EVERY company
+      // assignment to any Master Admin — so a company-scoped Master Admin could read the names,
+      // emails and login history of staff in companies they have no access to.
+      // Model: a user with >=1 portal_user_companies row belongs to exactly those companies;
+      // a user with NO rows is group-wide (a full-scope admin) and shows under every company.
+      const alw = await allowedTenants(b.token);   // fail-closed sentinel when scope is broken
+      if (b.tenant && alw.indexOf(String(b.tenant)) < 0) return j({ ok:false, error:"forbidden" }, 403);
       const { data: users } = await sb.from("portal_users").select("id,email,name,role,active,created_at,last_login_at,last_login_ip,login_count,totp_enabled").order("created_at");
-      const { data: uc } = await sb.from("portal_user_companies").select("user_id,tenant_id,role");
-      return j({ ok:true, users: users||[], user_companies: uc||[] });
+      const { data: ucAll } = await sb.from("portal_user_companies").select("user_id,tenant_id,role");
+      // Never expose assignments outside the caller's scope, even for a user they can legitimately see.
+      const uc = (ucAll||[]).filter((r)=> alw.indexOf(String(r.tenant_id)) >= 0);
+      const assignedAnywhere = new Set((ucAll||[]).map((r)=> r.user_id));
+      const inCallerScope    = new Set(uc.map((r)=> r.user_id));
+      const want = b.tenant ? String(b.tenant) : null;
+      const inCompany = want ? new Set(uc.filter((r)=> String(r.tenant_id) === want).map((r)=> r.user_id)) : null;
+      const visible = (users||[]).filter((u)=>{
+        if (!assignedAnywhere.has(u.id)) return true;          // group-wide account
+        return want ? inCompany.has(u.id) : inCallerScope.has(u.id);
+      }).map((u)=> ({ ...u, all_companies: !assignedAnywhere.has(u.id) }));
+      return j({ ok:true, users: visible, user_companies: uc, scoped_tenant: want });
     }
     if (api === "user_create") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.email || !b.pass) return j({ ok:false, error:"email and password required" });
       const tenantIds = Array.isArray(b.tenants) ? b.tenants.map((t)=> typeof t==="string" ? t : (t&&t.tenant_id)).filter(Boolean) : [];
+      // A scoped Master Admin may only create accounts inside their own companies.
+      if (!(await tenantsAssignable(b.token, me.user.id, tenantIds))) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
+      // No companies at all = a group-wide account; only a group-wide admin may mint one.
+      if (!tenantIds.length){
+        const { data: myCos } = await sb.from("portal_user_companies").select("tenant_id").eq("user_id", me.user.id);
+        if ((myCos||[]).length) return j({ ok:false, error:"forbidden: assign at least one of your companies" }, 403);
+      }
       const { data, error } = await sb.rpc("portal_create_user", { p_email: b.email, p_name: b.name||b.email, p_pass: b.pass, p_role: b.role||"viewer", p_tenants: tenantIds });
       if (error) return j({ ok:false, error: error.message });
       if (Array.isArray(b.tenants) && b.tenants.length && typeof b.tenants[0] === "object"){
@@ -2792,6 +2844,12 @@ Deno.serve(async (req)=>{
     if (api === "user_update") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.user_id) return j({ ok:false, error:"no user_id" });
+      if (!(await userWriteAllowed(b.token, me.user.id, b.user_id))) return j({ ok:false, error:"forbidden: that account belongs to a company outside your access" }, 403);
+      // Reassigning companies must not widen a user past the caller's own scope.
+      if (Array.isArray(b.tenants)){
+        const reqIds = b.tenants.map((t)=> typeof t==="string" ? t : (t&&t.tenant_id)).filter(Boolean);
+        if (!(await tenantsAssignable(b.token, me.user.id, reqIds))) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
+      }
       const upd = {}; if (b.role!==undefined) upd.role=b.role; if (b.active!==undefined) upd.active=b.active; if (b.name!==undefined) upd.name=b.name;
       if (Object.keys(upd).length){ const { error } = await sb.from("portal_users").update(upd).eq("id", b.user_id); if (error) return j({ ok:false, error:error.message }); }
       if (Array.isArray(b.tenants)){ await sb.from("portal_user_companies").delete().eq("user_id", b.user_id); if (b.tenants.length){ const rows = b.tenants.map((t)=> typeof t==="string" ? { user_id:b.user_id, tenant_id:t, role:null } : { user_id:b.user_id, tenant_id:t.tenant_id, role:t.role||null }); const { error:e2 } = await sb.from("portal_user_companies").insert(rows); if (e2) return j({ ok:false, error:e2.message }); } }
@@ -2801,6 +2859,7 @@ Deno.serve(async (req)=>{
     if (api === "user_reset_password") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.user_id || !b.new_pass) return j({ ok:false, error:"user_id and new_pass required" });
+      if (!(await userWriteAllowed(b.token, me.user.id, b.user_id))) return j({ ok:false, error:"forbidden: that account belongs to a company outside your access" }, 403);
       const { data, error } = await sb.rpc("portal_admin_reset_password", { p_user_id: b.user_id, p_new_pass: b.new_pass });
       if (error) return j({ ok:false, error: error.message });
       await logAudit(me, "password_reset", b.user_id, {});
@@ -4041,18 +4100,46 @@ Deno.serve(async (req)=>{
     // ── Access & Roles (Master Admin only): list portal users, change roles, invite viewers ──
     if (api === "hr_users_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v142: scope Access & Roles to the selected company. It listed EVERY account in the group
+      // to any Master Admin — and 4 of the Master Admins are themselves scoped to one company,
+      // so they could read every other company's staff emails.
+      const alw = await allowedTenants(b.token);
+      if (b.tenant && alw.indexOf(String(b.tenant)) < 0) return j({ ok:false, error:"forbidden" }, 403);
       const { data: users } = await sb.from("portal_users").select("id,email,name,role,created_at").order("role").order("email").range(0,999);
-      const ids=(users||[]).map((u:any)=>u.id); const empByUser:any={};
+      const { data: ucAll } = await sb.from("portal_user_companies").select("user_id,tenant_id");
+      const { count: tenantTotal } = await sb.from("xero_tenants").select("tenant_id", { count:"exact", head:true });
+      const cosByUser:any = {};
+      (ucAll||[]).forEach((r:any)=>{ (cosByUser[r.user_id] = cosByUser[r.user_id] || []).push(String(r.tenant_id)); });
+      const want = b.tenant ? String(b.tenant) : null;
+      const visibleUsers = (users||[]).filter((u:any)=>{
+        const cos = cosByUser[u.id] || [];
+        if (!cos.length) return true;                                  // unassigned account — always surfaced so it can be fixed
+        if (want) return cos.indexOf(want) >= 0;
+        return cos.some((t:string)=> alw.indexOf(t) >= 0);             // no company picked: everything in the caller's scope
+      });
+      const ids=visibleUsers.map((u:any)=>u.id); const empByUser:any={};
       if(ids.length){ const { data: emps } = await sb.from("hr_employees").select("user_id,name,emp_no").in("user_id",ids); (emps||[]).forEach((e:any)=>{ if(e.user_id) empByUser[e.user_id]=e; }); }
-      const rows=(users||[]).map((u:any)=>({ id:u.id, email:u.email, name:u.name, role:u.role, employee:(empByUser[u.id]?empByUser[u.id].name:null), self:!!(me.user&&me.user.id===u.id) }));
-      const adminCount=(users||[]).filter((u:any)=>u.role==="admin").length;
-      return j({ ok:true, users: rows, me_id:(me.user&&me.user.id)||null, admin_count:adminCount });
+      const rows=visibleUsers.map((u:any)=>{
+        const cos = cosByUser[u.id] || [];
+        return { id:u.id, email:u.email, name:u.name, role:u.role,
+                 employee:(empByUser[u.id]?empByUser[u.id].name:null),
+                 self:!!(me.user&&me.user.id===u.id),
+                 company_count: cos.length,
+                 all_companies: cos.length >= (tenantTotal||0) && cos.length > 0,
+                 // a scoped admin may not edit an account that also lives in a company they can't see
+                 can_edit: cos.length ? cos.every((t:string)=> alw.indexOf(t) >= 0) : false };
+      });
+      const adminCount=(users||[]).filter((u:any)=>u.role==="admin").length;   // group-wide count: the last-admin guard must not be fooled by filtering
+      return j({ ok:true, users: rows, me_id:(me.user&&me.user.id)||null, admin_count:adminCount, scoped_tenant: want });
     }
     if (api === "hr_user_role_set") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const uid=String(b.user_id||""); const role=String(b.role||"").toLowerCase();
       if(!uid) return j({ ok:false, error:"No user specified." });
       if(["admin","hr_admin","viewer","approver","employee"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
+      // v142: a company-scoped Master Admin must not be able to re-role an account that belongs to
+      // (or also belongs to) a company outside their access — the role itself is group-wide.
+      if(!(await userWriteAllowed(b.token, me.user.id, uid))) return j({ ok:false, error:"That account belongs to a company outside your access." }, 403);
       const { data: target } = await sb.from("portal_users").select("id,role,email").eq("id",uid).maybeSingle();
       if(!target) return j({ ok:false, error:"User not found." });
       if(target.role==="admin" && role!=="admin"){ // never leave the org without a Master Admin
@@ -5601,7 +5688,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
