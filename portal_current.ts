@@ -609,6 +609,26 @@ async function xeroInvoicesAll(access, tenant, type){
   }
   return out;
 }
+// v143: paginate an arbitrary Invoices?where= query. The AP duplicate cross-check used to fetch
+// ONE page (Xero caps at 100 with no pageSize) — under full-autonomy AP a duplicate bill sitting
+// past record 100 was invisible, so a repeat supplier invoice could be auto-posted (double pay).
+// pageSize=1000 makes one page enough for a single-vendor filter; the loop covers a no-vendor
+// 90-day scan. __partial is set if we hit the page ceiling or a mid-scan error, so callers can
+// refuse to treat an incomplete scan as "no duplicate found".
+async function xeroInvoicesWhere(access, tenant, whereClause){
+  const out:any[] = [];
+  (out as any).__partial = false;
+  for (let page=1; page<=50; page++){
+    let d;
+    try { d = await xeroGet(access, tenant, "Invoices?pageSize=1000&page=" + page + "&where=" + encodeURIComponent(whereClause)); }
+    catch (e) { (out as any).__partial = true; (out as any).__error = String(e).slice(0,200); break; }
+    const arr = d.Invoices || [];
+    for (const iv of arr) out.push(iv);
+    if (arr.length < 1000) return out;          // fewer than a full page ⇒ genuinely exhausted
+  }
+  (out as any).__partial = true;                // exited via the page ceiling ⇒ possibly truncated
+  return out;
+}
 // ilike special chars must be literal: a vendor named "100% Wellness" must not wildcard-match
 // "100 PLUS WELLNESS" — with AP autonomy ON that posts the bill to the wrong supplier contact.
 function ilikeEscape(s){ return String(s).replace(/([%_\\])/g, "\\$1"); }
@@ -3419,8 +3439,7 @@ Deno.serve(async (req)=>{
           const dateStr = "DateTime(" + ninetyDaysAgo.getUTCFullYear() + "," + (ninetyDaysAgo.getUTCMonth()+1) + "," + ninetyDaysAgo.getUTCDate() + ")";
           let whereClause = 'Type=="ACCPAY" AND Status!="VOIDED" AND Date>=' + dateStr;
           if (cid) whereClause += ' AND Contact.ContactID==GUID("' + cid + '")';
-          const d = await xeroGet(accessCheck, item.tenant_id, "Invoices?where=" + encodeURIComponent(whereClause));
-          const existing = (d.Invoices || []) as any[];
+          const existing = await xeroInvoicesWhere(accessCheck, item.tenant_id, whereClause);
           // If we don't have a contact_id, filter locally on vendor-name match to keep results relevant.
           const filtered = cid ? existing : existing.filter((iv:any)=>{
             const cname = String((iv.Contact||{}).Name||"").toLowerCase();
@@ -3448,8 +3467,12 @@ Deno.serve(async (req)=>{
               });
             }
           }
+          const scanPartial = !!(existing as any).__partial;
           checks.push({ name:"No existing Xero bill with the same invoice number for this vendor", pass: !xero_dupes.some(d=>d.match_type==="invoice_number"), detail: xero_dupes.length ? xero_dupes.length + " potential dup(s) found in Xero" : "OK" });
           checks.push({ name:"No existing Xero bill with same amount + date within 7 days", pass: !xero_dupes.some(d=>d.match_type==="amount+date"), detail: "" });
+          // A truncated scan is NOT a clean scan — fail the check so the operator can't read
+          // "no duplicate" from an incomplete search. Only relevant if the scan actually hit the ceiling.
+          if (scanPartial) checks.push({ name:"Xero duplicate scan was COMPLETE", pass:false, detail:"Xero returned a partial result (rate-limit or >50k bills) — duplicates beyond the scanned set may exist. Verify manually before posting." });
         } catch (e: any) {
           checks.push({ name:"Xero cross-check", pass: false, detail: "Xero API error: " + String(e.message||e).slice(0,120) + " — proceed with caution" });
         }
@@ -5688,7 +5711,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

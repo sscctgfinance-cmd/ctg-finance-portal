@@ -1688,13 +1688,17 @@ function cfoRender(){
   var revCur=Number(g.rev_cur)||0, revPrev=Number(g.rev_prev)||0;
   var momPct = revPrev>0 ? Math.round((revCur-revPrev)/revPrev*100) : null;
   var pm=r.period_months||12;
+  // Hero cards are the authoritative calendar-YTD figures (RPC sums period>=year-start, tied to Xero
+  // via xero_pnl_ytd) — NOT the 12-month window the trend table below uses. Label them YTD so the two
+  // different numbers on one screen stop contradicting each other.
+  var ytdYr=(new Date(Date.now()+8*3600000)).getUTCFullYear();
   var expense=Number(g.expenses)||0, net=Number(g.net_profit)||0, revenue=Number(g.revenue)||0;
   var margin=revenue>0?Math.round(net/revenue*100):0;
   // ── Hero KPIs: P&L row + financial-position row ──
   var kpis='<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
-    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:var(--green-soft)">'+M(revenue)+'</div><div class="l">Revenue · '+pm+' mo</div></div>'+
-    '<div class="card"><div class="c-ico">🧾</div><div class="n" style="color:var(--coral)">'+M(expense)+'</div><div class="l">Expenses (bills) · '+pm+' mo</div></div>'+
-    '<div class="card '+(net>=0?'green':'red')+'"><div class="c-ico">'+(net>=0?'📈':'📉')+'</div><div class="n" style="color:'+(net>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(net)+'</div><div class="l">Net profit · '+pm+' mo</div></div>'+
+    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:var(--green-soft)">'+M(revenue)+'</div><div class="l">Revenue · YTD '+ytdYr+'</div></div>'+
+    '<div class="card"><div class="c-ico">🧾</div><div class="n" style="color:var(--coral)">'+M(expense)+'</div><div class="l">Expenses · YTD '+ytdYr+'</div></div>'+
+    '<div class="card '+(net>=0?'green':'red')+'"><div class="c-ico">'+(net>=0?'📈':'📉')+'</div><div class="n" style="color:'+(net>=0?'var(--green-soft)':'var(--red-soft)')+'">'+M(net)+'</div><div class="l">Net profit · YTD '+ytdYr+'</div></div>'+
     '<div class="card"><div class="c-ico">📊</div><div class="n" style="color:'+(margin>=0?'var(--text)':'var(--red-soft)')+'">'+margin+'%</div><div class="l">Net margin</div></div>'+
   '</div><div style="height:12px"></div>'+
   '<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
