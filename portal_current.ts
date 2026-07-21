@@ -796,6 +796,12 @@ function xDate(s){
   return null;
 }
 function invToCacheRow(tenant, iv){ const now = new Date().toISOString(); return { tenant_id: tenant, invoice_id: iv.InvoiceID, number: iv.InvoiceNumber || null, type: iv.Type || null, status: iv.Status || null, contact_name: (iv.Contact||{}).Name || null, contact_id: (iv.Contact||{}).ContactID || null, total: Number(iv.Total||0), amount_due: Number(iv.AmountDue||0), currency: iv.CurrencyCode || null, /* Xero CurrencyRate is FOREIGN PER BASE (a USD bill on an MYR org carries ~0.2522, i.e. 1 USD = RM3.97), so the base amount is amount / rate — the generated columns total_base / amount_due_base do the division. Multiplying shrinks FX balances ~4x. */ currency_rate: (Number(iv.CurrencyRate) > 0 ? Number(iv.CurrencyRate) : 1), inv_date: xDate(iv.DateString||iv.Date), due_date: xDate(iv.DueDateString||iv.DueDate), updated_at: now, last_synced_at: now }; }
+// v144 (H4): supabase-js does NOT throw on a DB error — it returns { error }. processOneEvent used to
+// ignore that, so a failed cache write still returned true and the caller marked the webhook event
+// processed:true. The lost write is exactly a PAYMENT/CREDITNOTE AmountDue change — a paid invoice
+// kept its old balance and collections chased a customer who had already paid. sbMust throws on error
+// so the caller's catch increments attempts and the event is retried instead of silently dropped.
+async function sbMust(op:any, what:string){ const { error } = await op; if (error) throw new Error(what+": "+(error.message||String(error))); }
 // v37+: also handle PAYMENT and CREDITNOTE events — both change Invoice.AmountDue.
 // Without this, Xero payments don't reflect in the cache until next delta cron (up to 1h lag).
 async function processOneEvent(ev){
@@ -809,9 +815,9 @@ async function processOneEvent(ev){
     const c = (d.Contacts || [])[0];
     if (c){
       if (c.ContactStatus === "ARCHIVED" || c.ContactStatus === "DELETED"){
-        await sb.from("xero_contacts_cache").delete().eq("tenant_id", tenant).eq("contact_id", c.ContactID);
+        await sbMust(sb.from("xero_contacts_cache").delete().eq("tenant_id", tenant).eq("contact_id", c.ContactID), "contact delete");
       } else {
-        await sb.from("xero_contacts_cache").upsert({ tenant_id: tenant, contact_id: c.ContactID, name: c.Name || "", email: c.EmailAddress || null, updated_at: new Date().toISOString() }, { onConflict: "tenant_id,contact_id" });
+        await sbMust(sb.from("xero_contacts_cache").upsert({ tenant_id: tenant, contact_id: c.ContactID, name: c.Name || "", email: c.EmailAddress || null, updated_at: new Date().toISOString() }, { onConflict: "tenant_id,contact_id" }), "contact upsert");
       }
     }
   } else if (cat === "INVOICE"){
@@ -819,9 +825,9 @@ async function processOneEvent(ev){
     const iv = (d.Invoices || [])[0];
     if (iv){
       if (iv.Status === "VOIDED" || iv.Status === "DELETED"){
-        await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID);
+        await sbMust(sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID), "invoice delete");
       } else {
-        await sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" });
+        await sbMust(sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" }), "invoice upsert");
       }
     }
   } else if (cat === "PAYMENT"){
@@ -834,9 +840,9 @@ async function processOneEvent(ev){
       const iv = (di.Invoices || [])[0];
       if (iv){
         if (iv.Status === "VOIDED" || iv.Status === "DELETED"){
-          await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID);
+          await sbMust(sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID), "payment→invoice delete");
         } else {
-          await sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" });
+          await sbMust(sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" }), "payment→invoice upsert");
         }
       }
     }
@@ -846,6 +852,7 @@ async function processOneEvent(ev){
     const cn = (d.CreditNotes || [])[0];
     const allocs = (cn && cn.Allocations) || [];
     const seen = new Set();
+    let firstErr:any = null;
     for (const a of allocs){
       const id = a && a.Invoice && a.Invoice.InvoiceID; if (!id || seen.has(id)) continue; seen.add(id);
       try {
@@ -853,13 +860,15 @@ async function processOneEvent(ev){
         const iv = (di.Invoices || [])[0];
         if (iv){
           if (iv.Status === "VOIDED" || iv.Status === "DELETED"){
-            await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID);
+            await sbMust(sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).eq("invoice_id", iv.InvoiceID), "creditnote→invoice delete");
           } else {
-            await sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" });
+            await sbMust(sb.from("xero_invoice_cache").upsert(invToCacheRow(tenant, iv), { onConflict: "tenant_id,invoice_id" }), "creditnote→invoice upsert");
           }
         }
-      } catch (_e){}
+      } catch (e){ firstErr = firstErr || e; }   // don't swallow: a lost allocation write is a wrong AmountDue
     }
+    // Rethrow so the event is retried rather than marked processed with a stale balance.
+    if (firstErr) throw firstErr;
   }
   return true;
 }
@@ -2109,8 +2118,16 @@ async function handleWebhook(req, sig){
   const events = Array.isArray(payload.events) ? payload.events : [];
   if (events.length){
     const rows = events.map((e)=>({ tenant_id:e.tenantId||null, event_category:e.eventCategory||null, event_type:e.eventType||null, resource_id:e.resourceId||null, resource_url:e.resourceUrl||null, event_date:e.eventDateUtc||null, raw:e }));
-    let inserted = [];
-    try { const { data } = await sb.from("xero_webhook_events").insert(rows).select("id"); inserted = data || []; } catch (_e) {}
+    // v144 (H3): the insert used to be swallowed, then we ACK'd 200 regardless — a failed insert
+    // meant Xero considered the event delivered and NEVER redelivered it, so the payment/invoice
+    // change was lost for good. Now: if durable persistence fails, return 500 so Xero retries
+    // (Xero redelivers on any non-2xx). supabase-js returns { error } rather than throwing.
+    let inserted:any[] = [];
+    try {
+      const { data, error } = await sb.from("xero_webhook_events").insert(rows).select("id");
+      if (error) { try { console.error("webhook insert failed:", error.message); } catch(_){} return new Response("persist failed", { status: 500 }); }
+      inserted = data || [];
+    } catch (e) { try { console.error("webhook insert threw:", e); } catch(_){} return new Response("persist failed", { status: 500 }); }
     // v71: process INLINE on receipt (seconds, not the 5-min cron) via the BATCHED processor —
     // it picks up the rows just inserted, batches invoice fetches, and is skip-if-cached +
     // cooldown + budget aware. Fire-and-forget after the 200 so Xero's "intent to receive" stays healthy.
@@ -5711,7 +5728,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

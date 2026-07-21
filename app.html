@@ -1044,7 +1044,7 @@ let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
 
 const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const M=n=>'RM '+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 // MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
 function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
@@ -3868,8 +3868,8 @@ async function sbiSavePayee(){
 }
 async function sbiDeletePayee(id){ if(!confirm('Delete this payee?'))return; var r=await call({api:'individual_delete',id:id}); if(r&&r.ok){toast(r.soft?'Payee archived (has invoices)':'Payee deleted');var a=await call({api:'individuals_list'});SBI.payees=(a&&a.individuals)||[];sbiRender();} else toast((r&&r.error)||'Failed',true); }
 // ---- Create / edit invoice ----
-async function sbiNewInvoice(){ SBI.editId=null; SBI.lines=[{description:'',qty:1,unit_price:0,amount:0}]; sbiFormRender({}); }
-async function sbiEdit(id){ var r=await call({api:'sbi_get',id:id}); if(!r||!r.invoice){toast('Not found',true);return;} SBI.editId=id; SBI.lines=(r.invoice.line_items&&r.invoice.line_items.length)?r.invoice.line_items:[{description:'',qty:1,unit_price:0,amount:0}]; sbiFormRender(r.invoice); }
+async function sbiNewInvoice(){ SBI.editId=null; SBI.editSst=0; SBI.lines=[{description:'',qty:1,unit_price:0,amount:0}]; sbiFormRender({}); }
+async function sbiEdit(id){ var r=await call({api:'sbi_get',id:id}); if(!r||!r.invoice){toast('Not found',true);return;} SBI.editId=id; SBI.editSst=Number(r.invoice.sst_amount)||0; SBI.lines=(r.invoice.line_items&&r.invoice.line_items.length)?r.invoice.line_items:[{description:'',qty:1,unit_price:0,amount:0}]; sbiFormRender(r.invoice); }
 function sbiFormRender(inv){
   var f=document.getElementById('sbi_form'); if(!f) return;
   var coOpts='<option value="">— select paying company —</option>'+COMPANIES.map(function(c){return '<option value="'+c.tenant_id+'"'+(inv.tenant_id===c.tenant_id?' selected':'')+'>'+esc(c.tenant_name)+'</option>';}).join('');
@@ -3966,6 +3966,7 @@ async function sbiSave(){
     payee_bank_name:bankNm,payee_bank_account:bankAc,payee_bank_holder:document.getElementById('sbi_bank_holder').value.trim(),
     line_items:SBI.lines.filter(function(l){return (l.description||'')||l.amount;}),
     wht_type:wt,wht_rate:rate,gl_account:document.getElementById('sbi_gl').value,wht_gl_account:document.getElementById('sbi_whtgl').value,
+    sst_amount:Number(SBI.editSst)||0,  // H7: the form has no SST input; preserve the record's SST (set at create via OCR) so re-saving doesn't zero it — net = gross + sst - wht on a tax document
     notes:document.getElementById('sbi_notes').value,new_attachments:files};
   var r=await call({api:'sbi_save',invoice:inv});
   if(r&&r.ok){toast('Invoice '+(r.invoice&&r.invoice.invoice_no||'')+' saved');renderSelfbill();}
@@ -4966,10 +4967,10 @@ async function syncAudit(){
         var deltaColor = Math.abs(x.delta_amount) < 1 ? 'var(--green-soft)' : 'var(--red-soft)';
         var countColor = x.count_diff === 0 ? 'var(--green-soft)' : 'var(--red-soft)';
         return '<tr><td><b>'+esc(x.tenant)+'</b></td>'+
-          '<td class="amt">'+x.cache_count+' / RM '+x.cache_sum.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
-          '<td class="amt">'+x.xero_count+' / RM '+x.xero_sum.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
+          '<td class="amt">'+x.cache_count+' / RM '+x.cache_sum.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
+          '<td class="amt">'+x.xero_count+' / RM '+x.xero_sum.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td>'+
           '<td class="amt" style="color:'+countColor+'">'+(x.count_diff>0?'+':'')+x.count_diff+'</td>'+
-          '<td class="amt" style="color:'+deltaColor+'"><b>RM '+x.delta_amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'+
+          '<td class="amt" style="color:'+deltaColor+'"><b>RM '+x.delta_amount.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2})+'</b></td>'+
           '<td>'+verdictPill+'</td></tr>';
       }).join('');
       var allOk = (r.results||[]).every(function(x){return x.ok;});
