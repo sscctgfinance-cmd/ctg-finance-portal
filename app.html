@@ -927,6 +927,10 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
   .fld select,.fld input:not([type=file]),.fld textarea{ width:100%; }
   /* Keep dense editable grids intact — don't force those inputs full-width. */
   .bigtable input,.bigtable select,table[data-list] input,table[data-list] select{ width:auto; }
+  /* v148: the OCR / AP / Quick-Invoice editors use plain tables (not .bigtable/data-list); keep their
+     multi-column inputs from going full-width and breaking the row layout on phones. */
+  #ocr_lines input,#ocr_lines select,#ap_lines input,#ap_lines select,.qi-prod,.qi-desc,.qi-qty,.qi-amt,.qi-acct{ width:auto; min-height:0; font-size:13px; }
+  input[type=checkbox]{ width:auto; min-height:0; }
   /* Touch targets ≥44px on every tappable control. */
   .btn{ min-height:44px; padding:11px 15px; font-size:13px; }
   .btn.sm,.btn.xs{ min-height:40px; }
@@ -4683,7 +4687,7 @@ async function sessionsLoad(){
       var whoSafe = String(s.user_name||s.user_email||'').replace(/['\\]/g,'');
       var revokeBtn = s.is_self
         ? '<span class="muted" style="font-size:11px">—</span>'
-        : '<button class="btn sm" data-tok="'+esc(s.token_full)+'" data-who="'+esc(whoSafe)+'" onclick="sessionRevoke(this.dataset.tok,this.dataset.who)">Revoke</button>';
+        : '<button class="btn sm" data-sid="'+esc(s.sid||'')+'" data-who="'+esc(whoSafe)+'" onclick="sessionRevoke(this.dataset.sid,this.dataset.who)">Revoke</button>';
       return '<tr><td>'+dot+'<b>'+esc(s.user_name||s.user_email||'')+'</b>'+selfPill+'<br><span class="muted" style="font-size:11px">'+esc(s.user_email||'')+'</span></td>'+
         '<td><span class="pill '+rolePill+'">'+esc(s.user_role||'')+'</span></td>'+
         '<td class="muted" style="font-size:11.5px;font-family:monospace">'+esc(s.token_short||'')+'</td>'+
@@ -4695,9 +4699,9 @@ async function sessionsLoad(){
     document.getElementById('sess_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Token</th><th>Started</th><th>Last seen</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Green dot = active in the last 5 minutes. Revoking a session logs that user out immediately. Sessions auto-expire after 30 days, or 14 days of inactivity.</div>';
   }catch(e){ document.getElementById('sess_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-async function sessionRevoke(tok, who){
+async function sessionRevoke(sid, who){
   if(!confirm('Revoke session for '+who+'? They will be signed out immediately.')) return;
-  try{ var r=await call({api:'session_revoke', session_token:tok});
+  try{ var r=await call({api:'session_revoke', sid:sid});
     if(r&&r.ok!==false){ toast('Session revoked'); sessionsLoad(); }
     else toast((r&&r.error)||'Failed',true);
   }catch(e){ toast(e.message,true); }

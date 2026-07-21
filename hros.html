@@ -1142,7 +1142,7 @@ let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
 
 const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const M=n=>'RM '+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 // MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
 function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }

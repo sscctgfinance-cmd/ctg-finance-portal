@@ -135,6 +135,17 @@ async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_aud
 // A genuine full-scope admin gets the full real tenant list from the RPC, never the sentinel.
 const NO_TENANT = "00000000-0000-0000-0000-000000000000";
 async function allowedTenants(token){ try{ const { data } = await sb.rpc("portal_allowed_tenants", { p_token: token||"" }); return (Array.isArray(data) && data.length) ? data : [NO_TENANT]; } catch (_e) { return [NO_TENANT]; } }
+// v148 (security audit): a FULL-SCOPE admin is one whose allowed tenants cover EVERY company. superAdmin()
+// alone is not tenant-aware, and 4 of 5 admins are scoped to a single company — so group-wide admin actions
+// (all-session list, group audit log, RBAC config, group-wide payee PII, group cache rebuilds) must gate on
+// this, not on superAdmin(), or a single-company admin reads/writes every company's data.
+async function isFullScopeAdmin(me:any, token:string){
+  if (!superAdmin(me)) return false;
+  const alw = await allowedTenants(token);
+  if (!alw.length || alw.indexOf(NO_TENANT) >= 0) return false;
+  const { count } = await sb.from("xero_tenants").select("tenant_id", { count:"exact", head:true });
+  return (count||0) > 0 && alw.length >= (count||0);
+}
 // Tenant pin for by-id actions (v103): the central guard only sees b.tenant in the request body, so an
 // action that takes only an id could act on another company's record. Call with the FETCHED record's
 // tenant_id; returns false when the caller's allowed list doesn't include it. Apply on admin paths —
@@ -754,17 +765,28 @@ async function refreshPnlCache(access:any, tenants:any[], monthsBack?:number){
         const rep = (d.Reports||[])[0];
         const pl = parsePnl(rep);   // { revenue_total, expense_total, net_profit }
         await sb.from("xero_pnl_cache").upsert({ tenant_id:t.tenant_id, period:p.key, income:pl.revenue_total, cost_of_sales:0, expenses:pl.expense_total, net_profit:pl.net_profit, refreshed_at:new Date().toISOString() }, { onConflict:"tenant_id,period" });
-        // v141: account-level rows for the P&L Analysis grid. Delete-then-insert per month so an
-        // account that disappears from Xero doesn't linger as a stale row (upsert alone can't do that).
+        // v141: account-level rows for the P&L Analysis grid.
+        // v148: was delete-then-insert (two non-atomic calls) — if the insert failed after the delete
+        // succeeded, that tenant-month showed ZERO account rows under non-zero totals (blank grid).
+        // Now UPSERT the fresh rows first (grid never goes empty), then delete only the STALE rows from
+        // this month (refreshed_at older than this run) to drop accounts Xero no longer reports. A failed
+        // upsert leaves last-good data; a failed delete just leaves a stale row that self-heals next run.
         try{
+          const runStamp = new Date().toISOString();
           const accRows:any[] = [];
           for (const s of (pl.sections||[])){
             for (const r of (s.rows||[])){
-              accRows.push({ tenant_id:t.tenant_id, period:p.key, section:s.title, account:r.name, amount:r.amount, seq:r.seq, refreshed_at:new Date().toISOString() });
+              accRows.push({ tenant_id:t.tenant_id, period:p.key, section:s.title, account:r.name, amount:r.amount, seq:r.seq, refreshed_at:runStamp });
             }
           }
-          await sb.from("xero_pnl_accounts").delete().eq("tenant_id", t.tenant_id).eq("period", p.key);
-          if (accRows.length) await sb.from("xero_pnl_accounts").insert(accRows);
+          if (accRows.length){
+            const { error: upErr } = await sb.from("xero_pnl_accounts").upsert(accRows, { onConflict:"tenant_id,period,section,account" });
+            if (upErr) throw upErr;
+            await sb.from("xero_pnl_accounts").delete().eq("tenant_id", t.tenant_id).eq("period", p.key).lt("refreshed_at", runStamp);
+          } else {
+            // genuinely no accounts this month (e.g. dormant) — safe to clear.
+            await sb.from("xero_pnl_accounts").delete().eq("tenant_id", t.tenant_id).eq("period", p.key);
+          }
         }catch(e){ lastErr = lastErr || String(e).slice(0,120); }
         okN++;
       }catch(e){ lastErr=String(e).slice(0,120); }
@@ -893,8 +915,15 @@ async function fetchInvoiceIdsBatch(access, tenant, ids){
   let deleted = r.deleted || 0;
   const returned = new Set(arr.map((iv)=>iv.InvoiceID));
   const missing = ids.filter((id)=> !returned.has(id));
-  if (missing.length){ try { await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).in("invoice_id", missing); deleted += missing.length; } catch(_e){} }
-  return { applied: r.upserted || 0, deleted, error: r.error || null };
+  let pruneErr:any = null;
+  // v148: the prune of Xero-gone invoices used to swallow its error — a failed delete left a VOIDED/PAID
+  // invoice lingering in AR/AP with a stale amount_due forever, while the webhook events were still marked
+  // processed. Surface it so the caller holds the watermark / retries instead of dropping it silently.
+  if (missing.length){
+    const { error } = await sb.from("xero_invoice_cache").delete().eq("tenant_id", tenant).in("invoice_id", missing);
+    if (error) pruneErr = "prune: " + String(error.message||error).slice(0,160); else deleted += missing.length;
+  }
+  return { applied: r.upserted || 0, deleted, error: r.error || pruneErr || null };
 }
 async function processPendingDedup(limit){
   const MAX_CALLS = 30;   // Xero API calls per run (one call = up to 50 invoices batched)
@@ -2956,12 +2985,12 @@ Deno.serve(async (req)=>{
       return j(data || { ok:true });
     }
     if (api === "roles_list") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const { data } = await sb.from("portal_roles").select("*").order("is_system", { ascending:false }).order("name");
       return j({ ok:true, roles: data||[] });
     }
     if (api === "role_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const name = String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9_]/g,"_"); if (!name) return j({ ok:false, error:"name required" });
       const row = { name, label: b.label||name, features: Array.isArray(b.features)?b.features:[], manage_users: !!b.manage_users };
       if (name==="admin") row.manage_users = true;
@@ -2971,7 +3000,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true });
     }
     if (api === "role_delete") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const name = String(b.name||""); if (!name) return j({ ok:false, error:"name required" });
       const { data: sys } = await sb.from("portal_roles").select("is_system").eq("name", name).single();
       if (sys && sys.is_system) return j({ ok:false, error:"cannot delete a system role" });
@@ -3024,18 +3053,18 @@ Deno.serve(async (req)=>{
       return j({ ok:false, verdict:"process_failed", auth, where, detail: err.slice(0,300) });
     }
     if (api === "audit_list") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const { data } = await sb.from("portal_audit").select("*").order("created_at", { ascending:false }).limit(Math.min(Number(b.limit)||120, 300));
       return j({ ok:true, events: data||[] });
     }
     // ── Self-Billed Invoices — companies issue invoices on individuals' behalf, for payment (MY tax/audit) ──
     if (api === "individuals_list") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const { data } = await sb.from("portal_individuals").select("*").eq("active", true).order("name");
       return j({ ok:true, individuals: data||[] });
     }
     if (api === "individual_save") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       const p = b.payee || {};
       if (!String(p.name||"").trim()) return j({ ok:false, error:"Name is required" });
       const row: any = { name:String(p.name).trim(), id_type:p.id_type||'ic', id_no:p.id_no||null, tin:p.tin||null,
@@ -3050,7 +3079,7 @@ Deno.serve(async (req)=>{
       return j({ ok:true, individual: res.data });
     }
     if (api === "individual_delete") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       if (!b.id) return j({ ok:false, error:"id required" });
       const { count } = await sb.from("portal_self_billed_invoices").select("id",{count:"exact",head:true}).eq("individual_id", Number(b.id));
       if (count && count>0){ await sb.from("portal_individuals").update({ active:false }).eq("id", Number(b.id)); return j({ ok:true, soft:true }); }
@@ -3739,7 +3768,7 @@ Deno.serve(async (req)=>{
     }
     if (api === "pnl_refresh") {
       // Refresh the real-P&L cache from Xero for all tenants (used by the dashboard for accurate numbers).
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const { data: tn } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
       const results = await refreshPnlCache(access, tn||[], Number(b.months)||12);
@@ -3760,7 +3789,7 @@ Deno.serve(async (req)=>{
       // invoice sits at rate 1 and its base-currency amount equals its foreign amount.
       // Re-fetch just the non-MYR invoices from Xero and store the real CurrencyRate.
       // total_base / amount_due_base are generated columns, so they correct themselves.
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);  // v148: group-wide action — not a single-company admin
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const { data: rows, error: selErr } = await sb.from("xero_invoice_cache")
         .select("tenant_id,invoice_id").neq("currency","MYR").limit(5000);
@@ -3989,19 +4018,34 @@ Deno.serve(async (req)=>{
       return j({ ok:true, results });
     }
     if (api === "sessions_list") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v148 (BLOCKER fix): this used to return token_full — the real bearer token for EVERY user in EVERY
+      // company — to any admin. A single-company admin could lift a full-scope admin's token and replay it
+      // (total account takeover). Now: full-scope admins only, NO token is ever returned, and the revoke
+      // handle is a SHA-256 of the token (opaque, can't be replayed as a bearer).
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("portal_sessions").select("token,user_id,created_at,last_seen_at").order("last_seen_at", { ascending:false, nullsFirst:false });
       const { data: users } = await sb.from("portal_users").select("id,email,name,role");
       const u = {}; (users||[]).forEach((x)=>{ u[x.id]=x; });
-      const sessions = (data||[]).map((s)=>({ token_short: (s.token||"").slice(0,10) + "â€¦", token_full: s.token, user_email: (u[s.user_id]||{}).email, user_name: (u[s.user_id]||{}).name, user_role: (u[s.user_id]||{}).role, created_at: s.created_at, last_seen_at: s.last_seen_at, is_self: s.token === b.token }));
+      const sessions = [];
+      for (const s of (data||[])){
+        const sid = await sha256Hex(String(s.token||""));
+        sessions.push({ sid, token_short: (String(s.token||"").slice(0,10)) + "…", user_email: (u[s.user_id]||{}).email, user_name: (u[s.user_id]||{}).name, user_role: (u[s.user_id]||{}).role, created_at: s.created_at, last_seen_at: s.last_seen_at, is_self: s.token === b.token });
+      }
       return j({ ok:true, sessions });
     }
     if (api === "session_revoke") {
-      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      if (!b.session_token) return j({ ok:false, error:"session_token required" });
-      const { error } = await sb.from("portal_sessions").delete().eq("token", b.session_token);
+      // Revoke by the opaque sid (SHA-256 of the token) — the caller never holds the real token. Full-scope
+      // admins only; a caller can always revoke their OWN session via b.token.
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized" }, 401);
+      const sid = String(b.sid||"");
+      if (!sid) return j({ ok:false, error:"sid required" });
+      const { data: rows } = await sb.from("portal_sessions").select("token");
+      let target: string|null = null;
+      for (const r of (rows||[])){ if (await sha256Hex(String(r.token||"")) === sid){ target = r.token; break; } }
+      if (!target) return j({ ok:false, error:"session not found" });
+      const { error } = await sb.from("portal_sessions").delete().eq("token", target);
       if (error) return j({ ok:false, error: error.message });
-      await logAudit(me, "session_revoke", String(b.session_token||"").slice(0,10)+"â€¦", {});
+      await logAudit(me, "session_revoke", sid.slice(0,10)+"…", {});
       return j({ ok:true });
     }
     if (api === "export_log") {
@@ -4496,7 +4540,7 @@ Deno.serve(async (req)=>{
       const bankAccount = String(f.bankAccount||"").replace(/\D/g,"").slice(0,20) || null; // digits only, max 20, trimmed
       const bankHolder = String(f.bankHolder||"").trim() || null;
       const patch: any = {
-        name:f.name, ic_no:f.ic||null, email:f.email||null, dept:f.dept||null, position:f.position||null,
+        name:f.name, ic_no:f.ic||null, email:f.email||null, position:f.position||null,
         employment_type: (["Full-time","Part-time","Contract","Intern","Probation"].indexOf(String(f.employmentType))>=0 ? f.employmentType : "Full-time"),
         basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
         bank_code:bankCode, bank_name:bankName, bank_account:bankAccount, bank_holder:bankHolder,
@@ -4523,6 +4567,12 @@ Deno.serve(async (req)=>{
         patch.status = st;
         patch.resign_date = st==="resigned" ? (String(f.resignDate||"").slice(0,10) || new Date(Date.now()+8*3600*1000).toISOString().slice(0,10)) : null;
       }
+      // v148 (data-loss fix): Department became a 2-option dropdown, which pre-selects BLANK for any legacy
+      // value (e.g. "IPROCARE"). Writing dept unconditionally then wiped that value to null whenever an admin
+      // saved an unrelated field. Guard it exactly like status: only write dept when a non-blank value is sent,
+      // so editing salary/bank/etc never clears a department the admin didn't touch.
+      if (f.dept !== undefined && String(f.dept).trim() !== "") patch.dept = String(f.dept).trim();
+      else if (!f.id) patch.dept = null;   // a brand-new employee with no team selected → explicit null is fine
       let res:any;
       if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
       else {
@@ -5836,7 +5886,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v147: P&L Analysis rows keep the Xero report order (Excel row-for-row) — parsePnl records a monotonic seq per account, refreshPnlCache stores it in xero_pnl_accounts.seq, and portal_pnl_analysis orders rows by (section, seq, name) instead of alphabetically. Also the RPC normalizes Xero section titles (Income→Trading Income etc.) and fixes the % denominator so occupancy-of-revenue shows. Run pnl_refresh once to populate seq. v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v148: security + correctness audit fixes. BLOCKER: sessions_list no longer returns token_full (a scoped admin could lift a full-scope admin's bearer token → total account takeover) — now full-scope-admin-only, returns an opaque SHA-256 sid, revoke by sid. Group-wide admin actions (sessions_list/session_revoke/audit_list/roles_*/individuals_*/pnl_refresh/fx_backfill) gated on new isFullScopeAdmin() not superAdmin() so a single-company admin can't read/write every company. BLOCKER: hr_emp_save no longer wipes Department to null when the 2-option dropdown pre-selects blank for a legacy value (guarded like status). refreshPnlCache upserts-then-deletes-stale (never blanks a month). fetchInvoiceIdsBatch surfaces its prune-delete error. Frontend: session revoke uses sid; mobile input-width no longer distorts OCR/AP/Quick-Invoice grids; hros money formatter pinned en-MY. v147: P&L Analysis rows keep the Xero report order (Excel row-for-row) — parsePnl records a monotonic seq per account, refreshPnlCache stores it in xero_pnl_accounts.seq, and portal_pnl_analysis orders rows by (section, seq, name) instead of alphabetically. Also the RPC normalizes Xero section titles (Income→Trading Income etc.) and fixes the % denominator so occupancy-of-revenue shows. Run pnl_refresh once to populate seq. v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
