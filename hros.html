@@ -956,6 +956,83 @@ select:focus-visible,input:focus-visible,textarea:focus-visible,a[onclick]:focus
 /* Viewer (read-only) — hide commit CTAs (backend also blocks all writes) */
 .viewer-mode .btn.p,.viewer-mode .btn.d,.viewer-mode .hr-write{ display:none !important; }
 .viewer-badge{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:var(--w-semi); background:var(--info-bg); color:var(--info-soft); }
+
+/* ════════════════════════════════════════════
+   v10 — Market-grade refinement (settles the cascade)
+   Presentation-only · token-driven · additive · light + dark.
+   Goals: one consistent control system, calmer rhythm, and a
+   real mobile touch-target / legibility pass. No JS/HTML changes.
+   ════════════════════════════════════════════ */
+
+/* — Type ladder: comfortable line-heights + tightened headings — */
+.page-title{ line-height:1.12; letter-spacing:-.02em; }
+.panel h3,.modal h3{ line-height:1.25; letter-spacing:-.01em; }
+.card .l,.side-group,.page-eyebrow{ line-height:1.2; }
+.emp-meta,.page-sub,.notif-item .nd{ line-height:1.5; }
+
+/* — Rhythm: a little more breathing room on desktop surfaces (Wix breathes).
+     Guarded to desktop so the existing mobile padding reductions still win. — */
+@media(min-width:641px){
+  .panel{ padding:var(--sp-6); }
+  .card{ padding:var(--sp-5); }
+  .bigtable th,.bigtable td{ padding:13px 16px; }
+}
+
+/* — Buttons: one consistent height, centered content, calm secondary,
+     unambiguous disabled. Keeps every existing variant intact. — */
+.btn{
+  min-height:36px;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  border-radius:var(--r-sm);
+}
+.btn.sm{ min-height:32px; }
+.btn.xs{ min-height:28px; }
+.btn:disabled,.btn[disabled]{
+  opacity:.45; cursor:not-allowed; box-shadow:none; filter:none; transform:none;
+}
+.btn:disabled::after{ opacity:0; }
+
+/* — Inputs / selects / textareas: one shared control height + radius — */
+select,input:not([type=file]){ min-height:38px; border-radius:var(--r-sm); }
+textarea{ min-height:82px; border-radius:var(--r-sm); }
+.side-company select{ min-height:38px; }
+
+/* — Cards / panels: consistent calm radius — */
+.panel,.tbl-wrap,.card,.emp-card{ border-radius:var(--r-lg); }
+
+/* — Chips / pills: consistent pill geometry across the app — */
+.pill,.page-chip,.role-chip,.emp-no,.viewer-badge{ border-radius:var(--r-pill); line-height:1.4; }
+
+/* — Financial figures stay tabular so columns line up — */
+.emp-sal .v,.card .n,.amt,td.amt{ font-variant-numeric:tabular-nums lining-nums; }
+
+/* ── Mobile pass (≤640px): thumb-friendly targets, legible forms,
+      no horizontal overflow. Employees run HR OS on phones. ── */
+@media(max-width:640px){
+  /* Every primary tappable control clears the 44px touch minimum */
+  .btn{ min-height:44px; }
+  .btn.sm,.btn.xs{ min-height:40px; }
+  .top .btn{ padding:11px 15px; font-size:13px; }
+  .row-act .btn{ min-height:40px; }
+  .side-link{ min-height:44px; padding:11px 14px; }
+  .side-foot-btn{ min-height:44px; }
+  .tab,.tab-cat{ min-height:44px; display:inline-flex; align-items:center; }
+  .modal-close{ min-width:44px; min-height:44px; }
+  .emp-mobtop-actions button{ width:44px; height:44px; }
+
+  /* Form controls: full-width, ≥44px, 16px text to stop iOS zoom-on-focus */
+  select,input:not([type=file]),textarea,.side-company select{
+    min-height:44px; font-size:16px;
+  }
+  .fld select,.fld input:not([type=file]),.fld textarea{ width:100%; }
+
+  /* Trim oversized desktop paddings on phones */
+  .page-head{ margin-bottom:16px; padding-bottom:14px; }
+  .empty{ padding:44px 20px; }
+
+  /* Long unbroken tokens (emails / ids) must not push the page sideways */
+  .emp-name,.emp-meta,.notif-item .nt,.notif-item .nd{ overflow-wrap:anywhere; }
+}
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
