@@ -2115,6 +2115,23 @@ async function sendAlertEmail(subject, body){
   } catch(e){ return { ok:false, error:String(e).slice(0,300) }; }
   finally { if (smtpClient){ try { await smtpClient.close(); } catch(_e){} } }
 }
+// v146: general one-off email to an arbitrary recipient (login credentials etc). Reuses the same
+// Gmail SMTP as the watchdog. Best-effort — returns {ok,error}, never throws, so a bulk caller can
+// report per-recipient success without one failure aborting the batch.
+async function sendEmailTo(to, subject, body, fromName){
+  const gmailUser = Deno.env.get("GMAIL_USER");
+  const gmailPass = Deno.env.get("GMAIL_APP_PASSWORD");
+  if (!gmailUser || !gmailPass) return { ok:false, error:"no gmail creds (set GMAIL_USER + GMAIL_APP_PASSWORD edge secrets)" };
+  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to))) return { ok:false, error:"invalid recipient" };
+  let smtpClient: any = null;
+  try {
+    const { SMTPClient } = await import("https://deno.land/x/denomailer@1.6.0/mod.ts");
+    smtpClient = new SMTPClient({ connection:{ hostname:"smtp.gmail.com", port:465, tls:true, auth:{ username: gmailUser, password: gmailPass } } });
+    await smtpClient.send({ from: (fromName||"CTG HR OS") + " <" + gmailUser + ">", to, subject, content: body });
+    return { ok:true, to };
+  } catch(e){ return { ok:false, error:String(e).slice(0,300) }; }
+  finally { if (smtpClient){ try { await smtpClient.close(); } catch(_e){} } }
+}
 async function handleWebhook(req, sig){
   const key = await getWebhookKey();
   const raw = await req.text();
@@ -4240,6 +4257,61 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_user_invite",email,{ role });
       return j({ ok:true, email, temp_password:pass, role });
     }
+    if (api === "hr_send_logins") {
+      // v146: reset + email login credentials to the employees of ONE company. superAdmin only,
+      // tenant-scoped. `test:true` sends a single probe to the caller's own inbox and touches NO
+      // passwords — always run that first to confirm SMTP before a real batch. The real run returns
+      // every temp password in the response so a failed email never leaves anyone locked out with a
+      // credential nobody has.
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"tenant required" });
+      const alw = await allowedTenants(b.token);
+      if (alw.indexOf(tenant) < 0) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
+      const loginUrl = String(b.login_url||"https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html");
+      const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", tenant).maybeSingle();
+      const coName = (tn && tn.tenant_name) || "your company";
+      const mkBody = (name, email, pass)=>(
+        "Hi "+name+",\n\n"+
+        "Your HR OS login for "+coName+" is ready.\n\n"+
+        "Portal: "+loginUrl+"\n"+
+        "Email: "+email+"\n"+
+        "Temporary password: "+pass+"\n\n"+
+        "For security you will be asked to set your own password on first login.\n\n"+
+        "———\n"+
+        "您好 "+name+",\n\n"+
+        coName+" 的 HR OS 登入已开通。\n\n"+
+        "网址："+loginUrl+"\n"+
+        "登入邮箱："+email+"\n"+
+        "临时密码："+pass+"\n\n"+
+        "首次登入后系统会要求您设置自己的新密码。\n\n"+
+        "— CTG HR OS"
+      );
+      // TEST MODE — verify SMTP end-to-end without changing a single password.
+      if (b.test === true){
+        const probe = await sendEmailTo(me.user.email, "HR OS — test email (no action taken)",
+          "This is a test from HR OS to confirm email delivery works before sending employee logins. No passwords were changed.\n\n这是一封测试信,确认发信功能正常后才会寄送员工登入资料。没有任何密码被更改。", "CTG HR OS");
+        return j({ ok: probe.ok, test:true, sent_to: me.user.email, error: probe.error });
+      }
+      // REAL RUN — employees of this tenant only.
+      const { data: uc } = await sb.from("portal_user_companies").select("user_id").eq("tenant_id", tenant);
+      const ids = (uc||[]).map((r:any)=>r.user_id);
+      if (!ids.length) return j({ ok:false, error:"no users assigned to this company" });
+      const { data: users } = await sb.from("portal_users").select("id,email,name,role").in("id", ids).eq("role","employee").order("name");
+      const targets = (users||[]).filter((u:any)=> u.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email));
+      const results:any[] = [];
+      for (const u of targets){
+        const pass = "Ctg"+Math.random().toString(36).slice(2,7)+Math.floor(Math.random()*90+10)+"!";
+        const { data: rr, error: re } = await sb.rpc("portal_admin_reset_password", { p_user_id: u.id, p_new_pass: pass });
+        if (re || !(rr && rr.ok)){ results.push({ name:u.name, email:u.email, reset:false, emailed:false, error: (re && re.message) || (rr && rr.error) || "reset failed" }); continue; }
+        const em = await sendEmailTo(u.email, "Your HR OS login — "+coName, mkBody(u.name||u.email, u.email, pass), "CTG HR OS");
+        results.push({ name:u.name, email:u.email, temp_password:pass, reset:true, emailed:em.ok, error: em.ok?undefined:em.error });
+      }
+      const emailedN = results.filter((r)=>r.emailed).length;
+      const resetN = results.filter((r)=>r.reset).length;
+      await logAudit(me, "hr_send_logins", tenant, { total:targets.length, reset:resetN, emailed:emailedN });
+      return j({ ok:true, company:coName, total:targets.length, reset:resetN, emailed:emailedN, results });
+    }
     if (api === "hr_bootstrap") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||"");
@@ -5763,7 +5835,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
