@@ -42,6 +42,10 @@
   --panel:var(--surface);
   --panel-2:var(--surface2);
   --panel-border:var(--border);
+  /* Radius scale — one calm rounding system shared across surfaces (v9 cohesion). */
+  --r-sm:8px;
+  --r-md:11px;
+  --r-lg:14px;
 }
 *{box-sizing:border-box}
 body{
@@ -870,6 +874,76 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .tab-cat.active{ color:#fff; background:linear-gradient(135deg,var(--coral),var(--coral-deep)); box-shadow:0 2px 8px -2px rgba(224,78,43,.45); }
 :root[data-theme="light"] .tab{ color:var(--muted); }
 :root[data-theme="light"] .sub{ color:var(--muted); }
+
+/* ════════════════════════════════════════════
+   v9 — COHESION & MOBILE REFINEMENT LAYER
+   Brings every tab up to the P&L tab's premium bar and gives mobile a
+   dedicated pass. Presentation only; appended last so it settles the
+   cascade. All colour via existing --vars so light theme keeps resolving.
+   Nothing here renames/removes a class, id, or --var. Does not touch .pnl-*.
+   ════════════════════════════════════════════ */
+
+/* ── Type ladder: calmer heading rhythm + tabular figures on money ── */
+h1,h2,h3{ line-height:1.25; }
+.panel h3,.modal h3{ line-height:1.3; letter-spacing:-.01em; }
+.card .n,td.amt,.bigtable td.amt,.bigtable th.amt{ font-variant-numeric:tabular-nums lining-nums; }
+
+/* ── One calm rounding system across the main surfaces (uses --r-lg) ── */
+.panel,.card,.tbl-wrap,.modal,.notif-panel{ border-radius:var(--r-lg); }
+.btn,input:not([type=file]),select,textarea,.bar,.pill{ border-radius:var(--r-md); }
+.pill,.role-chip{ border-radius:999px; }
+
+/* ── Cohesion: colored KPI cards echo the P&L tab's thin top accent.
+   Redeclares the full shadow stack so the depth shadow is preserved. ── */
+.card.green,.card.red,.card.blue,.card.amber{
+  box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 18px 40px -28px rgba(0,0,0,.6),inset 0 2px 0 0 var(--accent,transparent);
+}
+.card.green{ --accent:var(--green); }
+.card.red{ --accent:var(--red); }
+.card.blue{ --accent:var(--sky); }
+.card.amber{ --accent:var(--amber); }
+
+/* ── Long text (emails, company names) wraps instead of forcing overflow ── */
+.who,.notif-item .nt,.notif-item .nd,.bigtable td,.card .l{ overflow-wrap:anywhere; }
+td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
+
+/* ── Momentum scroll inside the tables' own containers (never the body) ── */
+.tbl-wrap,.pnl-wrap{ -webkit-overflow-scrolling:touch; }
+
+/* ── Desktop breathing room — GUARDED so mobile stays tight ── */
+@media(min-width:641px){
+  .panel{ padding:22px 24px; }
+  .bigtable th,.bigtable td{ padding:13px 18px; }
+  .bar{ padding:13px 16px; }
+  .cards{ gap:14px; }
+  .modal{ padding:28px; }
+}
+
+/* ════ MOBILE — dedicated responsive pass ════ */
+@media(max-width:640px){
+  /* iOS focus-zoom guard: form controls must be ≥16px and thumb-tall (≥44px). */
+  input:not([type=file]),select,textarea{ font-size:16px; min-height:44px; width:100%; }
+  textarea{ min-height:96px; }
+  .fld select,.fld input:not([type=file]),.fld textarea{ width:100%; }
+  /* Keep dense editable grids intact — don't force those inputs full-width. */
+  .bigtable input,.bigtable select,table[data-list] input,table[data-list] select{ width:auto; }
+  /* Touch targets ≥44px on every tappable control. */
+  .btn{ min-height:44px; padding:11px 15px; font-size:13px; }
+  .btn.sm,.btn.xs{ min-height:40px; }
+  .tab{ min-height:44px; padding:11px 15px; display:inline-flex; align-items:center; }
+  .tab-cat{ min-height:44px; padding:10px 14px; display:inline-flex; align-items:center; }
+  .row-act{ gap:8px; flex-wrap:wrap; }
+  .row-act .btn{ min-height:40px; }
+  .modal-close{ min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; }
+  .bell{ min-width:44px; min-height:44px; }
+  /* Trim oversized desktop padding. */
+  .panel{ padding:15px 13px; }
+  /* Category nav: thumb-friendly; scroll sideways if a row overflows rather
+     than crushing chips (page body itself still never scrolls sideways). */
+  .tab-cats{ flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .tab-cats::-webkit-scrollbar{ display:none; }
+  .tab-cat{ flex:0 0 auto; }
+}
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
