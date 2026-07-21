@@ -940,9 +940,6 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="cfo"      data-cat="dashboard"  onclick="tab('cfo')"        id="tab-cfo">🎯 CFO Cockpit</div>
     <div class="tab active" data-t="overview" data-cat="dashboard"  onclick="tab('overview')">📊 Overview</div>
     <div class="tab"        data-t="pnl"      data-cat="dashboard"  onclick="tab('pnl')"        id="tab-pnl">📑 P&amp;L Analysis</div>
-    <div class="tab"        data-t="smart"    data-cat="dashboard"  onclick="tab('smart')"      id="tab-smart">🧠 Smart</div>
-    <div class="tab"        data-t="recv"     data-cat="dashboard"  onclick="tab('recv')"       id="tab-recv">💰 Receivables</div>
-    <div class="tab"        data-t="cashflow" data-cat="dashboard"  onclick="tab('cashflow')"   id="tab-cashflow">📈 Cashflow</div>
     <!-- Operations -->
     <div class="tab"        data-t="approvals"   data-cat="operations" onclick="tab('approvals')"   id="tab-appr">✅ Approvals</div>
     <div class="tab"        data-t="collections" data-cat="operations" onclick="tab('collections')" id="tab-coll">📨 Collections</div>
@@ -976,16 +973,13 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="gateway"     class="hide"></div>
   <div id="bankfeed"    class="hide"></div>
   <div id="salesrecon"  class="hide"></div>
-  <div id="recv"        class="hide"></div>
   <div id="pnl"         class="hide"></div>
-  <div id="smart"       class="hide"></div>
   <div id="close"       class="hide"></div>
   <div id="recon"       class="hide"></div>
   <div id="users"       class="hide"></div>
   <div id="info"        class="hide"></div>
   <div id="pharm"       class="hide"></div>
   <div id="calendar"    class="hide"></div>
-  <div id="cashflow"    class="hide"></div>
   <div id="ocr"         class="hide"></div>
   <div id="ap"          class="hide"></div>
 
@@ -1271,12 +1265,12 @@ function logout(){storageRemove('ctg_portal_token');location.href='index.html';}
 
 function roleLabel(r){return r==='admin'?'Admin':r==='approver'?'Approver':'Viewer';}
 
-const ALL_FEATURES=['cfo','overview','approvals','collections','upload','o2o','qinv','recv','pnl','smart','close','recon'];
+const ALL_FEATURES=['cfo','overview','approvals','collections','upload','o2o','qinv','pnl','close','recon'];
 function fallbackPerms(){
   // Used only if my_perms can't be reached — keeps the user from being locked out.
   const appr=ME.role==='admin'||ME.role==='approver';
   return { role:ME.role, label:roleLabel(ME.role),
-    features: appr?ALL_FEATURES.slice():['overview','recv','pnl'],
+    features: appr?ALL_FEATURES.slice():['overview','pnl'],
     manage_users: ME.role==='admin' };
 }
 async function showApp(){
@@ -1299,7 +1293,6 @@ async function showApp(){
     else if(t==='info') el.classList.remove('hide');     // Company Info: always visible (gated server-side)
     else if(t==='pharm') el.classList.remove('hide');    // Pharmacies: gated server-side by SKINDAE access
     else if(t==='calendar') el.classList.remove('hide'); // Compliance Calendar: gated server-side
-    else if(t==='cashflow') el.classList.remove('hide'); // Cashflow forecast: gated server-side
     else if(t==='ocr') el.classList.toggle('hide', true); // OCR HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
     else if(t==='ap') el.classList.toggle('hide', true);  // AP Inbox HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
@@ -1351,9 +1344,9 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','recv','pnl','smart','close','recon','users','info','pharm','calendar','cashflow','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','pnl','close','recon','users','info','pharm','calendar','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    const asyncTabs = ['cfo','overview','approvals','collections','recv','pnl','smart','close','users','info','pharm','calendar','cashflow','ap','selfbill'];
+    const asyncTabs = ['cfo','overview','approvals','collections','pnl','close','users','info','pharm','calendar','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -1366,10 +1359,10 @@ function reloadActive(){const a=document.querySelector('.tab.active');const t=a?
   render(t);}
 function onCompany(){
   // Switching the top-bar company must re-scope every tenant-aware dashboard tab + drop its cached data.
-  loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.recv=false; loaded.pnl=false; loaded.cashflow=false;
+  loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.pnl=false;
   CFO_DATA=null; FIN_DATA=null; PNL_DATA=null; try{ OV_TREND=null; }catch(_e){}
   const a=document.querySelector('.tab.active'); const t=a?a.dataset.t:'overview';
-  const tenantAware=['overview','approvals','cfo','recv','pnl','cashflow'];
+  const tenantAware=['overview','approvals','cfo','pnl'];
   if(tenantAware.indexOf(t)>=0) render(t);
 }
 function curCo(){return document.getElementById('company').value;}
@@ -1389,16 +1382,13 @@ async function render(t){
     if(t==='gateway')    return renderGateway();
     if(t==='bankfeed')   return renderBankFeed();
     if(t==='salesrecon') return renderSalesRecon();
-    if(t==='recv')       return renderRecv();
     if(t==='pnl')        return await renderPnl();
-    if(t==='smart')      return renderSmart();
     if(t==='close')      return renderClose();
     if(t==='recon')      return renderRecon();
     if(t==='users')      return renderUsers();
     if(t==='info')       return renderInfo();
     if(t==='pharm')      return renderPharm();
     if(t==='calendar')   return renderCalendar();
-    if(t==='cashflow')   return renderCashflow();
     if(t==='ocr')        return renderOcr();
     if(t==='ap')         return renderAp();
   }catch(x){
@@ -2516,15 +2506,9 @@ function idleLogout(){ if(!TOKEN) return; storageRemove('ctg_portal_token'); TOK
 /* ── In-app alert centre (bell) ── */
 var NOTIFS=[];
 var SEV_COL={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
-function computeAlerts(ov,pend,recv){
-  var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
+function computeAlerts(ov,pend){
+  var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[];
   var a=[];
-  var overdue=items.filter(function(i){return i.days_overdue>0;});
-  var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
-  if(overdue.length){ var top=overdue.slice().sort(function(x,y){return y.amount_due-x.amount_due;})[0];
-    a.push({sev:'high',t:M(odtot)+' overdue across '+overdue.length+' invoices',d:'Biggest: '+(top.contact||'?')+' '+M(top.amount_due)+' ('+top.days_overdue+'d)',tab:'recv'}); }
-  var aged=overdue.filter(function(i){return i.days_overdue>60;});
-  if(aged.length) a.push({sev:'high',t:aged.length+' invoice(s) 60+ days overdue',d:'High collection risk — consider escalating',tab:'recv'});
   var payDue=bills.reduce(function(s,b){return s+(+b.total||0);},0);
   if(bills.length) a.push({sev:'med',t:bills.length+' bill(s) awaiting approval',d:M(payDue)+' total pending your review',tab:'approvals'});
   var big=bills.filter(function(b){return (+b.total||0)>5000;});
@@ -2539,11 +2523,10 @@ async function loadNotifs(){
   try{
     var feats=(PERMS&&PERMS.features)||[];
     var jobs=[ feats.indexOf('overview')>=0?call({api:'overview'}):Promise.resolve(null),
-               feats.indexOf('approvals')>=0?call({api:'pending'}):Promise.resolve(null),
-               feats.indexOf('recv')>=0?call({api:'receivables'}):Promise.resolve(null) ];
+               feats.indexOf('approvals')>=0?call({api:'pending'}):Promise.resolve(null) ];
     var s=await Promise.allSettled(jobs);
-    var ov=s[0].status==='fulfilled'?s[0].value:null, pend=s[1].status==='fulfilled'?s[1].value:null, recv=s[2].status==='fulfilled'?s[2].value:null;
-    NOTIFS=computeAlerts(ov,pend,recv).filter(function(x){return feats.indexOf(x.tab)>=0;});
+    var ov=s[0].status==='fulfilled'?s[0].value:null, pend=s[1].status==='fulfilled'?s[1].value:null;
+    NOTIFS=computeAlerts(ov,pend).filter(function(x){return feats.indexOf(x.tab)>=0;});
   }catch(e){ NOTIFS=[]; }
   renderNotifBadge();
 }
@@ -4274,28 +4257,6 @@ async function qiCreate(){
   });
 }
 
-/* ---- Receivables ---- */
-function renderRecv(){
-  var scope=cfoScopeName();
-  document.getElementById('recv').innerHTML='<div class="panel"><div class="panel-hd"><h3>Receivables · who owes you'+(scope?(' · '+esc(scope)):'')+'</h3><button class="btn p" onclick="recvLoad()">↻ Load from Xero</button></div><div id="recv_out" class="muted">Click load (queries '+(scope?esc(scope):'all companies')+' live in Xero).</div></div>';
-  loaded.recv=true;
-}
-async function recvLoad(){
-  document.getElementById('recv_out').innerHTML='<div class="load"><span class="spin"></span>Querying Xero…</div>';
-  try{ var r=await call({api:'receivables', tenant:curCo()||undefined});
-    if(r&&r.ok){
-      var overdue=r.items.filter(function(i){return i.days_overdue>0;}); var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
-      var rows=r.items.map(function(i){ var cls=i.days_overdue>0?' style="color:var(--red-soft)"':'';
-        return '<tr><td>'+esc(i.tenant_name||'')+'</td><td>'+esc(i.contact||'—')+'</td><td>'+esc(i.number||'')+'</td><td class="amt">'+M(i.amount_due)+'</td><td>'+esc(i.due_date||'')+'</td><td class="amt"'+cls+'>'+(i.days_overdue>0?i.days_overdue+'d':'—')+'</td></tr>';
-      }).join('');
-      document.getElementById('recv_out').innerHTML=
-        '<div class="cards"><div class="card"><div class="n" style="color:var(--sky-soft)">'+M(r.total)+'</div><div class="l">Total outstanding</div></div>'+
-        '<div class="card"><div class="n" style="color:var(--red-soft)">'+M(odtot)+'</div><div class="l">Overdue ('+overdue.length+')</div></div></div>'+
-        '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th>Customer</th><th>Invoice</th><th class="amt">Due</th><th>Due date</th><th class="amt">Overdue</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" class="muted">Nothing outstanding ✓</td></tr>')+'</tbody></table></div>';
-    } else { document.getElementById('recv_out').innerHTML='<div style="color:var(--red-soft)">'+esc((r&&r.error)||'failed')+'</div>'; }
-  }catch(e){ document.getElementById('recv_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
-}
-
 /* ---- P&L Analysis (mirrors the CTG Xero P&L export: months across, accounts down) ---- */
 var PNL_DATA=null, PNL_MONTHS=6, PNL_SHOW_ZERO=false;
 var PNL_BLOCK_ORDER=['STAFF','CTG','BD&M','G&A','FIN','OTHER'];
@@ -4736,7 +4697,7 @@ var FEATURE_META=[
   ['cfo','🎯 CFO Cockpit'],
   ['overview','📊 Overview'],['approvals','✅ Approvals'],['collections','📨 Collections'],
   ['upload','⬆ Upload'],['o2o','💊 O2O Billing'],['qinv','🧾 Quick Invoice'],
-  ['recv','💰 Receivables'],['pnl','📑 P&L Analysis'],['smart','🧠 Smart'],
+  ['pnl','📑 P&L Analysis'],
   ['close','📋 Close'],['recon','🏦 Bank Rec']
 ];
 async function rolesLoad(){
@@ -5156,44 +5117,6 @@ async function arRunCollections(){
   }catch(e){ toast(e.message,true); }
 }
 
-
-/* ---- Smart checks & insights (rule-based, no key needed) ---- */
-function renderSmart(){
-  document.getElementById('smart').innerHTML='<div class="panel"><div class="panel-hd"><h3>🧠 Smart checks &amp; insights <span class="muted" style="font-size:12px;font-weight:400">· all companies</span></h3><button class="btn p" onclick="smartLoad()">↻ Run analysis</button></div><div id="smart_out" class="muted">Scanning your bills, cash &amp; receivables…</div></div>';
-  loaded.smart=true; smartLoad();
-}
-async function smartLoad(){
-  document.getElementById('smart_out').innerHTML='<div class="load"><span class="spin"></span>Analysing your live data…</div>';
-  try{
-    // Group insights: overview + pending are group-only, so receivables is group-wide too (consistent scope).
-    var _r=await Promise.allSettled([call({api:'overview'}),call({api:'pending'}),call({api:'receivables'})]);
-    var ov=_r[0].status==='fulfilled'?_r[0].value:null; var pend=_r[1].status==='fulfilled'?_r[1].value:null; var recv=_r[2].status==='fulfilled'?_r[2].value:null;
-    var companies=(ov&&ov.companies)||[]; var bills=(pend&&pend.bills)||[]; var items=(recv&&recv.items)||[];
-    var alerts=[];
-    var seen={};
-    bills.forEach(function(b){ var key=(b.contact||'')+'|'+(Number(b.total)||0).toFixed(2);
-      if(seen[key]) alerts.push({sev:'high',t:'Possible duplicate bill',d:esc(b.contact||'?')+' · '+M(b.total)+' appears more than once in pending bills'});
-      seen[key]=true; });
-    var noDue=bills.filter(function(b){return !b.due;}); if(noDue.length) alerts.push({sev:'med',t:noDue.length+' bill(s) missing a due date',d:'Add due dates for correct payment &amp; collection timing'});
-    var big=bills.filter(function(b){return (Number(b.total)||0)>5000;}); if(big.length){ big.sort(function(a,b){return b.total-a.total;}); alerts.push({sev:'med',t:big.length+' large bill(s) over RM 5,000',d:'Review before approving — largest: '+esc(big[0].contact||'?')+' '+M(big[0].total)}); }
-    companies.filter(function(c){return (Number(c.net_profit)||0)<0;}).forEach(function(c){ alerts.push({sev:'med',t:'Running at a loss: '+esc(c.tenant_name),d:'Net profit '+M(c.net_profit)+' YTD'}); });
-    var overdue=items.filter(function(i){return i.days_overdue>0;}); var odtot=overdue.reduce(function(s,i){return s+i.amount_due;},0);
-    if(overdue.length){ var top=overdue.slice().sort(function(a,b){return b.amount_due-a.amount_due;})[0]; alerts.push({sev:'high',t:M(odtot)+' overdue across '+overdue.length+' invoices',d:'Biggest: '+esc(top.contact||'?')+' '+M(top.amount_due)+' ('+top.days_overdue+' days)'}); }
-    var aged=overdue.filter(function(i){return i.days_overdue>60;}); if(aged.length) alerts.push({sev:'high',t:aged.length+' invoice(s) over 60 days overdue',d:'High collection risk — consider escalating'});
-    var cash=companies.reduce(function(s,c){return s+ (+c.bank||0);},0);
-    var payDue=bills.reduce(function(s,b){return s+ (+b.total||0);},0);
-    var insights='<div class="cards">'+
-      '<div class="card"><div class="n" style="color:var(--sky-soft)">'+M(cash)+'</div><div class="l">Total cash</div></div>'+
-      '<div class="card"><div class="n" style="color:var(--amber)">'+M(payDue)+'</div><div class="l">Bills awaiting approval</div></div>'+
-      '<div class="card"><div class="n" style="color:'+(odtot>0?'var(--red-soft)':'var(--green-soft)')+'">'+M(odtot)+'</div><div class="l">Overdue receivables</div></div>'+
-      '<div class="card"><div class="n" style="color:'+(cash>payDue?'var(--green-soft)':'var(--red-soft)')+';font-size:18px">'+(cash>payDue?'✓ Healthy':'⚠ Tight')+'</div><div class="l">Cash vs payables</div></div></div>';
-    var sevC={high:'var(--red-soft)',med:'var(--amber)',low:'var(--sky-soft)'};
-    var aHtml = alerts.length ? alerts.map(function(a){return '<div style="padding:12px 14px;border:1px solid var(--border);border-left:3px solid '+sevC[a.sev]+';border-radius:9px;margin-bottom:8px;background:var(--surface2)"><div style="font-weight:700;font-size:13px">'+a.t+'</div><div class="muted" style="font-size:12px">'+a.d+'</div></div>';}).join('')
-      : '<div class="card" style="max-width:360px"><div class="n" style="color:var(--green-soft);font-size:16px">✓ All clear</div><div class="l">No anomalies detected in your current data</div></div>';
-    document.getElementById('smart_out').innerHTML=insights+'<h3 style="font-size:14px;margin:20px 0 10px;color:var(--text)">⚠ Smart alerts ('+alerts.length+')</h3>'+aHtml+
-      '<div class="muted" style="font-size:11px;margin-top:16px;line-height:1.6">Rule-based intelligence over live Xero data — duplicate &amp; anomaly detection, cash-risk &amp; profit insights. Add an AI key in the backend to unlock natural-language CFO Q&amp;A and photo→bill extraction.</div>';
-  }catch(e){ document.getElementById('smart_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
-}
 
 /* ---- One-click Excel export ---- */
 function exportCurrent(){
@@ -6443,81 +6366,6 @@ function calRender(){
         (by.upcoming.length?'<tr><td colspan="5" style="background:rgba(91,155,213,.05);font-size:10.5px;color:var(--sky-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 90 DAYS</td></tr>'+rows(by.upcoming):'')+
         (by.distant.length?'<tr><td colspan="5" style="background:rgba(255,255,255,.02);font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.08em;padding:7px 14px">LATER</td></tr>'+rows(by.distant):'')+
         '</tbody></table></div>');
-}
-
-/* ── 📈 Cashflow Forecast ── */
-let CF_DATA=null, CF_DAYS=90, CF_TENANT='', CF_OPENING={};
-async function renderCashflow(){
-  spin('cashflow');
-  try{
-    const r=await call({api:'cashflow_forecast', days:CF_DAYS, tenant:CF_TENANT||undefined, opening:CF_OPENING});
-    if(!r||!r.ok){ document.getElementById('cashflow').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(r&&r.error||'Failed')+'</div></div>'; return; }
-    CF_DATA=r;
-    cfRender();
-    loaded.cashflow=true;
-  }catch(e){ document.getElementById('cashflow').innerHTML='<div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div>'; }
-}
-function cfRender(){
-  const ts=(CF_DATA&&CF_DATA.tenants)||[];
-  // Group totals
-  const gIn=ts.reduce((s,t)=>s+Number(t.inflows_total||0),0);
-  const gOut=ts.reduce((s,t)=>s+Number(t.outflows_total||0),0);
-  const gNet=gIn-gOut;
-  const gLowest=ts.length?Math.min(...ts.map(t=>Number(t.lowest_balance||0))):0;
-  const gNegDays=ts.reduce((s,t)=>s+Number(t.days_negative||0),0);
-  // Controls
-  const daysBtns=[30,60,90,180].map(n=>'<button class="btn'+(CF_DAYS===n?' p':'')+'" style="padding:6px 12px;font-size:12px" onclick="CF_DAYS='+n+';renderCashflow()">'+n+' days</button>').join('');
-  const tenantOpts='<option value="">All companies (group view)</option>'+(COMPANIES||[]).map(c=>'<option value="'+esc(c.tenant_id)+'"'+(CF_TENANT===c.tenant_id?' selected':'')+'>'+esc(c.tenant_name)+'</option>').join('');
-  // Sparkline for one tenant (first one, or selected)
-  const focus = CF_TENANT ? ts.find(t=>t.tenant_id===CF_TENANT) : ts[0];
-  let sparkSvg = '';
-  if(focus && focus.series && focus.series.length){
-    const pts = focus.series;
-    const min = Math.min(...pts.map(p=>Number(p.bal||0)), 0);
-    const max = Math.max(...pts.map(p=>Number(p.bal||0)), 1);
-    const range = (max-min) || 1;
-    const w=720, h=160, pad=10;
-    const xs = pts.map((p,i)=>pad + (i/(pts.length-1||1))*(w-2*pad));
-    const ys = pts.map(p=>pad + (1 - (Number(p.bal||0)-min)/range)*(h-2*pad));
-    const linePath = pts.map((_,i)=>(i===0?'M':'L')+xs[i].toFixed(1)+' '+ys[i].toFixed(1)).join(' ');
-    const areaPath = linePath + ' L '+xs[xs.length-1].toFixed(1)+' '+(h-pad)+' L '+xs[0].toFixed(1)+' '+(h-pad)+' Z';
-    const zeroY = pad + (1 - (0-min)/range)*(h-2*pad);
-    sparkSvg = '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block;background:var(--panel-2);border-radius:10px;padding:8px;margin-top:14px">'+
-      '<defs><linearGradient id="cfgrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3ddc97" stop-opacity=".35"/><stop offset="100%" stop-color="#3ddc97" stop-opacity="0"/></linearGradient></defs>'+
-      '<line x1="'+pad+'" y1="'+zeroY.toFixed(1)+'" x2="'+(w-pad)+'" y2="'+zeroY.toFixed(1)+'" stroke="rgba(239,68,68,.4)" stroke-dasharray="3 3"/>'+
-      '<path d="'+areaPath+'" fill="url(#cfgrad)"/>'+
-      '<path d="'+linePath+'" fill="none" stroke="#3ddc97" stroke-width="2"/>'+
-      '</svg>'+
-      '<div class="muted" style="font-size:11px;text-align:center;margin-top:6px">'+esc((focus&&focus.tenant_name)||'')+' · projected balance over '+CF_DAYS+' days (dashed line = zero)</div>';
-  }
-  // Per-tenant rows
-  const rows = ts.map(t=>{
-    const low=Number(t.lowest_balance||0);
-    const lowColor=low<0?'var(--red-soft)':low<10000?'var(--amber)':'var(--green-soft)';
-    return '<tr><td><b>'+esc(t.tenant_name||'')+'</b></td>'+
-      '<td class="amt" style="color:var(--green-soft)">'+M(t.inflows_total||0)+'</td>'+
-      '<td class="amt" style="color:var(--coral-soft)">'+M(t.outflows_total||0)+'</td>'+
-      '<td class="amt" style="color:'+(Number(t.net_total||0)<0?'var(--red-soft)':'var(--green-soft)')+'"><b>'+M(t.net_total||0)+'</b></td>'+
-      '<td class="amt" style="color:'+lowColor+'">'+M(low)+(t.lowest_balance_date?'<div class="muted" style="font-size:10.5px">on '+esc(String(t.lowest_balance_date).slice(0,10))+'</div>':'')+'</td>'+
-      '<td>'+(Number(t.days_negative||0)>0?'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px">'+t.days_negative+' day(s) ⚠</span>':'<span class="pill pill-green" style="font-size:10px">all positive</span>')+'</td></tr>';
-  }).join('');
-  document.getElementById('cashflow').innerHTML=
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">'+
-      '<select onchange="CF_TENANT=this.value;renderCashflow()" style="min-width:200px">'+tenantOpts+'</select>'+
-      '<div style="display:flex;gap:4px">'+daysBtns+'</div>'+
-      '<span class="muted" style="font-size:11.5px;margin-left:auto;max-width:340px;line-height:1.5">Based on cached AR / AP due dates from Xero. Overdue lumped into day 0. Opening balance defaults to 0 — input per company below to project actual balance.</span>'+
-    '</div>'+
-    '<div class="cards" style="margin-bottom:18px">'+
-      '<div class="card"><div class="n" style="color:var(--green-soft);font-size:20px">'+M(gIn)+'</div><div class="l">Total inflows ('+CF_DAYS+'d)</div></div>'+
-      '<div class="card"><div class="n" style="color:var(--coral-soft);font-size:20px">'+(gOut>0?'-':'')+M(gOut)+'</div><div class="l">Total outflows ('+CF_DAYS+'d)</div></div>'+
-      '<div class="card"><div class="n" style="color:'+(gNet<0?'var(--red-soft)':'var(--green-soft)')+';font-size:20px">'+M(gNet)+'</div><div class="l">Net group cashflow</div></div>'+
-      '<div class="card"><div class="n" style="color:'+(gNegDays>0?'var(--red-soft)':'var(--green-soft)')+';font-size:20px">'+gNegDays+'</div><div class="l">Days projected negative</div></div>'+
-    '</div>'+
-    sparkSvg+
-    (ts.length === 0
-      ? '<div class="empty"><div class="empty-ico">📈</div><div>No data — make sure your Xero invoice cache is synced.</div></div>'
-      : '<div class="tbl-wrap" style="margin-top:14px"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Inflows</th><th class="amt">Outflows</th><th class="amt">Net</th><th class="amt">Lowest projected balance</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div>')+
-    '<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">⚙ <b>Set opening balances</b> for an accurate projection: '+(COMPANIES||[]).map(c=>'<input type="number" placeholder="'+esc(c.tenant_name)+' RM" oninput="CF_OPENING[\''+esc(c.tenant_id)+'\']=Number(this.value)||0" style="width:140px;font-size:11.5px;padding:4px 8px;margin:0 4px 4px 0"/>').join('')+'<button class="btn p" style="padding:5px 12px;font-size:11.5px" onclick="renderCashflow()">Apply</button></div>';
 }
 
 /* ── 🤖 Smart OCR — Receipt → Xero Bill ── */
