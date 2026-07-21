@@ -126,30 +126,70 @@ textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(
 .bigtable tbody tr:hover td{background:rgba(232,93,60,.04)}
 td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600}
 
-/* ── P&L Analysis grid (sticky first column + sticky header) ── */
+/* ── P&L Analysis — premium financial-statement styling ── */
+
+/* KPI cards: quiet numbers, a thin coloured top-accent bar per card, refined delta pill. */
+.pnl-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:2px}
+.pnl-kpi{position:relative;background:linear-gradient(180deg,rgba(19,28,45,.82),rgba(12,20,33,.72));border:1px solid var(--border-strong);border-radius:14px;padding:17px 18px 15px;overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.pnl-kpi:hover{transform:translateY(-3px);border-color:rgba(255,255,255,.16);box-shadow:0 14px 34px rgba(0,0,0,.30)}
+.pnl-kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--kpi-accent,var(--border-strong));opacity:.92}
+.pnl-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:18px;margin-bottom:11px}
+.pnl-kpi-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-soft)}
+.pnl-kpi-n{font-size:26px;font-weight:700;letter-spacing:-.6px;line-height:1.04;font-variant-numeric:tabular-nums}
+.pnl-kpi-sub{font-size:10.5px;color:var(--muted);margin-top:6px;letter-spacing:.2px}
+.pnl-chip{display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;letter-spacing:.2px;line-height:1;font-variant-numeric:tabular-nums;vertical-align:middle;border:1px solid transparent}
+
+/* Segmented control (6 / 12 months) + quiet controls row. */
+.pnl-ctrls{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 16px}
+.pnl-ctrls-r{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.pnl-seg{display:inline-flex;background:rgba(255,255,255,.035);border:1px solid var(--border-strong);border-radius:10px;padding:3px}
+.pnl-seg button{border:none;background:transparent;color:var(--text-soft);font-size:12px;font-weight:600;padding:5px 14px;border-radius:7px;cursor:pointer;font-family:inherit;transition:.15s;letter-spacing:.2px}
+.pnl-seg button:hover{color:#fff}
+.pnl-seg button.on{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;box-shadow:0 3px 10px rgba(232,93,60,.34)}
+.pnl-zero{font-size:11.5px;color:var(--text-soft);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.pnl-zero input{width:auto;margin:0;accent-color:var(--coral);cursor:pointer}
+
+/* Cost-block chart legend. */
+.pnl-legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.pnl-legend span.it{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-soft);letter-spacing:.2px}
+.pnl-legend span.sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+
+/* The grid (statement look): hairline separators, generous cells, sticky frozen column. */
 .pnl-wrap{overflow:auto;max-height:72vh;border-radius:13px;border:1px solid var(--border-strong);position:relative}
 .pnl-grid{border-collapse:separate;border-spacing:0;background:linear-gradient(180deg,rgba(19,28,45,.6),rgba(12,20,33,.5));min-width:100%}
-.pnl-grid th,.pnl-grid td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;white-space:nowrap}
+.pnl-grid th,.pnl-grid td{padding:10px 15px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;white-space:nowrap;line-height:1.35}
 .pnl-grid td.pnl-num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
-.pnl-grid .pnl-pct{display:block;font-size:9.5px;font-weight:400;color:var(--muted);margin-top:1px}
-/* Row tints — data cells scroll, so translucent tints are fine here. */
-.pnl-grid tr.pnl-band td{background:rgba(232,93,60,.10);color:var(--coral-soft);font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.7px}
-.pnl-grid tr.pnl-sub td{background:rgba(255,255,255,.035);font-weight:700}
-.pnl-grid tr.pnl-key td{background:rgba(14,157,103,.11);font-weight:800;font-size:13px;border-top:1px solid var(--border-strong)}
-.pnl-grid tr.pnl-blk td{background:rgba(255,255,255,.02);font-weight:700;font-size:11.5px;color:var(--text-soft)}
-.pnl-grid tbody tr:hover td{background:rgba(232,93,60,.05)}
+.pnl-grid .pnl-pct{display:block;font-size:9.5px;font-weight:400;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+/* Row treatments — data cells scroll, so translucent tints are fine here (the frozen
+   account column below re-states each tint as an OPAQUE hex). */
+/* Section band: quiet uppercase statement header + hairline rule above, no heavy fill. */
+.pnl-grid tr.pnl-band td{background:transparent;color:var(--text-soft);font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:1.4px;border-top:1px solid var(--border-strong);border-bottom-color:transparent;padding-top:17px;padding-bottom:6px}
+/* Cost-block sub-header: lighter still, indented feel. */
+.pnl-grid tr.pnl-blk td{background:rgba(255,255,255,.014);font-weight:700;font-size:10.5px;letter-spacing:.9px;text-transform:uppercase;color:var(--muted)}
+.pnl-grid tr.pnl-blk td.pnl-acc{padding-left:26px}
+/* Subtotal (Total …): medium weight, hairline top border, subtle fill. */
+.pnl-grid tr.pnl-sub td{background:rgba(255,255,255,.03);font-weight:700;border-top:1px solid var(--border)}
+/* Key rows (Gross Profit / Net Profit): the emphasis rows — larger, bold, refined accent. */
+.pnl-grid tr.pnl-key td{font-weight:800;font-size:13.5px;border-top:1px solid var(--border-strong)}
+.pnl-grid tr.pnl-key.gp  td{background:rgba(255,255,255,.05)}
+.pnl-grid tr.pnl-key.pos td{background:rgba(14,157,103,.12)}
+.pnl-grid tr.pnl-key.neg td{background:rgba(232,93,60,.12)}
+.pnl-grid tbody tr:hover td{background:rgba(255,255,255,.035)}
 /* Sticky header row, sticky account column, and the corner where they meet.
    Every sticky background MUST be fully opaque — a translucent tint lets the
    horizontally-scrolled month cells show through the frozen column. */
-.pnl-grid thead th{position:sticky;top:0;z-index:3;color:var(--muted);font-size:10.5px;text-transform:uppercase;font-weight:700;letter-spacing:.6px;background:#0B1220;text-align:right}
-.pnl-grid tbody td.pnl-acc{position:sticky;left:0;z-index:2;background:#0E1626;min-width:260px;max-width:340px;white-space:normal;box-shadow:1px 0 0 var(--border-strong)}
-.pnl-grid tbody tr.pnl-band td.pnl-acc{background:#241D28}
-.pnl-grid tbody tr.pnl-sub  td.pnl-acc{background:#161E2E}
-.pnl-grid tbody tr.pnl-key  td.pnl-acc{background:#0E252D}
-.pnl-grid tbody tr.pnl-blk  td.pnl-acc{background:#131B2A}
-.pnl-grid tbody tr:hover    td.pnl-acc{background:#281A18}
-.pnl-grid thead th.pnl-acc{position:sticky;top:0;left:0;z-index:6;text-align:left;background:#0B1220;min-width:260px;max-width:340px;box-shadow:1px 0 0 var(--border-strong)}
-.pnl-chip{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:middle}
+.pnl-grid thead th{position:sticky;top:0;z-index:3;color:var(--muted);font-size:10px;text-transform:uppercase;font-weight:700;letter-spacing:.7px;background:#0B1220;text-align:right;padding-top:12px;padding-bottom:12px}
+.pnl-grid tbody td.pnl-acc{position:sticky;left:0;z-index:2;background:#0E1626;min-width:260px;max-width:340px;white-space:normal;box-shadow:8px 0 14px -10px rgba(0,0,0,.6),1px 0 0 var(--border)}
+.pnl-grid tbody tr.pnl-band td.pnl-acc{background:#0E1626}
+.pnl-grid tbody tr.pnl-blk  td.pnl-acc{background:#101825}
+.pnl-grid tbody tr.pnl-sub  td.pnl-acc{background:#141D2C}
+.pnl-grid tbody tr.pnl-key.gp  td.pnl-acc{background:#182231}
+.pnl-grid tbody tr.pnl-key.pos td.pnl-acc{background:#0E2129}
+.pnl-grid tbody tr.pnl-key.neg td.pnl-acc{background:#241B1A}
+.pnl-grid tbody tr:hover    td.pnl-acc{background:#182130}
+.pnl-grid thead th.pnl-acc{position:sticky;top:0;left:0;z-index:6;text-align:left;background:#0B1220;min-width:260px;max-width:340px;box-shadow:8px 0 14px -10px rgba(0,0,0,.6),1px 0 0 var(--border)}
+@media(max-width:760px){ .pnl-kpis{grid-template-columns:repeat(2,1fr)} }
+@media(max-width:440px){ .pnl-kpis{grid-template-columns:1fr} }
 
 /* ── Panel ── */
 .panel{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
@@ -4374,7 +4414,8 @@ function pnlChip(cur,prev,inverse){
   if(cur===null||prev===null||cur===undefined||prev===undefined||!prev) return '';
   var p=(cur-prev)/Math.abs(prev)*100; if(!isFinite(p)) return '';
   var up=p>=0, good=inverse?!up:up;
-  return '<span class="pnl-chip" style="background:'+(good?'rgba(14,157,103,.16)':'rgba(232,93,60,.16)')+';color:'+(good?'var(--green-soft)':'var(--coral-soft)')+'">'+(up?'▲':'▼')+Math.abs(p).toFixed(1)+'%</span>';
+  var bg=good?'rgba(14,157,103,.13)':'rgba(232,93,60,.13)', bd=good?'rgba(14,157,103,.30)':'rgba(232,93,60,.30)', fg=good?'var(--green-soft)':'var(--coral-soft)';
+  return '<span class="pnl-chip" style="background:'+bg+';border-color:'+bd+';color:'+fg+'">'+(up?'▲':'▼')+Math.abs(p).toFixed(1)+'%</span>';
 }
 
 // Stacked bars — cost blocks per month, chronological left→right, colours shared with the grid.
@@ -4386,28 +4427,35 @@ function pnlBlockChart(months, blocks){
   PNL_BLOCK_ORDER.forEach(function(b){ if(list.some(function(x){return x.block===b;})){ order.push(b); seen[b]=1; } });
   list.forEach(function(x){ if(!seen[x.block]){ seen[x.block]=1; order.push(x.block); } });
   var val=function(b,m){ var e=list.filter(function(x){return x.block===b;})[0]; if(!e||!e.by_month) return 0; var v=Number(e.by_month[m]); return isFinite(v)?v:0; };
-  var w=820,h=290,padL=56,padR=14,padB=46,padT=16;
+  var w=820,h=290,padL=56,padR=14,padB=46,padT=18;
   // Negative (credit/reversal) blocks can't be stacked upward — they're clamped here for the bar
   // height only; the tooltip and the grid still show the true signed figure.
   var stackTot=ms.map(function(m){ return order.reduce(function(s,b){ return s+Math.max(0,val(b,m)); },0); });
   var max=Math.max.apply(null,[1].concat(stackTot));
-  var slot=(w-padL-padR)/n, barW=Math.min(56,slot*0.6);
+  var slot=(w-padL-padR)/n, barW=Math.min(52,slot*0.56);
   var yat=function(v){ return h-padB-(v/max)*(h-padB-padT); };
   var grid=''; for(var k=0;k<=4;k++){ var gv=max*(4-k)/4, gy=padT+(k/4)*(h-padB-padT);
-    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity=".5"/>'+
-      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--muted)">'+cfoMk(gv)+'</text>'; }
+    grid+='<line x1="'+padL+'" y1="'+gy.toFixed(1)+'" x2="'+(w-padR)+'" y2="'+gy.toFixed(1)+'" stroke="var(--border)" stroke-width="1" opacity="'+(k===4?'.7':'.28')+'"/>'+
+      '<text x="'+(padL-8)+'" y="'+(gy+3).toFixed(1)+'" text-anchor="end" font-size="8.5" fill="var(--muted)">'+cfoMk(gv)+'</text>'; }
   var bars=ms.map(function(m,i){
     var cx=padL+slot*i+slot/2, x=cx-barW/2, base=h-padB, seg='';
-    order.forEach(function(b){
-      var raw=val(b,m), v=Math.max(0,raw); if(v<=0) return;
-      var bh=(v/max)*(h-padB-padT), y=base-bh; base=y;
-      seg+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+(PNL_BLOCK_COLORS[b]||'#8892a6')+'"><title>'+esc(b+' · '+m+' · '+M(raw))+'</title></rect>';
+    // Only positive blocks stack; the topmost of them gets rounded top corners.
+    var pos=order.filter(function(b){ return val(b,m)>0; });
+    pos.forEach(function(b,pi){
+      var raw=val(b,m), v=raw, bh=(v/max)*(h-padB-padT), y=base-bh; base=y;
+      var fill=(PNL_BLOCK_COLORS[b]||'#8892a6'), title='<title>'+esc(b+' · '+m+' · '+M(raw))+'</title>';
+      if(pi===pos.length-1){ // rounded top on the crown segment
+        var r=Math.min(4,barW/2,bh/2), xr=x+barW;
+        seg+='<path d="M'+x.toFixed(1)+' '+(y+bh).toFixed(1)+' L'+x.toFixed(1)+' '+(y+r).toFixed(1)+' Q'+x.toFixed(1)+' '+y.toFixed(1)+' '+(x+r).toFixed(1)+' '+y.toFixed(1)+' L'+(xr-r).toFixed(1)+' '+y.toFixed(1)+' Q'+xr.toFixed(1)+' '+y.toFixed(1)+' '+xr.toFixed(1)+' '+(y+r).toFixed(1)+' L'+xr.toFixed(1)+' '+(y+bh).toFixed(1)+' Z" fill="'+fill+'">'+title+'</path>';
+      } else {
+        seg+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+fill+'">'+title+'</rect>';
+      }
     });
-    return seg+'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+16)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.slice(2))+'</text>'+
-      '<text x="'+cx.toFixed(1)+'" y="'+(yat(stackTot[i])-5).toFixed(1)+'" text-anchor="middle" font-size="9.5" font-weight="800" fill="var(--text)">'+cfoMk(stackTot[i])+'</text>';
+    return seg+'<text x="'+cx.toFixed(1)+'" y="'+(h-padB+17)+'" text-anchor="middle" font-size="9" fill="var(--muted)">'+esc(m.slice(2))+'</text>'+
+      '<text x="'+cx.toFixed(1)+'" y="'+(yat(stackTot[i])-6).toFixed(1)+'" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-soft)">'+cfoMk(stackTot[i])+'</text>';
   }).join('');
-  var legend=order.map(function(b){ return '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11.5px"><span style="width:11px;height:11px;border-radius:2px;background:'+(PNL_BLOCK_COLORS[b]||'#8892a6')+'"></span>'+esc(b)+'</span>'; }).join('');
-  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg><div style="margin-top:8px">'+legend+'</div>';
+  var legend=order.map(function(b){ return '<span class="it"><span class="sw" style="background:'+(PNL_BLOCK_COLORS[b]||'#8892a6')+'"></span>'+esc(b)+'</span>'; }).join('');
+  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" style="display:block">'+grid+bars+'</svg><div class="pnl-legend">'+legend+'</div>';
 }
 
 function pnlRender(){
@@ -4425,24 +4473,32 @@ function pnlRender(){
   var opC=mdl.hasRows?at(mdl.opexRow&&mdl.opexRow.vals,0):(tcur.expenses!=null?Number(tcur.expenses):null);
   var opP=mdl.hasRows?at(mdl.opexRow&&mdl.opexRow.vals,1):(tprv.expenses!=null?Number(tprv.expenses):null);
   var npC=at(mdl.npVals,0), npP=at(mdl.npVals,1);
-  var sub=function(txt){ return '<div class="muted" style="font-size:10.5px;margin-top:2px">'+txt+'</div>'; };
+  var sub=function(txt){ return '<div class="pnl-kpi-sub">'+txt+'</div>'; };
   var col=function(v){ return v===null?'var(--muted)':(v<0?'var(--coral-soft)':'var(--text)'); };
-  var kpis='<div class="cards" style="grid-template-columns:repeat(4,1fr)">'+
-    '<div class="card"><div class="c-ico">💵</div><div class="n" style="color:'+(revC===null?'var(--muted)':(revC<0?'var(--coral-soft)':'var(--green-soft)'))+'">'+pnlNum(revC)+'</div><div class="l">Revenue '+pnlChip(revC,revP)+'</div>'+sub(cur?esc(cur):'—')+'</div>'+
-    '<div class="card"><div class="c-ico">📐</div><div class="n" style="color:'+col(gpC)+'">'+pnlNum(gpC)+'</div><div class="l">Gross Profit '+pnlChip(gpC,gpP)+'</div>'+
-      sub(gpC===null?(mdl.hasRows?'—':'needs account cache'):((revC?((gpC/revC*100).toFixed(1)+'% GP margin'):'—')))+'</div>'+
-    '<div class="card"><div class="c-ico">🧾</div><div class="n" style="color:'+(opC===null?'var(--muted)':'var(--coral)')+'">'+pnlNum(opC)+'</div><div class="l">Operating Expenses '+pnlChip(opC,opP,true)+'</div>'+
-      sub(opC!==null&&revC?((opC/revC*100).toFixed(1)+'% of revenue'):'—')+'</div>'+
-    '<div class="card '+(npC!==null&&npC>=0?'green':'red')+'"><div class="c-ico">'+(npC!==null&&npC>=0?'📈':'📉')+'</div><div class="n" style="color:'+(npC===null?'var(--muted)':(npC<0?'var(--coral-soft)':'var(--green-soft)'))+'">'+pnlNum(npC)+'</div><div class="l">Net Profit '+pnlChip(npC,npP)+'</div>'+
-      sub(npC!==null&&revC?((npC/revC*100).toFixed(1)+'% net margin'):'—')+'</div>'+
+  // A KPI card: thin coloured top-accent bar (accent), uppercase label + delta pill, quiet number, muted sub.
+  var kpi=function(accent,label,numColor,numHtml,chip,subHtml){
+    return '<div class="pnl-kpi" style="--kpi-accent:'+accent+'">'+
+      '<div class="pnl-kpi-top"><span class="pnl-kpi-lbl">'+label+'</span>'+chip+'</div>'+
+      '<div class="pnl-kpi-n" style="color:'+numColor+'">'+numHtml+'</div>'+subHtml+'</div>';
+  };
+  var npAccent=(npC===null?'var(--border-strong)':(npC<0?'var(--coral)':'var(--green)'));
+  var kpis='<div class="pnl-kpis">'+
+    kpi('var(--border-strong)','Revenue',(revC===null?'var(--muted)':(revC<0?'var(--coral-soft)':'var(--green-soft)')),pnlNum(revC),pnlChip(revC,revP),sub(cur?esc(cur):'—'))+
+    kpi('var(--sky)','Gross Profit',col(gpC),pnlNum(gpC),pnlChip(gpC,gpP),
+      sub(gpC===null?(mdl.hasRows?'—':'needs account cache'):((revC?((gpC/revC*100).toFixed(1)+'% GP margin'):'—'))))+
+    kpi('var(--coral)','Operating Expenses',(opC===null?'var(--muted)':'var(--coral)'),pnlNum(opC),pnlChip(opC,opP,true),
+      sub(opC!==null&&revC?((opC/revC*100).toFixed(1)+'% of revenue'):'—'))+
+    kpi(npAccent,'Net Profit',(npC===null?'var(--muted)':(npC<0?'var(--coral-soft)':'var(--green-soft)')),pnlNum(npC),pnlChip(npC,npP),
+      sub(npC!==null&&revC?((npC/revC*100).toFixed(1)+'% net margin'):'—'))+
   '</div>';
   // ── Controls ──
-  var mbtn=function(n){ return '<button class="btn sm'+(PNL_MONTHS===n?' p':'')+'" onclick="pnlSetMonths('+n+')">'+n+' months</button>'; };
-  var controls='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:2px 0 14px">'+
+  var mbtn=function(n){ return '<button class="'+(PNL_MONTHS===n?'on':'')+'" onclick="pnlSetMonths('+n+')">'+n+' months</button>'; };
+  var controls='<div class="pnl-ctrls">'+
     '<div class="muted" style="font-size:12.5px">'+(d.scoped_tenant?('P&amp;L · <b style="color:var(--text)">'+esc(scopeCo||'selected company')+'</b>'):('Consolidated P&amp;L · all companies'))+
       ' · '+months.length+' months'+(d.generated_at?(' · refreshed '+esc(String(d.generated_at).replace('T',' ').slice(0,16))):'')+'</div>'+
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+mbtn(6)+mbtn(12)+
-      '<label class="muted" style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" style="width:auto;margin:0" '+(PNL_SHOW_ZERO?'checked':'')+' onchange="pnlToggleZero()"/> Show zero-value accounts</label>'+
+    '<div class="pnl-ctrls-r">'+
+      '<div class="pnl-seg">'+mbtn(6)+mbtn(12)+'</div>'+
+      '<label class="pnl-zero"><input type="checkbox" '+(PNL_SHOW_ZERO?'checked':'')+' onchange="pnlToggleZero()"/> Show zero-value accounts</label>'+
       '<button class="btn sm" onclick="pnlExportCsv()">⬇ Export CSV</button>'+
       '<button class="btn sm" onclick="PNL_DATA=null;renderPnl()">↻ Refresh</button>'+
     '</div></div>';
@@ -4464,6 +4520,9 @@ function pnlRender(){
     var head='<thead><tr><th class="pnl-acc">Account</th>'+months.map(function(m){ return '<th>'+esc(m)+'</th>'; }).join('')+'<th>Total</th></tr></thead>';
     var body=mdl.rows.map(function(r){
       var cls=r.kind==='band'?'pnl-band':r.kind==='sub'?'pnl-sub':r.kind==='key'?'pnl-key':r.kind==='blk'?'pnl-blk':'';
+      // Key rows carry a sign-aware accent: Gross Profit is neutral; Net Profit greens when
+      // positive, corals when negative. Presentation only — the number/model are untouched.
+      if(r.kind==='key'){ cls+=/gross/i.test(r.label)?' gp':((r.total!==null&&r.total!==undefined&&r.total<0)?' neg':' pos'); }
       var label=esc(r.label);
       if(r.kind==='band'||r.kind==='blk'){
         return '<tr class="'+cls+'"><td class="pnl-acc">'+label+'</td>'+months.map(function(){return '<td class="pnl-num"></td>';}).join('')+'<td class="pnl-num"></td></tr>';
