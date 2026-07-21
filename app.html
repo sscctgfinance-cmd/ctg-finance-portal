@@ -1047,7 +1047,9 @@ const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt
 const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 // MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
-function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+// H6: pin "today" to MYT (UTC+8) regardless of the viewer's browser timezone. A browser set to a
+// western TZ was computing period presets, close-month and invoice-date defaults one day early.
+function todayLocalISO(){ const d=new Date(Date.now()+8*3600000); const p=n=>String(n).padStart(2,'0'); return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate()); }
 function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
 function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }
 
@@ -1436,7 +1438,9 @@ function mkCard(cls,ico,n,l){return'<div class="card '+cls+'"><div class="c-ico"
 // Date range state for Overview. null = current YTD (use legacy `overview` action).
 var OV_RANGE = null;   // { from, to, label }
 function ovDates(){
-  var n=new Date(); var y=n.getFullYear(), m=n.getMonth();
+  // H6: base the period presets on MYT wall-clock, not the browser's timezone.
+  var myt=new Date(Date.now()+8*3600000); var y=myt.getUTCFullYear(), m=myt.getUTCMonth();
+  var n=new Date(y, m, myt.getUTCDate());   // local Date carrying the MYT calendar day, so p() reads it back correctly
   // Build local-date YYYY-MM-DD (toISOString would shift by timezone — MYT is UTC+8 so midnight Jun 1 became May 31).
   var p=function(d){ var yy=d.getFullYear(), mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return yy+'-'+mm+'-'+dd; };
   return {
@@ -1943,8 +1947,15 @@ async function renderOverview(){
     if(!r||!r.companies){ document.getElementById('overview').innerHTML=ovHeader()+'<div class="empty"><div class="empty-ico">📭</div><div>'+esc((r&&r.error)||'No data in this period')+'</div></div>'; return; }
     const filter=curCo();
     let cs=r.companies.filter(c=>!filter||c.tenant_id===filter);
-    const tot=cs.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,ar:a.ar+(+c.ar_count||0),ap:a.ap+(+c.ap_count||0)}),{inc:0,exp:0,np:0,ar:0,ap:0});
-    let h=ovHeader()+'<div class="cards">';
+    // B4: a company whose live fetch failed comes back with null figures + an error — it is NOT zero.
+    // Exclude it from the totals (otherwise +null=0 silently understates the group) and render it as
+    // "unavailable" rather than RM 0.00.
+    const errRows=cs.filter(c=>c.error||c.income===null);
+    const okRows=cs.filter(c=>!(c.error||c.income===null));
+    const tot=okRows.reduce((a,c)=>({inc:a.inc+ +c.income,exp:a.exp+ +c.expenses,np:a.np+ +c.net_profit,ar:a.ar+(+c.ar_count||0),ap:a.ap+(+c.ap_count||0)}),{inc:0,exp:0,np:0,ar:0,ap:0});
+    let h=ovHeader();
+    if(r.partial||errRows.length){ h+='<div class="status-bar" style="background:rgba(224,113,78,.12);border-color:var(--coral)"><div style="color:var(--coral)">⚠️</div>Live Xero data unavailable for '+errRows.length+' company(ies): '+esc((r.unavailable||errRows.map(c=>c.tenant_name)).join(', '))+'. Totals below EXCLUDE them — retry in a moment.</div>'; }
+    h+='<div class="cards">';
     h+=mkCard(tot.np>=0?'green':'red','📈',M(tot.np),'Net (in period)');
     h+=mkCard('green','💰',M(tot.inc),'Revenue (in period)');
     h+=mkCard('amber','📤',M(tot.exp),'Expenses (in period)');
@@ -1953,9 +1964,12 @@ async function renderOverview(){
     h+='<div class="panel"><div class="panel-hd"><h3>Company Financials · '+esc(OV_RANGE.label)+'</h3>';
     if(cs.length>1)h+='<span class="pill pill-coral">'+cs.length+' companies</span>';
     h+='</div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Company</th><th class="amt">Revenue</th><th class="amt">Expenses</th><th class="amt">Net</th><th class="amt">Invoices</th></tr></thead><tbody>';
-    cs.forEach(c=>{ const col=+c.net_profit>=0?'var(--green-soft)':'var(--red-soft)'; h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td><td class="amt" style="color:var(--green-soft)">'+M(c.income)+'</td><td class="amt" style="color:var(--red-soft)">'+M(c.expenses)+'</td><td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td><td class="amt muted" style="font-size:11.5px">'+((+c.ar_count||0)+'·AR / '+(+c.ap_count||0)+'·AP')+'</td></tr>'; });
+    cs.forEach(c=>{
+      if(c.error||c.income===null){ h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td><td class="amt muted" colspan="3" style="text-align:center;color:var(--coral)">⚠️ live data unavailable — not counted</td><td class="amt muted" style="font-size:11.5px">'+((+c.ar_count||0)+'·AR / '+(+c.ap_count||0)+'·AP')+'</td></tr>'; return; }
+      const col=+c.net_profit>=0?'var(--green-soft)':'var(--red-soft)'; h+='<tr><td><b>'+esc(c.tenant_name)+'</b></td><td class="amt" style="color:var(--green-soft)">'+M(c.income)+'</td><td class="amt" style="color:var(--red-soft)">'+M(c.expenses)+'</td><td class="amt" style="color:'+col+'">'+M(c.net_profit)+'</td><td class="amt muted" style="font-size:11.5px">'+((+c.ar_count||0)+'·AR / '+(+c.ap_count||0)+'·AP')+'</td></tr>'; });
     h+='</tbody></table></div></div>';
-    h+='<div class="status-bar"><div class="dot-green"></div>'+esc(OV_RANGE.from)+' → '+esc(OV_RANGE.to)+' · From cached invoices (AR + AP). Bank balance excluded for period view.</div>';
+    var srcTxt=r.source||'From cached invoices (AR + AP)';
+    h+='<div class="status-bar"><div class="dot-green"'+(r.partial?' style="background:var(--coral)"':'')+'></div>'+esc(OV_RANGE.from)+' → '+esc(OV_RANGE.to)+' · '+esc(srcTxt)+'. Bank balance excluded for period view.</div>';
     document.getElementById('overview').innerHTML=h;
   }
   // Group revenue & bills monthly trend (from invoice cache) + live Xero P&L — appended below, lazy-loaded.

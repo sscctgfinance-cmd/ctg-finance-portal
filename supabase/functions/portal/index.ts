@@ -2025,19 +2025,26 @@ async function runBackfill(access, list, opts){
     const sinceHeader = new Date(sinceISO).toUTCString();
     try {
       // page through ALL modified invoices, no status filter → captures AUTHORISED/SUBMITTED/PAID/VOIDED/DELETED.
-      for (let page=1; page<=100; page++){
+      // v145 (B10): pageSize=1000 (was default 100) and MAX_PAGES=100 → 100k ceiling. Crucially, if we exit
+      // by hitting the page bound (not by a short/empty page), the fetch is INCOMPLETE — treat that as an
+      // error so last_full_sync_at is NOT advanced past pages we never read (UpdatedDateUTC ASC means the
+      // dropped rows are the most recently modified — exactly the ones that matter).
+      const MAX_PAGES = 100, PAGE_SIZE = 1000;
+      let complete = false;
+      for (let page=1; page<=MAX_PAGES; page++){
         let d;
-        try { d = await xeroGet(access, t.tenant_id, "Invoices?page=" + page + "&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader }); }
+        try { d = await xeroGet(access, t.tenant_id, "Invoices?pageSize=" + PAGE_SIZE + "&page=" + page + "&order=UpdatedDateUTC%20ASC", { "If-Modified-Since": sinceHeader }); }
         catch (e) { tErr = String(e); break; }
-        if (d.__notModified) break;
-        const arr = d.Invoices || []; if (!arr.length) break;
+        if (d.__notModified) { complete = true; break; }
+        const arr = d.Invoices || []; if (!arr.length) { complete = true; break; }
         fetched += arr.length;
         const r = await applyInvoiceBatch(t.tenant_id, arr);
         upserted += r.upserted; deleted += r.deleted; tCount += r.upserted; tDel += r.deleted;
         // Per-batch upsert/delete failures used to be swallowed silently — surface them now.
         if (r.error){ tErr = (tErr ? tErr + " | " : "") + "batch p" + page + ": " + r.error; }
-        if (arr.length < 100) break;
+        if (arr.length < PAGE_SIZE) { complete = true; break; }
       }
+      if (!tErr && !complete) tErr = "incomplete: hit " + MAX_PAGES + "-page ceiling (" + (MAX_PAGES*PAGE_SIZE) + " invoices) — watermark held so the rest is refetched next run";
       if (tErr){
         await recordRateLimit(t.tenant_id, tErr);
         await syncStateUpdate(t.tenant_id, { last_error: tErr.slice(0,500), last_error_at: new Date().toISOString() });
@@ -2150,15 +2157,22 @@ async function runDriftCheck(access, tenant_id, opts){
   // 1. Fetch every open invoice from Xero (ID + Status), both types.
   const xeroOpen = new Map(); // invoice_id -> { id, status, type }
   let xeroSeen = 0;
+  // v145 (B10): pageSize=1000 (was 100) → 100k ceiling. If EITHER type exits via the page bound the
+  // xeroOpen set is incomplete, which would make valid cache rows look like "extras" — skip the
+  // extra-pruning in that case so we never burn the 50-cap re-querying invoices that are actually fine.
+  let xeroComplete = true;
+  const MAX_PAGES = 100, PAGE_SIZE = 1000;
   try {
     for (const ty of ["ACCREC","ACCPAY"]){
-      for (let page=1; page<=100; page++){
-        const d = await xeroGet(access, tenant_id, "Invoices?Statuses=AUTHORISED,SUBMITTED&page=" + page + "&where=" + encodeURIComponent('Type=="' + ty + '"'));
-        const arr = d.Invoices || []; if (!arr.length) break;
+      let tyComplete = false;
+      for (let page=1; page<=MAX_PAGES; page++){
+        const d = await xeroGet(access, tenant_id, "Invoices?Statuses=AUTHORISED,SUBMITTED&pageSize=" + PAGE_SIZE + "&page=" + page + "&where=" + encodeURIComponent('Type=="' + ty + '"'));
+        const arr = d.Invoices || []; if (!arr.length) { tyComplete = true; break; }
         for (const iv of arr){ xeroOpen.set(iv.InvoiceID, { id: iv.InvoiceID, status: iv.Status, type: iv.Type, full: iv }); }
         xeroSeen += arr.length;
-        if (arr.length < 100) break;
+        if (arr.length < PAGE_SIZE) { tyComplete = true; break; }
       }
+      if (!tyComplete) xeroComplete = false;
     }
   } catch (e) {
     await recordRateLimit(tenant_id, e);
@@ -2188,7 +2202,9 @@ async function runDriftCheck(access, tenant_id, opts){
   // 5. Repair extras: re-query each by ID, apply real status (PAID/VOIDED/DELETED → upsert or delete).
   //    Cap at 50 per drift run to avoid rate-limit blowup on a stale cache; rest waits for next cron.
   let repairedExtras = 0;
-  if (extra.length && !opts.skipExtraRepair){
+  // Only prune extras when the Xero snapshot was COMPLETE — otherwise a valid open invoice on an
+  // unfetched page looks like an extra and would waste the 50-cap (and the drift count is meaningless).
+  if (extra.length && !opts.skipExtraRepair && xeroComplete){
     const cap = Math.min(extra.length, 50);
     for (let i=0; i<cap; i++){
       try {
@@ -2302,6 +2318,12 @@ Deno.serve(async (req)=>{
           const failing = Number(health.pending_events_failing||0);
           if (backlog > 200) problems.push("Webhook backlog: " + backlog + " events pending");
           if (failing > 0) problems.push(failing + " webhook event(s) failing (rate-limit / Xero error)");
+          // H8: events at >=12 attempts are ABANDONED — processPendingDedup only retries `attempts<12`,
+          // so these never self-heal and need a manual resync. Flag them distinctly from transient failures.
+          try {
+            const { count: dead } = await sb.from("xero_webhook_events").select("id",{count:"exact",head:true}).eq("processed",false).gte("attempts",12);
+            if ((dead||0) > 0) problems.push((dead||0) + " webhook event(s) PERMANENTLY STUCK (>=12 attempts, no longer retried) — run a manual resync for the affected tenant");
+          } catch(_e){}
           for (const c of (health.crons||[])){ if (c && c.overdue) problems.push("Cron overdue: " + c.cron_name + " (last ran " + (c.last_run_at||"never") + ")"); }
           const nowMs = Date.now();
           for (const t of (health.tenants||[])){
@@ -2332,8 +2354,14 @@ Deno.serve(async (req)=>{
             // Healthy — reset the signature so the next problem alerts immediately (recovery = clean slate).
             await sb.from("portal_secrets").upsert({ key:"watchdog_state", value: JSON.stringify({ signature:"", alerted_at: state.alerted_at||null, last_check: new Date().toISOString(), problems:[] }), updated_at:new Date().toISOString() }, { onConflict:"key" });
           }
-          await sb.from("portal_audit").insert({ action: problems.length ? "cron_watchdog_alert" : "cron_watchdog_ok", ref:"every30min", detail:{ problems, emailed } });
-          try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_watchdog", p_status:"ok", p_detail:{ problems: problems.length } }); } catch(_e){}
+          // H5: alerting must not fail SILENTLY. If we found problems but the email didn't send (creds
+          // unset / SMTP down), record a distinct action so it's greppable and the Sync Health surface
+          // can show "alerting is DOWN" — otherwise a real regression + a broken alert channel = 15 more
+          // silent days, the exact failure this watchdog exists to prevent.
+          const alertUndelivered = problems.length > 0 && (emailed === null ? false : !(emailed && emailed.ok));
+          const auditAction = problems.length ? (alertUndelivered ? "cron_watchdog_alert_undelivered" : "cron_watchdog_alert") : "cron_watchdog_ok";
+          await sb.from("portal_audit").insert({ action: auditAction, ref:"every30min", detail:{ problems, emailed, alert_channel: alertUndelivered ? "DOWN" : "ok" } });
+          try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_watchdog", p_status: alertUndelivered ? "alert_channel_down" : "ok", p_detail:{ problems: problems.length, alert_undelivered: alertUndelivered } }); } catch(_e){}
         } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_watchdog_error", ref:"every30min", detail:{ error:String(e) } }); } catch(_e){} }
       })();
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
@@ -2419,10 +2447,17 @@ Deno.serve(async (req)=>{
           try { const d = await xeroGet(access, t.tenant_id, "Reports/ProfitAndLoss?fromDate="+from+"&toDate="+to);
             const pl = parsePnl((d.Reports||[])[0]); const cc = cntMap[t.tenant_id]||{};
             comps.push({ tenant_id:t.tenant_id, tenant_name:t.tenant_name, income:pl.revenue_total, expenses:pl.expense_total, net_profit:pl.net_profit, ar_count:cc.ar_count||0, ap_count:cc.ap_count||0 });
-          } catch(e){ const cc=cntMap[t.tenant_id]||{}; comps.push({ tenant_id:t.tenant_id, tenant_name:t.tenant_name, income:0, expenses:0, net_profit:0, ar_count:cc.ar_count||0, ap_count:cc.ap_count||0 }); }
+          } catch(e){
+            // B4: a failed/rate-limited fetch must NOT render as RM0 — that is indistinguishable from a
+            // genuinely dormant company. Flag the row as errored (null figures) so the UI can show
+            // "unavailable" and the response carries partial:true.
+            const cc=cntMap[t.tenant_id]||{};
+            comps.push({ tenant_id:t.tenant_id, tenant_name:t.tenant_name, income:null, expenses:null, net_profit:null, ar_count:cc.ar_count||0, ap_count:cc.ap_count||0, error:String(e).slice(0,120) });
+          }
         }
         comps.sort((a,b)=>String(a.tenant_name).localeCompare(String(b.tenant_name)));
-        return j({ ok:true, from, to, companies:comps, as_of:new Date().toISOString(), source:"live Xero P&L (exact range)" });
+        const failed = comps.filter((c)=>c.error).map((c)=>c.tenant_name);
+        return j({ ok:true, from, to, companies:comps, as_of:new Date().toISOString(), source:"live Xero P&L (exact range)", partial: failed.length>0, unavailable: failed });
       } catch(_e){ return j(data); }   // last resort: the month-sum approximation from cache
     }
     if (api === "pending") { const { data } = await sb.rpc("portal_pending_bills", { p_token: b.token||"" }); return j(data); }
@@ -5728,7 +5763,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
