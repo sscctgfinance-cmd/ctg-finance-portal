@@ -6547,7 +6547,10 @@ const DocScanner = (function () {
     return [{ x: W * m, y: H * m }, { x: W * (1 - m), y: H * m }, { x: W * (1 - m), y: H * (1 - m) }, { x: W * m, y: H * (1 - m) }]; }
 
   // ---- auto page-corner detection (background-difference + Otsu) ----
-  function detectCorners(cv) {
+  function detectCorners(cv) { return detectCornersEx(cv).corners; }
+  // Returns { corners, found } — `found` is false when we fell back to the full
+  // frame (no confident document boundary). The live auto-shutter only fires on found.
+  function detectCornersEx(cv) {
     const W = cv.width, H = cv.height, scale = 340 / Math.max(W, H);
     const w = Math.max(8, Math.round(W * scale)), h = Math.max(8, Math.round(H * scale));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -6573,12 +6576,17 @@ const DocScanner = (function () {
     for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (!mask[i]) continue;
       let n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) n += mask[i + dy * w + dx];
       if (n >= 6) { fg[i] = 1; fgCount++; } }
-    if (fgCount < w * h * 0.03 || fgCount > w * h * 0.92) return fullFrame(W, H);
+    if (fgCount < w * h * 0.03 || fgCount > w * h * 0.92) return { corners: fullFrame(W, H), found: false };
     const pts = []; for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) if (fg[y * w + x]) pts.push({ x, y });
     const [tl, tr, br, bl] = orderCorners(pts), up = (p) => ({ x: p.x / scale, y: p.y / scale });
     const cxp = (tl.x + tr.x + br.x + bl.x) / 4, cyp = (tl.y + tr.y + br.y + bl.y) / 4;
     const pad = (p) => ({ x: p.x + (p.x - cxp) * 0.015, y: p.y + (p.y - cyp) * 0.015 });
-    return [tl, tr, br, bl].map(pad).map(up).map((p) => ({ x: Math.max(0, Math.min(W, p.x)), y: Math.max(0, Math.min(H, p.y)) }));
+    const out = [tl, tr, br, bl].map(pad).map(up).map((p) => ({ x: Math.max(0, Math.min(W, p.x)), y: Math.max(0, Math.min(H, p.y)) }));
+    // sanity: a real page is a convex-ish quad covering a sensible slice of frame
+    const area = Math.abs((out[0].x*out[1].y-out[1].x*out[0].y)+(out[1].x*out[2].y-out[2].x*out[1].y)+
+                          (out[2].x*out[3].y-out[3].x*out[2].y)+(out[3].x*out[0].y-out[0].x*out[3].y))/2;
+    const frac = area / (W * H);
+    return { corners: out, found: frac > 0.10 && frac < 0.97 };
   }
 
   // ---- perspective warp (Heckbert unit-square → quad) ----
@@ -6647,7 +6655,7 @@ const DocScanner = (function () {
     if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
     if (jspdfLoading) return jspdfLoading;
     jspdfLoading = new Promise((res, rej) => { const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+      s.src = './jspdf.umd.min.js';   // vendored in the repo — no CDN, works offline
       s.onload = res; s.onerror = () => rej(new Error('Could not load PDF library')); document.head.appendChild(s); });
     return jspdfLoading;
   }
@@ -6673,6 +6681,15 @@ const DocScanner = (function () {
       '.ds-stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}' +
       '.ds-stage video{max-width:100%;max-height:100%;object-fit:contain;background:#000}' +
       '.ds-guide{position:absolute;inset:7%;border:2px dashed rgba(255,255,255,.35);border-radius:14px;pointer-events:none}' +
+      '.ds-camwrap{position:relative;line-height:0;max-width:100%;max-height:100%}' +
+      '.ds-liveov{position:absolute;left:0;top:0;pointer-events:none}' +
+      '.ds-status{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;background:rgba(0,0,0,.62);color:#fff;font-size:12.5px;font-weight:600;padding:7px 15px;border-radius:20px;white-space:nowrap;line-height:1.3;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}' +
+      '.ds-status.near{background:rgba(255,214,10,.95);color:#1a1a1a}' +
+      '.ds-status.ok{background:#22c55e;color:#fff}' +
+      '.ds-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}' +
+      '.ds-flash.go{animation:dsflash .26s ease-out}' +
+      '@keyframes dsflash{0%{opacity:.85}100%{opacity:0}}' +
+      '.ds-ico.on{background:#e2604b;color:#fff}' +
       '.ds-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:12.5px;color:#c7ced6;text-shadow:0 1px 3px #000;pointer-events:none;padding:0 20px}' +
       '.ds-editwrap{position:relative;touch-action:none;line-height:0}' +
       '.ds-editwrap canvas{display:block;max-width:100%;height:auto}' +
@@ -6700,9 +6717,10 @@ const DocScanner = (function () {
   let ov = null;
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
   function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
-  function close() { stopCam(); if (ov) { ov.remove(); ov = null; } pages = []; srcCanvas = corners = warpedRaw = null; }
+  function close() { stopLoop(); stopCam(); if (ov) { ov.remove(); ov = null; } pages = []; srcCanvas = corners = warpedRaw = null; }
 
   function shell(title) {
+    stopLoop();                       // never leave a rAF pointing at a removed <video>
     injectCss(); if (ov) ov.remove();
     ov = el('div', 'ds-ov');
     const top = el('div', 'ds-top');
@@ -6715,29 +6733,122 @@ const DocScanner = (function () {
     return { stage, bot };
   }
 
-  // ---- CAPTURE stage ----
+  // ---- CAPTURE stage — Apple-Notes-style live edge tracking + auto shutter ----
+  let rafId = null, liveHist = [], capturing = false, autoOn = true;
+  // setInterval (not rAF): rAF is paused/throttled whenever the tab isn't the
+  // foreground one, which silently kills live detection. 10 fps is plenty here.
+  function stopLoop() { if (rafId) clearInterval(rafId); rafId = null; liveHist = []; capturing = false; }
+  function drawQuad(octx, ovc, pts, found) {
+    octx.clearRect(0, 0, ovc.width, ovc.height);
+    octx.save();
+    octx.fillStyle = 'rgba(0,0,0,.42)'; octx.fillRect(0, 0, ovc.width, ovc.height);
+    if (pts) {   // punch a spotlight through the mask
+      octx.globalCompositeOperation = 'destination-out';
+      octx.beginPath(); octx.moveTo(pts[0].x, pts[0].y); pts.forEach(p => octx.lineTo(p.x, p.y)); octx.closePath(); octx.fill();
+      octx.globalCompositeOperation = 'source-over';
+      octx.beginPath(); octx.moveTo(pts[0].x, pts[0].y); pts.forEach(p => octx.lineTo(p.x, p.y)); octx.closePath();
+      octx.strokeStyle = found ? '#ffd60a' : 'rgba(255,255,255,.5)';
+      octx.lineWidth = found ? 3.5 : 2; octx.setLineDash(found ? [] : [8, 7]); octx.stroke();
+      if (found) { octx.fillStyle = '#ffd60a'; pts.forEach(p => { octx.beginPath(); octx.arc(p.x, p.y, 5.5, 0, 7); octx.fill(); }); }
+    }
+    octx.restore();
+  }
   async function showCapture() {
-    const { stage, bot } = shell(wantMulti ? '📷 Scan · page ' + (pages.length + 1) : '📷 Scan document');
+    stopLoop();
+    const { stage, bot } = shell(wantMulti && pages.length ? '📷 Scan · page ' + (pages.length + 1) : '📷 Scan document');
     stage.innerHTML = ''; bot.innerHTML = '';
     let usingCam = false;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
+      if (!stream || !stream.active) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
+      }
+      const wrap = el('div', 'ds-camwrap');
       const video = el('video'); video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
-      await video.play(); stage.appendChild(video);
-      stage.appendChild(el('div', 'ds-guide')); stage.appendChild(el('div', 'ds-hint', 'Fit the whole document in the frame, then tap the shutter — edges are detected for you.'));
-      usingCam = true;
-      const shutter = el('button', 'ds-shutter'); shutter.setAttribute('aria-label', 'Capture');
-      shutter.onclick = () => { const cv = el('canvas'); cv.width = video.videoWidth; cv.height = video.videoHeight;
-        cv.getContext('2d').drawImage(video, 0, 0); stopCam(); loadSource(cv); };
+      const ovc = el('canvas', 'ds-liveov');
+      const flash = el('div', 'ds-flash');
+      wrap.append(video, ovc, flash); stage.appendChild(wrap);
+      await video.play(); usingCam = true;
+      const fit = () => {
+        const aw = stage.clientWidth || ov.clientWidth || window.innerWidth || 360;
+        const ah = stage.clientHeight || Math.round((window.innerHeight || 640) * .6);
+        const vw = video.videoWidth || 4, vh = video.videoHeight || 3;
+        const s = Math.min(aw / vw, ah / vh) || 1;
+        const w = Math.max(1, Math.round(vw * s)), h = Math.max(1, Math.round(vh * s));
+        wrap.style.width = w + 'px'; wrap.style.height = h + 'px';
+        video.style.width = w + 'px'; video.style.height = h + 'px';
+        ovc.width = w; ovc.height = h; ovc.style.width = w + 'px'; ovc.style.height = h + 'px'; };
+      if (video.readyState >= 1) fit(); else video.onloadedmetadata = fit;
+      video.addEventListener('loadedmetadata', fit);
+      window.addEventListener('resize', fit);                        // rotation / keyboard
+      const status = el('div', 'ds-status', 'Point the camera at the document');
+      wrap.appendChild(status);
+      // bottom controls
       const gal = el('button', 'ds-ico', '🖼'); gal.title = 'Choose from gallery'; gal.onclick = () => pickFile();
-      const spacer = el('div', 'ds-ico'); spacer.style.visibility = 'hidden';
-      const row = el('div', 'ds-row'); row.append(gal, shutter, spacer); bot.appendChild(row);
+      const shutter = el('button', 'ds-shutter'); shutter.setAttribute('aria-label', 'Capture');
+      shutter.onclick = () => { if (!capturing) { capturing = true; doCapture(video, flash); } };
+      const autoBtn = el('button', 'ds-ico' + (autoOn ? ' on' : ''), 'A'); autoBtn.title = 'Auto-capture';
+      autoBtn.onclick = () => { autoOn = !autoOn; autoBtn.classList.toggle('on', autoOn); liveHist = []; };
+      const row = el('div', 'ds-row'); row.append(gal, shutter, autoBtn); bot.appendChild(row);
+      if (pages.length) {
+        const save = el('button', 'ds-btn p', '✓ Save (' + pages.length + ')'); save.style.marginTop = '10px';
+        save.onclick = () => { stopLoop(); finish(); };
+        const r2 = el('div', 'ds-row'); r2.appendChild(save); bot.appendChild(r2);
+        bot.appendChild(thumbStrip());
+      }
+      // ---- live detection loop ----
+      const work = el('canvas'), octx = ovc.getContext('2d');
+      const tick = () => {
+        const ts = performance.now();
+        if (capturing || !video.videoWidth) return;
+        // Detection runs purely off the video frame. Overlay drawing is best-effort:
+        // if layout hasn't settled (0-size canvas) we still detect and auto-capture.
+        const PW = 300, s = PW / video.videoWidth;
+        work.width = PW; work.height = Math.max(4, Math.round(video.videoHeight * s));
+        work.getContext('2d').drawImage(video, 0, 0, work.width, work.height);
+        let r; try { r = detectCornersEx(work); } catch (_e) { return; }
+        if (ovc.width && ovc.height) {
+          const sx = ovc.width / work.width, sy = ovc.height / work.height;
+          drawQuad(octx, ovc, r.found ? r.corners.map(p => ({ x: p.x * sx, y: p.y * sy })) : null, r.found);
+        } else { fit(); }
+        const pts = r.corners;                                    // stability judged in work space
+        if (!autoOn) { status.textContent = r.found ? 'Document detected — tap the shutter' : 'Point the camera at the document'; status.className = 'ds-status' + (r.found ? ' near' : ''); return; }
+        if (!r.found) { liveHist = []; status.textContent = 'Looking for the document…'; status.className = 'ds-status'; return; }
+        // Steadiness is judged on sample COUNT + elapsed SPAN — never on an assumed
+        // tick rate. Background tabs and low-power mode stretch timers to ~1 Hz, and
+        // a fixed-age window would then discard every sample and never fire.
+        if (liveHist.length && ts - liveHist[liveHist.length - 1].t > 2500) liveHist = [];   // long gap → restart
+        liveHist.push({ t: ts, pts });
+        if (liveHist.length > 12) liveHist.shift();
+        const span = ts - liveHist[0].t;
+        if (liveHist.length < 3 || span < 600) { status.textContent = 'Hold steady…'; status.className = 'ds-status near'; return; }
+        const diag = Math.hypot(work.width, work.height); let maxd = 0;
+        for (const hst of liveHist) for (let i = 0; i < 4; i++) maxd = Math.max(maxd, Math.hypot(pts[i].x - hst.pts[i].x, pts[i].y - hst.pts[i].y));
+        if (maxd < diag * 0.035) {
+          capturing = true; status.textContent = '✓ Captured'; status.className = 'ds-status ok';
+          doCapture(video, flash);
+        } else { status.textContent = 'Hold steady…'; status.className = 'ds-status near'; }
+      };
+      rafId = setInterval(tick, 100);
     } catch (e) { /* no camera → file fallback */ }
     if (!usingCam) {
-      stage.appendChild(el('div', 'ds-center', '<div>📷</div><div>Camera not available here.<br>Choose a photo of the document instead.</div>'));
+      stage.appendChild(el('div', 'ds-center', '<div style="font-size:34px">📷</div><div>Camera not available here.<br>Choose a photo of the document instead.</div>'));
       const b = el('button', 'ds-btn p', '🖼 Choose photo'); b.onclick = () => pickFile();
       const row = el('div', 'ds-row'); row.appendChild(b); bot.appendChild(row);
+      if (pages.length) { const save = el('button', 'ds-btn p', '✓ Save (' + pages.length + ')'); save.onclick = () => finish(); row.appendChild(save); }
     }
+  }
+  function doCapture(video, flash) {
+    if (flash) { flash.classList.add('go'); setTimeout(() => flash.classList.remove('go'), 260); }
+    const cv = el('canvas'); cv.width = video.videoWidth; cv.height = video.videoHeight;
+    cv.getContext('2d').drawImage(video, 0, 0);
+    stopLoop();
+    loadSource(cv);
+  }
+  function thumbStrip() {
+    const th = el('div', 'ds-thumbs');
+    pages.forEach((p, i) => { const t = el('div', 'ds-thumb'); const im = el('img'); im.src = p.toDataURL('image/jpeg', 0.5); t.appendChild(im);
+      const del = el('b', null, '×'); del.onclick = () => { pages.splice(i, 1); showCapture(); }; t.appendChild(del); th.appendChild(t); });
+    return th;
   }
   function pickFile() {
     const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
@@ -6748,7 +6859,7 @@ const DocScanner = (function () {
       img.onerror = () => toast('Could not read that image', true); img.src = URL.createObjectURL(f); };
     inp.click();
   }
-  function loadSource(cv) { srcCanvas = cv; corners = detectCorners(cv); showEdit(); }
+  function loadSource(cv) { srcCanvas = cv; corners = detectCorners(cv); warpedRaw = warp(srcCanvas, corners, 1700); showReview(); }
 
   // ---- EDIT (crop) stage ----
   function showEdit() {
@@ -6776,30 +6887,36 @@ const DocScanner = (function () {
     const rot = el('button', 'ds-btn g', '⟳ Rotate'); rot.onclick = () => { const r = el('canvas'); r.width = srcCanvas.height; r.height = srcCanvas.width;
       const rc = r.getContext('2d'); rc.translate(r.width, 0); rc.rotate(Math.PI / 2); rc.drawImage(srcCanvas, 0, 0); srcCanvas = r; corners = detectCorners(srcCanvas); showEdit(); };
     const auto = el('button', 'ds-btn g', '✨ Auto'); auto.onclick = () => { corners = detectCorners(srcCanvas); redraw(); };
-    const next = el('button', 'ds-btn p', 'Next ▸'); next.onclick = () => { warpedRaw = warp(srcCanvas, corners, 1700); showEnhance(); };
+    const next = el('button', 'ds-btn p', 'Done ▸'); next.onclick = () => { warpedRaw = warp(srcCanvas, corners, 1700); showReview(); };
     const r1 = el('div', 'ds-row'); r1.append(retake, rot, auto);
     const r2 = el('div', 'ds-row'); r2.style.marginTop = '10px'; r2.appendChild(next);
     bot.append(r1, r2);
   }
 
-  // ---- ENHANCE stage ----
-  function showEnhance() {
-    const { stage, bot } = shell('Enhance'); stage.innerHTML = ''; bot.innerHTML = '';
+  // ---- REVIEW stage — "Keep Scan / Retake", like Apple Notes ----
+  function showReview() {
+    stopLoop();
+    const { stage, bot } = shell('Scan ' + (pages.length + 1)); stage.innerHTML = ''; bot.innerHTML = '';
     const preview = el('canvas'); const availW = stage.clientWidth || window.innerWidth, availH = stage.clientHeight || (window.innerHeight * 0.6);
     const applyPreview = () => { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode);
       const sc = Math.min(availW / work.width, availH / work.height, 1); preview.width = Math.round(work.width * sc); preview.height = Math.round(work.height * sc);
-      preview.getContext('2d').drawImage(work, 0, 0, preview.width, preview.height); preview._full = work; };
-    preview.style.maxWidth = '100%'; preview.style.maxHeight = '100%'; preview.style.objectFit = 'contain'; stage.appendChild(preview); applyPreview();
+      preview.getContext('2d').drawImage(work, 0, 0, preview.width, preview.height); };
+    preview.style.maxWidth = '100%'; preview.style.maxHeight = '100%'; stage.appendChild(preview); applyPreview();
     const modes = [['bw', '📄 B&W'], ['color', '✨ Color'], ['gray', 'Gray'], ['original', 'Original']];
     const mrow = el('div', 'ds-modes'); modes.forEach(([k, lbl]) => { const b = el('button', 'ds-mode' + (mode === k ? ' on' : ''), lbl);
       b.onclick = () => { mode = k; mrow.querySelectorAll('.ds-mode').forEach(x => x.classList.remove('on')); b.classList.add('on'); applyPreview(); }; mrow.appendChild(b); });
     bot.appendChild(mrow);
-    const back = el('button', 'ds-btn g', '◂ Edges'); back.onclick = () => showEdit();
-    const addPage = el('button', 'ds-btn g', '＋ Page'); addPage.onclick = () => { commitPage(); showCapture(); };
-    const done = el('button', 'ds-btn p', (wantMulti && pages.length ? '✓ Done (' + (pages.length + 1) + ')' : 'Done ▸')); done.onclick = () => { commitPage(); finish(); };
-    const row = el('div', 'ds-row'); if (wantMulti) row.append(back, addPage, done); else row.append(back, done); bot.appendChild(row);
-    if (pages.length) { const th = el('div', 'ds-thumbs'); pages.forEach((p, i) => { const t = el('div', 'ds-thumb'); const im = el('img'); im.src = p.toDataURL('image/jpeg', 0.5); t.appendChild(im);
-      const del = el('b', null, '×'); del.onclick = () => { pages.splice(i, 1); showEnhance(); }; t.appendChild(del); th.appendChild(t); }); bot.appendChild(th); }
+    const retake = el('button', 'ds-btn g', '↻ Retake'); retake.onclick = () => showCapture();
+    const edges = el('button', 'ds-btn g', '✎ Edges'); edges.onclick = () => showEdit();
+    const keep = el('button', 'ds-btn p', wantMulti ? '✓ Keep Scan' : '✓ Use this scan');
+    keep.onclick = () => { commitPage(); if (wantMulti) showCapture(); else finish(); };
+    const row = el('div', 'ds-row'); row.append(retake, edges, keep); bot.appendChild(row);
+    if (wantMulti && pages.length) {
+      const save = el('button', 'ds-btn g', '✓ Save now (' + pages.length + ')'); save.style.marginTop = '10px';
+      save.onclick = () => finish();
+      const r2 = el('div', 'ds-row'); r2.appendChild(save); bot.appendChild(r2);
+      bot.appendChild(thumbStrip());
+    }
   }
   function commitPage() { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode); pages.push(work); }
 
@@ -6815,7 +6932,7 @@ const DocScanner = (function () {
 
   return {
     open: function (opts) { opts = opts || {}; wantMulti = opts.multi !== false; onDoneCb = opts.onDone || null;
-      pages = []; srcCanvas = corners = warpedRaw = null; mode = 'bw';
+      stopLoop(); autoOn = true; pages = []; srcCanvas = corners = warpedRaw = null; mode = 'bw';
       if (!navigator.mediaDevices && !window.FileReader) { toast('Scanning not supported on this device', true); return; }
       showCapture(); }
   };
