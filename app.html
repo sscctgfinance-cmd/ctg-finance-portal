@@ -6532,7 +6532,7 @@ function calRender(){
 const DocScanner = (function () {
   'use strict';
   let stream = null, pages = [], srcCanvas = null, corners = null, warpedRaw = null,
-      mode = 'color', onDoneCb = null, wantMulti = false, dragIdx = -1, dispScale = 1;
+      mode = 'bw', onDoneCb = null, wantMulti = false, dragIdx = -1, dispScale = 1;
 
   // ---- geometry helpers ----
   function orderCorners(pts) {
@@ -6790,7 +6790,7 @@ const DocScanner = (function () {
       const sc = Math.min(availW / work.width, availH / work.height, 1); preview.width = Math.round(work.width * sc); preview.height = Math.round(work.height * sc);
       preview.getContext('2d').drawImage(work, 0, 0, preview.width, preview.height); preview._full = work; };
     preview.style.maxWidth = '100%'; preview.style.maxHeight = '100%'; preview.style.objectFit = 'contain'; stage.appendChild(preview); applyPreview();
-    const modes = [['color', '✨ Color'], ['bw', '📄 B&W'], ['gray', 'Gray'], ['original', 'Original']];
+    const modes = [['bw', '📄 B&W'], ['color', '✨ Color'], ['gray', 'Gray'], ['original', 'Original']];
     const mrow = el('div', 'ds-modes'); modes.forEach(([k, lbl]) => { const b = el('button', 'ds-mode' + (mode === k ? ' on' : ''), lbl);
       b.onclick = () => { mode = k; mrow.querySelectorAll('.ds-mode').forEach(x => x.classList.remove('on')); b.classList.add('on'); applyPreview(); }; mrow.appendChild(b); });
     bot.appendChild(mrow);
@@ -6815,7 +6815,7 @@ const DocScanner = (function () {
 
   return {
     open: function (opts) { opts = opts || {}; wantMulti = opts.multi !== false; onDoneCb = opts.onDone || null;
-      pages = []; srcCanvas = corners = warpedRaw = null; mode = 'color';
+      pages = []; srcCanvas = corners = warpedRaw = null; mode = 'bw';
       if (!navigator.mediaDevices && !window.FileReader) { toast('Scanning not supported on this device', true); return; }
       showCapture(); }
   };
