@@ -2406,27 +2406,47 @@ function renderUpload(){
       '<option>Other</option>'+
     '</select></div>'+
     '<div class="fld"><label>File <span style="color:var(--muted);text-transform:none;letter-spacing:0">(PDF / Image / Excel)</span></label>'+
-      '<input type="file" id="up_file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv"/></div>'+
+      '<input type="file" id="up_file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv" onchange="upClearScan()"/></div>'+
+    '<button type="button" class="btn" style="width:100%;justify-content:center;margin:-4px 0 14px;background:linear-gradient(180deg,rgba(226,96,75,.18),rgba(226,96,75,.08));border-color:rgba(226,96,75,.4)" onclick="upScan()">📷 Scan document → PDF <span style="opacity:.7;font-weight:400">— auto-crop, multi-page</span></button>'+
+    '<div id="up_scan_note" style="margin:-6px 0 12px"></div>'+
     '<div class="fld"><label>Note <span style="color:var(--muted);text-transform:none;letter-spacing:0">(Optional)</span></label>'+
       '<textarea id="up_note" placeholder="e.g. March rent invoice"></textarea></div>'+
     '<button class="btn p" onclick="doUpload(this)">⬆ Upload</button>'+
     '<div id="upres" style="margin-top:14px"></div></div>';
+  UP_SCAN=null;
 }
+let UP_SCAN=null;
+function upScan(){
+  DocScanner.open({ multi:true, title:'📷 Scan document', onDone:function(res){
+    UP_SCAN={ blob:res.pdfBlob, name:'scan_'+Date.now()+'.pdf' };
+    var fi=document.getElementById('up_file'); if(fi) fi.value='';
+    var n=document.getElementById('up_scan_note'); if(n) n.innerHTML=
+      '<div style="display:flex;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:8px 10px">'+
+        '<img src="'+res.jpegDataUrl+'" style="height:64px;border-radius:5px;border:1px solid var(--panel-border)"/>'+
+        '<span style="color:var(--green-soft);font-size:12.5px">📄 Scanned PDF ready ('+res.pageCount+' page'+(res.pageCount>1?'s':'')+') — click <b>Upload</b>. <a href="#" onclick="upClearScan();return false" style="color:var(--muted)">clear</a></span>'+
+      '</div>';
+  }});
+}
+function upClearScan(){ UP_SCAN=null; var n=document.getElementById('up_scan_note'); if(n) n.innerHTML=''; }
 
 async function doUpload(btn){
-  const f=document.getElementById('up_file').files[0];
   const res=document.getElementById('upres');
-  if(!f){res.innerHTML='<span style="color:var(--red-soft)">Please select a file</span>';return;}
-  if(f.size>15*1024*1024){res.innerHTML='<span style="color:var(--red-soft)">File too large (max 15MB)</span>';return;}
+  // A scanned PDF (from 📷 Scan) takes precedence over the file picker.
+  let blob, fileName, contentType;
+  if(UP_SCAN){ blob=UP_SCAN.blob; fileName=UP_SCAN.name; contentType='application/pdf'; }
+  else { const f=document.getElementById('up_file').files[0];
+    if(!f){res.innerHTML='<span style="color:var(--red-soft)">Please select a file or scan a document</span>';return;}
+    blob=f; fileName=f.name; contentType=f.type; }
+  if(blob.size>15*1024*1024){res.innerHTML='<span style="color:var(--red-soft)">File too large (max 15MB)</span>';return;}
   btn.disabled=true;btn.textContent='Uploading…';
   try{
-    const b64=await new Promise((rs,rj)=>{const r=new FileReader();r.onload=()=>rs(r.result);r.onerror=rj;r.readAsDataURL(f);});
+    const b64=await new Promise((rs,rj)=>{const r=new FileReader();r.onload=()=>rs(r.result);r.onerror=rj;r.readAsDataURL(blob);});
     const r=await call({api:'upload',tenant:document.getElementById('up_tenant').value,
-      category:document.getElementById('up_cat').value,file_name:f.name,
-      content_base64:b64,content_type:f.type,note:document.getElementById('up_note').value});
+      category:document.getElementById('up_cat').value,file_name:fileName,
+      content_base64:b64,content_type:contentType,note:document.getElementById('up_note').value});
     if(r&&r.ok){
       res.innerHTML='<div style="color:var(--green-soft);font-size:13px">✅ Uploaded. Finance will process it.</div>';
-      document.getElementById('up_file').value='';document.getElementById('up_note').value='';
+      document.getElementById('up_file').value='';document.getElementById('up_note').value='';upClearScan();
     }else{res.innerHTML='<span style="color:var(--red-soft)">Failed: '+esc((r&&r.error)||'')+'</span>';}
   }catch(x){res.innerHTML='<span style="color:var(--red-soft)">Upload error: '+esc(x.message||x)+'</span>';}
   btn.disabled=false;btn.textContent='⬆ Upload';
@@ -6505,8 +6525,304 @@ function calRender(){
         '</tbody></table></div>');
 }
 
+/* ═══ 📷 DocScanner — CamScanner-style capture → auto edge-detect → perspective
+   correct → enhance → multi-page PDF. Self-contained; only jsPDF lazy-loaded.
+   Public: DocScanner.open({ multi, title, onDone })
+     onDone({ pageCount, jpegDataUrl, jpegB64, pdfBlob }) ═══ */
+const DocScanner = (function () {
+  'use strict';
+  let stream = null, pages = [], srcCanvas = null, corners = null, warpedRaw = null,
+      mode = 'color', onDoneCb = null, wantMulti = false, dragIdx = -1, dispScale = 1;
+
+  // ---- geometry helpers ----
+  function orderCorners(pts) {
+    let tl = pts[0], br = pts[0], tr = pts[0], bl = pts[0];
+    let sMin = Infinity, sMax = -Infinity, dMin = Infinity, dMax = -Infinity;
+    for (const p of pts) { const s = p.x + p.y, d = p.y - p.x;
+      if (s < sMin) { sMin = s; tl = p; } if (s > sMax) { sMax = s; br = p; }
+      if (d < dMin) { dMin = d; tr = p; } if (d > dMax) { dMax = d; bl = p; } }
+    return [tl, tr, br, bl];
+  }
+  function fullFrame(W, H, m) { m = m || 0.015;
+    return [{ x: W * m, y: H * m }, { x: W * (1 - m), y: H * m }, { x: W * (1 - m), y: H * (1 - m) }, { x: W * m, y: H * (1 - m) }]; }
+
+  // ---- auto page-corner detection (background-difference + Otsu) ----
+  function detectCorners(cv) {
+    const W = cv.width, H = cv.height, scale = 340 / Math.max(W, H);
+    const w = Math.max(8, Math.round(W * scale)), h = Math.max(8, Math.round(H * scale));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(cv, 0, 0, w, h);
+    const d = c.getContext('2d').getImageData(0, 0, w, h).data;
+    const ring = Math.max(2, Math.round(Math.min(w, h) * 0.05)), rs = [[], [], []];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < ring || y < ring || x >= w - ring || y >= h - ring) {
+      const i = (y * w + x) * 4; rs[0].push(d[i]); rs[1].push(d[i + 1]); rs[2].push(d[i + 2]); }
+    const med = (a) => { a.sort((p, q) => p - q); return a[a.length >> 1] || 0; };
+    const bg = [med(rs[0]), med(rs[1]), med(rs[2])];
+    const raw = new Float32Array(w * h); let dmax = 1;
+    for (let i = 0; i < w * h; i++) { const r = d[i * 4] - bg[0], gg = d[i * 4 + 1] - bg[1], bb = d[i * 4 + 2] - bg[2];
+      const v = Math.sqrt(r * r + gg * gg + bb * bb); raw[i] = v; if (v > dmax) dmax = v; }
+    const dist = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) dist[i] = Math.min(255, (raw[i] / dmax) * 255) | 0;
+    const hist = new Int32Array(256); for (let i = 0; i < dist.length; i++) hist[dist[i]]++;
+    const N = dist.length; let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+    let sumB = 0, wB = 0, best = 0, thr = 0;
+    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = N - wB; if (!wF) break;
+      sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF; const bt = wB * wF * (mB - mF) * (mB - mF);
+      if (bt > best) { best = bt; thr = t; } }
+    const mask = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) mask[i] = dist[i] > thr ? 1 : 0;
+    const fg = new Uint8Array(w * h); let fgCount = 0;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (!mask[i]) continue;
+      let n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) n += mask[i + dy * w + dx];
+      if (n >= 6) { fg[i] = 1; fgCount++; } }
+    if (fgCount < w * h * 0.03 || fgCount > w * h * 0.92) return fullFrame(W, H);
+    const pts = []; for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) if (fg[y * w + x]) pts.push({ x, y });
+    const [tl, tr, br, bl] = orderCorners(pts), up = (p) => ({ x: p.x / scale, y: p.y / scale });
+    const cxp = (tl.x + tr.x + br.x + bl.x) / 4, cyp = (tl.y + tr.y + br.y + bl.y) / 4;
+    const pad = (p) => ({ x: p.x + (p.x - cxp) * 0.015, y: p.y + (p.y - cyp) * 0.015 });
+    return [tl, tr, br, bl].map(pad).map(up).map((p) => ({ x: Math.max(0, Math.min(W, p.x)), y: Math.max(0, Math.min(H, p.y)) }));
+  }
+
+  // ---- perspective warp (Heckbert unit-square → quad) ----
+  function warp(cv, cor, maxSide) {
+    const [tl, tr, br, bl] = cor, dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    let Wout = Math.max(16, Math.round(Math.max(dist(tl, tr), dist(bl, br))));
+    let Hout = Math.max(16, Math.round(Math.max(dist(tl, bl), dist(tr, br))));
+    const cap = maxSide || 1700, lng = Math.max(Wout, Hout);
+    if (lng > cap) { const s = cap / lng; Wout = Math.round(Wout * s); Hout = Math.round(Hout * s); }
+    const x0 = tl.x, y0 = tl.y, x1 = tr.x, y1 = tr.y, x2 = br.x, y2 = br.y, x3 = bl.x, y3 = bl.y;
+    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    let a, b, cc, dd, e, f, gg, hh; const den = dx1 * dy2 - dy1 * dx2;
+    if (Math.abs(den) < 1e-9) { a = x1 - x0; b = x3 - x0; cc = x0; dd = y1 - y0; e = y3 - y0; f = y0; gg = 0; hh = 0; }
+    else { gg = (dx3 * dy2 - dx2 * dy3) / den; hh = (dx1 * dy3 - dy1 * dx3) / den;
+      a = x1 - x0 + gg * x1; b = x3 - x0 + hh * x3; cc = x0; dd = y1 - y0 + gg * y1; e = y3 - y0 + hh * y3; f = y0; }
+    const sc = document.createElement('canvas'); sc.width = cv.width; sc.height = cv.height; sc.getContext('2d').drawImage(cv, 0, 0);
+    const sd = sc.getContext('2d').getImageData(0, 0, sc.width, sc.height).data, SW = sc.width, SH = sc.height;
+    const out = document.createElement('canvas'); out.width = Wout; out.height = Hout;
+    const octx = out.getContext('2d'), oimg = octx.createImageData(Wout, Hout), od = oimg.data;
+    for (let oy = 0; oy < Hout; oy++) { const v = (oy + 0.5) / Hout;
+      for (let ox = 0; ox < Wout; ox++) { const u = (ox + 0.5) / Wout, wsum = gg * u + hh * v + 1;
+        const sx = (a * u + b * v + cc) / wsum, sy = (dd * u + e * v + f) / wsum, oi = (oy * Wout + ox) * 4;
+        if (sx < 0 || sy < 0 || sx > SW - 1 || sy > SH - 1) { od[oi] = od[oi + 1] = od[oi + 2] = 255; od[oi + 3] = 255; continue; }
+        const x1i = sx | 0, y1i = sy | 0, x2i = Math.min(SW - 1, x1i + 1), y2i = Math.min(SH - 1, y1i + 1), fx = sx - x1i, fy = sy - y1i;
+        const i00 = (y1i * SW + x1i) * 4, i10 = (y1i * SW + x2i) * 4, i01 = (y2i * SW + x1i) * 4, i11 = (y2i * SW + x2i) * 4;
+        for (let k = 0; k < 3; k++) { const tp = sd[i00 + k] * (1 - fx) + sd[i10 + k] * fx, bt = sd[i01 + k] * (1 - fx) + sd[i11 + k] * fx;
+          od[oi + k] = (tp * (1 - fy) + bt * fy) | 0; } od[oi + 3] = 255; } }
+    octx.putImageData(oimg, 0, 0); return out;
+  }
+
+  // ---- enhancement ----
+  function enhance(canvas, m) {
+    const w = canvas.width, h = canvas.height, ctx = canvas.getContext('2d'), img = ctx.getImageData(0, 0, w, h), d = img.data;
+    if (m === 'original') return canvas;
+    if (m === 'gray' || m === 'bw') {
+      const gray = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) gray[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+      if (m === 'gray') { for (let i = 0; i < w * h; i++) { const v = gray[i] | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; } }
+      else {
+        const integ = new Float64Array((w + 1) * (h + 1));
+        for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += gray[y * w + x]; integ[(y + 1) * (w + 1) + (x + 1)] = integ[y * (w + 1) + (x + 1)] + row; } }
+        const rad = Math.max(8, Math.round(Math.min(w, h) / 22)), C = 10;
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const x1 = Math.max(0, x - rad), y1 = Math.max(0, y - rad), x2 = Math.min(w - 1, x + rad), y2 = Math.min(h - 1, y + rad);
+          const cnt = (x2 - x1 + 1) * (y2 - y1 + 1);
+          const sum = integ[(y2 + 1) * (w + 1) + (x2 + 1)] - integ[(y1) * (w + 1) + (x2 + 1)] - integ[(y2 + 1) * (w + 1) + (x1)] + integ[(y1) * (w + 1) + (x1)];
+          const v = gray[y * w + x] > (sum / cnt - C) ? 255 : 0, i = (y * w + x) * 4; d[i] = d[i + 1] = d[i + 2] = v;
+        }
+      }
+    } else if (m === 'color') {
+      for (let k = 0; k < 3; k++) {
+        const hist = new Int32Array(256); for (let i = 0; i < w * h; i++) hist[d[i * 4 + k]]++;
+        const tot = w * h, loT = tot * 0.02, hiT = tot * 0.98; let acc = 0, lo = 0, hi = 255;
+        for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= loT) { lo = v; break; } }
+        acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= hiT) { hi = v; break; } }
+        const rng = Math.max(1, hi - lo);
+        for (let i = 0; i < w * h; i++) { let v = (d[i * 4 + k] - lo) * 255 / rng; d[i * 4 + k] = v < 0 ? 0 : v > 255 ? 255 : v | 0; }
+      }
+    }
+    ctx.putImageData(img, 0, 0); return canvas;
+  }
+
+  // ---- PDF (lazy jsPDF) ----
+  let jspdfLoading = null;
+  function loadJsPDF() {
+    if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
+    if (jspdfLoading) return jspdfLoading;
+    jspdfLoading = new Promise((res, rej) => { const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+      s.onload = res; s.onerror = () => rej(new Error('Could not load PDF library')); document.head.appendChild(s); });
+    return jspdfLoading;
+  }
+  async function buildPdf(pageCanvases, q) {
+    await loadJsPDF(); const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
+    const PW = pdf.internal.pageSize.getWidth(), PH = pdf.internal.pageSize.getHeight(), M = 18;
+    pageCanvases.forEach((cv, i) => { if (i > 0) pdf.addPage();
+      const maxW = PW - M * 2, maxH = PH - M * 2; let dw = maxW, dh = dw * cv.height / cv.width;
+      if (dh > maxH) { dh = maxH; dw = dh * cv.width / cv.height; }
+      pdf.addImage(cv.toDataURL('image/jpeg', q || 0.82), 'JPEG', (PW - dw) / 2, (PH - dh) / 2, dw, dh); });
+    return pdf.output('blob');
+  }
+
+  // ═══════════════════════ UI ═══════════════════════
+  function injectCss() {
+    if (document.getElementById('ds-css')) return;
+    const s = document.createElement('style'); s.id = 'ds-css'; s.textContent =
+      '.ds-ov{position:fixed;inset:0;z-index:99999;background:#0d0f12;display:flex;flex-direction:column;color:#fff;font-family:inherit;overscroll-behavior:contain}' +
+      '.ds-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#14171c;border-bottom:1px solid #232830;flex:none}' +
+      '.ds-top h4{margin:0;font-size:15px;font-weight:700;letter-spacing:.2px}' +
+      '.ds-x{background:none;border:none;color:#9aa4af;font-size:26px;line-height:1;cursor:pointer;padding:0 4px}' +
+      '.ds-stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}' +
+      '.ds-stage video{max-width:100%;max-height:100%;object-fit:contain;background:#000}' +
+      '.ds-guide{position:absolute;inset:7%;border:2px dashed rgba(255,255,255,.35);border-radius:14px;pointer-events:none}' +
+      '.ds-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:12.5px;color:#c7ced6;text-shadow:0 1px 3px #000;pointer-events:none;padding:0 20px}' +
+      '.ds-editwrap{position:relative;touch-action:none;line-height:0}' +
+      '.ds-editwrap canvas{display:block;max-width:100%;height:auto}' +
+      '.ds-svg{position:absolute;inset:0;width:100%;height:100%;touch-action:none}' +
+      '.ds-poly{fill:rgba(226,96,75,.14);stroke:#f0785f;stroke-width:2.5;vector-effect:non-scaling-stroke}' +
+      '.ds-h{fill:#fff;stroke:#e2604b;stroke-width:3;vector-effect:non-scaling-stroke;cursor:grab}' +
+      '.ds-bot{flex:none;background:#14171c;border-top:1px solid #232830;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}' +
+      '.ds-modes{display:flex;gap:8px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}' +
+      '.ds-mode{background:#1d222a;border:1px solid #2b323c;color:#c7ced6;border-radius:20px;padding:7px 15px;font-size:13px;cursor:pointer;font-weight:600}' +
+      '.ds-mode.on{background:#e2604b;border-color:#e2604b;color:#fff}' +
+      '.ds-row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}' +
+      '.ds-btn{border:none;border-radius:11px;padding:13px 20px;font-size:14.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px}' +
+      '.ds-btn.p{background:#e2604b;color:#fff}.ds-btn.g{background:#232830;color:#e6ebf1}.ds-btn:disabled{opacity:.5;cursor:default}' +
+      '.ds-shutter{width:70px;height:70px;border-radius:50%;background:#fff;border:5px solid #e2604b;cursor:pointer;flex:none;box-shadow:0 3px 14px rgba(0,0,0,.5)}' +
+      '.ds-ico{background:#232830;color:#e6ebf1;border:none;width:52px;height:52px;border-radius:14px;font-size:22px;cursor:pointer;flex:none}' +
+      '.ds-thumbs{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px}' +
+      '.ds-thumb{position:relative;flex:none;height:56px;border-radius:6px;border:1px solid #2b323c}' +
+      '.ds-thumb img{height:100%;border-radius:5px;display:block}' +
+      '.ds-thumb b{position:absolute;top:-6px;right:-6px;background:#e2604b;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:grid;place-items:center;cursor:pointer}' +
+      '.ds-spin{width:34px;height:34px;border:3px solid #2b323c;border-top-color:#e2604b;border-radius:50%;animation:dsspin .8s linear infinite}' +
+      '@keyframes dsspin{to{transform:rotate(360deg)}}' +
+      '.ds-center{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;color:#c7ced6;font-size:13.5px;text-align:center;padding:24px}';
+    document.head.appendChild(s);
+  }
+  let ov = null;
+  function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+  function close() { stopCam(); if (ov) { ov.remove(); ov = null; } pages = []; srcCanvas = corners = warpedRaw = null; }
+
+  function shell(title) {
+    injectCss(); if (ov) ov.remove();
+    ov = el('div', 'ds-ov');
+    const top = el('div', 'ds-top');
+    top.appendChild(el('h4', null, title || '📷 Scan document'));
+    const x = el('button', 'ds-x', '&times;'); x.onclick = close; top.appendChild(x);
+    const stage = el('div', 'ds-stage'); stage.id = 'ds-stage';
+    const bot = el('div', 'ds-bot'); bot.id = 'ds-bot';
+    ov.appendChild(top); ov.appendChild(stage); ov.appendChild(bot);
+    document.body.appendChild(ov);
+    return { stage, bot };
+  }
+
+  // ---- CAPTURE stage ----
+  async function showCapture() {
+    const { stage, bot } = shell(wantMulti ? '📷 Scan · page ' + (pages.length + 1) : '📷 Scan document');
+    stage.innerHTML = ''; bot.innerHTML = '';
+    let usingCam = false;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
+      const video = el('video'); video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
+      await video.play(); stage.appendChild(video);
+      stage.appendChild(el('div', 'ds-guide')); stage.appendChild(el('div', 'ds-hint', 'Fit the whole document in the frame, then tap the shutter — edges are detected for you.'));
+      usingCam = true;
+      const shutter = el('button', 'ds-shutter'); shutter.setAttribute('aria-label', 'Capture');
+      shutter.onclick = () => { const cv = el('canvas'); cv.width = video.videoWidth; cv.height = video.videoHeight;
+        cv.getContext('2d').drawImage(video, 0, 0); stopCam(); loadSource(cv); };
+      const gal = el('button', 'ds-ico', '🖼'); gal.title = 'Choose from gallery'; gal.onclick = () => pickFile();
+      const spacer = el('div', 'ds-ico'); spacer.style.visibility = 'hidden';
+      const row = el('div', 'ds-row'); row.append(gal, shutter, spacer); bot.appendChild(row);
+    } catch (e) { /* no camera → file fallback */ }
+    if (!usingCam) {
+      stage.appendChild(el('div', 'ds-center', '<div>📷</div><div>Camera not available here.<br>Choose a photo of the document instead.</div>'));
+      const b = el('button', 'ds-btn p', '🖼 Choose photo'); b.onclick = () => pickFile();
+      const row = el('div', 'ds-row'); row.appendChild(b); bot.appendChild(row);
+    }
+  }
+  function pickFile() {
+    const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
+    inp.onchange = () => { const f = inp.files[0]; if (!f) return;
+      const img = new Image(); img.onload = () => { let W = img.naturalWidth, H = img.naturalHeight; const cap = 2600, l = Math.max(W, H);
+        if (l > cap) { const s = cap / l; W = Math.round(W * s); H = Math.round(H * s); }
+        const cv = el('canvas'); cv.width = W; cv.height = H; cv.getContext('2d').drawImage(img, 0, 0, W, H); URL.revokeObjectURL(img.src); loadSource(cv); };
+      img.onerror = () => toast('Could not read that image', true); img.src = URL.createObjectURL(f); };
+    inp.click();
+  }
+  function loadSource(cv) { srcCanvas = cv; corners = detectCorners(cv); showEdit(); }
+
+  // ---- EDIT (crop) stage ----
+  function showEdit() {
+    const { stage, bot } = shell('Adjust edges'); stage.innerHTML = ''; bot.innerHTML = '';
+    const availW = stage.clientWidth || window.innerWidth, availH = stage.clientHeight || (window.innerHeight * 0.6);
+    dispScale = Math.min(availW / srcCanvas.width, availH / srcCanvas.height, 1);
+    const dw = Math.round(srcCanvas.width * dispScale), dh = Math.round(srcCanvas.height * dispScale);
+    const wrap = el('div', 'ds-editwrap'); wrap.style.width = dw + 'px'; wrap.style.height = dh + 'px';
+    const disp = el('canvas'); disp.width = dw; disp.height = dh; disp.getContext('2d').drawImage(srcCanvas, 0, 0, dw, dh); wrap.appendChild(disp);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'ds-svg'); svg.setAttribute('viewBox', '0 0 ' + dw + ' ' + dh);
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon'); poly.setAttribute('class', 'ds-poly'); svg.appendChild(poly);
+    const handles = corners.map((_, i) => { const h = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); h.setAttribute('class', 'ds-h'); h.setAttribute('r', 11); h.dataset.i = i; svg.appendChild(h); return h; });
+    wrap.appendChild(svg); stage.appendChild(wrap);
+    function redraw() { poly.setAttribute('points', corners.map(p => (p.x * dispScale) + ',' + (p.y * dispScale)).join(' '));
+      handles.forEach((h, i) => { h.setAttribute('cx', corners[i].x * dispScale); h.setAttribute('cy', corners[i].y * dispScale); }); }
+    redraw();
+    function pt(ev) { const r = svg.getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev;
+      return { x: Math.max(0, Math.min(srcCanvas.width, (t.clientX - r.left) / dispScale)), y: Math.max(0, Math.min(srcCanvas.height, (t.clientY - r.top) / dispScale)) }; }
+    svg.addEventListener('pointerdown', (ev) => { const i = ev.target.dataset && ev.target.dataset.i; if (i == null) return; dragIdx = +i; ev.target.setPointerCapture(ev.pointerId); ev.preventDefault(); });
+    svg.addEventListener('pointermove', (ev) => { if (dragIdx < 0) return; corners[dragIdx] = pt(ev); redraw(); ev.preventDefault(); });
+    svg.addEventListener('pointerup', () => { dragIdx = -1; });
+    svg.addEventListener('pointercancel', () => { dragIdx = -1; });
+    // buttons
+    const retake = el('button', 'ds-btn g', '↻ Retake'); retake.onclick = () => showCapture();
+    const rot = el('button', 'ds-btn g', '⟳ Rotate'); rot.onclick = () => { const r = el('canvas'); r.width = srcCanvas.height; r.height = srcCanvas.width;
+      const rc = r.getContext('2d'); rc.translate(r.width, 0); rc.rotate(Math.PI / 2); rc.drawImage(srcCanvas, 0, 0); srcCanvas = r; corners = detectCorners(srcCanvas); showEdit(); };
+    const auto = el('button', 'ds-btn g', '✨ Auto'); auto.onclick = () => { corners = detectCorners(srcCanvas); redraw(); };
+    const next = el('button', 'ds-btn p', 'Next ▸'); next.onclick = () => { warpedRaw = warp(srcCanvas, corners, 1700); showEnhance(); };
+    const r1 = el('div', 'ds-row'); r1.append(retake, rot, auto);
+    const r2 = el('div', 'ds-row'); r2.style.marginTop = '10px'; r2.appendChild(next);
+    bot.append(r1, r2);
+  }
+
+  // ---- ENHANCE stage ----
+  function showEnhance() {
+    const { stage, bot } = shell('Enhance'); stage.innerHTML = ''; bot.innerHTML = '';
+    const preview = el('canvas'); const availW = stage.clientWidth || window.innerWidth, availH = stage.clientHeight || (window.innerHeight * 0.6);
+    const applyPreview = () => { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode);
+      const sc = Math.min(availW / work.width, availH / work.height, 1); preview.width = Math.round(work.width * sc); preview.height = Math.round(work.height * sc);
+      preview.getContext('2d').drawImage(work, 0, 0, preview.width, preview.height); preview._full = work; };
+    preview.style.maxWidth = '100%'; preview.style.maxHeight = '100%'; preview.style.objectFit = 'contain'; stage.appendChild(preview); applyPreview();
+    const modes = [['color', '✨ Color'], ['bw', '📄 B&W'], ['gray', 'Gray'], ['original', 'Original']];
+    const mrow = el('div', 'ds-modes'); modes.forEach(([k, lbl]) => { const b = el('button', 'ds-mode' + (mode === k ? ' on' : ''), lbl);
+      b.onclick = () => { mode = k; mrow.querySelectorAll('.ds-mode').forEach(x => x.classList.remove('on')); b.classList.add('on'); applyPreview(); }; mrow.appendChild(b); });
+    bot.appendChild(mrow);
+    const back = el('button', 'ds-btn g', '◂ Edges'); back.onclick = () => showEdit();
+    const addPage = el('button', 'ds-btn g', '＋ Page'); addPage.onclick = () => { commitPage(); showCapture(); };
+    const done = el('button', 'ds-btn p', (wantMulti && pages.length ? '✓ Done (' + (pages.length + 1) + ')' : 'Done ▸')); done.onclick = () => { commitPage(); finish(); };
+    const row = el('div', 'ds-row'); if (wantMulti) row.append(back, addPage, done); else row.append(back, done); bot.appendChild(row);
+    if (pages.length) { const th = el('div', 'ds-thumbs'); pages.forEach((p, i) => { const t = el('div', 'ds-thumb'); const im = el('img'); im.src = p.toDataURL('image/jpeg', 0.5); t.appendChild(im);
+      const del = el('b', null, '×'); del.onclick = () => { pages.splice(i, 1); showEnhance(); }; t.appendChild(del); th.appendChild(t); }); bot.appendChild(th); }
+  }
+  function commitPage() { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode); pages.push(work); }
+
+  async function finish() {
+    const { stage, bot } = shell('Processing'); stage.innerHTML = '<div class="ds-center"><div class="ds-spin"></div><div>Building your document…</div></div>'; bot.innerHTML = '';
+    try {
+      const first = pages[0], jpegDataUrl = first.toDataURL('image/jpeg', 0.9), jpegB64 = jpegDataUrl.split(',').pop();
+      const pdfBlob = await buildPdf(pages, 0.82);
+      const res = { pageCount: pages.length, jpegDataUrl, jpegB64, pdfBlob };
+      const cb = onDoneCb; close(); if (cb) cb(res);
+    } catch (e) { toast(e.message || 'Failed to build document', true); close(); }
+  }
+
+  return {
+    open: function (opts) { opts = opts || {}; wantMulti = opts.multi !== false; onDoneCb = opts.onDone || null;
+      pages = []; srcCanvas = corners = warpedRaw = null; mode = 'color';
+      if (!navigator.mediaDevices && !window.FileReader) { toast('Scanning not supported on this device', true); return; }
+      showCapture(); }
+  };
+})();
+
 /* ── 🤖 Smart OCR — Receipt → Xero Bill ── */
-let OCR_RESULT=null, OCR_FILE_NAME='', OCR_FILE_B64='', OCR_MIME='';
+let OCR_RESULT=null, OCR_FILE_NAME='', OCR_FILE_B64='', OCR_MIME='', OCR_SCAN_PDF=null;
 function renderOcr(){
   const tenantOpts=(COMPANIES||[]).map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
   document.getElementById('ocr').innerHTML=
@@ -6519,6 +6835,7 @@ function renderOcr(){
         '<div><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Receipt / invoice file</label>'+
           '<input type="file" id="ocr_file" accept="image/png,image/jpeg,image/webp,application/pdf" onchange="ocrPick(this)" style="width:100%"/></div>'+
       '</div>'+
+      '<button type="button" class="btn" style="width:100%;margin-bottom:10px;justify-content:center;background:linear-gradient(180deg,rgba(226,96,75,.18),rgba(226,96,75,.08));border-color:rgba(226,96,75,.4)" onclick="ocrScan()">📷 Scan with camera <span style="opacity:.7;font-weight:400">— auto-crop &amp; clean like a scanner</span></button>'+
       '<button class="btn p" id="ocr_extract_btn" onclick="ocrExtract()" disabled>🧠 Extract with AI</button>'+
       '<div id="ocr_out" style="margin-top:14px"></div>'+
     '</div>';
@@ -6527,11 +6844,26 @@ function renderOcr(){
 }
 function ocrPick(input){
   const f=input.files[0]; if(!f) return;
-  OCR_FILE_NAME=f.name; OCR_MIME=f.type||'image/jpeg';
+  OCR_FILE_NAME=f.name; OCR_MIME=f.type||'image/jpeg'; OCR_SCAN_PDF=null;
   const rd=new FileReader();
   rd.onload=function(e){ OCR_FILE_B64=String(e.target.result||'').split(',').pop(); document.getElementById('ocr_extract_btn').disabled=false; document.getElementById('ocr_out').innerHTML='<div class="muted" style="font-size:12px">📎 '+esc(f.name)+' ready ('+(f.size/1024).toFixed(0)+' KB) · click <b>Extract with AI</b></div>'; };
   rd.readAsDataURL(f);
 }
+// 📷 Scan → auto-cropped, cleaned image feeds the AI extractor (and a PDF you can keep).
+function ocrScan(){
+  DocScanner.open({ multi:false, title:'📷 Scan receipt / invoice', onDone:function(res){
+    OCR_FILE_B64=res.jpegB64; OCR_MIME='image/jpeg'; OCR_FILE_NAME='scan.jpg'; OCR_SCAN_PDF=res.pdfBlob;
+    var btn=document.getElementById('ocr_extract_btn'); if(btn) btn.disabled=false;
+    var out=document.getElementById('ocr_out'); if(out) out.innerHTML=
+      '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;padding:12px">'+
+        '<img src="'+res.jpegDataUrl+'" style="height:120px;border-radius:8px;border:1px solid var(--panel-border)"/>'+
+        '<div><div style="color:var(--green-soft);font-size:12.5px;font-weight:600">✓ Scanned &amp; cleaned</div>'+
+        '<div class="muted" style="font-size:12px;margin:4px 0 8px">'+res.pageCount+' page'+(res.pageCount>1?'s':'')+' · click <b>Extract with AI</b> below</div>'+
+        '<button type="button" class="btn sm" onclick="ocrDownloadScan()">⬇ Download PDF</button></div>'+
+      '</div>';
+  }});
+}
+function ocrDownloadScan(){ if(!OCR_SCAN_PDF) return; var a=document.createElement('a'); a.href=URL.createObjectURL(OCR_SCAN_PDF); a.download='scan_'+Date.now()+'.pdf'; document.body.appendChild(a); a.click(); a.remove(); }
 async function ocrExtract(){
   const out=document.getElementById('ocr_out');
   if(!OCR_FILE_B64){ toast('Pick a file first',true); return; }
