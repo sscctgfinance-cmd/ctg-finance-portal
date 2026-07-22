@@ -4391,8 +4391,9 @@ Deno.serve(async (req)=>{
       return j({ ok:true, banks:data||[] });
     }
     if (api === "hr_banks_save") {
-      // Add / rename / (de)activate a bank — future additions are data-only, no code change (spec).
-      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // Add / rename / (de)activate a bank — global reference list shared by every company.
+      // v150 (F2): full-scope admin only (it affects all tenants' payroll bank pickers).
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (group-wide bank list — full-scope admin only)" }, 403);
       const row = b.row||{};
       const code = String(row.code||"").trim().toUpperCase().replace(/[^A-Z0-9_]/g,"_");
       const name = String(row.name||"").trim();
@@ -4437,10 +4438,23 @@ Deno.serve(async (req)=>{
         const inMs = new Date(open.clock_in).getTime();
         let hrs = (nowMs - inMs)/3600000 - (Number(open.break_minutes)||0)/60;
         hrs = Math.max(0, Math.round(hrs*100)/100);
+        // v150 (MED-2): a punch left open across midnight measures 20-30h of elapsed time and overpays
+        // hourly/daily staff. If the open punch is from a previous day, cap it to the employee's shift
+        // length (default 8h) and flag it so HR can correct.
+        let capped = false;
+        if (String(open.work_date) < mytToday){
+          const hm = (t:any)=>{ const m=String(t||"").match(/^(\d{1,2}):(\d{2})/); return m? (Number(m[1])+Number(m[2])/60) : null; };
+          const st=hm(emp.shift_start), en=hm(emp.shift_end);
+          let shiftLen = (st!=null && en!=null) ? (en>st ? en-st : (en+24-st)) : 8;
+          if (!(shiftLen>0 && shiftLen<=16)) shiftLen = 8;
+          if (hrs > shiftLen){ hrs = Math.round(shiftLen*100)/100; capped = true; }
+        }
         const { data: upd, error } = await sb.from("hr_timeclock").update({ clock_out: new Date(nowMs).toISOString(), hours: hrs, status:"complete",
-          out_lat:(b.lat!=null?Number(b.lat):null), out_lng:(b.lng!=null?Number(b.lng):null), updated_at:new Date().toISOString() }).eq("id",open.id).select().single();
+          out_lat:(b.lat!=null?Number(b.lat):null), out_lng:(b.lng!=null?Number(b.lng):null),
+          note: capped ? (String(open.note||"")+" [auto-capped: left open across midnight]").trim() : open.note,
+          updated_at:new Date().toISOString() }).eq("id",open.id).select().single();
         if (error) return j({ ok:false, error: error.message });
-        return j({ ok:true, punch: upd });
+        return j({ ok:true, punch: upd, capped });
       }
       // clock_status: current open punch (+ whether it's stale from a previous day), today's punches, week hours.
       const { data: todayRows } = await sb.from("hr_timeclock").select("*").eq("employee_id",empId).eq("work_date",mytToday).order("clock_in");
@@ -4544,6 +4558,12 @@ Deno.serve(async (req)=>{
     if (api === "hr_emp_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const f = b.emp||{};
+      // v150 (LOW-8): required-field / format validation before this touches payroll + bank files.
+      if (!String(f.name||"").trim()) return j({ ok:false, error:"Employee name is required." });
+      { const acc = String(f.bankAccount||"").replace(/\D/g,""); if (acc && (acc.length < 5 || acc.length > 20)) return j({ ok:false, error:"Bank account number looks invalid (5–20 digits)." });
+        // Enforce the 12-digit MyKad format only when the value is numeric; a passport (contains letters) is exempt.
+        const icRaw = String(f.ic||"").trim(); const icDigits = icRaw.replace(/[-\s]/g,"");
+        if (icRaw && /^\d+$/.test(icDigits) && icDigits.length !== 12) return j({ ok:false, error:"IC number must be 12 digits (or use a passport number with letters)." }); }
       // Bank: store the master-list CODE as source of truth; resolve the canonical display name from it
       // (keeps the payroll BIC file + vouchers working). Legacy records with no code keep their typed name.
       let bankCode = String(f.bankCode||"").trim() || null;
@@ -4586,16 +4606,33 @@ Deno.serve(async (req)=>{
       if (f.dept !== undefined && String(f.dept).trim() !== "") patch.dept = String(f.dept).trim();
       else if (!f.id) patch.dept = null;   // a brand-new employee with no team selected → explicit null is fine
       let res:any;
-      if (f.id){ res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single(); }
+      if (f.id){
+        // v150 (BLOCKER F1): the edit-by-id branch had NO tenant pin — the central guard only sees
+        // b.tenant (the attacker's own company), so a scoped admin passing a FOREIGN employee's f.id could
+        // overwrite that person's salary / bank account / IC / statutory numbers / resignation. Pin the
+        // target's tenant to allowedTenants first (same guard hr_emp_delete already uses).
+        const { data: exEmp } = await sb.from("hr_employees").select("tenant_id").eq("id",f.id).maybeSingle();
+        if (!exEmp) return j({ ok:false, error:"Employee not found." });
+        const alwE = await allowedTenants(b.token);
+        if (exEmp.tenant_id && alwE.indexOf(String(exEmp.tenant_id)) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403);
+        res = await sb.from("hr_employees").update(patch).eq("id",f.id).select().single();
+      }
       else {
         const tenant = String(b.tenant||f.tenant||"");
         if (!tenant) return j({ ok:false, error:"no company selected" });
         // Numeric max, not lexicographic: order("emp_no" desc) on TEXT ranks "E999" above "E1000",
         // which would hand out an already-taken number once headcount passes 999.
-        const { data:allNos } = await sb.from("hr_employees").select("emp_no").range(0,4999);
-        let maxN=0; (allNos||[]).forEach((r:any)=>{ const m=String(r.emp_no||"").match(/^E(\d+)$/i); if(m){ const v=parseInt(m[1],10); if(v>maxN) maxN=v; } });
-        patch.emp_no = "E"+String(maxN+1).padStart(3,"0"); patch.status="active"; patch.tenant_id=tenant;
-        res = await sb.from("hr_employees").insert(patch).select().single();
+        // v150 (LOW-6): emp_no is UNIQUE; two concurrent creates could pick the same E### and the loser got a
+        // raw duplicate-key error. Retry a few times on a unique violation, recomputing the next number.
+        patch.status="active"; patch.tenant_id=tenant;
+        for (let attempt=0; attempt<5; attempt++){
+          const { data:allNos } = await sb.from("hr_employees").select("emp_no").order("emp_no",{ ascending:false }).range(0,9999);
+          let maxN=0; (allNos||[]).forEach((r:any)=>{ const m=String(r.emp_no||"").match(/^E(\d+)$/i); if(m){ const v=parseInt(m[1],10); if(v>maxN) maxN=v; } });
+          patch.emp_no = "E"+String(maxN+1+attempt).padStart(3,"0");
+          res = await sb.from("hr_employees").insert(patch).select().single();
+          if (!res.error) break;
+          if (!/duplicate key|unique/i.test(String(res.error.message||""))) break;   // a different error → surface it
+        }
       }
       if (res.error) return j({ ok:false, error:res.error.message });
       await logAudit(me,"hr_emp_save",String(res.data&&res.data.id),{ name:f.name });
@@ -4761,9 +4798,8 @@ Deno.serve(async (req)=>{
           const year = new Date(from).getFullYear();
           const { data:lt2 } = await sb.from("hr_leave_types").select("id,paid,default_days").eq("name",typeName).maybeSingle();
           if (lt2 && lt2.paid) {
-            const { data:bal } = await sb.from("hr_leave_balances").select("id,taken").eq("employee_id",empId).eq("leave_type_id",lt2.id).eq("year",year).maybeSingle();
-            if (bal) await sb.from("hr_leave_balances").update({ taken:Number(bal.taken||0)+Number(days) }).eq("id",bal.id);
-            else await sb.from("hr_leave_balances").insert({ employee_id:empId, leave_type_id:lt2.id, year, entitled:Number(lt2.default_days||0), taken:Number(days) });
+            // v150 (MED-3): atomic increment — no read-modify-write race across concurrent approvals.
+            await sb.rpc("hr_leave_balance_bump", { p_employee:empId, p_leave_type:lt2.id, p_year:year, p_delta:Number(days) });
           }
         } catch(_e){}
         await logAudit(me,"hr_leave_apply",String(ins.id),{ on_behalf:true, auto_approve:true, days });
@@ -4840,7 +4876,8 @@ Deno.serve(async (req)=>{
       return j({ ok:true, requests, flow: flow||[], employees: empQ.data||[], leave_types: types||[] });
     }
     if (api === "hr_leave_flow_save") {
-      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v150 (F2): the leave approval chain is one global row rewritten for every company → full-scope only.
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (group-wide leave flow — full-scope admin only)" }, 403);
       const steps = Array.isArray(b.steps) ? b.steps : [];
       const clean = steps.map((s:any,i:number)=>{
         const t = s.approver_type==="employee" ? "employee" : (s.approver_type==="manager" ? "manager" : "role");
@@ -4922,9 +4959,9 @@ Deno.serve(async (req)=>{
         const year = new Date(req.date_from).getFullYear();
         const { data:lt } = await sb.from("hr_leave_types").select("id,paid,default_days").eq("name",req.leave_type).maybeSingle();
         if (lt && lt.paid){
-          const { data:bal } = await sb.from("hr_leave_balances").select("id,taken").eq("employee_id",req.employee_id).eq("leave_type_id",lt.id).eq("year",year).maybeSingle();
-          if (bal) await sb.from("hr_leave_balances").update({ taken: Number(bal.taken||0)+Number(req.days) }).eq("id",bal.id);
-          else await sb.from("hr_leave_balances").insert({ employee_id:req.employee_id, leave_type_id:lt.id, year, entitled:Number(lt.default_days||0), taken:Number(req.days) });
+          // v150 (MED-3): atomic increment — concurrent approvals of the same employee's requests can't
+          // clobber each other's balance write.
+          await sb.rpc("hr_leave_balance_bump", { p_employee:req.employee_id, p_leave_type:lt.id, p_year:year, p_delta:Number(req.days) });
         }
       }catch(_e){}
       await logAudit(me,"hr_leave_decide",id,{ decision:"approve", final:true });
@@ -5004,6 +5041,19 @@ Deno.serve(async (req)=>{
       const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
       { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_finalise",tenant); }
+      // v150 (MED-5): reject an empty run — it would delete-then-insert-nothing and wipe finalised payslips
+      // (the EA / Form-E source of record). v150 (HIGH-1): these figures are computed client-side and written
+      // verbatim, so validate every figure is a finite non-negative number and every employee belongs to this
+      // company, before they become the official statutory record.
+      if (!rows.length) return j({ ok:false, error:"No payroll rows to finalise." });
+      const NUMF=["gross","epfEe","epfEr","socsoEe","socsoEr","eisEe","eisEr","pcb","net","employerCost"];
+      const empIds = rows.map((r:any)=>r.employeeId).filter(Boolean);
+      const { data: validEmps } = await sb.from("hr_employees").select("id").eq("tenant_id",tenant).in("id", empIds.length?empIds:["00000000-0000-0000-0000-000000000000"]);
+      const okEmp = new Set((validEmps||[]).map((e:any)=>String(e.id)));
+      for (const r of rows){
+        if (!r.employeeId || !okEmp.has(String(r.employeeId))) return j({ ok:false, error:"A payslip references an employee not in this company — refusing to finalise." }, 400);
+        for (const k of NUMF){ const v=Number((r as any)[k]); if (!isFinite(v) || v < 0) return j({ ok:false, error:"A payslip figure ("+k+") is not a valid non-negative number — refusing to write. Recompute the payroll and try again." }, 400); }
+      }
       const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
@@ -5210,6 +5260,19 @@ Deno.serve(async (req)=>{
       const c = b.claim||{};
       const empId = who.isAdmin ? (c.employee_id||null) : who.employee.id;
       const tenant = who.isAdmin ? String(b.tenant||"") : who.employee.tenant_id;
+      // v150 (F3): an admin sets employee_id + tenant from the body. The central guard validates b.tenant
+      // is theirs, but the referenced employee could belong to ANOTHER company — pin it. Also, on edit,
+      // the existing claim must belong to this tenant (can't pull a foreign draft into your company).
+      if (who.isAdmin){
+        if (empId){
+          const { data: rcEmp } = await sb.from("hr_employees").select("tenant_id").eq("id", empId).maybeSingle();
+          if (!rcEmp || String(rcEmp.tenant_id) !== String(tenant)) return j({ ok:false, error:"forbidden: employee is not in this company" }, 403);
+        }
+        if (c.id){
+          const { data: rcEx } = await sb.from("hr_claim_requests").select("tenant_id").eq("id", c.id).maybeSingle();
+          if (rcEx){ const alwRc = await allowedTenants(b.token); if (alwRc.indexOf(String(rcEx.tenant_id)) < 0) return j({ ok:false, error:"forbidden: claim outside your access" }, 403); }
+        }
+      }
       const { data: allTypes } = await sb.from("hr_claim_types").select("id,is_mileage,taxable");
       const typeMap:any={}; (allTypes||[]).forEach((t:any)=>{ typeMap[t.id]=t; });
       const items:any[]|null = (Array.isArray(c.items)&&c.items.length) ? c.items : null;
@@ -5669,6 +5732,26 @@ Deno.serve(async (req)=>{
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const kind=String(b.kind||""); const row=b.row||{};
+      // v150 (F2): scope claim/approval config. GLOBAL tables (claim types, mileage, policy) drive every
+      // company → full-scope admin only. PER-TENANT config (cost centre, role approver, workflow) must pin
+      // the affected company to allowedTenants — a scoped admin could otherwise plant or delete another
+      // company's approval config by tenant_id or by id.
+      {
+        const GLOBAL_KINDS = ["claim_type","claim_type_del","mileage_rate","mileage_rate_del","policy"];
+        if (GLOBAL_KINDS.indexOf(kind) >= 0){
+          if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (group-wide claim config — full-scope admin only)" }, 403);
+        } else {
+          const alwR = await allowedTenants(b.token);
+          let tgtTenant:any = row.tenant_id || null;
+          if (!tgtTenant && row.id){
+            const tbl = kind.indexOf("cost_center")===0 ? "hr_cost_centers" : kind.indexOf("role_approver")===0 ? "hr_claim_role_approvers" : "hr_approval_workflows";
+            const { data: tr } = await sb.from(tbl).select("tenant_id").eq("id", row.id).maybeSingle();
+            tgtTenant = tr ? tr.tenant_id : null;
+          }
+          if (tgtTenant && alwR.indexOf(String(tgtTenant)) < 0) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
+          if (!tgtTenant && !(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"forbidden: a group-wide (no-company) config needs a full-scope admin" }, 403);
+        }
+      }
       if(kind==="claim_type"){ if(row.id){ await sb.from("hr_claim_types").update({...row, updated_at:new Date().toISOString()}).eq("id",row.id);} else { await sb.from("hr_claim_types").insert(row);} }
       else if(kind==="claim_type_del"){ await sb.from("hr_claim_types").update({active:false}).eq("id",row.id); }
       else if(kind==="mileage_rate"){ if(row.id){ await sb.from("hr_mileage_rates").update(row).eq("id",row.id);} else { await sb.from("hr_mileage_rates").insert(row);} }
@@ -5764,15 +5847,19 @@ Deno.serve(async (req)=>{
       return j({ ok:true, rows:data||[] });
     }
     if (api === "hr_rates_save") {
-      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v150 (F2): the single hr_statutory_rates row drives EVERY company's payroll → full-scope admin only.
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (group-wide statutory rates — full-scope admin only)" }, 403);
       const rates = b.rates||{};
-      // Guard: the single hr_statutory_rates row drives ALL companies' payroll. Reject an empty/partial
-      // payload so a stray {} can never wipe EPF/SOCSO/EIS config (hrCompute throws on cfg.epf.eeRate).
+      // Guard: reject an empty/partial payload so a stray {} can never wipe EPF/SOCSO/EIS config.
+      // v150 (MED-4): validate the FULL shape hrCompute needs — the old guard only checked the three eeRates,
+      // so a payload missing socso.ceiling / epf.threshold / erRates passed and leaked NaN into every payslip.
+      const num = (x:any)=> typeof x==="number" && isFinite(x);
+      const e=rates&&rates.epf, s=rates&&rates.socso, i=rates&&rates.eis;
       const okShape = rates && typeof rates==="object"
-        && rates.epf && typeof rates.epf==="object" && rates.epf.eeRate!=null
-        && rates.socso && typeof rates.socso==="object" && rates.socso.eeRate!=null
-        && rates.eis && typeof rates.eis==="object" && rates.eis.eeRate!=null;
-      if (!okShape) return j({ ok:false, error:"Rates payload is incomplete — EPF, SOCSO and EIS rates are all required. No changes made." });
+        && e && typeof e==="object" && num(e.eeRate) && num(e.erRateLow) && num(e.erRateHigh) && num(e.threshold)
+        && s && typeof s==="object" && num(s.eeRate) && num(s.erRate) && num(s.ceiling)
+        && i && typeof i==="object" && num(i.eeRate) && num(i.erRate) && num(i.ceiling);
+      if (!okShape) return j({ ok:false, error:"Rates payload is incomplete — every EPF/SOCSO/EIS rate, threshold and ceiling must be a number. No changes made." });
       const { data: prev } = await sb.from("hr_statutory_rates").select("rates").eq("id",1).maybeSingle();
       const { error } = await sb.from("hr_statutory_rates").upsert({ id:1, rates }, { onConflict:"id" });
       if (error) return j({ ok:false, error:error.message });
@@ -5898,7 +5985,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v149: audit follow-through. company_folder_delete now pins the target folder's tenant to allowedTenants BEFORE touching storage (a scoped admin passing another company's folder_id used to wipe its files before the reject). The top-level webhook catch returns 500 (not 200) on an unexpected throw so Xero redelivers instead of losing the batch. (Also: all 80 admin sessions were revoked as a precaution after the v148 token-exposure window.) v148: security + correctness audit fixes. BLOCKER: sessions_list no longer returns token_full (a scoped admin could lift a full-scope admin's bearer token → total account takeover) — now full-scope-admin-only, returns an opaque SHA-256 sid, revoke by sid. Group-wide admin actions (sessions_list/session_revoke/audit_list/roles_*/individuals_*/pnl_refresh/fx_backfill) gated on new isFullScopeAdmin() not superAdmin() so a single-company admin can't read/write every company. BLOCKER: hr_emp_save no longer wipes Department to null when the 2-option dropdown pre-selects blank for a legacy value (guarded like status). refreshPnlCache upserts-then-deletes-stale (never blanks a month). fetchInvoiceIdsBatch surfaces its prune-delete error. Frontend: session revoke uses sid; mobile input-width no longer distorts OCR/AP/Quick-Invoice grids; hros money formatter pinned en-MY. v147: P&L Analysis rows keep the Xero report order (Excel row-for-row) — parsePnl records a monotonic seq per account, refreshPnlCache stores it in xero_pnl_accounts.seq, and portal_pnl_analysis orders rows by (section, seq, name) instead of alphabetically. Also the RPC normalizes Xero section titles (Income→Trading Income etc.) and fixes the % denominator so occupancy-of-revenue shows. Run pnl_refresh once to populate seq. v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v150: HR OS market-launch hardening. SECURITY: hr_emp_save edit-by-id now pins the target employee's tenant (was a cross-company salary/bank/IC tamper BLOCKER). Group-wide HR config — hr_rates_save, hr_leave_flow_save, hr_banks_save, and the claim_type/mileage/policy kinds of hr_rc_admin_save — gated on isFullScopeAdmin; per-tenant claim config (cost_center/role_approver/workflow) pins tenantsAssignable/allowedTenants. hr_rc_save validates the referenced employee + edited claim belong to the caller's company. STABILITY: hr_payroll_finalise rejects empty runs and non-finite/negative figures + employee↔tenant (payslips are the EA source); hr_rates_save validates the FULL rate shape (ceilings/thresholds) so no NaN leaks into payslips; clock_out caps a punch left open across midnight to the shift length; leave-balance increments are atomic via hr_leave_balance_bump (no lost-update race); a partial unique index stops double clock-in; hr_emp_save validates name/IC/bank; emp_no allocation retries on conflict. v149: audit follow-through. company_folder_delete now pins the target folder's tenant to allowedTenants BEFORE touching storage (a scoped admin passing another company's folder_id used to wipe its files before the reject). The top-level webhook catch returns 500 (not 200) on an unexpected throw so Xero redelivers instead of losing the batch. (Also: all 80 admin sessions were revoked as a precaution after the v148 token-exposure window.) v148: security + correctness audit fixes. BLOCKER: sessions_list no longer returns token_full (a scoped admin could lift a full-scope admin's bearer token → total account takeover) — now full-scope-admin-only, returns an opaque SHA-256 sid, revoke by sid. Group-wide admin actions (sessions_list/session_revoke/audit_list/roles_*/individuals_*/pnl_refresh/fx_backfill) gated on new isFullScopeAdmin() not superAdmin() so a single-company admin can't read/write every company. BLOCKER: hr_emp_save no longer wipes Department to null when the 2-option dropdown pre-selects blank for a legacy value (guarded like status). refreshPnlCache upserts-then-deletes-stale (never blanks a month). fetchInvoiceIdsBatch surfaces its prune-delete error. Frontend: session revoke uses sid; mobile input-width no longer distorts OCR/AP/Quick-Invoice grids; hros money formatter pinned en-MY. v147: P&L Analysis rows keep the Xero report order (Excel row-for-row) — parsePnl records a monotonic seq per account, refreshPnlCache stores it in xero_pnl_accounts.seq, and portal_pnl_analysis orders rows by (section, seq, name) instead of alphabetically. Also the RPC normalizes Xero section titles (Income→Trading Income etc.) and fixes the % denominator so occupancy-of-revenue shows. Run pnl_refresh once to populate seq. v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
