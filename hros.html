@@ -3780,9 +3780,16 @@ function hrApvRc(){
     var scope=w.tenant_id?'this company':'all companies';
     return '<tr><td><b>'+esc(w.name)+'</b><br><span class="muted" style="font-size:10.5px">'+scope+' · priority '+(w.priority||0)+'</span></td><td class="muted">'+esc(rng)+'</td><td style="font-size:12px">'+chain+'</td><td>'+(w.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td><td style="white-space:nowrap">'+hrRW('<button class="btn xs" onclick="hrApvWfEdit(\''+w.id+'\')">Edit</button> '+(w.active?'<button class="btn xs d" onclick="hrApvWfDel(\''+w.id+'\')">off</button>':''))+'</td></tr>';
   }).join('')||'<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">No workflows yet — claims fall back to a single Finance approval. Add one to build a multi-level chain.</td></tr>';
+  // Loud warning for the silent-downgrade trap: workflows configured but ALL switched off means every
+  // new claim quietly drops to a ONE-approver fallback, no matter how many levels you designed.
+  var wfAll=(cfg.workflows||[]), wfOn=wfAll.filter(function(w){return w.active;});
+  var wfWarn = (wfAll.length && !wfOn.length)
+    ? '<div style="background:rgba(245,158,11,.14);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No workflow is active.</b> You have '+wfAll.length+' workflow(s) configured but all are switched <b>off</b>, so every new claim uses a <b>single-approver fallback</b> — your multi-level chain is not being applied. Switch one on below.</div>'
+    : (!wfAll.length ? '<div style="background:rgba(245,158,11,.10);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No approval workflow.</b> Claims use a single-approver fallback. Add a workflow to require more than one approver.</div>' : '');
   var wfPanel='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Reimbursement approval workflows</h3>'+hrRW('<button class="btn p sm" onclick="hrApvWfNew()">+ New workflow</button>')+'</div>'+
+    wfWarn+
     '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Workflow</th><th>Amount</th><th>Approval chain</th><th>Status</th><th></th></tr></thead><tbody>'+wfRows+'</tbody></table></div>'+
-    '<div class="muted" style="font-size:11px;margin-top:8px">A claim routes to the <b>highest-priority active</b> workflow whose amount range (and optional department / type filter) match. If none match, it goes to Finance. “Manager” resolves to the employee’s direct manager.</div></div>';
+    '<div class="muted" style="font-size:11px;margin-top:8px">A claim routes to the <b>highest-priority active</b> workflow whose amount range (and optional department / type filter) match. If none match, it falls back to a <b>single</b> approver (a role that has a holder) and the claim is flagged with a warning. “Manager” resolves to the employee’s direct manager.</div></div>';
   var byRole={}; (cfg.role_approvers||[]).forEach(function(a){ (byRole[a.role]=byRole[a.role]||[]).push(a); });
   var empName=function(id){ var e=hrApvEmps().find(function(x){return x.id===id;}); return e?e.name:id; };
   var roles=[['hr','HR'],['director','Director / Boss']];   // Manager & Finance retired per operator
