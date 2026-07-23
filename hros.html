@@ -2776,7 +2776,11 @@ function hrRCDetail(){
   var steps=(d.steps||[]).map(function(s){ var col=s.status==='Approved'?'var(--green-soft)':s.status==='Rejected'?'var(--coral-soft)':s.status==='Info Requested'?'var(--sky-soft)':s.status==='Pending'?'var(--amber)':'var(--muted)'; var cur=(c.current_step===s.step_order&&pending);
     return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)"><div style="width:22px;height:22px;border-radius:50%;background:'+col+'22;color:'+col+';display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+s.step_order+'</div><div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(s.name||s.approver_role)+' <span style="font-weight:400;color:'+col+';font-size:11.5px">· '+esc(s.status)+(cur?' ← now':'')+'</span></div>'+(function(){
       if(s.acted_at || s.acted_by_name){ var verb=s.decision==='approve'?'✓ Approved':s.decision==='reject'?'✕ Rejected':(s.status==='Info Requested'?'ℹ Info requested':'Acted'); var c2=s.decision==='approve'?'var(--green-soft)':s.decision==='reject'?'var(--coral-soft)':'var(--muted)'; return '<div style="font-size:11px;margin-top:2px;color:'+c2+'"><b>'+verb+'</b>'+(s.acted_by_name?(' by '+esc(s.acted_by_name)):'')+(s.acted_at?(' · '+esc(hrDT(s.acted_at))):'')+'</div>'; }
-      return '<div class="muted" style="font-size:11px;margin-top:2px">👤 Approver: '+esc(s.assignee_name||'any admin')+'</div>';
+      // Never claim "any admin" for a step that is actually assigned to a ROLE: if nobody holds that
+      // role the backend refuses every admin, and the old label made that look like a broken button.
+      if(s.assignee_name) return '<div class="muted" style="font-size:11px;margin-top:2px">👤 Approver: '+esc(s.assignee_name)+'</div>';
+      if(s.approver_role) return '<div style="font-size:11px;margin-top:2px;color:var(--amber)">⚠ Approver role “'+esc(s.approver_role)+'” has nobody assigned — assign someone in Claim settings, or an admin can approve to unblock it.</div>';
+      return '<div class="muted" style="font-size:11px;margin-top:2px">👤 Approver: any admin</div>';
     })()+(s.comment?'<div class="muted" style="font-size:11.5px;margin-top:2px">“'+esc(s.comment)+'”</div>':'')+'</div></div>';
   }).join('')||'<div class="muted" style="font-size:12px;padding:6px 0">Not yet submitted</div>';
   var timeline='<div class="panel"><div class="panel-hd"><h3>Approval timeline</h3></div>'+steps+'</div>';
