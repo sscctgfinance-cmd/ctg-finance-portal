@@ -1374,7 +1374,7 @@ function hrPickCompany(tid){
   if(!tid || tid===HR.tenant) return;
   HR.tenant=tid; storageSet('hr_tenant',tid);
   // reset all per-company state so nothing leaks across companies
-  HR.data=null; HR.view='dashboard'; HR.editEmp=null;
+  HR.data=null; HR.view='dashboard'; HR.editEmp=null; HR.submitPack=null;
   HR.pay={ month:0, year:0, data:null, loading:false, adjEmp:null, dedEmp:null, _rows:[], grid:null };
   if(typeof HR_YE!=='undefined'){ HR_YE.annual=null; HR_YE.year=0; }
   if(typeof HR_DASH!=='undefined'){ HR_DASH.data=null; HR_DASH.loading=false; }
@@ -4017,7 +4017,29 @@ function hrPayHub(tot,finalised,p){
     '<div><label class="muted" style="font-size:10px">UOB debit account</label><br><input id="hr_uob_acct" value="'+esc(u.acct||'')+'" placeholder="company UOB account no" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:180px"></div>'+
     '<div><label class="muted" style="font-size:10px">Crediting date</label><br><input id="hr_uob_cd" type="date" value="'+esc(u.cd||'')+'" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"></div>'+
     '<button class="btn xs" onclick="hrUobCfgSave()">Save</button></div>';
+  // One-click bar: generate ALL statutory + salary files in a single ZIP, then guide the upload.
+  var packRows='';
+  if(HR.submitPack){
+    packRows=HR.submitPack.items.map(function(it){
+      var path={salary:'UOB Infinity → Pay &amp; Transfer → Bulk Transactions → Upload Bulk Files → “IBG Payroll with Payment Advice”',
+                epf:'KWSP i-Akaun (Majikan) → Contribution → Upload',
+                perkeso:'PERKESO ASSIST → Monthly Contribution → Upload',
+                pcb:'LHDN e-PCB / e-Data PCB → Upload CP39 → pay by FPX'}[it.key];
+      return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">'+
+        '<span style="flex:none;font-family:monospace;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:10.5px">'+esc(it.file.name)+'</span>'+
+        '<span style="flex:1;min-width:120px"><b>'+esc(it.label)+'</b> · '+it.file.count+' staff · '+M(it.file.total)+'<div class="muted" style="font-size:10.5px;margin-top:1px">→ '+path+'</div></span>'+
+        chk(it.key)+'</div>';
+    }).join('');
+    packRows='<div style="background:var(--ok-soft,rgba(34,197,94,.08));border:1px solid var(--green-soft);border-radius:10px;padding:11px 13px;margin-bottom:12px">'+
+      '<div style="font-size:12.5px;font-weight:700;color:var(--green-soft);margin-bottom:4px">✓ Submission pack generated — '+esc(HR.submitPack.per)+' ('+HR.submitPack.items.length+' files in the ZIP)</div>'+
+      '<div class="muted" style="font-size:11px;margin-bottom:6px">Upload each file at its portal below, then tick it. Files are also individually downloadable from each row further down.</div>'+
+      packRows+'</div>';
+  }
+  var submitBar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05));border:1px solid rgba(226,96,75,.4);border-radius:11px;padding:12px 14px;margin-bottom:12px">'+
+    '<button class="btn p" onclick="hrSubmitAll()" style="font-size:14px">📤 Submit all — generate every file</button>'+
+    '<span class="muted" style="font-size:11.5px;flex:1;min-width:160px">One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. '+(finalised?'':'<b style="color:var(--amber)">Finalise payroll first for authoritative figures.</b>')+'</span></div>';
   return '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
+    submitBar+packRows+
     sec('🏦','Salaries — UOB Infinity', M(tot.net)+' <span class="muted" style="font-size:10px">net pay</span>', '<span class="muted" style="font-size:10.5px">pay on your payday</span>',
       uobCfgRow+'<button class="btn xs p" onclick="hrExpBank(\'uob\')">⬇ UOB Infinity salary file</button><button class="btn xs" onclick="hrExpBank(\'maybank\')">Maybank M2E</button><button class="btn xs" onclick="hrExpGiro()">Generic IBG CSV</button>',
       'UOB Infinity → <b>Pay &amp; Transfer → Bulk Transactions → Upload Bulk Files</b> → file type <b>&ldquo;IBG Payroll with Payment Advice (Employee)&rdquo;</b>. First upload needs UOB&rsquo;s one-time test-file certification. If your Infinity requires their fixed-width UFF template, get the spec sheet from your UOB RM — it can be encoded exactly.','salary')+
@@ -4196,7 +4218,7 @@ async function hrGridSave(){
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
   if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }
-function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; hrRender(); }
+function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; HR.submitPack=null; hrRender(); }
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
   // Capture the request identity: if the operator switches company or period while this request is in
@@ -4325,11 +4347,11 @@ function hrPadR(s,n){ s=String(s==null?'':s); return s.length>=n?s.slice(0,n):s+
 function hrPadL(s,n,c){ s=String(s==null?'':s); c=c||'0'; return s.length>=n?s.slice(-n):new Array(n-s.length+1).join(c)+s; }
 function hrCents(n){ return String(Math.round((Number(n)||0)*100)); }
 // EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
-function hrExpKwsp(){
+function hrExpKwsp(ret){
   var rows=hrCurRows().filter(function(x){ return x.p.epfEe||x.p.epfEr; });
-  if(!rows.length){ toast('No EPF contributions this period',true); return; }
-  var per=hrPeriod();
-  var lines=rows.map(function(x){ var e=x.e,p=x.p;
+  if(!rows.length){ if(ret) return null; toast('No EPF contributions this period',true); return; }
+  var per=hrPeriod(); var total=0;
+  var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.epfEe+p.epfEr;
     return hrPadL(String(e.epfNo||'').replace(/\D/g,''),12)      // EPF member no (12)
          + hrPadL(String(e.ic||'').replace(/\D/g,''),12)          // new IC (12)
          + hrPadR(String(e.name||'').toUpperCase(),40)            // name (40)
@@ -4337,33 +4359,39 @@ function hrExpKwsp(){
          + hrPadL(hrCents(p.epfEe),9)                             // employee share cents (9)
          + hrPadL(hrCents(p.epfEr),9);                            // employer share cents (9)
   });
-  hrDownload('KWSP_iAkaun_'+per.label.replace(' ','')+'.txt', lines.join('\r\n')+'\r\n','text/plain;charset=utf-8;');
+  var out={ name:'KWSP_iAkaun_'+per.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
+  if(ret) return out;
+  hrDownload(out.name, out.text, out.mime);
   toast('KWSP i-Akaun file — '+lines.length+' members. Do one test upload to confirm layout.');
 }
 // SOCSO + EIS → PERKESO ASSIST combined contribution file (CSV)
-function hrExpAssist(){
-  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+function hrExpAssist(ret){
+  var rows=hrCurRows(); if(!rows.length){ if(ret) return null; toast('No payroll rows',true); return; }
   var per=hrPeriod(); var f2=function(n){ return Number(n).toFixed(2); };
   var head=['No','No. KP Baru (New IC)','Nama Pekerja','No. Pekerja (SOCSO)','Gaji/Upah (RM)','Caruman SOCSO Pekerja','Caruman SOCSO Majikan','Caruman SIP/EIS Pekerja','Caruman SIP/EIS Majikan'];
   var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.ic||'',e.name,e.socsoNo||'',f2(p.gross),f2(p.socsoEe),f2(p.socsoEr),f2(p.eisEe),f2(p.eisEr)]; });
   var t=rows.reduce(function(a,x){ a.a+=x.p.socsoEe;a.b+=x.p.socsoEr;a.c+=x.p.eisEe;a.d+=x.p.eisEr; return a; },{a:0,b:0,c:0,d:0});
   body.push(['','','TOTAL','','',f2(t.a),f2(t.b),f2(t.c),f2(t.d)]);
-  hrDownload('PERKESO_ASSIST_'+per.label.replace(' ','')+'.csv', hrCsv([head].concat(body)),'text/csv;charset=utf-8;');
+  var out={ name:'PERKESO_ASSIST_'+per.label.replace(' ','')+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:(t.a+t.b+t.c+t.d) };
+  if(ret) return out;
+  hrDownload(out.name, out.text, out.mime);
   toast('PERKESO ASSIST file (SOCSO+EIS) — '+rows.length+' staff. Confirm columns on ASSIST.');
 }
 // PCB → LHDN CP39 / e-PCB text file (fixed-width; amounts in cents)
-function hrExpCp39(){
+function hrExpCp39(ret){
   var rows=hrCurRows().filter(function(x){ return x.p.pcb>0; });
-  if(!rows.length){ toast('No PCB payable this period',true); return; }
-  var per=hrPeriod();
-  var lines=rows.map(function(x){ var e=x.e,p=x.p;
+  if(!rows.length){ if(ret) return null; toast('No PCB payable this period',true); return; }
+  var per=hrPeriod(); var total=0;
+  var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.pcb;
     return hrPadR(String(e.taxNo||'').replace(/[^0-9A-Za-z]/g,''),11)  // income-tax no / TIN (11)
          + hrPadL(String(e.ic||'').replace(/\D/g,''),12)                // new IC (12)
          + hrPadR(String(e.name||'').toUpperCase(),60)                  // name (60)
          + hrPadL(hrCents(p.pcb),8)                                     // PCB/MTD cents (8)
          + hrPadL('0',8);                                               // CP38 cents (8)
   });
-  hrDownload('LHDN_CP39_'+per.label.replace(' ','')+'.txt', lines.join('\r\n')+'\r\n','text/plain;charset=utf-8;');
+  var out={ name:'LHDN_CP39_'+per.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
+  if(ret) return out;
+  hrDownload(out.name, out.text, out.mime);
   toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
 var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
@@ -4408,12 +4436,12 @@ function hrExpGiro(){
   hrDownload('Bank_Giro_'+tag+'.csv',hrCsv([head].concat(body))); toast('Bank giro CSV downloaded');
 }
 // ---- Bank-specific salary bulk-payment files (net pay). Confirm exact column order in your bank's uploader on first use. ----
-function hrExpBank(bank){
-  var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+function hrExpBank(bank,ret){
+  var rows=hrCurRows(); if(!rows.length){ if(ret) return null; toast('No payroll rows',true); return; }
   var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var refBase=('SAL'+per.label.replace(/[^A-Za-z0-9]/g,'').toUpperCase()).slice(0,14);
   var pay=rows.filter(function(x){ return x.p.net>0; });
-  if(!pay.length){ toast('No positive net pay to disburse',true); return; }
+  if(!pay.length){ if(ret) return null; toast('No positive net pay to disburse',true); return; }
   var noAcct=pay.filter(function(x){ return !x.e.bankAccount; }).length;
   var total=pay.reduce(function(s,x){ return s+x.p.net; },0);
   var head,body,name;
@@ -4433,8 +4461,48 @@ function hrExpBank(bank){
     body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',hrBankCode(e.bankName),e.bankAccount||'',f2(x.p.net),('SALARY '+per.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
     body.push(['','','','','','TOTAL',f2(total),'','','','']);
   }
-  hrDownload(name,hrCsv([head].concat(body)));
+  var out={ name:name, text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:pay.length, total:total, noAcct:noAcct };
+  if(ret) return out;
+  hrDownload(out.name, out.text, out.mime);
   toast((bank==='maybank'?'Maybank':'UOB Infinity')+' salary file — '+pay.length+' staff, '+M(total)+(noAcct?(' · ⚠ '+noAcct+' missing bank a/c'):''), noAcct>0);
+}
+// ── One-click "Submit all": build every statutory + salary file, bundle into one ZIP, guide the upload. ──
+// Dependency-free STORE-method ZIP (no compression needed for text) so it works offline with no library.
+var HR_CRC_TBL=(function(){ var t=[],c,n,k; for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; } return t; })();
+function hrCrc32(bytes){ var crc=0xFFFFFFFF; for(var i=0;i<bytes.length;i++) crc=(crc>>>8)^HR_CRC_TBL[(crc^bytes[i])&0xFF]; return (crc^0xFFFFFFFF)>>>0; }
+function hrZip(files){
+  var enc=new TextEncoder(), parts=[], central=[], offset=0;
+  var u16=function(n){return [n&255,(n>>8)&255];}, u32=function(n){n>>>=0;return [n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];};
+  files.forEach(function(f){
+    var nameB=enc.encode(f.name), dataB=enc.encode(f.text), crc=hrCrc32(dataB);
+    var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+    parts.push(new Uint8Array(lh),nameB,dataB);
+    var ch=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
+    central.push(new Uint8Array(ch),nameB);
+    offset+=lh.length+nameB.length+dataB.length;
+  });
+  var cdSize=central.reduce(function(s,p){return s+p.length;},0);
+  var end=[].concat(u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(cdSize),u32(offset),u16(0));
+  return new Blob(parts.concat(central,[new Uint8Array(end)]),{type:'application/zip'});
+}
+function hrSubmitAll(){
+  if(!hrCurRows().length){ toast('No payroll to submit — finalise the month first',true); return; }
+  var per=hrPeriod(), co=(hrCompanyName()||'CTG').replace(/[^A-Za-z0-9]+/g,'_');
+  var specs=[
+    { key:'salary',  label:'Salaries (UOB Infinity)', file:hrExpBank('uob',true) },
+    { key:'epf',     label:'EPF — KWSP i-Akaun',      file:hrExpKwsp(true) },
+    { key:'perkeso', label:'SOCSO + EIS — PERKESO',   file:hrExpAssist(true) },
+    { key:'pcb',     label:'PCB — LHDN CP39',         file:hrExpCp39(true) }
+  ];
+  var got=specs.filter(function(s){ return s.file; });
+  if(!got.length){ toast('Nothing to generate for this month',true); return; }
+  var zip=hrZip(got.map(function(s){ return { name:s.file.name, text:s.file.text }; }));
+  var url=URL.createObjectURL(zip), a=document.createElement('a');
+  a.href=url; a.download='CTG_Payroll_Submissions_'+co+'_'+per.label.replace(' ','')+'.zip';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  toast('✓ '+got.length+' submission files generated — see the upload steps below');
+  HR.submitPack={ per:per.label, at:Date.now(), items:got };   // drives the tracker panel
+  hrRender();
 }
 // ---- Payroll Summary (styled .xls that opens formatted in Excel) ----
 var HR_HRDF_RATE=0.01; // HRD Corp levy = 1% of basic (only for HRDF-registered employers)
