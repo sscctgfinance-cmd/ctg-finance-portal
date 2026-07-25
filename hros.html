@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1034,6 +1034,45 @@ textarea{ min-height:82px; border-radius:var(--r-sm); }
   /* Long unbroken tokens (emails / ids) must not push the page sideways */
   .emp-name,.emp-meta,.notif-item .nt,.notif-item .nd{ overflow-wrap:anywhere; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   v11 — Premium refinement pass (default = dark CTG theme). Additive,
+   token-driven, presentation-only, works in both themes. No JS/HTML changes.
+   Goal: calmer surface, crisper type, tasteful depth + micro-interactions.
+   ════════════════════════════════════════════════════════════════════════ */
+:root{ --ease-out:cubic-bezier(.16,1,.3,1); }
+/* Smooth, high-end theme switch + surface transitions (respects reduced-motion below) */
+body,.panel,.card,.emp-card,.bigtable,.side,.btn,.bar,.modal,.toast,.lbox,select,input,textarea{
+  transition:background-color var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease); }
+/* Calmer, more premium film grain (was a touch noisy) */
+body::before{ opacity:.15; }
+:root[data-theme="light"] body::before{ opacity:.04; }
+/* Sharper, more legible text everywhere */
+body{ -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility; }
+/* Typography: refined heading tracking + balanced wrapping; roomier body rhythm */
+h1,h2,h3,.page-title,.panel h3,.brand h1,.lbox h1{ letter-spacing:-.015em; }
+h1,.page-title,.lbox h1{ text-wrap:balance; }
+.side-group,.bigtable th,.page-eyebrow,.role-chip,.viewer-badge{ letter-spacing:.085em; }
+/* Money & figures always line up */
+.amt,.hero-val,.card .n,.dcard-val,.pay-tbl td{ font-variant-numeric:tabular-nums; }
+/* Surfaces: tasteful even depth + a crisp glassy top edge, gentle hover lift */
+.panel,.emp-card,.card,.lbox{ box-shadow:var(--elev-2); }
+.card,.emp-card{ transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur) var(--ease); }
+.card:hover,.emp-card:hover{ transform:translateY(-2px); box-shadow:var(--elev-3); }
+.panel:hover{ box-shadow:var(--elev-3); }
+/* Buttons: premium easing + a subtle press so taps feel physical */
+.btn{ transition:all var(--dur) var(--ease-out); }
+.btn:active{ transform:translateY(0) scale(.98); }
+.btn.p:active{ filter:brightness(.96); box-shadow:0 2px 8px rgba(232,93,60,.3); }
+/* Inputs: calm, rounded, responsive on hover */
+select,input:not([type=file]),textarea{ border-radius:9px; }
+select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--muted); }
+/* Thin, unobtrusive premium scrollbars */
+*::-webkit-scrollbar{ width:10px; height:10px; }
+*::-webkit-scrollbar-thumb{ border:3px solid transparent; border-radius:999px; background-clip:content-box; }
+/* Pills read a touch calmer */
+.pill{ letter-spacing:.015em; }
+@media(prefers-reduced-motion:reduce){ *{ transition:none !important; animation:none !important; } .card:hover,.emp-card:hover{ transform:none; } }
 </style>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -1136,7 +1175,8 @@ function hrSkel(n){ var o=''; for(var i=0;i<(n||4);i++) o+='<div class="skel" st
 function hrApplyTheme(t){ var d=document.documentElement; d.setAttribute('data-theme', t==='dark'?'dark':'light'); var b=document.getElementById('hr_theme_btn'); if(b) b.innerHTML=ic(t==='dark'?'sun':'moon',15)+'<span class="lbl">'+(t==='dark'?'Light mode':'Dark mode')+'</span>'; }
 function hrToggleTheme(){ var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; var t=(cur==='dark')?'light':'dark'; storageSet('hros_theme',t); hrApplyTheme(t); if(typeof hrRenderMobileChrome==='function') hrRenderMobileChrome(); }
 function hrToggleNav(){ var s=document.querySelector('.side'); if(!s) return; var c=s.classList.toggle('collapsed'); storageSet('hros_nav_collapsed', c?'1':''); }
-(function(){ try{ if(storageGet('hros_theme')==='dark') document.documentElement.setAttribute('data-theme','dark'); }catch(_e){} })();
+/* v11: DEFAULT is the premium dark CTG theme; only honour an explicit 'light' preference the user set. */
+(function(){ try{ document.documentElement.setAttribute('data-theme', storageGet('hros_theme')==='light'?'light':'dark'); }catch(_e){} })();
 function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
