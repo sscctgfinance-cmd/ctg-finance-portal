@@ -1415,7 +1415,7 @@ function hrEpfParts(wage,eeRate,erRate){ var w=wage<=20000?Math.ceil(wage/20)*20
 function hrTableParts(wage,ceiling,eeRate,erRate){ var w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; var mid=hrBandMid(w); return { ee:eeRate>0?hrRound5(mid*eeRate):0, er:erRate>0?hrRound5(mid*erRate):0 }; }
 function hrProgTax(chargeable){ var tax=0,prev=0; for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0],rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
 // cfg = hr_statutory_rates.rates. emp carries eligibility flags + date_of_birth + epf_ee_rate + socso_category + marital_status/spouse_working/num_children + resident.
-function hrCompute(emp,cfg,adj,period){ adj=adj||[];
+function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var earn=adj.filter(function(a){return ['allowance','bonus','ot'].indexOf(a.kind)>=0;});
   var addEarn=earn.reduce(function(s,a){return s+Number(a.amount||0);},0);
   var addEarnStat=earn.filter(function(a){return a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
@@ -1443,8 +1443,11 @@ function hrCompute(emp,cfg,adj,period){ adj=adj||[];
   // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
   var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
   var statWageNormal=Math.max(0, statWage - bonusStat);
-  // v155: annualise over ACTUAL service months in the tax year; LHDN rounding (truncate 2dp → up to 5 sen); MTD < RM10 = nil.
+  // v155/v156: LHDN MTD — annualise over ACTUAL service months, reconcile against income & PCB already
+  // paid earlier this year (ytd), LHDN rounding (truncate 2dp → up to 5 sen), MTD < RM10 = nil.
   var N=myServiceMonths(emp, period);
+  var yg=Number(ytd&&ytd.gross)||0, ye=Number(ytd&&ytd.epf)||0, yp=Number(ytd&&ytd.pcb)||0, ym=Number(ytd&&ytd.months)||0;
+  var remain=Math.max(1, N - ym);
   var pcb, pcbCat=1;
   if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); pcbCat=0; }
   else {
@@ -1453,14 +1456,15 @@ function hrCompute(emp,cfg,adj,period){ adj=adj||[];
     pcbCat=cat2?2:( ms==='married'?3:1 );
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var kids=Number(emp.num_children||0);
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(epfEe*N, rEpf);
-    var chargeable=Math.max(0, statWageNormal*N - reliefs);
+    var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
+    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf);
+    var chargeable=Math.max(0, projGross - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
-    var monthlyBase=Math.max(0,(tax-rebate)/N);
+    var monthlyBase=Math.max(0, ((tax-rebate) - yp) / remain);
     var addlTax=0;
     if(bonusStat>0){
-      var chargeableB=Math.max(0, statWageNormal*N + bonusStat - reliefs);
+      var chargeableB=Math.max(0, projGross + bonusStat - reliefs);
       var taxB=hrProgTax(chargeableB);
       var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
       addlTax=Math.max(0,(taxB-rebateB)-(tax-rebate));
@@ -3080,6 +3084,17 @@ function hrEmpForm(){
       g('Marital status (for PCB)',sel('maritalStatus',msOpts,x.marital_status||'single'))+g('Number of children',inp('numChildren','0',x.num_children==null?0:x.num_children,'type="number" step="1" min="0"'))+g('&nbsp;','<div></div>')+
     '</div>'+
     '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px">'+ck('epf','EPF',x.epf_eligible!==false)+ck('socso','SOCSO',x.socso_eligible!==false)+ck('eis','EIS',x.eis_eligible!==false)+ck('resident','Tax resident',x.resident!==false)+ck('spouseWorking','Spouse working',!!x.spouse_working)+'</div>'+
+    // v156: mid-year go-live opening balances — income/EPF/PCB already paid THIS tax year before HR OS. Leave blank/0 for a full-year employee.
+    '<details style="margin:0 0 14px"><summary style="cursor:pointer;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">PCB opening balances (only if joined mid-year on another payroll)</summary>'+
+    '<div class="muted" style="font-size:11px;margin:6px 0 8px">If this employee was already paid earlier THIS tax year on a previous system, enter the totals so PCB trues-up correctly. Full-year employees: leave blank.</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">'+
+      g('Tax year',inp('ytdYear','e.g. 2026',(x.ytd_year==null?'':x.ytd_year),'type="number" step="1" min="2020"'))+
+      g('Months already paid',inp('ytdMonths','0',(x.ytd_months==null?'':x.ytd_months),'type="number" step="1" min="0" max="12"'))+
+      g('&nbsp;','<div></div>')+
+      g('YTD gross (RM)',inp('ytdGross','0.00',(x.ytd_gross==null?'':x.ytd_gross),'type="number" step="0.01" min="0"'))+
+      g('YTD EPF employee (RM)',inp('ytdEpf','0.00',(x.ytd_epf==null?'':x.ytd_epf),'type="number" step="0.01" min="0"'))+
+      g('YTD PCB paid (RM)',inp('ytdPcb','0.00',(x.ytd_pcb==null?'':x.ytd_pcb),'type="number" step="0.01" min="0"'))+
+    '</div></details>'+
     '<div class="muted" style="font-size:11px;margin-bottom:12px">EPF/SOCSO/EIS rates follow the Malaysian statutory tables. Age 60+ auto-switches to the senior EPF rate, SOCSO Category 2 and no EIS. PCB uses marital status + children + EPF relief; it is an estimate — verify against the LHDN MTD schedule before filing.</div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Pay basis &amp; time clock</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
@@ -3110,6 +3125,7 @@ async function hrSaveEmp(){
   var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'), employmentType:v('empType')||'Full-time',
     basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, joinDate:v('joinDate')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
+    ytdYear:v('ytdYear'), ytdMonths:v('ytdMonths'), ytdGross:v('ytdGross'), ytdEpf:v('ytdEpf'), ytdPcb:v('ytdPcb'),
     payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
     status:v('status')||'active', resignDate:v('resignDate')||null,
     epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
@@ -3928,7 +3944,7 @@ function hrGridRowCompute(e,g){
   if(Number(g.allowance)) adj.push({kind:'allowance',amount:Number(g.allowance),epf_subject:true});
   var dedTot=hrDedTot(g); if(dedTot) adj.push({kind:'deduction',amount:dedTot,epf_subject:false});
   if(Number(g.unpaid)) adj.push({kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
-  return hrCompute(synth,HR.pay.data.rates,adj,{month:HR.pay.month,year:HR.pay.year});   // v155: same period the server finalise uses
+  return hrCompute(synth,HR.pay.data.rates,adj,{month:HR.pay.month,year:HR.pay.year},(HR.pay.data.ytd||{})[e.id]);   // v155/v156: same period + YTD basis the server uses
 }
 function hrGridAll(){
   var p=HR.pay, emps=p.data.employees||[]; var rows=[];
