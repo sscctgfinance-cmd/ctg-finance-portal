@@ -1391,6 +1391,18 @@ function hrPickCompany(tid){
   renderHR();
 }
 var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
+/* v155: Official PERKESO Second Schedule (Cat1 <60, Cat2 60+) + EIS tables, RM6,000 ceiling (eff. 1 Oct
+   2024). Row = [wageUpperBound, employeeAmt, employerAmt]. MUST stay byte-identical to the server engine
+   (portal_current.ts) — the finalise step recomputes and rejects on any >1-sen difference. */
+var MY_SOCSO_CAT1=[[30,0.10,0.40],[50,0.20,0.70],[70,0.30,1.10],[100,0.40,1.50],[140,0.60,2.10],[200,0.85,2.95],[300,1.25,4.35],[400,1.75,6.15],[500,2.25,7.85],[600,2.75,9.65],[700,3.25,11.35],[800,3.75,13.15],[900,4.25,14.85],[1000,4.75,16.65],[1100,5.25,18.35],[1200,5.75,20.15],[1300,6.25,21.85],[1400,6.75,23.65],[1500,7.25,25.35],[1600,7.75,27.15],[1700,8.25,28.85],[1800,8.75,30.65],[1900,9.25,32.35],[2000,9.75,34.15],[2100,10.25,35.85],[2200,10.75,37.65],[2300,11.25,39.35],[2400,11.75,41.15],[2500,12.25,42.85],[2600,12.75,44.65],[2700,13.25,46.35],[2800,13.75,48.15],[2900,14.25,49.85],[3000,14.75,51.65],[3100,15.25,53.35],[3200,15.75,55.15],[3300,16.25,56.85],[3400,16.75,58.65],[3500,17.25,60.35],[3600,17.75,62.15],[3700,18.25,63.85],[3800,18.75,65.65],[3900,19.25,67.35],[4000,19.75,69.15],[4100,20.25,70.85],[4200,20.75,72.65],[4300,21.25,74.35],[4400,21.75,76.15],[4500,22.25,77.85],[4600,22.75,79.65],[4700,23.25,81.35],[4800,23.75,83.15],[4900,24.25,84.85],[5000,24.75,86.65],[5100,25.25,88.35],[5200,25.75,90.15],[5300,26.25,91.85],[5400,26.75,93.65],[5500,27.25,95.35],[5600,27.75,97.15],[5700,28.25,98.85],[5800,28.75,100.65],[5900,29.25,102.35],[6000,29.75,104.15]];
+var MY_SOCSO_CAT2=[[30,0,0.35],[50,0,0.60],[70,0,0.85],[100,0,1.20],[140,0,1.70],[200,0,2.40],[300,0,3.50],[400,0,4.85],[500,0,6.25],[600,0,7.60],[700,0,8.90],[800,0,10.30],[900,0,11.60],[1000,0,12.95],[1500,0,14.40],[2000,0,21.35],[2500,0,28.40],[3000,0,35.35],[3500,0,42.35],[4000,0,49.30],[4500,0,56.30],[5000,0,63.25],[5500,0,70.25],[6000,0,77.20]];
+var MY_EIS=[[30,0.05,0.05],[50,0.10,0.10],[70,0.15,0.15],[100,0.20,0.20],[140,0.25,0.25],[200,0.35,0.35],[300,0.55,0.55],[400,0.75,0.75],[500,0.95,0.95],[600,1.15,1.15],[700,1.35,1.35],[800,1.55,1.55],[900,1.75,1.75],[1000,1.95,1.95],[1100,2.15,2.15],[1200,2.35,2.35],[1300,2.55,2.55],[1400,2.75,2.75],[1500,2.95,2.95],[1600,3.15,3.15],[1700,3.35,3.35],[1800,3.55,3.55],[1900,3.75,3.75],[2000,3.95,3.95],[2500,4.95,4.95],[3000,5.95,5.95],[3500,6.95,6.95],[4000,7.95,7.95],[4500,8.95,8.95],[5000,9.95,9.95],[5500,10.95,10.95],[6000,11.95,11.95]];
+function myStatLookup(tbl,wage){ if(!(wage>0)) return {ee:0,er:0}; for(var i=0;i<tbl.length;i++){ if(wage<=tbl[i][0]) return {ee:tbl[i][1],er:tbl[i][2]}; } var L=tbl[tbl.length-1]; return {ee:L[1],er:L[2]}; }
+function myPcbRoundUp5(n){ n=Math.floor((Number(n)||0)*100)/100; return Math.round(Math.ceil(n/0.05-1e-9)*0.05*100)/100; }
+function myServiceMonths(emp,period){ if(!period||!period.year) return 12; var y=Number(period.year),start=1,end=12;
+  if(emp.join_date){ var d=new Date(emp.join_date); if(!isNaN(d.getTime())){ if(d.getUTCFullYear()>y) return 0; if(d.getUTCFullYear()===y) start=d.getUTCMonth()+1; } }
+  if(emp.resign_date){ var d2=new Date(emp.resign_date); if(!isNaN(d2.getTime())){ if(d2.getUTCFullYear()<y) return 0; if(d2.getUTCFullYear()===y) end=d2.getUTCMonth()+1; } }
+  return Math.max(1,end-start+1); }
 var HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
 function hrRoundUp(n){ return Math.ceil(n-1e-9); }
 function hrRound2(n){ return Math.round((Number(n)||0)*100)/100; }
@@ -1403,7 +1415,7 @@ function hrEpfParts(wage,eeRate,erRate){ var w=wage<=20000?Math.ceil(wage/20)*20
 function hrTableParts(wage,ceiling,eeRate,erRate){ var w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; var mid=hrBandMid(w); return { ee:eeRate>0?hrRound5(mid*eeRate):0, er:erRate>0?hrRound5(mid*erRate):0 }; }
 function hrProgTax(chargeable){ var tax=0,prev=0; for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0],rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
 // cfg = hr_statutory_rates.rates. emp carries eligibility flags + date_of_birth + epf_ee_rate + socso_category + marital_status/spouse_working/num_children + resident.
-function hrCompute(emp,cfg,adj){ adj=adj||[];
+function hrCompute(emp,cfg,adj,period){ adj=adj||[];
   var earn=adj.filter(function(a){return ['allowance','bonus','ot'].indexOf(a.kind)>=0;});
   var addEarn=earn.reduce(function(s,a){return s+Number(a.amount||0);},0);
   var addEarnStat=earn.filter(function(a){return a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
@@ -1421,38 +1433,40 @@ function hrCompute(emp,cfg,adj){ adj=adj||[];
   // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
   var socsoOn=emp.socso_eligible!==false;
   var scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  var sEe=scat===2?0:cfg.socso.eeRate, sEr=scat===2?(cfg.socso.erRate2!=null?cfg.socso.erRate2:0.0125):cfg.socso.erRate;
-  var sp=socsoOn?hrTableParts(statWage,cfg.socso.ceiling,sEe,sEr):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;
+  var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table
   // ---- EIS (SIP) — 18 to 60 only ----
   var eisOn=emp.eis_eligible!==false && !senior;
-  var ip=eisOn?hrTableParts(statWage,cfg.eis.ceiling,cfg.eis.eeRate,cfg.eis.erRate):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;
+  var ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table
   // ---- PCB / MTD (annualised chargeable-income estimate) ----
   // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
   // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).
   // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
   var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
   var statWageNormal=Math.max(0, statWage - bonusStat);
+  // v155: annualise over ACTUAL service months in the tax year; LHDN rounding (truncate 2dp → up to 5 sen); MTD < RM10 = nil.
+  var N=myServiceMonths(emp, period);
   var pcb, pcbCat=1;
-  if(emp.resident===false){ pcb=hrRound2(statWage*0.30); pcbCat=0; }
+  if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); pcbCat=0; }
   else {
     var ms=String(emp.marital_status||'single').toLowerCase();
     var cat2=(ms==='married' && emp.spouse_working===false);   // married, spouse not working -> spouse relief + rebate
     pcbCat=cat2?2:( ms==='married'?3:1 );
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var kids=Number(emp.num_children||0);
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(epfEe*12, rEpf);
-    var chargeable=Math.max(0, statWageNormal*12 - reliefs);
+    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(epfEe*N, rEpf);
+    var chargeable=Math.max(0, statWageNormal*N - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
-    var monthlyBase=Math.max(0,(tax-rebate)/12);
+    var monthlyBase=Math.max(0,(tax-rebate)/N);
     var addlTax=0;
     if(bonusStat>0){
-      var chargeableB=Math.max(0, statWageNormal*12 + bonusStat - reliefs);
+      var chargeableB=Math.max(0, statWageNormal*N + bonusStat - reliefs);
       var taxB=hrProgTax(chargeableB);
       var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
       addlTax=Math.max(0,(taxB-rebateB)-(tax-rebate));
     }
-    pcb=hrRound2(monthlyBase + addlTax);
+    var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
+    pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
   }
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
@@ -3906,14 +3920,15 @@ function hrGridInit(){
 }
 function hrGridRowCompute(e,g){
   var synth={ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, epf_eligible:e.epf_eligible, socso_eligible:e.socso_eligible, eis_eligible:e.eis_eligible, resident:e.resident,
-    date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children };
+    date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children,
+    join_date:e.join_date, resign_date:e.resign_date };   // v155: needed for MTD service-month annualisation
   var adj=[];
   if(Number(g.bonus)) adj.push({kind:'bonus',amount:Number(g.bonus),epf_subject:true});
   if(Number(g.ot)) adj.push({kind:'ot',amount:Number(g.ot),epf_subject:true});
   if(Number(g.allowance)) adj.push({kind:'allowance',amount:Number(g.allowance),epf_subject:true});
   var dedTot=hrDedTot(g); if(dedTot) adj.push({kind:'deduction',amount:dedTot,epf_subject:false});
   if(Number(g.unpaid)) adj.push({kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
-  return hrCompute(synth,HR.pay.data.rates,adj);
+  return hrCompute(synth,HR.pay.data.rates,adj,{month:HR.pay.month,year:HR.pay.year});   // v155: same period the server finalise uses
 }
 function hrGridAll(){
   var p=HR.pay, emps=p.data.employees||[]; var rows=[];
