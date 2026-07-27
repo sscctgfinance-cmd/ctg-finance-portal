@@ -314,22 +314,38 @@ async function rcValidate(claim, type, empId){
 }
 async function rcMe(me){
   const isAdmin = hrManage(me); let employee:any=null, roles:string[]=[], is_manager=false;   // admin OR hr_admin = full HR admin
+  let roleRows:{role:string,tenant_id:any}[]=[];
   const uid = me && me.user && me.user.id;
   if(uid){ const { data:e } = await sb.from("hr_employees").select("*").eq("user_id",uid).maybeSingle(); employee=e||null; }
   if(employee){
-    const { data:ra } = await sb.from("hr_claim_role_approvers").select("role").eq("employee_id",employee.id);
+    // v157: carry the tenant on each role. stepEligibleApprovers already honoured hr_claim_role_approvers
+    // .tenant_id, but rcMe did not — so who.roles was a GROUP-WIDE set and rcCanActStep matched a step's
+    // role by name alone. A "finance" approver of company A who also had company B in their portal
+    // assignment could therefore approve B's claims/leave without being an approver there at all.
+    const { data:ra } = await sb.from("hr_claim_role_approvers").select("role,tenant_id").eq("employee_id",employee.id);
     const set = new Set<string>(); (ra||[]).forEach((x:any)=>set.add(x.role)); if(employee.claim_role) set.add(employee.claim_role);
     roles = Array.from(set);
+    roleRows = (ra||[]).map((x:any)=>({ role:String(x.role), tenant_id:x.tenant_id||null }));
+    if(employee.claim_role) roleRows.push({ role:String(employee.claim_role), tenant_id:employee.tenant_id||null });
     const { count } = await sb.from("hr_employees").select("id",{count:"exact",head:true}).eq("manager_id",employee.id);
     is_manager = !!count;
   }
-  return { isAdmin, employee, roles, is_manager, uid: uid||null };
+  return { isAdmin, employee, roles, roleRows, is_manager, uid: uid||null };
+}
+// v157: does this person hold `role` FOR THIS COMPANY? A row with no tenant_id is a deliberate group-wide
+// approver and still counts (same rule stepEligibleApprovers uses). Falls back to the flat name match only
+// when roleRows is absent, so older callers keep working.
+function rcHasRole(who:any, role:string, tenantId?:any){
+  const r=String(role||"").trim(); if(!r) return false;
+  const rows = who && who.roleRows;
+  if(!Array.isArray(rows)) return ((who&&who.roles)||[]).indexOf(r)>=0;
+  return rows.some((x:any)=> String(x.role)===r && (!x.tenant_id || !tenantId || String(x.tenant_id)===String(tenantId)));
 }
 // Only the person the step is actually assigned to may act on it. Being an admin does NOT satisfy a
 // step: an admin who isn't the configured approver has no say (operator policy — strict segregation of
 // duties, no override). Before v120 this began with `if(who.isAdmin) return true`, which let one admin
 // approve every level of a chain, including levels belonging to somebody else.
-function rcCanActStep(who:any, step:any){ if(!step) return false; if(!who.employee) return false; if(step.approver_employee_id && step.approver_employee_id===who.employee.id) return true; if(step.approver_role && who.roles.indexOf(step.approver_role)>=0) return true; return false; }
+function rcCanActStep(who:any, step:any, tenantId?:any){ if(!step) return false; if(!who.employee) return false; if(step.approver_employee_id && step.approver_employee_id===who.employee.id) return true; if(step.approver_role && rcHasRole(who, step.approver_role, tenantId)) return true; return false; }
 // A step nobody is assigned to: no chain configured at all, or a "manager" step for an employee with no
 // manager_id. Left alone these can never be decided now that admin no longer satisfies every step, so an
 // admin may act on them — that is filling a gap, not overriding somebody else's level.
@@ -355,18 +371,26 @@ async function stepEligibleApprovers(step:any, tenantId:any, excludeEmpIds?:any[
   else {
     const role = String(step.approver_role||"").trim();
     if(!role) return 0;                                   // plain unassigned
-    const { data: ras } = await sb.from("hr_claim_role_approvers").select("employee_id,tenant_id").eq("role",role);
+    // v157 FAIL-CLOSED. supabase-js returns {data:null,error} instead of throwing, and every result here
+    // used to be consumed as (data||[]). A transient DB error therefore made this return 0 — which
+    // canActOrGap reads as "nobody can decide this step", silently handing ANY admin an approval override
+    // while the real approvers were alive and well. On error return -1 ("assume approvers exist"), so the
+    // gap-fill stays shut; -1 !== 0 also stops rcFallbackStep from treating the step as unfillable.
+    const { data: ras, error: eRas } = await sb.from("hr_claim_role_approvers").select("employee_id,tenant_id").eq("role",role);
+    if(eRas) return -1;
     // A holder counts when it is global (no tenant) or belongs to this request's company.
     ids = (ras||[]).filter((r:any)=> !r.tenant_id || !tenantId || String(r.tenant_id)===String(tenantId))
                    .map((r:any)=>String(r.employee_id));
     let q = sb.from("hr_employees").select("id").eq("claim_role",role);   // role carried on the employee row
     if(tenantId) q = q.eq("tenant_id",tenantId);
-    const { data: direct } = await q;
+    const { data: direct, error: eDir } = await q;
+    if(eDir) return -1;
     (direct||[]).forEach((e:any)=>ids.push(String(e.id)));
   }
   ids = Array.from(new Set(ids)).filter((id)=>!exE.has(id));
   if(!ids.length) return 0;
-  const { data: emps } = await sb.from("hr_employees").select("id,user_id,status").in("id", ids);
+  const { data: emps, error: eEmp } = await sb.from("hr_employees").select("id,user_id,status").in("id", ids);
+  if(eEmp) return -1;
   return (emps||[]).filter((e:any)=>
     String(e.status||"active").toLowerCase()!=="resigned" &&   // a resigned approver can't act
     e.user_id && !exU.has(String(e.user_id))                   // must have a login, and not have acted already
@@ -378,7 +402,7 @@ async function stepHasNoApprover(step:any, tenantId:any){
 }
 // ctx carries the request so eligibility is judged for THIS request, not in the abstract.
 async function canActOrGap(who:any, step:any, tenantId:any, ctx?:any){
-  if(rcCanActStep(who, step)) return true;                // still subject to sodViolation() afterwards
+  if(rcCanActStep(who, step, tenantId)) return true;      // still subject to sodViolation() afterwards
   if(!who.isAdmin) return false;
   const exE = ctx && ctx.requesterEmpId ? [ctx.requesterEmpId] : [];
   const exU = (ctx && ctx.actedUserIds) || [];
@@ -489,7 +513,7 @@ async function rcApproverQueue(tenant:string, who:any){
       return !acted.has(String(e.user_id));                          // already acted on another level
     }).length;
   };
-  const canAct=(st:any,c:any)=> rcCanActStep(who, st) || (who.isAdmin && eligibleCount(st,c)===0);
+  const canAct=(st:any,c:any)=> rcCanActStep(who, st, c&&c.tenant_id) || (who.isAdmin && eligibleCount(st,c)===0);
   return (claims||[]).filter((c:any)=>{
     const st=byClaim[c.id]&&byClaim[c.id][c.current_step];
     if(!(st && st.status==="Pending" && canAct(st,c))) return false;
@@ -943,9 +967,9 @@ const MY_DEFAULT_TAX_BANDS: [number,number][] = [[5000,0],[20000,0.01],[35000,0.
 // PERKESO Second Schedule, Category 1 (employee < 60), RM6,000 ceiling, effective 1 Oct 2024.
 const MY_SOCSO_CAT1:[number,number,number][]=[[30,0.10,0.40],[50,0.20,0.70],[70,0.30,1.10],[100,0.40,1.50],[140,0.60,2.10],[200,0.85,2.95],[300,1.25,4.35],[400,1.75,6.15],[500,2.25,7.85],[600,2.75,9.65],[700,3.25,11.35],[800,3.75,13.15],[900,4.25,14.85],[1000,4.75,16.65],[1100,5.25,18.35],[1200,5.75,20.15],[1300,6.25,21.85],[1400,6.75,23.65],[1500,7.25,25.35],[1600,7.75,27.15],[1700,8.25,28.85],[1800,8.75,30.65],[1900,9.25,32.35],[2000,9.75,34.15],[2100,10.25,35.85],[2200,10.75,37.65],[2300,11.25,39.35],[2400,11.75,41.15],[2500,12.25,42.85],[2600,12.75,44.65],[2700,13.25,46.35],[2800,13.75,48.15],[2900,14.25,49.85],[3000,14.75,51.65],[3100,15.25,53.35],[3200,15.75,55.15],[3300,16.25,56.85],[3400,16.75,58.65],[3500,17.25,60.35],[3600,17.75,62.15],[3700,18.25,63.85],[3800,18.75,65.65],[3900,19.25,67.35],[4000,19.75,69.15],[4100,20.25,70.85],[4200,20.75,72.65],[4300,21.25,74.35],[4400,21.75,76.15],[4500,22.25,77.85],[4600,22.75,79.65],[4700,23.25,81.35],[4800,23.75,83.15],[4900,24.25,84.85],[5000,24.75,86.65],[5100,25.25,88.35],[5200,25.75,90.15],[5300,26.25,91.85],[5400,26.75,93.65],[5500,27.25,95.35],[5600,27.75,97.15],[5700,28.25,98.85],[5800,28.75,100.65],[5900,29.25,102.35],[6000,29.75,104.15]];
 // Category 2 (employee 60+): employment-injury only — employer pays, employee 0.
-const MY_SOCSO_CAT2:[number,number,number][]=[[30,0,0.35],[50,0,0.60],[70,0,0.85],[100,0,1.20],[140,0,1.70],[200,0,2.40],[300,0,3.50],[400,0,4.85],[500,0,6.25],[600,0,7.60],[700,0,8.90],[800,0,10.30],[900,0,11.60],[1000,0,12.95],[1500,0,14.40],[2000,0,21.35],[2500,0,28.40],[3000,0,35.35],[3500,0,42.35],[4000,0,49.30],[4500,0,56.30],[5000,0,63.25],[5500,0,70.25],[6000,0,77.20]];
+const MY_SOCSO_CAT2:[number,number,number][]=[[30,0,0.30],[50,0,0.50],[70,0,0.80],[100,0,1.05],[140,0,1.50],[200,0,2.10],[300,0,3.10],[400,0,4.40],[500,0,5.60],[600,0,6.90],[700,0,8.10],[800,0,9.40],[900,0,10.60],[1000,0,11.90],[1100,0,13.10],[1200,0,14.40],[1300,0,15.60],[1400,0,16.90],[1500,0,18.10],[1600,0,19.40],[1700,0,20.60],[1800,0,21.90],[1900,0,23.10],[2000,0,24.40],[2100,0,25.60],[2200,0,26.90],[2300,0,28.10],[2400,0,29.40],[2500,0,30.60],[2600,0,31.90],[2700,0,33.10],[2800,0,34.40],[2900,0,35.60],[3000,0,36.90],[3100,0,38.10],[3200,0,39.40],[3300,0,40.60],[3400,0,41.90],[3500,0,43.10],[3600,0,44.40],[3700,0,45.60],[3800,0,46.90],[3900,0,48.10],[4000,0,49.40],[4100,0,50.60],[4200,0,51.90],[4300,0,53.10],[4400,0,54.40],[4500,0,55.60],[4600,0,56.90],[4700,0,58.10],[4800,0,59.40],[4900,0,60.60],[5000,0,61.90],[5100,0,63.10],[5200,0,64.40],[5300,0,65.60],[5400,0,66.90],[5500,0,68.10],[5600,0,69.40],[5700,0,70.60],[5800,0,71.90],[5900,0,73.10],[6000,0,74.40]];
 // EIS / SIP (employee = employer), RM6,000 ceiling.
-const MY_EIS:[number,number,number][]=[[30,0.05,0.05],[50,0.10,0.10],[70,0.15,0.15],[100,0.20,0.20],[140,0.25,0.25],[200,0.35,0.35],[300,0.55,0.55],[400,0.75,0.75],[500,0.95,0.95],[600,1.15,1.15],[700,1.35,1.35],[800,1.55,1.55],[900,1.75,1.75],[1000,1.95,1.95],[1100,2.15,2.15],[1200,2.35,2.35],[1300,2.55,2.55],[1400,2.75,2.75],[1500,2.95,2.95],[1600,3.15,3.15],[1700,3.35,3.35],[1800,3.55,3.55],[1900,3.75,3.75],[2000,3.95,3.95],[2500,4.95,4.95],[3000,5.95,5.95],[3500,6.95,6.95],[4000,7.95,7.95],[4500,8.95,8.95],[5000,9.95,9.95],[5500,10.95,10.95],[6000,11.95,11.95]];
+const MY_EIS:[number,number,number][]=[[30,0.05,0.05],[50,0.10,0.10],[70,0.10,0.10],[100,0.15,0.15],[140,0.25,0.25],[200,0.35,0.35],[300,0.50,0.50],[400,0.70,0.70],[500,0.90,0.90],[600,1.10,1.10],[700,1.30,1.30],[800,1.50,1.50],[900,1.70,1.70],[1000,1.90,1.90],[1100,2.10,2.10],[1200,2.30,2.30],[1300,2.50,2.50],[1400,2.70,2.70],[1500,2.90,2.90],[1600,3.10,3.10],[1700,3.30,3.30],[1800,3.50,3.50],[1900,3.70,3.70],[2000,3.90,3.90],[2100,4.10,4.10],[2200,4.30,4.30],[2300,4.50,4.50],[2400,4.70,4.70],[2500,4.90,4.90],[2600,5.10,5.10],[2700,5.30,5.30],[2800,5.50,5.50],[2900,5.70,5.70],[3000,5.90,5.90],[3100,6.10,6.10],[3200,6.30,6.30],[3300,6.50,6.50],[3400,6.70,6.70],[3500,6.90,6.90],[3600,7.10,7.10],[3700,7.30,7.30],[3800,7.50,7.50],[3900,7.70,7.70],[4000,7.90,7.90],[4100,8.10,8.10],[4200,8.30,8.30],[4300,8.50,8.50],[4400,8.70,8.70],[4500,8.90,8.90],[4600,9.10,9.10],[4700,9.30,9.30],[4800,9.50,9.50],[4900,9.70,9.70],[5000,9.90,9.90],[5100,10.10,10.10],[5200,10.30,10.30],[5300,10.50,10.50],[5400,10.70,10.70],[5500,10.90,10.90],[5600,11.10,11.10],[5700,11.30,11.30],[5800,11.50,11.50],[5900,11.70,11.70],[6000,11.90,11.90]];
 function myStatLookup(tbl:[number,number,number][],wage:number){ if(!(wage>0)) return {ee:0,er:0}; for(let i=0;i<tbl.length;i++){ if(wage<=tbl[i][0]) return {ee:tbl[i][1],er:tbl[i][2]}; } const L=tbl[tbl.length-1]; return {ee:L[1],er:L[2]}; }
 // LHDN MTD rounding: truncate to 2 dp, then round UP to the next 5 sen (123.02→123.05, 123.06→123.10).
 function myPcbRoundUp5(n:number){ n=Math.floor((Number(n)||0)*100)/100; return Math.round(Math.ceil(n/0.05-1e-9)*0.05*100)/100; }
@@ -4799,22 +4823,30 @@ Deno.serve(async (req)=>{
         basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
         bank_code:bankCode, bank_name:bankName, bank_account:bankAccount, bank_holder:bankHolder,
         epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
-        phone:f.phone||null, address:f.address||null, resident:f.resident!==false,
+        resident:f.resident!==false,
         epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
         marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
         date_of_birth:f.dob||null,
         join_date:f.joinDate||null,
         epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
-        manager_id:f.managerId||null,
-        claim_role:(f.claimRole===""||f.claimRole==null)?null:f.claimRole,
         pay_type:(["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"),
         hourly_rate:(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate),
         daily_rate:(f.dailyRate===""||f.dailyRate==null)?null:Number(f.dailyRate),
-        shift_start:(String(f.shiftStart||"").trim()||null),
-        shift_end:(String(f.shiftEnd||"").trim()||null),
         clock_reminder:!!f.clockReminder,
       };
+      // v157 (data-loss fix, same class as the v148 dept bug). The employee form does NOT post address /
+      // managerId / claimRole / shift times, so writing them unconditionally set them to null on EVERY save:
+      // editing a salary silently erased the home address the employee entered in My Profile (which is the
+      // MyInvois buyer address), broke the "manager" approval step, and dropped their approver role.
+      // Only write each of these when the caller actually sent the key; a brand-new employee may set null.
+      const keepIfSent = (key:string, col:string, val:any)=>{ if (f[key] !== undefined || !f.id) patch[col] = val; };
+      keepIfSent("phone",      "phone",      f.phone||null);
+      keepIfSent("address",    "address",    f.address||null);
+      keepIfSent("managerId",  "manager_id", f.managerId||null);
+      keepIfSent("claimRole",  "claim_role", (f.claimRole===""||f.claimRole==null)?null:f.claimRole);
+      keepIfSent("shiftStart", "shift_start",(String(f.shiftStart||"").trim()||null));
+      keepIfSent("shiftEnd",   "shift_end",  (String(f.shiftEnd||"").trim()||null));
       // v156: PCB YTD opening balances for a mid-year go-live (income/EPF/PCB already paid this tax year
       // before HR OS took over). Only written when the form actually sends them, so other saves don't clobber.
       if (f.ytdYear !== undefined){
@@ -5022,6 +5054,11 @@ Deno.serve(async (req)=>{
       } catch(_e){}
       // Admin "record / apply on behalf" with immediate approval — used to log MC / leave that already happened.
       if (who.isAdmin && b.auto_approve) {
+        // v157 (SoD): this was the ONLY decide path with no segregation-of-duties check — it force-approves
+        // every step regardless of current_step. An hr_admin/admin could therefore approve their OWN leave
+        // and skip the whole configured chain. Recording leave on behalf of SOMEBODY ELSE stays allowed.
+        if (who.employee && String(empId) === String(who.employee.id))
+          return j({ ok:false, error:"You cannot auto-approve your own leave — submit it and let your approver decide." }, 403);
         const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString();
         await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_at:nowIso, comment:"Recorded by admin" }).eq("leave_request_id",ins.id);
         await sb.from("hr_leave_requests").update({ status:"Approved" }).eq("id",ins.id);
@@ -5385,9 +5422,15 @@ Deno.serve(async (req)=>{
         if(!te) return j({ ok:false, error:"employee not found" });
         const alw=await allowedTenants(b.token); if(te.tenant_id && alw.indexOf(te.tenant_id)<0) return denyTenant(me,"hr_shift_save",te.tenant_id);
       }
-      const hhmm=(v:any)=> (v===null||v==="")?null:String(v).slice(0,5);   // 'HH:MM'
+      // v157: `undefined` used to fall through to String(undefined).slice(0,5) === "undef" — the employee
+      // form calls this without shift_end, so the UPDATE either failed outright (work_days never persisted,
+      // error swallowed by the caller) or stored the literal "undef" and killed the clock-out reminder.
+      // Treat undefined as "not sent" and leave the stored value alone.
+      const hhmm=(v:any)=> (v===null||v===undefined||v==="")?null:String(v).slice(0,5);   // 'HH:MM'
       const wd = Array.isArray(b.work_days) ? Array.from(new Set(b.work_days.map((x:any)=>Number(x)).filter((n:number)=>n>=1&&n<=7))) : null;
-      const patch:any = { shift_start: hhmm(b.shift_start), shift_end: hhmm(b.shift_end), work_days: wd, reminders_on: b.reminders_on!==false };
+      const patch:any = { work_days: wd, reminders_on: b.reminders_on!==false };
+      if (b.shift_start !== undefined) patch.shift_start = hhmm(b.shift_start);
+      if (b.shift_end   !== undefined) patch.shift_end   = hhmm(b.shift_end);
       const { error } = await sb.from("hr_employees").update(patch).eq("id",empId);
       if(error) return j({ ok:false, error:error.message });
       await logAudit(me,"hr_shift_save",empId,{ shift_start:patch.shift_start, shift_end:patch.shift_end, work_days:wd, reminders_on:patch.reminders_on, self:isSelf });
@@ -6201,6 +6244,13 @@ Deno.serve(async (req)=>{
         if (eDel) return j({ ok:false, error:eDel.message });
       }
       if (items.length){
+        // v157 (cross-tenant write): the DELETE above is scoped to this company's employees but the INSERT
+        // accepted any client-supplied employee_id, so a scoped admin could plant a bonus/deduction on
+        // ANOTHER company's employee — and hr_payroll_finalise's server recompute consumes stored
+        // adjustments, so the foreign company would finalise an inflated payslip. Pin it like hr_adj_add does.
+        const allowEmp = new Set(empTIds.map(String));
+        const strays = items.filter((a:any)=>!allowEmp.has(String(a.employee_id)));
+        if (strays.length) return j({ ok:false, error:"adjustment for an employee outside this company" }, 403);
         const rows = items.map((a:any)=>({ employee_id:String(a.employee_id), period_month:mo, period_year:yr, kind:String(a.kind), label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epf_subject!==false }));
         const { error:eIns } = await sb.from("hr_payroll_adjustments").insert(rows);
         if (eIns) return j({ ok:false, error:eIns.message });
@@ -6274,7 +6324,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v156: PCB YTD reconciliation (LHDN MTD net formula, completes the HREasily-grade payroll). PCB is now spread as [annual net tax on projected chargeable − PCB ALREADY paid this year] / remaining months, so a mid-year go-live or salary change trues up: if the prior payroll under-deducted, the next months catch up; if it over-deducted, they credit back. YTD basis = new per-employee opening balances (hr_employees.ytd_year/ytd_gross/ytd_epf/ytd_pcb/ytd_months, entered in the employee form for staff who were on another system earlier this tax year) PLUS every finalised HR payslip earlier this year, summed by shared helper payBuildYtd() used IDENTICALLY by hr_payroll_data (preview) and hr_payroll_finalise (authoritative) so the recompute-guard still matches. All-zero for a full-year employee → identical to v155. Both engines changed in lockstep and verified byte-identical (steady 110, prior-0 catch-up 220, over-deducted credit 20). v155: PAYROLL STATUTORY ACCURACY — now table-exact vs PERKESO/LHDN (benchmark HREasily). SOCSO & EIS were computed by a midpoint-times-rate formula that was 5 sen off on the SOCSO EMPLOYER amount at every RM100 band (e.g. RM3,400.01-3,500 gave 60.40, official 60.35) and wrong on EIS above RM2,000 (EIS uses RM500 bands there — RM3,500 gave 6.90, official 6.95). Both are now EXACT lookups against the embedded official PERKESO Second Schedule (Cat 1 <60 and Cat 2 60+) and EIS tables (RM6,000 ceiling, eff 1 Oct 2024). PCB/MTD now follows LHDN rounding — truncate to 2 dp then round UP to the next 5 sen — and a monthly MTD below RM10 is nil (RM3,500 single was 1.67, now 0). PCB is annualised over the employee ACTUAL service months in the tax year (join_date/resign_date) so a mid-year joiner is taxed on months worked, not a flat x12. Tax bands unchanged (current YA2023+ schedule). Both engines (server computePayrollMY + frontend hrCompute) changed in lockstep and verified byte-identical so the finalise recompute-guard still matches. v154: H1 — SOLE APPROVER CLAIMING FOR THEMSELVES no longer deadlocks. With one holder per role (hr=1 person, director=1 person) an approver own request stopped dead: the step is satisfiable only by them, segregation of duties forbids approving your own, and the v152 gap-fill did not apply because the role DOES have a holder — so nobody, admin included, could move it. Generalised the test from is a field filled in to CAN ANY HUMAN DECIDE THIS STEP FOR THIS REQUEST: new stepEligibleApprovers() excludes the requester, anyone who already acted on another level (SoD), resigned staff, and anyone with no portal login; zero eligible = an admin-fillable gap. Applied to hr_rc_decide(+bulk), the claim-detail can_act, rcApproverQueue (per-claim now, so these stay visible), and hr_leave_decide. SoD itself is unchanged. v153: APPROVAL POLICY SILENT-DOWNGRADE FIX. Operator configured a 2-level chain (HR then Director) but claims needed only ONE approval. Root cause: when rcMatchWorkflow found no ACTIVE workflow, hr_rc_submit silently fabricated a single hard-coded finance step — quietly replacing a multi-level policy with one approver, and pointing at a role that had no holder (the v152 deadlock). A financial control must never invent a weaker policy in silence. New rcFallbackStep(tenant) picks a fallback role somebody actually HOLDS (finance, hr, director, manager) and leaves the step unassigned when nobody holds any, so an admin can still act; the claim now carries a visible warning naming the fallback. Frontend: Claim settings warns loudly when workflows exist but ALL are switched off (every new claim was dropping to one approver), and the help text no longer claims it goes to Finance. v152: APPROVAL DEADLOCK FIX (blocker). A step assigned to an approver ROLE THAT NOBODY HOLDS was undecidable by every human: rcCanActStep could never match and stepUnassigned() was false, so the v120 admin gap-fill escape did not apply — 6 live ILADY claims sat on a finance step while only hr and director had holders, and the timeline mislabelled it Approver: any admin. New stepHasNoApprover()/canActOrGap() treat a role with zero holders in the request company as the same fillable gap as an unassigned step (SoD unchanged: still no self-approval and no two levels by one person). Applied to hr_rc_decide(+bulk), the claim detail canAct flag, rcApproverQueue (these claims were also INVISIBLE in the queue), and the leave decide + pending-leave paths. Refusals now name the blocking role. Frontend: the timeline no longer claims any admin for a role step with no holder — it warns which role is unassigned. v151: server-side Malaysian payroll engine. hr_payroll_finalise now INDEPENDENTLY recomputes every employee's EPF (KWSP Third Schedule)/SOCSO+EIS (PERKESO Second Schedule, RM6000 ceiling)/PCB (LHDN MTD) server-side from the DB employee record + this period's stored adjustments + hr_statutory_rates (computePayrollMY, faithful port of the audited frontend engine), COMPARES to the submitted figures, REJECTS on any >1-sen mismatch (409 recompute_mismatch — stale cache/tampering), and writes the SERVER figures as the authoritative EA/Form-E record. Tax bands configurable via rates.taxBands (default = post-Budget-2023 M40-reduced schedule; verify with a tax agent). Verified vs known cases (RM3500 single EPF 385/455 SOCSO 17.25/60.40 PCB 1.67; senior EPF-EE 0/ER-4%; spouse+children reliefs). v150: HR OS market-launch hardening. SECURITY: hr_emp_save edit-by-id now pins the target employee's tenant (was a cross-company salary/bank/IC tamper BLOCKER). Group-wide HR config — hr_rates_save, hr_leave_flow_save, hr_banks_save, and the claim_type/mileage/policy kinds of hr_rc_admin_save — gated on isFullScopeAdmin; per-tenant claim config (cost_center/role_approver/workflow) pins tenantsAssignable/allowedTenants. hr_rc_save validates the referenced employee + edited claim belong to the caller's company. STABILITY: hr_payroll_finalise rejects empty runs and non-finite/negative figures + employee↔tenant (payslips are the EA source); hr_rates_save validates the FULL rate shape (ceilings/thresholds) so no NaN leaks into payslips; clock_out caps a punch left open across midnight to the shift length; leave-balance increments are atomic via hr_leave_balance_bump (no lost-update race); a partial unique index stops double clock-in; hr_emp_save validates name/IC/bank; emp_no allocation retries on conflict. v149: audit follow-through. company_folder_delete now pins the target folder's tenant to allowedTenants BEFORE touching storage (a scoped admin passing another company's folder_id used to wipe its files before the reject). The top-level webhook catch returns 500 (not 200) on an unexpected throw so Xero redelivers instead of losing the batch. (Also: all 80 admin sessions were revoked as a precaution after the v148 token-exposure window.) v148: security + correctness audit fixes. BLOCKER: sessions_list no longer returns token_full (a scoped admin could lift a full-scope admin's bearer token → total account takeover) — now full-scope-admin-only, returns an opaque SHA-256 sid, revoke by sid. Group-wide admin actions (sessions_list/session_revoke/audit_list/roles_*/individuals_*/pnl_refresh/fx_backfill) gated on new isFullScopeAdmin() not superAdmin() so a single-company admin can't read/write every company. BLOCKER: hr_emp_save no longer wipes Department to null when the 2-option dropdown pre-selects blank for a legacy value (guarded like status). refreshPnlCache upserts-then-deletes-stale (never blanks a month). fetchInvoiceIdsBatch surfaces its prune-delete error. Frontend: session revoke uses sid; mobile input-width no longer distorts OCR/AP/Quick-Invoice grids; hros money formatter pinned en-MY. v147: P&L Analysis rows keep the Xero report order (Excel row-for-row) — parsePnl records a monotonic seq per account, refreshPnlCache stores it in xero_pnl_accounts.seq, and portal_pnl_analysis orders rows by (section, seq, name) instead of alphabetically. Also the RPC normalizes Xero section titles (Income→Trading Income etc.) and fixes the % denominator so occupancy-of-revenue shows. Run pnl_refresh once to populate seq. v146: hr_send_logins — reset + email HR OS credentials to a company's employees (superAdmin, tenant-scoped). test:true probes SMTP to the caller's inbox without touching any password; real run returns every temp password so a failed send never locks anyone out. Uses new sendEmailTo() (Gmail SMTP, arbitrary recipient). v145: residual audit close-out. overview_range no longer renders a failed live fetch as RM0 — errored tenants come back with null figures + error, are EXCLUDED from totals and shown 'unavailable'; response carries partial + unavailable[]. Sync backfill + drift check use pageSize=1000 (was 100) and treat hitting the page ceiling as INCOMPLETE — the watermark is held (not advanced past unfetched, most-recently-modified rows) and drift skips extra-pruning on a partial snapshot. Watchdog now flags webhook events permanently stuck at >=12 attempts distinctly, and records cron_watchdog_alert_undelivered + heartbeat alert_channel_down when problems exist but the alert email couldn't send. Frontend period presets + today-defaults pinned to MYT (were browser-local). v144: reliability wave. processOneEvent writes now throw on DB error via sbMust (supabase-js returns {error} not throws) — a failed PAYMENT/CREDITNOTE cache write no longer marks the webhook processed with a stale AmountDue; the CREDITNOTE loop stopped swallowing per-allocation errors. Webhook intake returns 500 (not silent 200) if the durable insert fails, so Xero redelivers instead of losing the event. _report_val honours Xero's parenthesis-negative convention — an overdrawn bank shows negative, not positive. Money formatters pinned to en-MY (were viewer-locale). Self-billed edit preserves sst_amount (form has no SST input; re-save used to zero it on a tax document). v143: audit follow-through. AP duplicate cross-check (ap_post_preview) now paginates via xeroInvoicesWhere (pageSize=1000 + page loop) and FAILS the scan-complete check when Xero returns a partial result — a duplicate bill past record 100 was previously invisible under full-autonomy AP. portal_cashflow_forecast now anchors the opening balance to portal_overview_cache.bank instead of zero cash (companies holding millions were flagged cash-negative). portal_pending_bills + intercompany_recon fetch pageSize=1000 (10x the old 100 ceiling). Cockpit hero cards relabelled YTD (they were the YTD figure but captioned '12 mo', contradicting the 12-month table below). v142: Access & Roles is tenant-scoped. hr_users_list + users_list now filter by the selected company (an ILADY-only account no longer appears under SKINDAE) and never expose company assignments outside the caller's scope — 4 of the Master Admins are themselves scoped to one company and could previously read every account in the group. Writes gated by new userWriteAllowed(): the target's company set must be a SUBSET of the caller's (role is global, so sharing one company is not enough), and a group-wide account is editable only by a group-wide admin; tenantsAssignable() stops user_create/user_update widening someone past your own scope. Applied to user_create, user_update, user_reset_password, hr_user_role_set. v141: P&L Analysis. parsePnl now also returns per-section account rows; refreshPnlCache persists them to xero_pnl_accounts (delete-then-insert per month so removed accounts don't linger). New pnl_analysis action -> portal_pnl_analysis RPC returns the months-across/accounts-down grid with % of Total Trading Income and a STAFF/CTG/BD&M/G&A/FIN cost-block roll-up, driving the Dashboard tab that replaced Today. v140: data-integrity wave. parsePnl no longer Math.abs() expense sections — in a credit/reversal month Xero returns them negative and the flip made the error exactly 2x the credit balance (DRSMILE 2026-02 was off RM92,262.56); revenue-expenses now ties to Xero net again. Multi-currency: xero_invoice_cache stores Xero CurrencyRate + generated total_base/amount_due_base, and every money aggregate in portal_ar_aging/cashflow_forecast/fin_analytics/group_dashboard/sync_health sums the base-currency column (SGD/USD were added to MYR 1:1). One-shot fx_backfill action re-fetches rates for historical FX rows. Uniform status predicate: DRAFT excluded from AR and revenue everywhere (Cockpit said 903,857.40, aging said 875,918.68 — now both 875,918.68). v139: exact YTD from one Xero range report (xero_pnl_ytd) so YTD ties to Xero to the cent. v138: overview_range (Overview period view: This/Last month, quarter, YTD, Last year) now reads REAL Xero P&L from xero_pnl_cache (18 months) instead of tax-inclusive invoice sums; custom partial ranges fetched live. Plus v137: portal_group_dashboard + portal_overview read REAL Xero P&L (xero_pnl_cache, single-period calendar-month ProfitAndLoss) not tax-inclusive invoice sums. Auto-refresh on nightly (12mo) + throttled delta (2mo) crons. Verified vs Xero exactly. v135: pre-launch hardening — hr_rc_comment now tenant-pinned; (DB) anon+authenticated locked out of all public functions/tables so a leaked anon key can't call SECURITY DEFINER fns or read RLS-less tables. v134: reimbursement OCR live on Gemini free tier — provider fallback (anthropic→gemini→openai), gemini tries multiple flash models (gemini-flash-latest first) with thinkingBudget:0 so 2.5-series returns text. Verified full extraction (vendor/total/SST/TIN/invoice). Plus v132 general-TIN." });
+    return j({ ok:true, hint:"portal v157: risk-bug sweep. Corrected SOCSO Cat2 + EIS statutory tables (64 official bands, EIS max 11.90, Cat2 max 74.40) in lockstep with the frontend. Employee save no longer wipes address/manager/claim role/shift. hr_shift_save no longer writes the literal undef. Leave auto-approve can no longer approve your own. Payroll grid adjustments pinned to the company. Approver roles are tenant-scoped. Eligible-approver count fails closed." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
