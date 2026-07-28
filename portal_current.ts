@@ -5060,9 +5060,22 @@ Deno.serve(async (req)=>{
         bank_account: (String(f.bankAccount||"").replace(/\D/g,"").slice(0,20) || null),
       };
       // Bank: same convention as hr_emp_save — the master-list CODE is the source of truth, name resolved from it.
-      let bankCode = s(f.bankCode,20);
-      if (bankCode){ const { data: bk } = await sb.from("hr_banks").select("name").eq("code",bankCode).maybeSingle(); if (bk){ upd.bank_code=bankCode; upd.bank_name=bk.name; } }
-      else { upd.bank_code=null; upd.bank_name=old.bank_name||null; } // cleared code keeps any legacy typed name
+      // v159: only touch the bank when the caller actually sent the key. The My Profile form renders before
+      // hr_banks_list resolves, so the picker briefly holds only its placeholder — saving in that window
+      // sent bankCode:"" and nulled a bank_code the employee never touched (the bank NAME survived, so
+      // nothing looked wrong until a payment file came out with a blank SWIFT/BIC).
+      if (f.bankCode !== undefined) {
+        const bankCode = s(f.bankCode,20);
+        if (bankCode){ const { data: bk } = await sb.from("hr_banks").select("name").eq("code",bankCode).maybeSingle(); if (bk){ upd.bank_code=bankCode; upd.bank_name=bk.name; } }
+        else { upd.bank_code=null; upd.bank_name=old.bank_name||null; } // cleared code keeps any legacy typed name
+      }
+      // Same guard for every other field: an absent key must mean "unchanged", never "set to null".
+      const PROF_KEYS:[string,string][] = [["phone","phone"],["address","address"],["emergencyName","emergency_name"],
+        ["emergencyPhone","emergency_phone"],["ic","ic_no"],["gender","gender"],["nationality","nationality"],
+        ["dob","date_of_birth"],["maritalStatus","marital_status"],["spouseWorking","spouse_working"],
+        ["numChildren","num_children"],["epfNo","epf_no"],["socsoNo","socso_no"],["taxNo","tax_no"],
+        ["bankHolder","bank_holder"],["bankAccount","bank_account"]];
+      for (const [src,col] of PROF_KEYS) if (f[src] === undefined) delete upd[col];
       // Diff against the current row → audit only what actually changed; no-op saves don't touch the record.
       const changed:any = {};
       for (const k in upd){ const a=old[k]==null?"":String(old[k]); const bv=upd[k]==null?"":String(upd[k]); if (a!==bv) changed[k]={ from:old[k]??null, to:upd[k]??null }; }
@@ -6180,23 +6193,30 @@ Deno.serve(async (req)=>{
           if (!tgtTenant && !(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"forbidden: a group-wide (no-company) config needs a full-scope admin" }, 403);
         }
       }
-      if(kind==="claim_type"){ if(row.id){ await sb.from("hr_claim_types").update({...row, updated_at:new Date().toISOString()}).eq("id",row.id);} else { await sb.from("hr_claim_types").insert(row);} }
-      else if(kind==="claim_type_del"){ await sb.from("hr_claim_types").update({active:false}).eq("id",row.id); }
-      else if(kind==="mileage_rate"){ if(row.id){ await sb.from("hr_mileage_rates").update(row).eq("id",row.id);} else { await sb.from("hr_mileage_rates").insert(row);} }
-      else if(kind==="mileage_rate_del"){ await sb.from("hr_mileage_rates").update({active:false}).eq("id",row.id); }
-      else if(kind==="policy"){ if(row.id){ await sb.from("hr_claim_policy_rules").update(row).eq("id",row.id);} else { await sb.from("hr_claim_policy_rules").insert(row);} }
-      else if(kind==="cost_center"){ if(row.id){ await sb.from("hr_cost_centers").update({code:row.code,name:row.name,active:row.active!==false,sort_order:Number(row.sort_order)||0}).eq("id",row.id);} else { await sb.from("hr_cost_centers").insert({tenant_id:row.tenant_id||null,code:row.code,name:row.name,active:true,sort_order:Number(row.sort_order)||0});} }
-      else if(kind==="cost_center_del"){ await sb.from("hr_cost_centers").update({active:false}).eq("id",row.id); }
-      else if(kind==="role_approver"){ await sb.from("hr_claim_role_approvers").insert({tenant_id:row.tenant_id||null, role:row.role, employee_id:row.employee_id}); }
-      else if(kind==="role_approver_del"){ await sb.from("hr_claim_role_approvers").delete().eq("id",row.id); }
+            // v159: every branch below awaited its write and then fell through to return ok:true, so a failed
+      // save (bad GL account on a claim type, a workflow step insert that violates a constraint, a
+      // cost-centre code collision) was reported to the operator as "Saved" / "Assigned" / "Added" while
+      // nothing changed. ck() surfaces the DB error instead of swallowing it.
+      const ck = (r:any)=>{ if(r && r.error) throw new Error(r.error.message || String(r.error)); return r; };
+      try {
+if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({...row, updated_at:new Date().toISOString()}).eq("id",row.id));} else { ck(await sb.from("hr_claim_types").insert(row));} }
+      else if(kind==="claim_type_del"){ ck(await sb.from("hr_claim_types").update({active:false}).eq("id",row.id)); }
+      else if(kind==="mileage_rate"){ if(row.id){ ck(await sb.from("hr_mileage_rates").update(row).eq("id",row.id));} else { ck(await sb.from("hr_mileage_rates").insert(row));} }
+      else if(kind==="mileage_rate_del"){ ck(await sb.from("hr_mileage_rates").update({active:false}).eq("id",row.id)); }
+      else if(kind==="policy"){ if(row.id){ ck(await sb.from("hr_claim_policy_rules").update(row).eq("id",row.id));} else { ck(await sb.from("hr_claim_policy_rules").insert(row));} }
+      else if(kind==="cost_center"){ if(row.id){ ck(await sb.from("hr_cost_centers").update({code:row.code,name:row.name,active:row.active!==false,sort_order:Number(row.sort_order)||0}).eq("id",row.id));} else { ck(await sb.from("hr_cost_centers").insert({tenant_id:row.tenant_id||null,code:row.code,name:row.name,active:true,sort_order:Number(row.sort_order)||0}));} }
+      else if(kind==="cost_center_del"){ ck(await sb.from("hr_cost_centers").update({active:false}).eq("id",row.id)); }
+      else if(kind==="role_approver"){ ck(await sb.from("hr_claim_role_approvers").insert({tenant_id:row.tenant_id||null, role:row.role, employee_id:row.employee_id})); }
+      else if(kind==="role_approver_del"){ ck(await sb.from("hr_claim_role_approvers").delete().eq("id",row.id)); }
       else if(kind==="workflow"){
         let wid=row.id;
         const wfRow:any={ tenant_id:row.tenant_id||null, name:row.name, description:row.description||"", active:row.active!==false, priority:Number(row.priority)||0, min_amount:(row.min_amount===""||row.min_amount==null)?0:Number(row.min_amount), max_amount:(row.max_amount===""||row.max_amount==null)?null:Number(row.max_amount), match_department:row.match_department||null, match_claim_type_id:row.match_claim_type_id||null, match_role:row.match_role||null, match_project:row.match_project||null, updated_at:new Date().toISOString() };
-        if(wid){ await sb.from("hr_approval_workflows").update(wfRow).eq("id",wid);} else { const ins=await sb.from("hr_approval_workflows").insert(wfRow).select("id").single(); wid=ins.data&&ins.data.id; }
-        if(wid && Array.isArray(row.steps)){ await sb.from("hr_approval_workflow_steps").delete().eq("workflow_id",wid); await sb.from("hr_approval_workflow_steps").insert(row.steps.map((s:any,i:number)=>({workflow_id:wid,step_order:i+1,name:s.name,approver_type:s.approver_type||"role",approver_role:s.approver_role,approver_employee_id:s.approver_employee_id||null}))); }
+        if(wid){ ck(await sb.from("hr_approval_workflows").update(wfRow).eq("id",wid));} else { const ins=ck(await sb.from("hr_approval_workflows").insert(wfRow).select("id").single()); wid=ins.data&&ins.data.id; }
+        if(wid && Array.isArray(row.steps)){ ck(await sb.from("hr_approval_workflow_steps").delete().eq("workflow_id",wid)); ck(await sb.from("hr_approval_workflow_steps").insert(row.steps.map((s:any,i:number)=>({workflow_id:wid,step_order:i+1,name:s.name,approver_type:s.approver_type||"role",approver_role:s.approver_role,approver_employee_id:s.approver_employee_id||null})))); }
       }
-      else if(kind==="workflow_del"){ await sb.from("hr_approval_workflows").update({active:false}).eq("id",row.id); }
+      else if(kind==="workflow_del"){ ck(await sb.from("hr_approval_workflows").update({active:false}).eq("id",row.id)); }
       else return j({ ok:false, error:"unknown kind" });
+      } catch(eAdm:any){ return j({ ok:false, error:"Could not save: "+String((eAdm&&eAdm.message)||eAdm) }); }
       await logAudit(me,"hr_rc_admin_save",String(kind),{ id:row.id||null, name:row.name||row.role||row.code||null });   // track approval/claim config changes
       return j({ ok:true });
     }
@@ -6420,7 +6440,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v159: risk sweep wave 3. Segregation of duties now records WHICH EMPLOYEE approved, so an approver with no portal login can no longer clear two levels of one chain via the email link. Whoever raised a claim cannot also approve it when another approver exists. Claim submit and receipt attach are pinned to the claim own company and receipts are frozen once a claim leaves the approval stages. Claim saves no longer report success after a failed write. Money actions are single-flight so a double click cannot create two Xero bills." });
+    return j({ ok:true, hint:"portal v160: risk sweep wave 4. The Calculator tab now uses the same gazetted SOCSO/EIS tables and LHDN PCB rounding as payroll, so a quoted net matches what is actually paid. Claim and approval config saves surface DB errors instead of reporting success. My Profile no longer nulls a bank code or any other field the form did not send. The dead SOCSO/EIS rate inputs are marked reference-only. A failed session check returns to sign-in instead of dropping the user into the admin shell." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

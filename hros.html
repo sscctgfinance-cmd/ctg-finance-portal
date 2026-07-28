@@ -3673,7 +3673,12 @@ async function hrEmpProfileSave(){
       ic:v('pf_ic'), dob:v('pf_dob'), gender:v('pf_gender'), nationality:v('pf_nat'),
       maritalStatus:v('pf_ms'), numChildren:v('pf_kids'), spouseWorking:!!(document.getElementById('pf_sw')||{}).checked,
       phone:v('pf_phone'), address:v('pf_addr'), emergencyName:v('pf_ename'), emergencyPhone:v('pf_ephone'),
-      bankCode:v('pf_bank'), bankHolder:v('pf_holder'), bankAccount:acct,
+      // v159: the bank list loads asynchronously and the form renders immediately, so during that window
+      // #pf_bank holds only the placeholder. Saving then sent bankCode:'' and nulled a bank_code the
+      // employee never touched (their bank NAME survived, so nothing looked wrong). Omit the key until
+      // the list is actually loaded — hr_my_profile_save only writes fields that are present.
+      bankHolder:v('pf_holder'), bankAccount:acct,
+      bankCode: ((EPRO.banks||[]).length ? v('pf_bank') : undefined),
       epfNo:v('pf_epf'), socsoNo:v('pf_socso'), taxNo:v('pf_tax')
     }});
     if(r&&r.ok){
@@ -4208,6 +4213,8 @@ function hrRatesPanel(cfg){
   var f=function(v){ return (v==null?'':v); };
   var pct=function(v){ return (v==null?'':(Math.round(Number(v)*100000)/1000)); }; // store as %, e.g. 0.11 -> 11
   var num=function(id,val,ph){ return '<input id="'+id+'" type="number" step="any" value="'+f(val)+'" placeholder="'+(ph||'')+'" style="width:100%;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right">'; };
+  // v159: reference-only fields — rendered disabled so nobody edits a value the engine never reads.
+  var numRO=function(id,v){ return num(id,v).replace('<input','<input disabled title="Table-driven — not editable" style="opacity:.6;cursor:not-allowed"'); };
   var row=function(lbl,el){ return '<div style="display:grid;grid-template-columns:1fr 120px;gap:8px;align-items:center;padding:4px 0"><span class="muted" style="font-size:12px">'+lbl+'</span>'+el+'</div>'; };
   var s=cfg.socso||{}, e=cfg.epf||{}, i=cfg.eis||{};
   return '<div class="panel" style="max-width:760px;border-color:var(--coral-soft);margin-bottom:14px"><div class="panel-hd"><h3>⚙️ Statutory rates &amp; reliefs</h3><button class="btn sm" onclick="hrRatesToggle()">✕ Close</button></div>'+
@@ -4216,8 +4223,8 @@ function hrRatesPanel(cfg){
       '<div><div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;margin-bottom:4px">EPF (KWSP)</div>'+
         row('Employee %',num('rt_epf_ee',pct(e.eeRate)))+row('Employer % (wage ≤ threshold)',num('rt_epf_erlow',pct(e.erRateLow)))+row('Employer % (wage &gt; threshold)',num('rt_epf_erhigh',pct(e.erRateHigh)))+row('Threshold (RM)',num('rt_epf_thr',e.threshold))+row('Employer % (age 60+)',num('rt_epf_ersen',pct(e.erSenior)))+
       '</div>'+
-      '<div><div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;margin-bottom:4px">SOCSO (PERKESO) &amp; EIS</div>'+
-        row('SOCSO EE % (Cat 1)',num('rt_soc_ee',pct(s.eeRate)))+row('SOCSO ER % (Cat 1)',num('rt_soc_er',pct(s.erRate)))+row('SOCSO ER % (Cat 2, 60+)',num('rt_soc_er2',pct(s.erRate2)))+row('SOCSO ceiling (RM)',num('rt_soc_ceil',s.ceiling))+row('EIS EE/ER % (each)',num('rt_eis',pct(i.eeRate)))+row('EIS ceiling (RM)',num('rt_eis_ceil',i.ceiling))+
+      '<div><div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;margin-bottom:4px">SOCSO (PERKESO) &amp; EIS <span style="text-transform:none;font-weight:400;opacity:.85">— reference only</span></div>'+'<div class="muted" style="font-size:10.5px;line-height:1.5;margin:-2px 0 8px;padding:6px 8px;border-left:2px solid var(--coral-soft);background:rgba(255,255,255,.03)">SOCSO &amp; EIS are taken from the official PERKESO contribution <b>tables</b> (RM100 bands to the RM6,000 ceiling), not from a percentage. These figures are shown for reference and <b>changing them has no effect</b> — a table revision needs a code update.</div>'+
+        row('SOCSO EE % (Cat 1)',numRO('rt_soc_ee',pct(s.eeRate)))+row('SOCSO ER % (Cat 1)',numRO('rt_soc_er',pct(s.erRate)))+row('SOCSO ER % (Cat 2, 60+)',numRO('rt_soc_er2',pct(s.erRate2)))+row('SOCSO ceiling (RM)',numRO('rt_soc_ceil',s.ceiling))+row('EIS EE/ER % (each)',numRO('rt_eis',pct(i.eeRate)))+row('EIS ceiling (RM)',numRO('rt_eis_ceil',i.ceiling))+
       '</div>'+
     '</div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;margin:14px 0 4px">PCB reliefs (annual, RM)</div>'+
@@ -4716,17 +4723,25 @@ function hrCalcCompute(){
   var erRate=senior?(cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04):(epfWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
   var ep=(s.epfOn!==false)?hrEpfParts(epfWage,eeRate,erRate):{ee:0,er:0};
   var scat=(s.socsoCat!==''&&s.socsoCat!=null)?Number(s.socsoCat):(senior?2:1);
-  var sEe=scat===2?0:cfg.socso.eeRate, sEr=scat===2?(cfg.socso.erRate2!=null?cfg.socso.erRate2:0.0125):cfg.socso.erRate;
-  var sp=(s.socsoOn!==false)?hrTableParts(socsoWage,cfg.socso.ceiling,sEe,sEr):{ee:0,er:0};
-  var ip=(s.eisOn!==false&&!senior)?hrTableParts(eisWage,cfg.eis.ceiling,cfg.eis.eeRate,cfg.eis.erRate):{ee:0,er:0};
+  // v159: use the SAME statutory source as payroll. This tab still ran the pre-v155 midpoint x rate
+  // formula (hrTableParts), so it quoted figures the payslip then contradicted — e.g. RM3,500 basic gave
+  // SOCSO employer 60.40 here vs 60.35 on the payslip, and EIS 6.90 vs 6.95. Those figures are written to
+  // hr_calc_audit as the "calculation audit log" and printed on a payslip PDF, so the quoted net in an
+  // offer letter did not match what the employee was actually paid.
+  var sp=(s.socsoOn!==false)?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, socsoWage):{ee:0,er:0};
+  var ip=(s.eisOn!==false&&!senior)?myStatLookup(MY_EIS, eisWage):{ee:0,er:0};
   var pcb;
-  if(s.resident===false){ pcb=hrRound2(taxWage*0.30); }
+  // v159: PCB must use the LHDN rounding the payroll engine uses — truncate to 2dp, round UP to 5 sen —
+  // and the "monthly MTD under RM10 is nil" rule. Without them this tab could quote a PCB where the
+  // payslip shows none.
+  if(s.resident===false){ pcb=myPcbRoundUp5(taxWage*0.30); }
   else{
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var cat2=!!s.married && s.spouseWorking===false, kids=hrCalcNum(s.children);
     var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf);
     var chargeable=Math.max(0, taxWage*12-reliefs), tax=hrProgTax(chargeable), rebate=chargeable<=35000?(400+(cat2?400:0)):0;
-    pcb=hrRound2(Math.max(0,(tax-rebate)/12));
+    var pcbC=myPcbRoundUp5(Math.max(0,(tax-rebate)/12));
+    pcb = pcbC < 10 ? 0 : pcbC;   // LHDN: monthly MTD of less than RM10 is nil
   }
   var res={ epfEe:ep.ee, epfEr:ep.er, socsoEe:sp.ee, socsoEr:sp.er, eisEe:ip.ee, eisEr:ip.er, pcb:pcb, gross:hrRound2(grossPay),
     epfWage:hrRound2(epfWage), socsoWage:hrRound2(socsoWage), eisWage:hrRound2(eisWage), taxWage:hrRound2(taxWage), _eeRate:eeRate, _erRate:erRate, _scat:scat };
@@ -4986,7 +5001,13 @@ function hrExpCp8d(fmt){
     call({api:'me'}).then(function(r){
       if(r&&r.ok&&r.user){ ME=r.user; COMPANIES=r.companies||COMPANIES; enterApp(); }
       else { storageRemove('ctg_portal_token'); showLogin(); }
-    }).catch(function(){ enterApp(); });   // network hiccup: fall back to the app rather than lock out
+    }).catch(function(){
+      // v159: this used to call enterApp() with ME still null, so enterApp skipped the employee branch and
+      // dropped an employee/viewer straight into the ADMIN shell. Server calls still 401 (no data leaked),
+      // but it is a confusing dead end. A transient failure should offer a retry, not a wrong shell.
+      showLogin();
+      try { toast('Could not reach the server — please sign in again.', true); } catch(_e){}
+    });
   } else { showLogin(); }
 })();
 </script>
