@@ -408,6 +408,20 @@ async function canActOrGap(who:any, step:any, tenantId:any, ctx?:any){
   const exU = (ctx && ctx.actedUserIds) || [];
   return (await stepEligibleApprovers(step, tenantId, exE, exU)) === 0;
 }
+// v157: resolve the leave approval chain FOR ONE COMPANY. A company that has configured its own chain
+// uses it; otherwise it falls back to the legacy group-wide rows (tenant_id NULL), so behaviour is
+// unchanged for every company until an admin saves a chain for it.
+async function leaveFlowFor(tenantId:any, activeOnly?:boolean){
+  const run = async (scoped:boolean)=>{
+    let q = sb.from("hr_leave_flow_steps").select("*");
+    q = scoped ? q.eq("tenant_id", tenantId) : q.is("tenant_id", null);
+    if(activeOnly) q = q.eq("active", true);
+    const { data } = await q.order("step_order");
+    return data||[];
+  };
+  if(tenantId){ const own = await run(true); if(own.length) return own; }
+  return await run(false);
+}
 // Segregation of duties: one human may not approve two levels of the same request, and nobody may
 // approve their own. Returns an error string to refuse with, or null when the actor is clear.
 // actorField is the step table's actor column ("acted_by" for claims, "decided_by" for leave).
@@ -982,7 +996,13 @@ function payRoundUp(n:number){ return Math.ceil(n-1e-9); }
 function payRound2(n:number){ return Math.round((Number(n)||0)*100)/100; }
 function payRound5(n:number){ return Math.round((Number(n)||0)*20)/20; }          // nearest 5 sen
 function payBandMid(w:number){ if(w<=0) return 0; const upper=Math.ceil((w-1e-9)/100)*100; return upper-50; }
-function payAge(dob:any){ if(!dob) return null; const d=new Date(dob); if(isNaN(d.getTime())) return null; const t=new Date(Date.now()+8*3600*1000); let a=t.getUTCFullYear()-d.getUTCFullYear(); const m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
+// v157: age must be as at the END OF THE PAYROLL PERIOD, not "today". Malaysian practice is to process a
+// month after it closes, so an employee who turned 60 in August used to have senior EPF/SOCSO/EIS applied
+// retroactively to the July run (EPF employee 11%→0, employer 13%→4%, EIS→0: hundreds of ringgit wrong on
+// a finalised payslip and EA record). It also made re-finalising an old month rewrite it differently.
+function payAge(dob:any, period?:any){ if(!dob) return null; const d=new Date(dob); if(isNaN(d.getTime())) return null;
+  const t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
+  let a=t.getUTCFullYear()-d.getUTCFullYear(); const m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
 function payEpfParts(wage:number,eeRate:number,erRate:number){ const w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?payRoundUp(w*eeRate):0, er:erRate>0?payRoundUp(w*erRate):0 }; }
 function payTableParts(wage:number,ceiling:number,eeRate:number,erRate:number){ const w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; const mid=payBandMid(w); return { ee:eeRate>0?payRound5(mid*eeRate):0, er:erRate>0?payRound5(mid*erRate):0 }; }
 function payProgTax(chargeable:number, bands:[number,number][]){ let tax=0,prev=0; for(const [cap,rate] of bands){ if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
@@ -990,17 +1010,31 @@ function payProgTax(chargeable:number, bands:[number,number][]){ let tax=0,prev=
 // baseOverride: for hourly/daily staff, the grid-derived basic pay (server can't re-derive hours rules).
 function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, period?:any, ytd?:any){
   adj = adj||[];
-  const bands = (Array.isArray(cfg?.taxBands) && cfg.taxBands.length) ? cfg.taxBands : MY_DEFAULT_TAX_BANDS;
+  // v157: this used to honour cfg.taxBands, but the FRONTEND engine has the bands hard-coded and cannot
+  // read them — so the moment anyone wrote rates.taxBands the two engines disagreed and hr_payroll_finalise
+  // rejected every run with 409 recompute_mismatch, group-wide, with an error blaming a stale cache.
+  // A configurable-looking knob that silently bricks payroll is worse than no knob: tax bands now change
+  // only by editing MY_DEFAULT_TAX_BANDS here AND HR_TAX_BANDS in hros.html, in the same commit.
+  // (Also: Infinity in the top band cannot survive a JSON round-trip from the DB — it returns as null.)
+  const bands = MY_DEFAULT_TAX_BANDS;
   const isEarn=(a:any)=> ['allowance','bonus','ot'].indexOf(a.kind)>=0;
   const earn=adj.filter(isEarn);
   const addEarn=earn.reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   const addEarnStat=earn.filter((a:any)=>a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   const unpaid=adj.filter((a:any)=>a.kind==='unpaid_leave').reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   const otherDed=adj.filter((a:any)=>a.kind==='deduction').reduce((s:number,a:any)=>s+Number(a.amount||0),0);
-  const base = (baseOverride!=null) ? Number(baseOverride) : (Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0));
+  // v157: the payroll grid lets an admin type a Basic / Allowance for THIS period only (pro-rated joiner,
+  // mid-month salary change). The frontend persists those as basic_set / allow_set adjustments and computes
+  // from them — but this engine never read either kind, so the server recompute produced the FULL monthly
+  // salary and hr_payroll_finalise rejected the entire company's run with 409 recompute_mismatch, with no
+  // way to clear it. Hourly/daily staff still arrive via baseOverride (already grid-derived).
+  const lastAdjAmt=(k:string)=>{ const m=adj.filter((a:any)=>a.kind===k); return m.length ? Number(m[m.length-1].amount||0) : null; };
+  const bSet=lastAdjAmt('basic_set'), aSet=lastAdjAmt('allow_set');
+  const base = (baseOverride!=null) ? Number(baseOverride)
+             : ((bSet!=null?bSet:Number(emp.basic_salary||0)) + (aSet!=null?aSet:Number(emp.fixed_allowance||0)));
   const gross=payRound2(base+addEarn-unpaid);
   const statWage=Math.max(0, base+addEarnStat-unpaid);
-  const age=payAge(emp.date_of_birth), senior=(age!=null&&age>=60);
+  const age=payAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
   const epfOn=emp.epf_eligible!==false;
   const eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate) : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
   const erRate=senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
@@ -5040,8 +5074,8 @@ Deno.serve(async (req)=>{
       // applicant's direct manager, or a role holder).
       let firstStatus = "Pending";
       try {
-        const { data: flow } = await sb.from("hr_leave_flow_steps").select("*").eq("active",true).order("step_order");
-        const { data: empRow } = await sb.from("hr_employees").select("manager_id").eq("id",empId).maybeSingle();
+        const { data: empRow } = await sb.from("hr_employees").select("manager_id,tenant_id").eq("id",empId).maybeSingle();
+        const flow = await leaveFlowFor(empRow&&empRow.tenant_id, true);   // v157: this applicant's company
         const stepStatus = (s:any)=> s.approver_type==="employee" ? "Pending Approval" : rcStatusForRole(s.approver_role);
         const steps = (flow||[]).map((s:any,i:number)=>({
           leave_request_id: ins.id, step_order: i+1, name: s.name,
@@ -5119,8 +5153,8 @@ Deno.serve(async (req)=>{
     }
     if (api === "hr_leave_flow_get") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data } = await sb.from("hr_leave_flow_steps").select("*").order("step_order");
-      return j({ ok:true, steps: data||[] });
+      const flowG = await leaveFlowFor(String(b.tenant||"").trim()||null);   // v157: per-company chain
+      return j({ ok:true, steps: flowG });
     }
     if (api === "hr_leave_admin") {
       // Admin Leave tab: this company's requests with their approval steps + the current flow config.
@@ -5139,7 +5173,7 @@ Deno.serve(async (req)=>{
       const ids=(reqs||[]).map((r:any)=>r.id); const stepsByReq:any={};
       if(ids.length){ const { data: st } = await sb.from("hr_leave_approval_steps").select("*").in("leave_request_id",ids).order("step_order"); await attachActorNames(st||[], "decided_by", "decided_by_name"); await attachAssignees(st||[], tenant||null); (st||[]).forEach((s:any)=>{ (stepsByReq[s.leave_request_id]=stepsByReq[s.leave_request_id]||[]).push(s); }); }
       const requests=(reqs||[]).map((r:any)=>({ ...r, steps: stepsByReq[r.id]||[] }));
-      const { data: flow } = await sb.from("hr_leave_flow_steps").select("*").order("step_order");
+      const flow = await leaveFlowFor(tenant);   // v157: the chain shown is the SELECTED company's
       // Active employees of the selected company — powers the apply-on-behalf picker, balance editor & name-based flow.
       const empQ = tenant ? await sb.from("hr_employees").select("id,name,emp_no").eq("tenant_id",tenant).eq("status","active").order("emp_no")
                           : await sb.from("hr_employees").select("id,name,emp_no").eq("status","active").order("emp_no").limit(500);
@@ -5149,6 +5183,13 @@ Deno.serve(async (req)=>{
     if (api === "hr_leave_flow_save") {
       // v150 (F2): the leave approval chain is one global row rewritten for every company → full-scope only.
       const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (group-wide leave flow — full-scope admin only)" }, 403);
+      // v157: scope the chain to the selected company. It used to be one global row set that the UI
+      // nonetheless labelled "...for every leave request in <company>" with a picker listing only that
+      // company's staff — so configuring SKINDAE silently replaced every other company's chain with people
+      // who don't work there. Rows with tenant_id NULL stay the group-wide default for companies that have
+      // not configured their own, so existing behaviour is preserved until an admin saves per company.
+      const flowTenant = String(b.tenant||"").trim() || null;
+      if (flowTenant) { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(flowTenant)<0) return denyTenant(me,"hr_leave_flow_save",flowTenant); }
       const steps = Array.isArray(b.steps) ? b.steps : [];
       const clean = steps.map((s:any,i:number)=>{
         const t = s.approver_type==="employee" ? "employee" : (s.approver_type==="manager" ? "manager" : "role");
@@ -5158,13 +5199,18 @@ Deno.serve(async (req)=>{
           approver_type:t,
           approver_role:(t==="role" ? (String(s.approver_role||"").trim()||null) : null),
           approver_employee_id:(t==="employee" ? (String(s.approver_employee_id||"").trim()||null) : null),
-          active:true,
+          active:true, tenant_id: flowTenant,
         };
       }).filter((s:any)=> s.approver_type==="manager" || (s.approver_type==="role" && s.approver_role) || (s.approver_type==="employee" && s.approver_employee_id));
-      await sb.from("hr_leave_flow_steps").delete().gte("step_order",0);
-      if(clean.length) await sb.from("hr_leave_flow_steps").insert(clean);
-      await logAudit(me,"hr_leave_flow_save",String(clean.length),{});
-      const { data } = await sb.from("hr_leave_flow_steps").select("*").order("step_order");
+      // Delete ONLY this company's chain (or only the group-wide rows when saved without a company).
+      const delQ = sb.from("hr_leave_flow_steps").delete();
+      const { error: eDelFlow } = await (flowTenant ? delQ.eq("tenant_id",flowTenant) : delQ.is("tenant_id",null));
+      if (eDelFlow) return j({ ok:false, error:eDelFlow.message });
+      // v157: the insert used to be unchecked — a failure left ZERO approval levels while the UI said
+      // "Saved", so every subsequent leave request skipped the chain entirely.
+      if(clean.length){ const { error:eInsFlow } = await sb.from("hr_leave_flow_steps").insert(clean); if(eInsFlow) return j({ ok:false, error:eInsFlow.message }); }
+      await logAudit(me,"hr_leave_flow_save",String(clean.length),{ tenant: flowTenant });
+      const { data } = await sb.from("hr_leave_flow_steps").select("*").or("tenant_id.is.null,tenant_id.eq."+(flowTenant||NO_TENANT)).order("step_order");
       return j({ ok:true, steps: data||[] });
     }
     if (api === "hr_leave_balance_save") {
@@ -6324,7 +6370,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v157: risk-bug sweep. Corrected SOCSO Cat2 + EIS statutory tables (64 official bands, EIS max 11.90, Cat2 max 74.40) in lockstep with the frontend. Employee save no longer wipes address/manager/claim role/shift. hr_shift_save no longer writes the literal undef. Leave auto-approve can no longer approve your own. Payroll grid adjustments pinned to the company. Approver roles are tenant-scoped. Eligible-approver count fails closed." });
+    return j({ ok:true, hint:"portal v158: risk sweep wave 2. Age is now taken as at the payroll period end, not today. Grid basic/allowance overrides are honoured by the server engine, so pro-rated joiners no longer 409 the whole run. Statutory exports block on a missing EPF/SOCSO/TIN/IC instead of padding zeros, CP38 is reported from real deductions, and fixed-width records are ASCII-folded so an accented name cannot shift every column. Leave approval chains are per company with a group-wide fallback. Tax bands are code-only in both engines." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
