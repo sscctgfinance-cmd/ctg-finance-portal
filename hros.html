@@ -4053,6 +4053,83 @@ function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var t
   var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
   var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
   return { txt:'due 15 '+HR_MONTHS[nm]+' '+ny+(days<0?(' · OVERDUE '+(-days)+'d'):(' · '+days+' day'+(days===1?'':'s')+' left')), col:col }; }
+// ── v161: bulk entry for statutory identifiers ──────────────────────────────────────────────────────
+// Since v158 the KWSP / PERKESO / CP39 exports BLOCK when a member number is missing, instead of padding
+// it into a plausible-looking 000000000000 that the portal would accept and never be able to allocate.
+// Filling those in one employee form at a time is exactly the friction that made the silent-zeros
+// behaviour tempting, so this is the fast path: every active employee, four columns, one save.
+var HR_STATIDS={ open:false, rows:null, loading:false };
+async function hrStatIdsOpen(){
+  if(!HR.tenant){ toast('Pick a company first',true); return; }
+  HR_STATIDS.open=true; HR_STATIDS.loading=true; hrRender();
+  var r=await call({api:'hr_stat_ids_get', tenant:HR.tenant});
+  HR_STATIDS.loading=false;
+  if(r&&r.ok){ HR_STATIDS.rows=(r.employees||[]).map(function(e){ return {
+    id:e.id, emp_no:e.emp_no||'', name:e.name||'',
+    ic:e.ic_no||'', epfNo:e.epf_no||'', socsoNo:e.socso_no||'', taxNo:e.tax_no||'' }; }); }
+  else { HR_STATIDS.open=false; toast((r&&r.error)||'Could not load employees',true); }
+  hrRender();
+}
+function hrStatIdsClose(){ HR_STATIDS.open=false; HR_STATIDS.rows=null; hrRender(); }
+function hrStatIdsCell(id,field,val){
+  var row=(HR_STATIDS.rows||[]).filter(function(x){ return x.id===id; })[0]; if(!row) return;
+  row[field]=String(val==null?'':val).trim();
+  var el=document.getElementById('si_'+field+'_'+id); if(el) el.style.borderColor = row[field] ? '' : 'var(--danger,#e2604b)';
+  var s=document.getElementById('si_summary'); if(s) s.innerHTML=hrStatIdsSummary();
+}
+function hrStatIdsSummary(){
+  var rows=HR_STATIDS.rows||[], need=[['ic','IC'],['epfNo','EPF'],['socsoNo','SOCSO'],['taxNo','TIN']];
+  var out=need.map(function(f){
+    var miss=rows.filter(function(r){ return !String(r[f[0]]||'').trim(); }).length;
+    return '<span style="margin-right:14px">'+f[1]+': <b style="color:'+(miss?'var(--danger,#e2604b)':'var(--ok,#3fb984)')+'">'
+      +(rows.length-miss)+'/'+rows.length+'</b></span>';
+  }).join('');
+  return out;
+}
+async function hrStatIdsSave(){ return hrOnce('hrStatIdsSave', async function(){
+  var rows=HR_STATIDS.rows||[]; if(!rows.length){ toast('Nothing to save',true); return; }
+  var r=await call({api:'hr_stat_ids_save', tenant:HR.tenant, rows:rows});
+  if(r&&r.ok){
+    toast('Statutory numbers saved ✓ ('+(r.n||0)+' staff)');
+    HR.pay.data=null;   // payroll rows carry these fields — force a refetch so exports see them
+    hrStatIdsClose();
+  } else toast((r&&r.error)||'Save failed',true);
+}); }
+function hrStatIdsPanel(){
+  if(!HR_STATIDS.open) return '';
+  if(HR_STATIDS.loading || !HR_STATIDS.rows)
+    return '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>🆔 Statutory numbers</h3></div><div class="muted" style="padding:18px;text-align:center">Loading employees…</div></div>';
+  var rows=HR_STATIDS.rows;
+  var inp=function(r,field,ph){
+    var v=String(r[field]||''); var bad=!v.trim();
+    return '<input id="si_'+field+'_'+r.id+'" value="'+esc(v)+'" placeholder="'+ph+'" onchange="hrStatIdsCell(\''+r.id+'\',\''+field+'\',this.value)" '+
+      'style="width:100%;box-sizing:border-box;padding:5px 7px;font-size:12px;border-radius:6px'+(bad?';border-color:var(--danger,#e2604b)':'')+'">';
+  };
+  var body=rows.map(function(r){
+    return '<tr><td style="white-space:nowrap"><b>'+esc(r.emp_no)+'</b> <span class="muted">'+esc(r.name)+'</span></td>'+
+      '<td>'+inp(r,'ic','IC (no dashes ok)')+'</td>'+
+      '<td>'+inp(r,'epfNo','EPF member no')+'</td>'+
+      '<td>'+inp(r,'socsoNo','SOCSO no')+'</td>'+
+      '<td>'+inp(r,'taxNo','TIN / income-tax no')+'</td></tr>';
+  }).join('');
+  return '<div class="panel" style="margin-top:14px;border-color:var(--coral-soft)">'+
+    '<div class="panel-hd"><h3>🆔 Statutory numbers — '+esc(hrCompanyName()||'')+'</h3>'+
+      '<div style="display:flex;gap:8px"><button class="btn p sm" onclick="hrStatIdsSave()">Save all</button>'+
+      '<button class="btn sm" onclick="hrStatIdsClose()">✕ Close</button></div></div>'+
+    '<div class="muted" style="font-size:11.5px;padding:0 2px 8px;line-height:1.6">'+
+      'KWSP, PERKESO and LHDN CP39 files are <b>blocked</b> until these are filled in — an empty member number '+
+      'used to be exported as <code>000000000000</code>, which the portal accepts but can never allocate to the member. '+
+      'Tab across the row; changes save together.</div>'+
+    '<div id="si_summary" style="font-size:12px;padding:6px 2px 10px">'+hrStatIdsSummary()+'</div>'+
+    '<div class="tbl-wrap" style="overflow-x:auto"><table class="bigtable" style="min-width:820px"><thead><tr>'+
+      '<th style="min-width:200px">Employee</th><th style="min-width:140px">IC (New)</th>'+
+      '<th style="min-width:140px">EPF member no</th><th style="min-width:130px">SOCSO no</th>'+
+      '<th style="min-width:150px">TIN (income tax)</th></tr></thead><tbody>'+body+'</tbody></table></div>'+
+    '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">'+
+      '<button class="btn p sm" onclick="hrStatIdsSave()">Save all</button>'+
+      '<span class="muted" style="font-size:11px">Blank fields are outlined in red. Leave a field blank if the employee genuinely has none — that file will stay blocked for them.</span>'+
+    '</div></div>';
+}
 function hrPayHub(tot,finalised,p){
   var st=hrHubGet(), u=hrUobCfg(), due=hrDueInfo();
   var done=['salary','epf','perkeso','pcb','xero'].filter(function(k){return st[k];}).length;
@@ -4088,8 +4165,9 @@ function hrPayHub(tot,finalised,p){
   }
   var submitBar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05));border:1px solid rgba(226,96,75,.4);border-radius:11px;padding:12px 14px;margin-bottom:12px">'+
     '<button class="btn p" onclick="hrSubmitAll()" style="font-size:14px">📤 Submit all — generate every file</button>'+
+    '<button class="btn" onclick="hrStatIdsOpen()" style="font-size:13px">🆔 Statutory numbers</button>'+
     '<span class="muted" style="font-size:11.5px;flex:1;min-width:160px">One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. '+(finalised?'':'<b style="color:var(--amber)">Finalise payroll first for authoritative figures.</b>')+'</span></div>';
-  return '<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
+  return hrStatIdsPanel()+'<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
     submitBar+packRows+
     sec('🏦','Salaries — UOB Infinity', M(tot.net)+' <span class="muted" style="font-size:10px">net pay</span>', '<span class="muted" style="font-size:10.5px">pay on your payday</span>',
       uobCfgRow+'<button class="btn xs p" onclick="hrExpBank(\'uob\')">⬇ UOB Infinity salary file</button><button class="btn xs" onclick="hrExpBank(\'maybank\')">Maybank M2E</button><button class="btn xs" onclick="hrExpGiro()">Generic IBG CSV</button>',

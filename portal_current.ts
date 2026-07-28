@@ -6347,6 +6347,42 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       await logAudit(me,"hr_employer_save",tenant,{ name:patch.name, doc_code:patch.doc_code, logo_changed: logo!==undefined });
       return j({ ok:true, employer: res.data });
     }
+    if (api === "hr_stat_ids_get" || api === "hr_stat_ids_save") {
+      // v161: bulk entry for the statutory identifiers the KWSP / PERKESO / LHDN files require. Since v158
+      // those exports BLOCK on a missing member number rather than padding 000000000000, and filling them in
+      // one employee form at a time is exactly the friction that made the old silent-zeros behaviour tempting.
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if(!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,api,tenant); }
+      if (api === "hr_stat_ids_get") {
+        const { data, error } = await sb.from("hr_employees")
+          .select("id,emp_no,name,ic_no,epf_no,socso_no,tax_no")
+          .eq("tenant_id",tenant).eq("status","active").order("emp_no");
+        if(error) return j({ ok:false, error:error.message });
+        return j({ ok:true, employees: data||[] });
+      }
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      if(!rows.length) return j({ ok:false, error:"nothing to save" });
+      // Pin every id to this company before writing — same lesson as hr_payroll_grid_save (v157).
+      const { data: mine } = await sb.from("hr_employees").select("id").eq("tenant_id",tenant);
+      const allow = new Set((mine||[]).map((e:any)=>String(e.id)));
+      if (rows.some((r:any)=>!allow.has(String(r.id)))) return j({ ok:false, error:"employee outside this company" }, 403);
+      const cl = (v:any)=>{ const t=String(v==null?"":v).trim().slice(0,30); return t||null; };
+      let n=0;
+      for (const r of rows){
+        const patch:any = {};
+        if(r.ic      !== undefined) patch.ic_no    = cl(r.ic);
+        if(r.epfNo   !== undefined) patch.epf_no   = cl(r.epfNo);
+        if(r.socsoNo !== undefined) patch.socso_no = cl(r.socsoNo);
+        if(r.taxNo   !== undefined) patch.tax_no   = cl(r.taxNo);
+        if(!Object.keys(patch).length) continue;
+        const { error:eU } = await sb.from("hr_employees").update(patch).eq("id",String(r.id));
+        if(eU) return j({ ok:false, error:(r.emp_no||"row")+": "+eU.message });
+        n++;
+      }
+      await logAudit(me,"hr_stat_ids_save",tenant,{ n });
+      return j({ ok:true, n });
+    }
     if (api === "hr_payroll_grid_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[]; const tenant=String(b.tenant||"");
@@ -6440,7 +6476,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v160: risk sweep wave 4. The Calculator tab now uses the same gazetted SOCSO/EIS tables and LHDN PCB rounding as payroll, so a quoted net matches what is actually paid. Claim and approval config saves surface DB errors instead of reporting success. My Profile no longer nulls a bank code or any other field the form did not send. The dead SOCSO/EIS rate inputs are marked reference-only. A failed session check returns to sign-in instead of dropping the user into the admin shell." });
+    return j({ ok:true, hint:"portal v161: bulk statutory-number entry. New hr_stat_ids_get / hr_stat_ids_save let an admin fill IC, EPF member no, SOCSO no and TIN for every active employee of one company in a single grid, with the employee ids pinned to that company. This is the fast path for the v158 rule that blocks KWSP, PERKESO and CP39 exports when a member number is missing rather than padding zeros." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
