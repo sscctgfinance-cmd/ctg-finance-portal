@@ -2772,6 +2772,62 @@ Deno.serve(async (req)=>{
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       return j({ ok:true, started:true });
     }
+    if (api === "hr_leave_compliance") {
+      // v174: Employment Act 1955 s.60E / s.60F set FLOORS on annual and sick leave that rise with
+      // continuous service. HR OS granted a flat 14/14, which silently under-grants everyone past two
+      // years. This lists who is currently short, and can top them up.
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||""); if(!tenant) return j({ ok:false, error:"no company selected" });
+      { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,api,tenant); }
+      const yr = Number(b.year) || new Date(Date.now()+8*3600*1000).getUTCFullYear();
+
+      const { data: emps } = await sb.from("hr_employees")
+        .select("id,emp_no,name,join_date").eq("tenant_id",tenant).eq("status","active").order("emp_no");
+      const { data: types } = await sb.from("hr_leave_types").select("id,code").in("code",["AL","ML"]);
+      const typeBy:any = {}; for(const t of (types||[])) typeBy[t.code] = t.id;
+      const empIds = (emps||[]).map((e:any)=>e.id);
+      const { data: bals } = empIds.length
+        ? await sb.from("hr_leave_balances").select("employee_id,leave_type_id,entitled").eq("year",yr).in("employee_id",empIds)
+        : { data: [] as any[] };
+      const balBy:any = {}; for(const x of (bals||[])) balBy[String(x.employee_id)+"|"+String(x.leave_type_id)] = Number(x.entitled)||0;
+
+      const REF = yr + "-12-31";                 // entitlement is judged on service within the leave year
+      const short:any[] = [], noJoin:any[] = [];
+      for(const e of (emps||[])){
+        if(!e.join_date){ noJoin.push({ emp_no:e.emp_no, name:e.name }); continue; }
+        const { data: minRows } = await sb.rpc("hr_statutory_leave_min", { p_join_date: e.join_date, p_ref: REF });
+        const m = Array.isArray(minRows) ? minRows[0] : minRows;
+        if(!m) continue;
+        const alHave = balBy[String(e.id)+"|"+String(typeBy.AL)];
+        const slHave = balBy[String(e.id)+"|"+String(typeBy.ML)];
+        const row:any = { employee_id:e.id, emp_no:e.emp_no, name:e.name, years:m.years };
+        let bad = false;
+        if(alHave === undefined || alHave < m.annual_min){ row.annual = { required:m.annual_min, granted: alHave===undefined?null:alHave }; bad = true; }
+        if(slHave === undefined || slHave < m.sick_min){   row.sick   = { required:m.sick_min,   granted: slHave===undefined?null:slHave };   bad = true; }
+        if(bad) short.push(row);
+      }
+
+      if (b.fix === true) {
+        // Top up to the statutory floor only — never reduce anyone who has been granted more.
+        if(!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"topping up leave entitlements needs a full-scope admin" }, 403);
+        let n = 0;
+        for(const r of short){
+          for(const [code, want] of [["AL", r.annual && r.annual.required], ["ML", r.sick && r.sick.required]] as any[]){
+            if(!want) continue;
+            const tid = typeBy[code]; if(!tid) continue;
+            const { data: ex } = await sb.from("hr_leave_balances")
+              .select("id,entitled").eq("employee_id",r.employee_id).eq("leave_type_id",tid).eq("year",yr).maybeSingle();
+            if(ex){ if(Number(ex.entitled) < want){ await sb.from("hr_leave_balances").update({ entitled: want }).eq("id",ex.id); n++; } }
+            else  { await sb.from("hr_leave_balances").insert({ employee_id:r.employee_id, leave_type_id:tid, year:yr, entitled:want, taken:0 }); n++; }
+          }
+        }
+        await logAudit(me,"hr_leave_compliance_fix",tenant,{ year:yr, adjusted:n, employees:short.length });
+        return j({ ok:true, fixed:n, employees:short.length, year:yr });
+      }
+
+      return j({ ok:true, year:yr, checked:(emps||[]).length, short, no_join_date:noJoin,
+        basis:"Employment Act 1955 s.60E (annual 8/12/16) and s.60F (sick 14/18/22) by completed years of continuous service" });
+    }
     if (api === "push_pending") {
       // v172: a payloadless Web Push cannot carry text, so the service worker asks what to display.
       // Identity is the device's OWN push subscription endpoint — a service worker cannot read
@@ -5486,6 +5542,26 @@ Deno.serve(async (req)=>{
       if (emp.tenant_id && alw.length && alw.indexOf(emp.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403);
       const entitled = Math.max(0, Number(b.entitled)||0);
       const taken = Math.max(0, Number(b.taken)||0);
+      // v174: refuse to record less than the Employment Act floor. s.60E/s.60F are minimums an employer
+      // cannot contract below, and the old flat 14/14 default was already short for 5 of 6 staff with a
+      // recorded join date. Granting MORE is always allowed.
+      try {
+        const { data: lt } = await sb.from("hr_leave_types").select("code").eq("id",ltId).maybeSingle();
+        const code = lt && String(lt.code);
+        if (code === "AL" || code === "ML") {
+          const { data: empRow } = await sb.from("hr_employees").select("join_date").eq("id",empId).maybeSingle();
+          if (empRow && empRow.join_date) {
+            const { data: mr } = await sb.rpc("hr_statutory_leave_min",
+              { p_join_date: empRow.join_date, p_ref: year + "-12-31" });
+            const m = Array.isArray(mr) ? mr[0] : mr;
+            const floor = m ? (code === "AL" ? m.annual_min : m.sick_min) : null;
+            if (floor != null && entitled < floor)
+              return j({ ok:false, error:"Employment Act 1955 sets a minimum of " + floor + " days of " +
+                (code==="AL" ? "annual" : "sick") + " leave for " + m.years +
+                " years of service. You entered " + entitled + ". Grant at least " + floor + "." }, 400);
+          }
+        }
+      } catch(_e){}
       const { data: existing } = await sb.from("hr_leave_balances").select("id").eq("employee_id",empId).eq("leave_type_id",ltId).eq("year",year).maybeSingle();
       let res:any;
       if (existing) res = await sb.from("hr_leave_balances").update({ entitled, taken }).eq("id",existing.id);
@@ -6766,7 +6842,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v173: go-live performance pass. pendingForEmployee is now batched into five queries instead of two per open claim, so the push and the daily reminder stay flat as claim volume grows. Seven indexes added on the columns every HR screen filters by, including hr_employees.tenant_id which had none." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v174: Employment Act 1955 leave compliance. Sections 60E and 60F set annual and sick leave floors that rise with continuous service (8/12/16 and 14/18/22, plus 60 days hospitalisation). HR OS granted a flat 14 and 14, which was already short for five of six staff with a recorded join date. New hr_leave_compliance action lists who is under-entitled and can top them up, the balance editor now refuses to record less than the floor, and the maternity, paternity and hospitalisation leave types the Act requires have been added." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
