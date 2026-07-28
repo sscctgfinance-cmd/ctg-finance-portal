@@ -1089,7 +1089,12 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
     const kids=Number(emp.num_children||0);
     const projGross=yg + statWageNormal*remain;   // prior-actual + (current + future estimated) months
     const projEpf=ye + epfEe*remain;
-    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf);
+    // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year. Leaving
+    // it out over-deducted PCB from every employee — small per month, but it is a rule LHDN's own
+    // computerised-calculation spec applies and any commercial payroll system applies too.
+    const projSocsoEis=Number(ytd&&ytd.socsoEis||0) + (socsoEe+eisEe)*remain;
+    const rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
+    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis);
     const chargeable=Math.max(0, projGross - reliefs);
     const tax=payProgTax(chargeable, bands);
     const rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;
@@ -1104,6 +1109,13 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
     const pcbR=myPcbRoundUp5(monthlyBase + addlTax);
     pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
   }
+  // v165: zakat reduces tax RINGGIT-FOR-RINGGIT, it is not an ordinary deduction — LHDN's rule is
+  // net MTD = MTD for the month − zakat paid for the month. HR OS offered "Zakat" as a payroll deduction
+  // but treated it as any other deduction, so the employee paid zakat AND the full PCB on top. It still
+  // comes out of net pay below; the PCB it displaces is what makes the employee whole.
+  const zakatMonth=adj.filter((a:any)=>a.kind==='deduction' && /^zakat/i.test(String(a.label||"")))
+                      .reduce((s:number,a:any)=>s+Number(a.amount||0),0);
+  if(zakatMonth>0) pcb = Math.max(0, payRound2(pcb - zakatMonth));
   const net=payRound2(gross-epfEe-socsoEe-eisEe-pcb-otherDed);
   const employerCost=payRound2(gross+epfEr+socsoEr+eisEr);
   return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, pcb, net, employerCost };
@@ -6501,7 +6513,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v164: the payroll grid can actually save. hr_payroll_adjustments.label was NOT NULL while the grid sends a label for only one of the seven kinds it writes, so every save containing a bonus, OT, allowance, unpaid leave or a Basic/Allowance override failed on the constraint — silently before v159, and the table was empty. Column is now nullable and the replace RPC takes tenant as text, which is what hr_employees.tenant_id actually is." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v165: two LHDN MTD rules that were missing. The employee SOCSO+EIS contribution is an allowable relief capped at RM350 a year, and zakat reduces MTD ringgit-for-ringgit rather than acting as an ordinary deduction. Without them PCB was over-deducted from everyone, and a zakat payer was charged zakat AND the full PCB on top. Both engines updated in lockstep and covered by the parity suite." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

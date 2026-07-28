@@ -1536,7 +1536,11 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var kids=Number(emp.num_children||0);
     var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf);
+    // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year.
+    // Must mirror computePayrollMY exactly. Leaving it out over-deducted PCB from every employee.
+    var projSocsoEis=Number((ytd&&ytd.socsoEis)||0) + (socsoEe+eisEe)*remain;
+    var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
+    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis);
     var chargeable=Math.max(0, projGross - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
@@ -1551,6 +1555,12 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
     pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
   }
+  // v165: zakat reduces tax RINGGIT-FOR-RINGGIT (net MTD = MTD − zakat for the month), it is not an
+  // ordinary deduction. Must mirror computePayrollMY exactly. HR OS offered "Zakat" as a payroll
+  // deduction but charged the employee zakat AND the full PCB on top.
+  var zakatMonth=adj.filter(function(a){ return a.kind==='deduction' && /^zakat/i.test(String(a.label||'')); })
+                    .reduce(function(s,a){ return s+Number(a.amount||0); },0);
+  if(zakatMonth>0) pcb = Math.max(0, hrRound2(pcb - zakatMonth));
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
   return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, pcb:pcb, net:net, employerCost:employerCost, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior} };

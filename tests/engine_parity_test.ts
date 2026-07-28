@@ -64,6 +64,7 @@ type Scenario = {
   gridAllow?: number;
   earnings?: { kind: string; amount: number; epf_subject?: boolean }[];
   deduction?: number;
+  deductions?: { label: string; amount: number }[];   // labelled — zakat / CP38 are recognised by label
   unpaid?: number;
   ytd?: unknown;
   period?: { month: number; year: number };
@@ -78,6 +79,7 @@ function compare(label: string, sc: Scenario) {
   const common = [
     ...(sc.earnings ?? []).map((e) => ({ epf_subject: true, ...e })),
     ...(sc.deduction ? [{ kind: "deduction", amount: sc.deduction, epf_subject: false }] : []),
+    ...((sc.deductions ?? []).map((d) => ({ kind: "deduction", label: d.label, amount: d.amount, epf_subject: false }))),
     ...(sc.unpaid ? [{ kind: "unpaid_leave", amount: sc.unpaid, epf_subject: false }] : []),
   ];
 
@@ -164,6 +166,31 @@ Deno.test("parity — PCB reliefs and YTD reconciliation", () => {
     { gross: 48000, epf: 5280, pcb: 5000, months: 6 },
   ]) {
     compare(`ytd pcb ${ytd.pcb}`, { emp: baseEmp({ basic_salary: 8000 }), ytd });
+  }
+});
+
+Deno.test("parity — zakat and the SOCSO/EIS relief (v165)", () => {
+  // Zakat reduces MTD ringgit-for-ringgit rather than acting as an ordinary deduction, and the employee's
+  // SOCSO+EIS contributions are an allowable MTD relief capped at RM350/yr. Both were missing; both must
+  // land identically on each side or every payroll run 409s.
+  for (const z of [50, 200, 100000]) {   // the last must floor PCB at zero, never go negative
+    compare(`zakat ${z}`, {
+      emp: baseEmp({ basic_salary: 9000 }),
+      deductions: [{ label: "Zakat", amount: z }],
+    });
+  }
+  // A deduction that is NOT zakat must not touch PCB — the label match has to be specific.
+  compare("non-zakat deduction", {
+    emp: baseEmp({ basic_salary: 9000 }),
+    deductions: [{ label: "Salary advance", amount: 200 }],
+  });
+  compare("zakat + other deduction", {
+    emp: baseEmp({ basic_salary: 9000 }),
+    deductions: [{ label: "Zakat", amount: 120 }, { label: "PTPTN", amount: 300 }],
+  });
+  // The SOCSO/EIS relief bites hardest around the tax threshold.
+  for (const basic of [3000, 4000, 5000, 6000, 8000, 12000]) {
+    compare(`socso/eis relief @ ${basic}`, { emp: baseEmp({ basic_salary: basic }) });
   }
 });
 
