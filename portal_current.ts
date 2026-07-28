@@ -237,36 +237,58 @@ async function pendingForEmployee(empId:any){
     const roles = new Set<string>((ras||[]).map((r:any)=>String(r.role)));
     if(emp && emp.claim_role) roles.add(String(emp.claim_role));
 
+    // v173: batched. The first cut fetched EVERY approval instance and then issued two more queries per
+    // instance — fine at 9 claims, hundreds of round trips at a few hundred. This runs on every push and
+    // every daily reminder, so it has to be flat: filter to open requests FIRST, then fetch instances and
+    // steps in one .in() each. Five queries total, whatever the volume.
     const RC_ACTIONABLE=["Submitted","Pending Manager Approval","Pending HR Approval",
                          "Pending Finance Approval","Pending Director Approval","Need More Info"];
-    const { data: insts } = await sb.from("hr_claim_approval_instances").select("id,claim_id,current_step");
-    for(const inst of (insts||[])){
-      const { data: step } = await sb.from("hr_claim_approval_steps").select("approver_employee_id,approver_role")
-        .eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
-      if(!step) continue;
-      const mine = (step.approver_employee_id && String(step.approver_employee_id)===String(empId))
-                || (step.approver_role && roles.has(String(step.approver_role)));
-      if(!mine) continue;
-      const { data: c } = await sb.from("hr_claim_requests")
-        .select("claim_no,amount,status,employee_id").eq("id",inst.claim_id).maybeSingle();
-      if(!c || RC_ACTIONABLE.indexOf(String(c.status))<0) continue;
-      if(String(c.employee_id)===String(empId)) continue;      // nobody approves their own
-      out.claims++; out.amount += Number(c.amount)||0;
-      if(!out.first) out.first = String(c.claim_no||"");
+    const { data: openClaims } = await sb.from("hr_claim_requests")
+      .select("id,claim_no,amount,employee_id").in("status", RC_ACTIONABLE);
+    const claimIds = (openClaims||[]).map((c:any)=>String(c.id));
+    if(claimIds.length){
+      const { data: insts } = await sb.from("hr_claim_approval_instances")
+        .select("id,claim_id,current_step").in("claim_id", claimIds);
+      const instIds = (insts||[]).map((i:any)=>String(i.id));
+      const { data: steps } = instIds.length
+        ? await sb.from("hr_claim_approval_steps")
+            .select("instance_id,step_order,approver_employee_id,approver_role").in("instance_id", instIds)
+        : { data: [] as any[] };
+      const stepBy:any = {};                       // instance_id|step_order -> step
+      for(const s of (steps||[])) stepBy[String(s.instance_id)+"|"+String(s.step_order)] = s;
+      const claimBy:any = {};
+      for(const c of (openClaims||[])) claimBy[String(c.id)] = c;
+      for(const inst of (insts||[])){
+        const step = stepBy[String(inst.id)+"|"+String(inst.current_step)];
+        if(!step) continue;
+        const mine = (step.approver_employee_id && String(step.approver_employee_id)===String(empId))
+                  || (step.approver_role && roles.has(String(step.approver_role)));
+        if(!mine) continue;
+        const c = claimBy[String(inst.claim_id)];
+        if(!c) continue;
+        if(String(c.employee_id)===String(empId)) continue;    // nobody approves their own
+        out.claims++; out.amount += Number(c.amount)||0;
+        if(!out.first) out.first = String(c.claim_no||"");
+      }
     }
 
     const { data: lv } = await sb.from("hr_leave_requests")
-      .select("id,employee_id,status,current_step").in("status",
+      .select("id,employee_id,current_step").in("status",
         ["Pending","Pending Approval","Pending Manager Approval","Pending HR Approval",
          "Pending Finance Approval","Pending Director Approval"]);
-    for(const r of (lv||[])){
-      if(String(r.employee_id)===String(empId)) continue;
-      const { data: st } = await sb.from("hr_leave_approval_steps")
-        .select("approver_employee_id,approver_role")
-        .eq("leave_request_id",r.id).eq("step_order",r.current_step||1).maybeSingle();
-      if(!st) continue;
-      if((st.approver_employee_id && String(st.approver_employee_id)===String(empId))
-        || (st.approver_role && roles.has(String(st.approver_role)))) out.leave++;
+    const lvIds = (lv||[]).map((r:any)=>String(r.id));
+    if(lvIds.length){
+      const { data: lsteps } = await sb.from("hr_leave_approval_steps")
+        .select("leave_request_id,step_order,approver_employee_id,approver_role").in("leave_request_id", lvIds);
+      const lstepBy:any = {};
+      for(const s of (lsteps||[])) lstepBy[String(s.leave_request_id)+"|"+String(s.step_order)] = s;
+      for(const r of (lv||[])){
+        if(String(r.employee_id)===String(empId)) continue;
+        const st = lstepBy[String(r.id)+"|"+String(r.current_step||1)];
+        if(!st) continue;
+        if((st.approver_employee_id && String(st.approver_employee_id)===String(empId))
+          || (st.approver_role && roles.has(String(st.approver_role)))) out.leave++;
+      }
     }
   } catch(_e){}
   return out;
@@ -6744,7 +6766,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v172: approval push notifications. An approver now gets a phone notification the moment a claim lands on their step, and a once-a-day nudge if anything is still waiting, so nobody has to log in just to check. The push carries no payload, so the service worker asks push_pending what to display, identifying itself with its own subscription endpoint; that endpoint returns counts and titles only, never anything that could act on a claim. Tapping opens the right section." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v173: go-live performance pass. pendingForEmployee is now batched into five queries instead of two per open claim, so the push and the daily reminder stay flat as claim volume grows. Seven indexes added on the columns every HR screen filters by, including hr_employees.tenant_id which had none." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
