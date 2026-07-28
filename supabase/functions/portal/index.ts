@@ -127,7 +127,7 @@ const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","
 // HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
 const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
-const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","client_error","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
+const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","client_error","push_pending","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 // Returns the tenant_ids this caller may touch. FAIL-CLOSED: the RPC returns a non-matching sentinel
 // UUID (not []) for an invalid token or a user with no company assignment, and on any error here we
@@ -225,6 +225,52 @@ async function pushToEmployee(employeeId:any){
   return { sent, dead, total:(subs||[]).length };
 }
 
+// v172: what is sitting on THIS person's desk right now. Used by the approval push (the service worker
+// asks for the text, because a payloadless push cannot carry it) and by the daily reminder.
+async function pendingForEmployee(empId:any){
+  const out = { claims:0, amount:0, leave:0, first:"" };
+  if(!empId) return out;
+  try {
+    // Which roles does this person hold? Same resolution the decide path uses.
+    const { data: ras } = await sb.from("hr_claim_role_approvers").select("role").eq("employee_id",empId);
+    const { data: emp } = await sb.from("hr_employees").select("claim_role,name").eq("id",empId).maybeSingle();
+    const roles = new Set<string>((ras||[]).map((r:any)=>String(r.role)));
+    if(emp && emp.claim_role) roles.add(String(emp.claim_role));
+
+    const RC_ACTIONABLE=["Submitted","Pending Manager Approval","Pending HR Approval",
+                         "Pending Finance Approval","Pending Director Approval","Need More Info"];
+    const { data: insts } = await sb.from("hr_claim_approval_instances").select("id,claim_id,current_step");
+    for(const inst of (insts||[])){
+      const { data: step } = await sb.from("hr_claim_approval_steps").select("approver_employee_id,approver_role")
+        .eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
+      if(!step) continue;
+      const mine = (step.approver_employee_id && String(step.approver_employee_id)===String(empId))
+                || (step.approver_role && roles.has(String(step.approver_role)));
+      if(!mine) continue;
+      const { data: c } = await sb.from("hr_claim_requests")
+        .select("claim_no,amount,status,employee_id").eq("id",inst.claim_id).maybeSingle();
+      if(!c || RC_ACTIONABLE.indexOf(String(c.status))<0) continue;
+      if(String(c.employee_id)===String(empId)) continue;      // nobody approves their own
+      out.claims++; out.amount += Number(c.amount)||0;
+      if(!out.first) out.first = String(c.claim_no||"");
+    }
+
+    const { data: lv } = await sb.from("hr_leave_requests")
+      .select("id,employee_id,status,current_step").in("status",
+        ["Pending","Pending Approval","Pending Manager Approval","Pending HR Approval",
+         "Pending Finance Approval","Pending Director Approval"]);
+    for(const r of (lv||[])){
+      if(String(r.employee_id)===String(empId)) continue;
+      const { data: st } = await sb.from("hr_leave_approval_steps")
+        .select("approver_employee_id,approver_role")
+        .eq("leave_request_id",r.id).eq("step_order",r.current_step||1).maybeSingle();
+      if(!st) continue;
+      if((st.approver_employee_id && String(st.approver_employee_id)===String(empId))
+        || (st.approver_role && roles.has(String(st.approver_role)))) out.leave++;
+    }
+  } catch(_e){}
+  return out;
+}
 // ===== Reimbursement / Claim engine helpers =====
 function rcStatusForRole(role){ return role==="manager"?"Pending Manager Approval":role==="hr"?"Pending HR Approval":role==="finance"?"Pending Finance Approval":role==="director"?"Pending Director Approval":"Submitted"; }
 async function rcAuditLog(claimId, action, me, fromS, toS, detail){ try{ await sb.from("hr_claim_audit_logs").insert({ claim_id:claimId, action, actor_id:(me&&me.user&&me.user.id)||null, actor_name:(me&&me.user&&me.user.email)||null, from_status:fromS||null, to_status:toS||null, details:detail||{} }); }catch(_e){} }
@@ -606,6 +652,8 @@ async function rcNotifyStepApprover(claimId:any){ try{
     } catch(_e){}
     const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\n"+(link?("Review & approve here (no login needed, link valid 14 days):\n  "+link+"\n\n"):"")+"Or log in to HR OS → Reimbursement → Pending:\n  https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html\n\n— CTG HR OS (automated)";
     await rcSendEmail(r.email, subj, body);
+    // v172: also buzz their phone. Payloadless push — the service worker asks push_pending for the text.
+    try { if(r.empId) await pushToEmployee(r.empId); } catch(_e){}
   }
 }catch(_e){} }
 // Resolve an employee id into the {isAdmin:false, employee, roles} shape rcDecideOne/rcCanActStep expect (email-approval identity).
@@ -2701,6 +2749,48 @@ Deno.serve(async (req)=>{
       } catch (e) { try { await sb.from("portal_audit").insert({ action:"cron_retry_error", ref:"every5min", detail:{ error:String(e) } }); } catch (_e) {} try { await sb.rpc("portal_cron_heartbeat", { p_name:"cron_retry", p_status:"error", p_detail:{ error:String(e).slice(0,400) } }); } catch (_e) {} } })();
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       return j({ ok:true, started:true });
+    }
+    if (api === "push_pending") {
+      // v172: a payloadless Web Push cannot carry text, so the service worker asks what to display.
+      // Identity is the device's OWN push subscription endpoint — a service worker cannot read
+      // localStorage, so it has no session token, but it does know its own endpoint and we already store
+      // that against an employee. Deliberately returns COUNTS AND TITLES ONLY, never an approval token:
+      // the endpoint is a device secret, not proof of identity strong enough to act on.
+      const ep = String(b.endpoint||"");
+      if(!ep) return j({ ok:true, title:"HR OS", body:"Open HR OS to see what needs you." });
+      const { data: sub } = await sb.from("hr_push_subscriptions").select("employee_id").eq("endpoint",ep).maybeSingle();
+      if(!sub) return j({ ok:true, title:"HR OS", body:"Open HR OS to see what needs you." });
+      const p = await pendingForEmployee(sub.employee_id);
+      if(!p.claims && !p.leave)
+        return j({ ok:true, title:"⏰ Time Clock reminder", body:"Open HR OS to clock in or out for your shift.", url:"./hros.html#clock" });
+      const bits:string[] = [];
+      if(p.claims) bits.push(p.claims + " claim" + (p.claims>1?"s":"") + " (" + rcMoney(p.amount) + ")");
+      if(p.leave)  bits.push(p.leave  + " leave request" + (p.leave>1?"s":""));
+      return j({ ok:true,
+        title:"✅ Waiting for your approval",
+        body: bits.join(" and ") + ". Tap to review.",
+        url:"./hros.html#claims" });
+    }
+    if (api === "approval_reminders") {
+      // v172: a nudge so nothing sits forgotten — the point of the whole feature is not having to log in
+      // just to CHECK. One push per approver per day, deduped through hr_push_reminder_log.
+      const today = new Date(Date.now()+8*3600*1000).toISOString().slice(0,10);
+      const { data: appr } = await sb.from("hr_claim_role_approvers").select("employee_id");
+      const ids = Array.from(new Set((appr||[]).map((a:any)=>String(a.employee_id))));
+      const out:any[] = [];
+      for(const empId of ids){
+        const { data: devs } = await sb.from("hr_push_subscriptions").select("id").eq("employee_id",empId);
+        if(!devs || !devs.length) { out.push({ empId, skipped:"no device" }); continue; }
+        const { data: done } = await sb.from("hr_push_reminder_log")
+          .select("employee_id").eq("employee_id",empId).eq("work_date",today).eq("kind","approval").maybeSingle();
+        if(done) { out.push({ empId, skipped:"already reminded today" }); continue; }
+        const p = await pendingForEmployee(empId);
+        if(!p.claims && !p.leave) { out.push({ empId, skipped:"nothing pending" }); continue; }
+        const res = await pushToEmployee(empId);
+        if(res.sent) await sb.from("hr_push_reminder_log").insert({ employee_id:empId, work_date:today, kind:"approval" });
+        out.push({ empId, claims:p.claims, leave:p.leave, sent:res.sent });
+      }
+      return j({ ok:true, approvers: ids.length, results: out });
     }
     if (api === "cron_health") {
       // v169: nothing watched the scheduled jobs. poll-gmail returned 500 every 5 minutes for four weeks
@@ -6654,7 +6744,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v170: the scheduled-job alarm can actually fire. v169 marked the state as alerting on the first bad check, so by the time the two-check streak was reached the de-duplication saw itself as already alerting and suppressed the opening email — the alarm would never have sent anything. State now flips only on an actual send." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v172: approval push notifications. An approver now gets a phone notification the moment a claim lands on their step, and a once-a-day nudge if anything is still waiting, so nobody has to log in just to check. The push carries no payload, so the service worker asks push_pending what to display, identifying itself with its own subscription endpoint; that endpoint returns counts and titles only, never anything that could act on a claim. Tapping opens the right section." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
