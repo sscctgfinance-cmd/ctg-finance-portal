@@ -5724,11 +5724,11 @@ Deno.serve(async (req)=>{
         claimId=ins.id; await rcAuditLog(claimId,"create",me,null,"Draft",{});
       }
       if(items){
-        // v159: delete-then-insert with both halves unchecked. If the insert failed the claim header kept
-        // the NEW amount with ZERO expense lines, and the UI still said "Draft saved" — an amount with no
-        // supporting detail then went into the approval chain.
-        { const { error:eDelIt } = await sb.from("hr_claim_items").delete().eq("claim_id",claimId); if(eDelIt) return j({ ok:false, error:eDelIt.message }); }
-        if(normItems.length){ const { error:eInsIt } = await sb.from("hr_claim_items").insert(normItems.map((x:any)=>({ ...x, claim_id:claimId }))); if(eInsIt) return j({ ok:false, error:"Expense lines could not be saved ("+eInsIt.message+") — the claim total no longer matches its lines. Please retry." }); }
+        // v159 made this failure visible; v163 makes it atomic. Delete-then-insert over two round trips
+        // meant a failed insert left the claim header carrying the NEW amount with ZERO expense lines —
+        // an amount with no supporting detail, heading into the approval chain. One transaction now.
+        { const { error:eItems } = await sb.rpc("hr_claim_items_replace", { p_claim: claimId, p_rows: normItems });
+          if(eItems) return j({ ok:false, error:"Expense lines could not be saved ("+eItems.message+"). Nothing was changed — please retry." }); }
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
       } else if(headerType && typeMap[headerType] && typeMap[headerType].is_mileage && c.mileage){
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
@@ -6388,27 +6388,18 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const mo=Number(b.month), yr=Number(b.year); const items=Array.isArray(b.adjustments)?b.adjustments:[]; const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
       { const alw=await allowedTenants(b.token); if(alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"hr_payroll_grid_save",tenant); }
-      // Bulk-replace THIS company's month entries only (scope delete to the tenant's employees).
-      const empT = await sb.from("hr_employees").select("id").eq("tenant_id",tenant);
-      const empTIds = (empT.data||[]).map((e:any)=>e.id);
-      if (empTIds.length){
-        const { error:eDel } = await sb.from("hr_payroll_adjustments").delete().eq("period_month",mo).eq("period_year",yr).in("employee_id",empTIds);
-        if (eDel) return j({ ok:false, error:eDel.message });
+      // v163: one transaction. The delete used to commit before the insert was attempted, so a failed
+      // insert destroyed the whole company-month of bonuses / OT / deductions / unpaid leave — v159 made
+      // that at least VISIBLE, but the data was gone either way. The RPC re-pins every employee_id to the
+      // tenant itself, so the guarantee does not depend on the checks below still being here.
+      {
+        const { error: eRpc } = await sb.rpc("hr_payroll_adjustments_replace", {
+          p_tenant: tenant, p_month: mo, p_year: yr, p_rows: items,
+        });
+        if (eRpc) return j({ ok:false, error: eRpc.message });
+        await logAudit(me,"hr_payroll_grid_save",String(mo)+"/"+String(yr),{ n:items.length });
+        return j({ ok:true, n:items.length });
       }
-      if (items.length){
-        // v157 (cross-tenant write): the DELETE above is scoped to this company's employees but the INSERT
-        // accepted any client-supplied employee_id, so a scoped admin could plant a bonus/deduction on
-        // ANOTHER company's employee — and hr_payroll_finalise's server recompute consumes stored
-        // adjustments, so the foreign company would finalise an inflated payslip. Pin it like hr_adj_add does.
-        const allowEmp = new Set(empTIds.map(String));
-        const strays = items.filter((a:any)=>!allowEmp.has(String(a.employee_id)));
-        if (strays.length) return j({ ok:false, error:"adjustment for an employee outside this company" }, 403);
-        const rows = items.map((a:any)=>({ employee_id:String(a.employee_id), period_month:mo, period_year:yr, kind:String(a.kind), label:a.label||null, amount:Number(a.amount)||0, epf_subject:a.epf_subject!==false }));
-        const { error:eIns } = await sb.from("hr_payroll_adjustments").insert(rows);
-        if (eIns) return j({ ok:false, error:eIns.message });
-      }
-      await logAudit(me,"hr_payroll_grid_save",String(mo)+"/"+String(yr),{ n:items.length });
-      return j({ ok:true, n:items.length });
     }
     if (api === "hr_annual") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -6506,7 +6497,12 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       });
       return j({ ok:true });
     }
-    return j({ ok:true, hint:"portal v162: engineering hardening. New client_error beacon receives uncaught browser errors from the single-file apps, grouped by fingerprint. A CI workflow now parses hros.html and app.html on every push, holds the no-redeclare baseline, checks the edge function source is in sync, and runs a payroll test suite covering the gazetted SOCSO/EIS anchors and frontend/backend engine parity." });
+    // v163 FAIL-CLOSED. This fallthrough used to answer every unrecognised action with ok:true, so a
+    // typo'd or removed action name looked like a success to the caller — the frontend would carry on
+    // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
+    // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v163: database-level invariants and atomicity. CHECK constraints now pin claim, leave, payroll-adjustment, employee and approver-role value sets at the database rather than only in this function. Payroll adjustments and claim expense lines are replaced through transactional RPCs, so a failed insert can no longer destroy the rows the delete already removed. An unrecognised api name returns an error instead of ok:true." });
+    return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 

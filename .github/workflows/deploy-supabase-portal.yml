@@ -139,3 +139,38 @@ jobs:
             fi
           done
           echo "✅ Health check PASSED — real portal live + new actions wired."
+
+      - name: Smoke test — auth still enforced & new actions wired
+        # The health check above proves the function BOOTS and that new action names exist. This proves it
+        # still BEHAVES: that an authenticated-only action refuses an anonymous caller, and that the
+        # actions this release added actually answer. Deliberately credential-free so it can run in CI.
+        run: |
+          set -e
+          URL="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal"
+          post() { curl -s --max-time 20 -X POST "$URL" -H "Content-Type: application/json" -d "$1" || true; }
+          fail=0
+
+          # 1. An admin-only action MUST refuse an anonymous caller. If this ever returns data, the auth
+          #    gate has regressed and every company's payroll is readable without a session.
+          for action in hr_payroll_data hr_emp_save hr_stat_ids_get hr_rc_list; do
+            r=$(post "{\"api\":\"$action\"}")
+            if echo "$r" | grep -qE '"ok"[[:space:]]*:[[:space:]]*true'; then
+              echo "::error::AUTH REGRESSION — {api:$action} answered ok:true with no token. Response: ${r:0:200}"
+              fail=1
+            else
+              echo "✓ $action refuses anonymous"
+            fi
+          done
+
+          # 2. The error beacon must accept a report without a session — boot-time failures happen before
+          #    login, and a beacon that needs auth would miss exactly the errors worth seeing.
+          r=$(post '{"api":"client_error","message":""}')
+          echo "$r" | grep -q '"ok":true' || { echo "::error::client_error beacon did not answer: ${r:0:200}"; fail=1; }
+          echo "✓ client_error beacon reachable"
+
+          # 3. Version hint present (confirms the fallthrough handler is the current build).
+          r=$(post '{"api":"__ping__"}')
+          echo "$r" | grep -qE 'portal v[0-9]+' || { echo "::error::__ping__ returned no version hint: ${r:0:200}"; fail=1; }
+          echo "✓ version: $(echo "$r" | grep -oE 'portal v[0-9]+')"
+
+          exit $fail
