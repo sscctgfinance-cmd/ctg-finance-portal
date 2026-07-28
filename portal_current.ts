@@ -1105,7 +1105,11 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
     // computerised-calculation spec applies and any commercial payroll system applies too.
     const projSocsoEis=Number(ytd&&ytd.socsoEis||0) + (socsoEe+eisEe)*remain;
     const rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
-    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis);
+    // v167: TP1 — reliefs the employee declared to the employer (lifestyle, medical, education,
+    // insurance, SSPN, childcare…). LHDN obliges the employer to apply them to MTD; without this the
+    // employee over-paid PCB all year and waited for the assessment refund.
+    const tp1=Math.max(0, Number(ytd&&ytd.tp1)||0);
+    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis) + tp1;
     const chargeable=Math.max(0, projGross - reliefs);
     const tax=payProgTax(chargeable, bands);
     const rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;
@@ -1149,6 +1153,20 @@ async function payBuildYtd(tenant:string, mo:number, yr:number, emps:any[]){
       (monthsSeen[id]=monthsSeen[id]||new Set()).add(p.run_id);
     }
     for(const id of Object.keys(monthsSeen)) out[id].months += (monthsSeen[id] as Set<any>).size;
+  }
+  // v167: TP1 — reliefs the employee declared to the employer for this tax year. Applied from the month
+  // the declaration takes effect, which is how LHDN expects it (a TP1 handed in mid-year does not
+  // retrospectively change months already filed).
+  const empIdsY = (emps||[]).map((e:any)=>String(e.id));
+  if (empIdsY.length){
+    const { data: tp1s } = await sb.from("hr_tp1_declarations")
+      .select("employee_id,items,effective_month").eq("year", yr).in("employee_id", empIdsY);
+    for(const d of (tp1s||[])){
+      const id=String(d.employee_id); if(!out[id]) continue;
+      if (Number(d.effective_month||1) > Number(mo)) continue;      // not in force yet for this month
+      const items = Array.isArray(d.items) ? d.items : [];
+      out[id].tp1 = items.reduce((s:number,it:any)=>s + Math.max(0, Number(it&&it.amount)||0), 0);
+    }
   }
   return out;
 }
@@ -6373,6 +6391,48 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       await logAudit(me,"hr_employer_save",tenant,{ name:patch.name, doc_code:patch.doc_code, logo_changed: logo!==undefined });
       return j({ ok:true, employer: res.data });
     }
+    if (api === "hr_tp1_get" || api === "hr_tp1_save") {
+      // v167: TP1 relief declarations. LHDN obliges the employer to apply what the employee declares to
+      // MTD, and to keep the form on file — so this records what was declared, when it takes effect and
+      // who accepted it.
+      const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const empId = String(b.employee_id||""); if(!empId) return j({ ok:false, error:"employee required" });
+      const yr = Number(b.year)||new Date(Date.now()+8*3600*1000).getUTCFullYear();
+      // Pin the employee to a company this caller may see — the same lesson as hr_payroll_grid_save (v157).
+      const { data: te } = await sb.from("hr_employees").select("tenant_id,name").eq("id",empId).maybeSingle();
+      if(!te) return j({ ok:false, error:"employee not found" });
+      { const alw=await allowedTenants(b.token); if(te.tenant_id && alw.length && alw.indexOf(String(te.tenant_id))<0) return denyTenant(me,api,String(te.tenant_id)); }
+
+      if (api === "hr_tp1_get"){
+        const { data, error } = await sb.from("hr_tp1_declarations")
+          .select("*").eq("employee_id",empId).eq("year",yr).maybeSingle();
+        if(error) return j({ ok:false, error:error.message });
+        return j({ ok:true, declaration: data||null, employee:{ id:empId, name:te.name }, year:yr });
+      }
+
+      const TP1_CATEGORIES = ["lifestyle","medical","education","insurance_life","insurance_medical",
+        "sspn","childcare","disabled_person","disabled_spouse","parent_medical","donation","other"];
+      const rawItems = Array.isArray(b.items) ? b.items : [];
+      const items:any[] = [];
+      for (const it of rawItems.slice(0,40)){
+        const cat = String((it&&it.category)||"other");
+        const amt = Math.max(0, Number((it&&it.amount))||0);
+        if (!amt) continue;                                  // a zero line is just noise
+        if (TP1_CATEGORIES.indexOf(cat) < 0) return j({ ok:false, error:"unknown relief category: "+cat }, 400);
+        if (amt > 1000000) return j({ ok:false, error:"relief amount looks wrong: "+amt }, 400);
+        items.push({ category:cat, amount:amt, note:String((it&&it.note)||"").slice(0,120)||null });
+      }
+      const effMonth = Math.min(12, Math.max(1, Number(b.effective_month)||1));
+      const { error: eUp } = await sb.from("hr_tp1_declarations").upsert({
+        employee_id: empId, year: yr, items, effective_month: effMonth,
+        note: String(b.note||"").slice(0,300)||null,
+        recorded_by: (me.user&&me.user.id)||null, updated_at: new Date().toISOString(),
+      }, { onConflict: "employee_id,year" });
+      if (eUp) return j({ ok:false, error:eUp.message });
+      const total = items.reduce((s:number,i:any)=>s+i.amount, 0);
+      await logAudit(me,"hr_tp1_save",empId,{ year:yr, lines:items.length, total, effective_month:effMonth });
+      return j({ ok:true, total, lines:items.length });
+    }
     if (api === "hr_stat_ids_get" || api === "hr_stat_ids_save") {
       // v161: bulk entry for the statutory identifiers the KWSP / PERKESO / LHDN files require. Since v158
       // those exports BLOCK on a missing member number rather than padding 000000000000, and filling them in
@@ -6527,7 +6587,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v166: citizenship now drives the statutory split. A non-Malaysian non-PR employee is on the 2% + 2% EPF schedule that became mandatory on 1 Oct 2025 and is outside EIS entirely (Act 800 covers citizens and PRs only); a Permanent Resident is treated as Malaysian; SOCSO is unchanged because foreign workers joined Category 1 in July 2024. EPF also now ceases at age 75. New citizen_status field on the employee, separate from the tax-residency flag." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v167: TP1 relief declarations. An employee can declare lifestyle, medical, education, insurance, SSPN, childcare and other reliefs to the employer, and LHDN obliges the employer to apply them to MTD. New hr_tp1_get and hr_tp1_save, a per-employee panel in the Payment and Statutory Hub, and both payroll engines now subtract the declared total from chargeable income from the month the declaration takes effect." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

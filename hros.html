@@ -1551,7 +1551,9 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     // Must mirror computePayrollMY exactly. Leaving it out over-deducted PCB from every employee.
     var projSocsoEis=Number((ytd&&ytd.socsoEis)||0) + (socsoEe+eisEe)*remain;
     var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis);
+    // v167: TP1 declared reliefs. Must mirror computePayrollMY exactly.
+    var tp1=Math.max(0, Number((ytd&&ytd.tp1))||0);
+    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis) + tp1;
     var chargeable=Math.max(0, projGross - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
@@ -4109,6 +4111,87 @@ function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var t
   var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
   var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
   return { txt:'due 15 '+HR_MONTHS[nm]+' '+ny+(days<0?(' · OVERDUE '+(-days)+'d'):(' · '+days+' day'+(days===1?'':'s')+' left')), col:col }; }
+// -- v167: TP1 relief declarations --------------------------------------------------------------------
+// An employee may declare extra reliefs (lifestyle, medical, education, insurance, SSPN, childcare ...)
+// to the employer, who is then OBLIGED to apply them when computing MTD. Without this the employee
+// over-pays PCB all year and only gets it back on assessment.
+var HR_TP1_CATS=[['lifestyle','Lifestyle'],['medical','Medical (self/spouse/child)'],['education','Education fees (self)'],
+  ['insurance_life','Life insurance / takaful'],['insurance_medical','Medical & education insurance'],
+  ['sspn','SSPN net deposit'],['childcare','Childcare / kindergarten fees'],['disabled_person','Disabled individual'],
+  ['disabled_spouse','Disabled spouse'],['parent_medical','Parent medical / care'],['donation','Approved donation'],['other','Other declared relief']];
+var HR_TP1={ open:false, empId:null, year:null, lines:[], effMonth:1, note:'', loading:false };
+function hrTp1Open(){
+  if(!HR.tenant){ toast('Pick a company first',true); return; }
+  HR_TP1.open=true; HR_TP1.empId=null; HR_TP1.lines=[]; HR_TP1.effMonth=1; HR_TP1.note='';
+  HR_TP1.year=(HR.pay&&HR.pay.year)||new Date().getFullYear();
+  hrRender();
+}
+function hrTp1Close(){ HR_TP1.open=false; hrRender(); }
+async function hrTp1Pick(empId){
+  HR_TP1.empId=empId||null; HR_TP1.lines=[]; HR_TP1.effMonth=1; HR_TP1.note='';
+  if(!empId){ hrRender(); return; }
+  HR_TP1.loading=true; hrRender();
+  var r=await call({api:'hr_tp1_get', employee_id:empId, year:HR_TP1.year});
+  HR_TP1.loading=false;
+  if(r&&r.ok&&r.declaration){
+    HR_TP1.lines=(r.declaration.items||[]).map(function(i){ return {category:i.category||'other', amount:Number(i.amount)||0, note:i.note||''}; });
+    HR_TP1.effMonth=Number(r.declaration.effective_month)||1;
+    HR_TP1.note=r.declaration.note||'';
+  }
+  if(!HR_TP1.lines.length) HR_TP1.lines=[{category:'lifestyle',amount:0,note:''}];
+  hrRender();
+}
+function hrTp1Line(i,f,v){ var l=HR_TP1.lines[i]; if(!l) return; l[f]=(f==='amount')?(Number(v)||0):v;
+  var tot=document.getElementById('tp1_total'); if(tot) tot.textContent=M(hrTp1Total()); }
+function hrTp1Total(){ return HR_TP1.lines.reduce(function(s,x){ return s+(Number(x.amount)||0); },0); }
+function hrTp1Add(){ HR_TP1.lines.push({category:'lifestyle',amount:0,note:''}); hrRender(); }
+function hrTp1Del(i){ HR_TP1.lines.splice(i,1); if(!HR_TP1.lines.length) HR_TP1.lines=[{category:'lifestyle',amount:0,note:''}]; hrRender(); }
+async function hrTp1Save(){ return hrOnce('hrTp1Save', async function(){
+  if(!HR_TP1.empId){ toast('Pick an employee first',true); return; }
+  var r=await call({api:'hr_tp1_save', employee_id:HR_TP1.empId, year:HR_TP1.year,
+    items:HR_TP1.lines.filter(function(l){ return Number(l.amount)>0; }),
+    effective_month:HR_TP1.effMonth, note:HR_TP1.note});
+  if(r&&r.ok){ toast('TP1 saved -- '+r.lines+' relief line(s), '+M(r.total)+'. PCB recalculates from month '+HR_TP1.effMonth+'.');
+    HR.pay.data=null; hrTp1Close(); }
+  else toast((r&&r.error)||'Save failed',true);
+}); }
+function hrTp1Panel(){
+  if(!HR_TP1.open) return '';
+  var emps=((HR.pay&&HR.pay.data&&HR.pay.data.employees)||[]);
+  var empOpts='<option value="">-- pick an employee --</option>'+emps.map(function(e){
+    return '<option value="'+e.id+'"'+(HR_TP1.empId===e.id?' selected':'')+'>'+esc(e.emp_no||'')+' '+esc(e.name||'')+'</option>'; }).join('');
+  var body='';
+  if(HR_TP1.loading) body='<div class="muted" style="padding:16px;text-align:center">Loading...</div>';
+  else if(HR_TP1.empId){
+    var rows=HR_TP1.lines.map(function(l,i){
+      var catSel='<select onchange="hrTp1Line('+i+',\'category\',this.value)" style="width:100%;padding:5px 7px;font-size:12px;border-radius:6px">'+
+        HR_TP1_CATS.map(function(c){ return '<option value="'+c[0]+'"'+(l.category===c[0]?' selected':'')+'>'+c[1]+'</option>'; }).join('')+'</select>';
+      return '<tr><td>'+catSel+'</td>'+
+        '<td><input type="number" step="0.01" min="0" value="'+(Number(l.amount)||0)+'" onchange="hrTp1Line('+i+',\'amount\',this.value)" style="width:100%;padding:5px 7px;font-size:12px;border-radius:6px"></td>'+
+        '<td><input value="'+esc(l.note||'')+'" placeholder="reference / receipt" onchange="hrTp1Line('+i+',\'note\',this.value)" style="width:100%;padding:5px 7px;font-size:12px;border-radius:6px"></td>'+
+        '<td style="width:34px"><button class="btn xs" onclick="hrTp1Del('+i+')" title="Remove">x</button></td></tr>';
+    }).join('');
+    var moOpts=''; for(var m=1;m<=12;m++) moOpts+='<option value="'+m+'"'+(HR_TP1.effMonth===m?' selected':'')+'>'+HR_MONTHS[m]+'</option>';
+    body='<div class="tbl-wrap" style="overflow-x:auto"><table class="bigtable" style="min-width:620px"><thead><tr>'+
+      '<th style="min-width:220px">Relief</th><th style="min-width:120px">Amount (RM)</th><th>Reference</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">'+
+        '<button class="btn sm" onclick="hrTp1Add()">+ Add relief</button>'+
+        '<span class="muted" style="font-size:12px">Applies from</span>'+
+        '<select onchange="HR_TP1.effMonth=Number(this.value)" style="padding:5px 7px;font-size:12px;border-radius:6px">'+moOpts+'</select>'+
+        '<span style="margin-left:auto;font-size:13px">Total declared: <b id="tp1_total">'+M(hrTp1Total())+'</b></span>'+
+      '</div>'+
+      '<div style="margin-top:10px"><input value="'+esc(HR_TP1.note||'')+'" placeholder="Note (e.g. TP1 dated 05/01/2026, filed)" onchange="HR_TP1.note=this.value" style="width:100%;padding:6px 8px;font-size:12px;border-radius:6px"></div>'+
+      '<div style="margin-top:12px"><button class="btn p sm" onclick="hrTp1Save()">Save TP1</button></div>';
+  }
+  return '<div class="panel" style="margin-top:14px;border-color:var(--coral-soft)">'+
+    '<div class="panel-hd"><h3>TP1 relief declarations -- '+HR_TP1.year+'</h3>'+
+      '<button class="btn sm" onclick="hrTp1Close()">Close</button></div>'+
+    '<div class="muted" style="font-size:11.5px;padding:0 2px 10px;line-height:1.6">'+
+      'What the employee declared to you on their <b>TP1</b>. LHDN obliges the employer to take these into account when computing MTD -- '+
+      'without them the employee over-pays PCB all year and only gets it back on assessment. Keep the signed form on file.</div>'+
+    '<div style="margin-bottom:12px"><select onchange="hrTp1Pick(this.value)" style="min-width:280px;padding:6px 8px;font-size:12.5px;border-radius:6px">'+empOpts+'</select></div>'+
+    body+'</div>';
+}
 // ── v161: bulk entry for statutory identifiers ──────────────────────────────────────────────────────
 // Since v158 the KWSP / PERKESO / CP39 exports BLOCK when a member number is missing, instead of padding
 // it into a plausible-looking 000000000000 that the portal would accept and never be able to allocate.
@@ -4222,8 +4305,9 @@ function hrPayHub(tot,finalised,p){
   var submitBar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05));border:1px solid rgba(226,96,75,.4);border-radius:11px;padding:12px 14px;margin-bottom:12px">'+
     '<button class="btn p" onclick="hrSubmitAll()" style="font-size:14px">📤 Submit all — generate every file</button>'+
     '<button class="btn" onclick="hrStatIdsOpen()" style="font-size:13px">🆔 Statutory numbers</button>'+
+    '<button class="btn" onclick="hrTp1Open()" style="font-size:13px">🧾 TP1 reliefs</button>'+
     '<span class="muted" style="font-size:11.5px;flex:1;min-width:160px">One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. '+(finalised?'':'<b style="color:var(--amber)">Finalise payroll first for authoritative figures.</b>')+'</span></div>';
-  return hrStatIdsPanel()+'<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
+  return hrStatIdsPanel()+hrTp1Panel()+'<div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>💸 Payment &amp; Statutory Hub — '+HR_MONTHS[p.month]+' '+p.year+'</h3><span class="pill '+(done>=5?'pill-green':'pill-draft')+'" style="font-size:10.5px">'+done+'/5 done</span></div>'+
     submitBar+packRows+
     sec('🏦','Salaries — UOB Infinity', M(tot.net)+' <span class="muted" style="font-size:10px">net pay</span>', '<span class="muted" style="font-size:10.5px">pay on your payday</span>',
       uobCfgRow+'<button class="btn xs p" onclick="hrExpBank(\'uob\')">⬇ UOB Infinity salary file</button><button class="btn xs" onclick="hrExpBank(\'maybank\')">Maybank M2E</button><button class="btn xs" onclick="hrExpGiro()">Generic IBG CSV</button>',

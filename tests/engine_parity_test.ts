@@ -229,6 +229,21 @@ Deno.test("rules — a foreign worker is on 2% EPF and pays no EIS", () => {
   assertEquals(old.epfEr, 0, "EPF ceases at 75");
 });
 
+Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
+  const emp = baseEmp({ basic_salary: 9000 });
+  for (const tp1 of [0, 2500, 9000, 500000]) {   // the last must not drive PCB negative
+    compare(`tp1 ${tp1}`, { emp, ytd: { gross: 0, epf: 0, pcb: 0, months: 0, tp1 } });
+  }
+  // The relief must actually bite, and more relief must never mean more tax.
+  const P = { month: 7, year: 2026 };
+  const none = computePayrollMY(emp, CFG, [], undefined, P, { gross: 0, epf: 0, pcb: 0, months: 0, tp1: 0 });
+  const some = computePayrollMY(emp, CFG, [], undefined, P, { gross: 0, epf: 0, pcb: 0, months: 0, tp1: 6000 });
+  const huge = computePayrollMY(emp, CFG, [], undefined, P, { gross: 0, epf: 0, pcb: 0, months: 0, tp1: 500000 });
+  assertEquals(some.pcb < none.pcb, true, "a declared relief must reduce PCB");
+  assertEquals(huge.pcb, 0, "relief beyond the chargeable income floors PCB at zero, never negative");
+  assertEquals(none.net < some.net, true, "less PCB means more take-home");
+});
+
 Deno.test("parity — no engine produces a negative or non-finite figure", () => {
   const a = hrCompute(baseEmp({ basic_salary: 1200 }), CFG, [{ kind: "deduction", amount: 99999 }], PERIOD);
   for (const k of MONEY) {
