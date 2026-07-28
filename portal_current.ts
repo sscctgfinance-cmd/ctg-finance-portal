@@ -2731,11 +2731,16 @@ Deno.serve(async (req)=>{
 
       const summary = problems.join("\n\n");
       const { data: st } = await sb.from("portal_cron_alerts").select("*").eq("id",1).maybeSingle();
-      const wasAlerting = st && st.state === "alerting";
+      const prevState   = (st && st.state) || "ok";
+      const prevSummary = (st && st.last_summary) || "";
       const streak = problems.length ? ((st && st.fail_streak) || 0) + 1 : 0;
-      // Two consecutive bad checks before emailing, so one transient blip stays quiet.
-      const shouldAlert = problems.length > 0 && streak >= 2 && (!wasAlerting || summary !== (st && st.last_summary));
-      const recovered  = problems.length === 0 && wasAlerting;
+      // "alerting" must mean "we have SENT mail about this", not merely "a problem exists". The first cut
+      // set the state on the very first bad check, so by the time the streak reached 2 the de-dupe saw
+      // itself as already alerting and suppressed the opening alert — the alarm could never fire once.
+      // Caught by running it three times instead of trusting it.
+      const alreadyAlerted = prevState === "alerting" && summary === prevSummary;
+      const shouldAlert = problems.length > 0 && streak >= 2 && !alreadyAlerted;   // 2 checks = no blips
+      const recovered   = problems.length === 0 && prevState === "alerting";
 
       let mailed:any = null;
       if (shouldAlert) {
@@ -2749,9 +2754,11 @@ Deno.serve(async (req)=>{
       }
       await sb.from("portal_cron_alerts").upsert({
         id: 1,
-        state: problems.length ? "alerting" : "ok",
+        // Only an actual send flips the state, and last_summary records WHAT WAS ALERTED — so a changed
+        // problem set produces a fresh alert while an unchanged one stays silent.
+        state: shouldAlert ? "alerting" : (recovered ? "ok" : prevState),
         fail_streak: streak,
-        last_summary: summary || null,
+        last_summary: shouldAlert ? summary : (recovered ? null : (prevSummary || null)),
         last_alerted_at: (shouldAlert || recovered) ? new Date().toISOString() : (st && st.last_alerted_at) || null,
         updated_at: new Date().toISOString(),
       });
@@ -6647,7 +6654,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v169: scheduled-job alarm. A new cron_health action reads per-job cron failures, failed HTTP calls from scheduled jobs with de-duplicated samples, and freshness of the Xero cache and AP inbox, then emails the operator once when something breaks and once when it clears. Built after finding poll-gmail had returned 500 every five minutes for four weeks and three bookkeeping crons had failed on every single run, all silently." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v170: the scheduled-job alarm can actually fire. v169 marked the state as alerting on the first bad check, so by the time the two-check streak was reached the de-duplication saw itself as already alerting and suppressed the opening email — the alarm would never have sent anything. State now flips only on an actual send." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
