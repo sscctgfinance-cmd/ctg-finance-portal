@@ -6501,7 +6501,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v163: database-level invariants and atomicity. CHECK constraints now pin claim, leave, payroll-adjustment, employee and approver-role value sets at the database rather than only in this function. Payroll adjustments and claim expense lines are replaced through transactional RPCs, so a failed insert can no longer destroy the rows the delete already removed. An unrecognised api name returns an error instead of ok:true." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v164: the payroll grid can actually save. hr_payroll_adjustments.label was NOT NULL while the grid sends a label for only one of the seven kinds it writes, so every save containing a bonus, OT, allowance, unpaid leave or a Basic/Allowance override failed on the constraint — silently before v159, and the table was empty. Column is now nullable and the replace RPC takes tenant as text, which is what hr_employees.tenant_id actually is." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
