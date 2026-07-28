@@ -1865,7 +1865,7 @@ function hrRCSelClear(){ RC.sel={}; hrRender(); }
 async function hrRCBulkApprove(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCBulkReject(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCBulkInfo(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
-async function hrRCBulkPay(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCBulkPay(){ return hrOnce('hrRCBulkPay', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 function hrRCExportBank(){ var ids=hrRCSelIds(); var list=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!list.length){ toast('Select Approved claims first',true); return; } var head=['No','Payee Name','Bank','SWIFT/BIC','Account No','IC','Amount (RM)','Payment Ref','Email']; var body=list.map(function(c,i){ var e=c.hr_employees||{}; return [i+1,e.name||'',e.bank_name||'',(e.bank_code||hrBankCode(e.bank_name)),e.bank_account||'',e.ic_no||'',(Number(c.amount)||0).toFixed(2),c.claim_no||'',e.email||'']; }); var total=list.reduce(function(s,c){return s+(Number(c.amount)||0);},0); /* v157 CRITICAL: no TOTAL trailer in a BANK file — it was a payment row (Payee "TOTAL", full amount). */ hrDownload('Reimbursement_Payments_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('Bank file: '+list.length+' claim(s) · RM'+total.toFixed(2)); }
 async function hrRCExportAcct(){
   var month=prompt('Claim month to export (YYYY-MM), or leave blank for ALL Approved/Paid:',''); if(month==null)return;
@@ -2872,7 +2872,7 @@ async function hrRCSetGl(itemId){
   var r=await call({api:'hr_rc_set_gl',id:RC.detail.claim.id,item_id:itemId||undefined,gl_account:gl.trim(),reason:reason.trim()});
   if(r&&r.ok){ toast('GL updated ('+r.updated+' line'+(r.updated>1?'s':'')+') ✓'); await hrRCOpen(RC.detail.claim.id); } else toast((r&&r.error)||'Failed',true);
 }
-async function hrRCPostXero(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }
+async function hrRCPostXero(){ return hrOnce('hrRCPostXero', async function(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }); }
 async function hrRCCancel(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 function hrRCEdit(){ var c=RC.detail.claim;
@@ -4194,7 +4194,7 @@ function hrEmployerLogoPick(input){
   }; img.onerror=function(){ toast('Could not read that image',true); }; img.src=ev.target.result; };
   reader.readAsDataURL(f);
 }
-async function hrEmployerSave(){
+async function hrEmployerSave(){ return hrOnce('hrEmployerSave', async function(){
   hrEmployerSyncInputs(); if(!HR_EMP_EDIT)return;
   if(!String(HR_EMP_EDIT.name||'').trim()){ toast('Company name is required',true); return; }
   var dc=String(HR_EMP_EDIT.doc_code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -4203,7 +4203,7 @@ async function hrEmployerSave(){
   var r=await call({api:'hr_employer_save', tenant:HR.tenant, employer:HR_EMP_EDIT});
   if(r&&r.ok){ toast('Company details saved ✓'); if(HR.data) HR.data.employer=r.employer; HR_EMPLOYER=r.employer||null; HR_COMPANY=hrCompanyName(); HR.pay.showEmployer=false; hrRender(); }
   else toast((r&&r.error)||'Save failed',true);
-}
+}); }
 function hrRatesPanel(cfg){
   var f=function(v){ return (v==null?'':v); };
   var pct=function(v){ return (v==null?'':(Math.round(Number(v)*100000)/1000)); }; // store as %, e.g. 0.11 -> 11
@@ -4226,7 +4226,17 @@ function hrRatesPanel(cfg){
     '</div>'+
     '<div style="margin-top:14px"><button class="btn p sm" onclick="hrRatesSave()">Save rates</button> <span class="muted" style="font-size:11px">Applies immediately to the grid.</span></div></div>';
 }
-async function hrRatesSave(){
+// v159: single-flight guard. None of the money/irreversible actions disabled their button while the
+// request was in flight, so a double-click fired the call twice. hr_rc_post_xero only checked
+// xero_bill_id BEFORE its write, so two overlapping posts both saw null and created TWO Xero bills.
+// (hr_rc_mark_paid was already safe via its status precondition; hrRCSave already had RC._saving.)
+var HR_INFLIGHT={};
+async function hrOnce(key, fn){
+  if(HR_INFLIGHT[key]){ toast('Still working on that \u2014 one moment\u2026',true); return; }
+  HR_INFLIGHT[key]=1;
+  try { return await fn(); } finally { delete HR_INFLIGHT[key]; }
+}
+async function hrRatesSave(){ return hrOnce('hrRatesSave', async function(){
   var gv=function(id){ var el=document.getElementById(id); return el?el.value:''; };
   var p2=function(id){ var v=gv(id); return v===''?null:Number(v)/100; };   // % -> decimal
   var n=function(id){ var v=gv(id); return v===''?null:Number(v); };
@@ -4242,7 +4252,7 @@ async function hrRatesSave(){
   });
   var r=await call({api:'hr_rates_save',rates:rates});
   if(r&&r.ok){ toast('Statutory rates saved ✓'); HR.pay.data.rates=rates; HR.pay.showRates=false; hrRender(); } else toast((r&&r.error)||'Save failed',true);
-}
+}); }
 function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g[field]=(val===''||val==null)?0:Number(val); if(isNaN(g[field]))g[field]=0; hrGridRecalc(); }
 function hrGridRecalc(){
   var p=HR.pay, emps=p.data.employees||[]; var A=hrGridAll(); var tot=A.tot;
@@ -4252,7 +4262,7 @@ function hrGridRecalc(){
   set('t_g',tot.gross); set('t_epf',tot.epfEe); set('t_soc',tot.socsoEe); set('t_eis',tot.eisEe); set('t_pcb',tot.pcb); set('t_net',tot.net);
   var sc=document.getElementById('hr_paysum'); if(sc) sc.innerHTML=hrPaySumHtml(tot);
 }
-async function hrGridSave(){
+async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
   var p=HR.pay, emps=p.data.employees||[], out=[];
   emps.forEach(function(e){ var g=p.grid[e.id]; if(!g) return;
     var mb=Number(e.basic_salary||0), ma=Number(e.fixed_allowance||0);
@@ -4266,7 +4276,7 @@ async function hrGridSave(){
   });
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
   if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
-}
+}); }
 function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; HR.submitPack=null; hrRender(); }
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
@@ -4282,13 +4292,13 @@ async function hrLoadPayroll(){
   }
   catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
 }
-async function hrFinalise(){
+async function hrFinalise(){ return hrOnce('hrFinalise', async function(){
   var rows=(HR.pay._rows||[]).map(function(r){ var q=r.p; return { employeeId:r.e.id, gross:q.gross, epfEe:q.epfEe, epfEr:q.epfEr, socsoEe:q.socsoEe, socsoEr:q.socsoEr, eisEe:q.eisEe, eisEr:q.eisEr, pcb:q.pcb, net:q.net, employerCost:q.employerCost }; });
   if(!rows.length){ toast('No active employees',true); return; }
   if(!confirm('Finalise payroll for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' ('+rows.length+' employees)? Saves payslips for the period.')) return;
   var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows,tenant:HR.tenant});
   if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
-}
+}); }
 function hrAdjOpen(id){ HR.pay.adjEmp=(HR.pay.adjEmp===id?null:id); hrRender(); if(HR.pay.adjEmp){ setTimeout(function(){var el=document.getElementById('hr_adjpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});},50); } }
 function hrAdjPanel(empId){
   var e=(HR.pay.data.employees||[]).find(function(x){return x.id===empId;}); if(!e) return '';
@@ -4381,7 +4391,10 @@ function hrDrawPayslip(doc,e,p,period,d){
 }
 function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var per=hrPeriod(); rows.forEach(function(r,i){ if(i>0)doc.addPage(); hrDrawPayslip(doc,r.e,r.p,per,r.d); }); doc.save('Payslips_'+per.label.replace(' ','')+'.pdf'); toast('Payslips PDF generated'); }); }
 function hrDownload(name,text,mime){ var blob=new Blob([text],{type:mime||'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},1500); }
-function hrCsv(arr){ return arr.map(function(r){ return r.map(function(c){ return /[",\n]/.test(String(c))?('"'+String(c).replace(/"/g,'""')+'"'):c; }).join(','); }).join('\n'); }
+// v159: CRLF + a terminating newline. KWSP/CP39 already use CRLF deliberately, but every CSV (PERKESO
+// ASSIST and both bank files) went out with bare LF and no EOF newline — several Malaysian bank and
+// government uploaders drop or reject the final record without one. Also quote a bare CR.
+function hrCsv(arr){ return arr.map(function(r){ return r.map(function(c){ return /[",\r\n]/.test(String(c))?('"'+String(c).replace(/"/g,'""')+'"'):c; }).join(','); }).join('\r\n')+'\r\n'; }
 function hrExpStatutory(kind){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var head,body=[],totals,name;
@@ -4582,6 +4595,12 @@ function hrZip(files){
 }
 function hrSubmitAll(){
   if(!hrCurRows().length){ toast('No payroll to submit — finalise the month first',true); return; }
+  // v159: the grid is live and editable, so generating before finalising (or after editing a finalised
+  // month) ships a bank file and CP39 that disagree with the payslips already issued and with the saved
+  // hr_payroll_runs record. Warn rather than block — a dry run before finalising is legitimate.
+  if(!(HR.pay&&HR.pay.data&&HR.pay.data.run&&String(HR.pay.data.run.status||'')==='finalised')){
+    if(!confirm('This month is not finalised.\n\nThe files will use the figures currently on screen, which may differ from the payslips you issue after finalising.\n\nGenerate anyway?')) return;
+  }
   var per=hrPeriod(), co=(hrCompanyName()||'CTG').replace(/[^A-Za-z0-9]+/g,'_');
   var specs=[
     { key:'salary',  label:'Salaries (UOB Infinity)', file:hrExpBank('uob',true) },

@@ -404,7 +404,8 @@ async function stepHasNoApprover(step:any, tenantId:any){
 async function canActOrGap(who:any, step:any, tenantId:any, ctx?:any){
   if(rcCanActStep(who, step, tenantId)) return true;      // still subject to sodViolation() afterwards
   if(!who.isAdmin) return false;
-  const exE = ctx && ctx.requesterEmpId ? [ctx.requesterEmpId] : [];
+  // v159: exclude by employee id too — an approver who already acted via the email link has no user id.
+  const exE = ([] as any[]).concat(ctx && ctx.requesterEmpId ? [ctx.requesterEmpId] : [], (ctx && ctx.actedEmpIds) || []);
   const exU = (ctx && ctx.actedUserIds) || [];
   return (await stepEligibleApprovers(step, tenantId, exE, exU)) === 0;
 }
@@ -425,13 +426,22 @@ async function leaveFlowFor(tenantId:any, activeOnly?:boolean){
 // Segregation of duties: one human may not approve two levels of the same request, and nobody may
 // approve their own. Returns an error string to refuse with, or null when the actor is clear.
 // actorField is the step table's actor column ("acted_by" for claims, "decided_by" for leave).
-async function sodViolation(table:string, idField:string, reqId:string, stepId:any, actorUserId:string, actorEmpId:any, requesterEmpId:any, actorField:string){
+// v159: empField is the step table's EMPLOYEE actor column ("acted_emp_id" / "decided_emp_id"). The check
+// used to key only on the portal USER id, so an approver with no login deciding via the emailed link was
+// stamped NULL and skipped the cross-level rule entirely — one person holding two roles could clear the
+// whole chain by email. Match on either identity, so a missing login no longer disables SoD.
+async function sodViolation(table:string, idField:string, reqId:string, stepId:any, actorUserId:string, actorEmpId:any, requesterEmpId:any, actorField:string, empField?:string){
   if(actorEmpId && requesterEmpId && String(actorEmpId)===String(requesterEmpId)) return "You cannot approve your own request.";
-  if(!actorUserId) return null;
-  let q = sb.from(table).select("step_order,name").eq(idField,reqId).eq(actorField,actorUserId);
-  if(stepId) q = q.neq("id",stepId);   // re-deciding the same step (e.g. after Need More Info) is fine
-  const { data: prior } = await q;
-  if(prior && prior.length) return "You already acted on step "+prior[0].step_order+" ("+(prior[0].name||"")+") of this request. A different person must approve this level.";
+  if(!actorUserId && !actorEmpId) return null;
+  const hit = async (col:string, val:any)=>{
+    if(!val) return null;
+    let q = sb.from(table).select("step_order,name").eq(idField,reqId).eq(col,val);
+    if(stepId) q = q.neq("id",stepId);   // re-deciding the same step (e.g. after Need More Info) is fine
+    const { data } = await q;
+    return (data && data.length) ? data[0] : null;
+  };
+  const prior = (await hit(actorField, actorUserId)) || (empField ? await hit(empField, actorEmpId) : null);
+  if(prior) return "You already acted on step "+prior.step_order+" ("+(prior.name||"")+") of this request. A different person must approve this level.";
   return null;
 }
 // Resolve the portal-user id in each step's actor field → a display name (employee name preferred,
@@ -661,16 +671,30 @@ async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:str
   const { data: step } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).eq("step_order",inst.current_step).maybeSingle();
   // Everyone who already acted on ANOTHER level of this request is ineligible here (SoD), so they don't
   // count when deciding whether the step still has a real approver.
-  const { data: actedRows } = await sb.from("hr_claim_approval_steps").select("acted_by,id").eq("instance_id",inst.id);
-  const actedUserIds = (actedRows||[]).filter((s:any)=>s.acted_by && (!step || s.id!==step.id)).map((s:any)=>s.acted_by);
-  if(!(await canActOrGap(who, step, claim.tenant_id, { requesterEmpId: claim.employee_id, actedUserIds })))
+  // v159: also collect the acting EMPLOYEE ids — an approver with no portal login (email-link approval)
+  // has acted_by NULL, so a user-id-only exclusion counted them as still eligible here.
+  const { data: actedRows } = await sb.from("hr_claim_approval_steps").select("acted_by,acted_emp_id,id").eq("instance_id",inst.id);
+  const otherSteps = (actedRows||[]).filter((s:any)=> !step || s.id!==step.id);
+  const actedUserIds = otherSteps.filter((s:any)=>s.acted_by).map((s:any)=>s.acted_by);
+  const actedEmpIds  = otherSteps.filter((s:any)=>s.acted_emp_id).map((s:any)=>s.acted_emp_id);
+  if(!(await canActOrGap(who, step, claim.tenant_id, { requesterEmpId: claim.employee_id, actedUserIds, actedEmpIds })))
     return { ok:false, error:"You are not the approver for this step"+(step&&step.approver_role?(" (\""+step.approver_role+"\")"):"")+". Ask that approver to act, or assign someone to the role in Claim settings.", forbidden:true };
-  const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
-  const sodErr = await sodViolation("hr_claim_approval_steps","instance_id",inst.id,step&&step.id,actor,who.employee&&who.employee.id,claim.employee_id,"acted_by");
+  const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const actorEmp=(who.employee&&who.employee.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
+  const sodErr = await sodViolation("hr_claim_approval_steps","instance_id",inst.id,step&&step.id,actor,who.employee&&who.employee.id,claim.employee_id,"acted_by","acted_emp_id");
   if(sodErr) return { ok:false, error:sodErr, forbidden:true };
+  // v159 (SoD, origination vs approval): sodViolation only compares the actor to the BENEFICIARY, so an
+  // admin who raised a claim on someone else's behalf could then approve it — and if they also hold
+  // "finance" they could mark it paid and edit the payee's bank account. One person, end to end.
+  // Refuse only when somebody else could actually decide this step, so this can never deadlock a claim
+  // (the v152/153/154 lesson: "assigned" is not the same as "actionable").
+  if(decision==="approve" && claim.created_by && actor && String(claim.created_by)===String(actor)
+     && !(claim.employee_id && actorEmp && String(claim.employee_id)===String(actorEmp))){
+    const others = await stepEligibleApprovers(step, claim.tenant_id, [actorEmp].filter(Boolean), [actor].filter(Boolean));
+    if(others > 0) return { ok:false, error:"You raised this claim, so you cannot also approve it. Another approver for this step must act.", forbidden:true };
+  }
   if(decision==="reject"){
     if(!String(comment||"").trim()) return { ok:false, error:"a rejection reason is required" };
-    if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+    if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
     await sb.from("hr_claim_approval_instances").update({status:"rejected"}).eq("id",inst.id);
     await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
     await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
@@ -679,7 +703,7 @@ async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:str
   }
   if(decision==="request_info"){
     if(!String(comment||"").trim()) return { ok:false, error:"a message to the employee is required" };
-    if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+    if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
     await sb.from("hr_claim_requests").update({status:"Need More Info"}).eq("id",id);
     await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"info_request"});
     await rcAuditLog(id,"request_info",me,fromS,"Need More Info",{comment});
@@ -687,7 +711,7 @@ async function rcDecideOne(who:any, me:any, id:any, decision:string, comment:str
   }
   const override = (overrideAmount!=null && overrideAmount!=="") ? Number(overrideAmount) : null;
   if(override!=null){ if(!String(overrideReason||"").trim()) return { ok:false, error:"a reason is required to override the amount" }; await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:overrideReason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:overrideReason}); claim.amount=override; }
-  if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_at:nowIso}).eq("id",step.id);
+  if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
   const { data: allSteps } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).order("step_order");
   const next=(allSteps||[]).find((s:any)=>s.step_order>inst.current_step);
   if(next){
@@ -5094,7 +5118,7 @@ Deno.serve(async (req)=>{
         if (who.employee && String(empId) === String(who.employee.id))
           return j({ ok:false, error:"You cannot auto-approve your own leave — submit it and let your approver decide." }, 403);
         const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString();
-        await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_at:nowIso, comment:"Recorded by admin" }).eq("leave_request_id",ins.id);
+        await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment:"Recorded by admin" }).eq("leave_request_id",ins.id);
         await sb.from("hr_leave_requests").update({ status:"Approved" }).eq("id",ins.id);
         try {
           const year = new Date(from).getFullYear();
@@ -5146,7 +5170,7 @@ Deno.serve(async (req)=>{
         const pActedUsers = (pActed||[]).filter((s:any)=>s.decided_by && s.id!==step.id).map((s:any)=>s.decided_by);
         if(!(await canActOrGap(who, step, r.tenant_id, { requesterEmpId: r.employee_id, actedUserIds: pActedUsers }))) continue;
         // Hide what this caller already acted on earlier in the same chain, or raised themselves.
-        if(await sodViolation("hr_leave_approval_steps","leave_request_id",r.id,step.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,r.employee_id,"decided_by")) continue;
+        if(await sodViolation("hr_leave_approval_steps","leave_request_id",r.id,step.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,r.employee_id,"decided_by","decided_emp_id")) continue;
         out.push({ ...r, current_step_name: step.name||step.approver_role||"(unassigned)" });
       }
       return j({ ok:true, requests: out });
@@ -5252,18 +5276,18 @@ Deno.serve(async (req)=>{
       if(!(await canActOrGap(who, step, req.tenant_id, { requesterEmpId: req.employee_id, actedUserIds: lActedUsers })))
         return j({ ok:false, error:"You are not the approver for this step"+(step&&step.approver_role?(" (\""+step.approver_role+"\")"):"")+". Ask that approver to act, or assign someone to the role in Leave settings." }, 403);
       const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString(); const comment=String(b.comment||"").slice(0,500);
-      const sodErr = await sodViolation("hr_leave_approval_steps","leave_request_id",id,step&&step.id,actor,who.employee&&who.employee.id,req.employee_id,"decided_by");
+      const sodErr = await sodViolation("hr_leave_approval_steps","leave_request_id",id,step&&step.id,actor,who.employee&&who.employee.id,req.employee_id,"decided_by","decided_emp_id");
       if(sodErr) return j({ ok:false, error:sodErr }, 403);
       const { data: emp } = await sb.from("hr_employees").select("name,email").eq("id",req.employee_id).maybeSingle();
       if(decision==="reject"){
-        if(step) await sb.from("hr_leave_approval_steps").update({ status:"Rejected", decided_by:actor, decided_at:nowIso, comment }).eq("id",step.id);
+        if(step) await sb.from("hr_leave_approval_steps").update({ status:"Rejected", decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment }).eq("id",step.id);
         await sb.from("hr_leave_requests").update({ status:"Rejected" }).eq("id",id);
         await logAudit(me,"hr_leave_decide",id,{ decision:"reject", step:step&&step.name });
         try{ if(emp&&emp.email) await rcSendEmail(emp.email, "[HR OS] Your leave request was not approved", "Hi "+((emp&&emp.name)||"")+",\n\nYour "+req.leave_type+" leave "+req.date_from+" → "+req.date_to+" was rejected"+(comment?(" — "+comment):".")+"\n\n— CTG HR OS (automated)"); }catch(_e){}
         return j({ ok:true, status:"Rejected" });
       }
       // approve current step
-      if(step) await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_at:nowIso, comment }).eq("id",step.id);
+      if(step) await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment }).eq("id",step.id);
       const { data: allSteps } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",id).order("step_order");
       const next=(allSteps||[]).find((s:any)=>s.step_order>(req.current_step||1));
       if(next){
@@ -5676,7 +5700,8 @@ Deno.serve(async (req)=>{
         if(!who.isAdmin && ex.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403);
         if(!who.isAdmin) row.employee_id=ex.employee_id;
         if(ex && !["Draft","Need More Info"].includes(ex.status)) return j({ ok:false, error:"Claim can only be edited while Draft or Need More Info." });
-        await sb.from("hr_claim_requests").update(row).eq("id",c.id);
+        // v159: unchecked. A failed update returned ok:true and the UI toasted "Draft saved".
+        { const { error:eUpd } = await sb.from("hr_claim_requests").update(row).eq("id",c.id); if(eUpd) return j({ ok:false, error:eUpd.message }); }
       } else {
         row.status="Draft"; row.created_by=(me.user&&me.user.id)||null;
         try { row.claim_no = await rcNextClaimNo(tenant); }
@@ -5686,8 +5711,11 @@ Deno.serve(async (req)=>{
         claimId=ins.id; await rcAuditLog(claimId,"create",me,null,"Draft",{});
       }
       if(items){
-        await sb.from("hr_claim_items").delete().eq("claim_id",claimId);
-        if(normItems.length) await sb.from("hr_claim_items").insert(normItems.map((x:any)=>({ ...x, claim_id:claimId })));
+        // v159: delete-then-insert with both halves unchecked. If the insert failed the claim header kept
+        // the NEW amount with ZERO expense lines, and the UI still said "Draft saved" — an amount with no
+        // supporting detail then went into the approval chain.
+        { const { error:eDelIt } = await sb.from("hr_claim_items").delete().eq("claim_id",claimId); if(eDelIt) return j({ ok:false, error:eDelIt.message }); }
+        if(normItems.length){ const { error:eInsIt } = await sb.from("hr_claim_items").insert(normItems.map((x:any)=>({ ...x, claim_id:claimId }))); if(eInsIt) return j({ ok:false, error:"Expense lines could not be saved ("+eInsIt.message+") — the claim total no longer matches its lines. Please retry." }); }
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
       } else if(headerType && typeMap[headerType] && typeMap[headerType].is_mileage && c.mileage){
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
@@ -5699,6 +5727,20 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
       const claimId=b.claim_id; if(!claimId) return j({ ok:false, error:"claim_id required" });
+      // v159: admins previously skipped EVERY check here — no claim-existence, no company pin — so a
+      // scoped admin could attach a file to another company's claim. And nobody had a status gate, so a
+      // claimant could add "receipts" to an already Approved/Paid claim, changing the evidence the
+      // approval was granted on.
+      {
+        const { data: ac } = await sb.from("hr_claim_requests").select("tenant_id,status,employee_id").eq("id",claimId).maybeSingle();
+        if(!ac) return j({ ok:false, error:"claim not found" });
+        if(who.isAdmin && ac.tenant_id){
+          const alwA=await allowedTenants(b.token);
+          if(alwA.indexOf(String(ac.tenant_id))<0) return denyTenant(me,"hr_rc_attach",String(ac.tenant_id));
+        }
+        const ATTACHABLE=["Draft","Need More Info","Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"];
+        if(ATTACHABLE.indexOf(String(ac.status))<0) return j({ ok:false, error:"This claim is "+ac.status+" — receipts can no longer be changed." }, 403);
+      }
       if(!who.isAdmin){ const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",claimId).maybeSingle(); if(!oc || !who.employee || oc.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403); }
       const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null; let upErr:any=null;
       if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error){ upErr=up.error.message||String(up.error); path=null; } }catch(e){ upErr=String(e).slice(0,200); path=null; } }
@@ -5744,7 +5786,15 @@ Deno.serve(async (req)=>{
       const { data: claim } = await sb.from("hr_claim_requests").select("*").eq("id",id).maybeSingle();
       if(!claim) return j({ ok:false, error:"claim not found" });
       if(!who.isAdmin && claim.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403);
-      const tenant = who.isAdmin ? String(b.tenant||"") : who.employee.tenant_id;
+      // v159: the admin branch fetched the claim by id with NO company check (hr_rc_save / _cancel / _get
+      // all pin it), and then built the approval chain from b.tenant — so a scoped admin of company A
+      // could submit company B's draft and have B's claim routed through A's workflow. Always pin to the
+      // claim's own company, and use THAT for workflow matching.
+      if(who.isAdmin && claim.tenant_id){
+        const alwS=await allowedTenants(b.token);
+        if(alwS.indexOf(String(claim.tenant_id))<0) return denyTenant(me,"hr_rc_submit",String(claim.tenant_id));
+      }
+      const tenant = who.isAdmin ? (String(claim.tenant_id||"") || String(b.tenant||"")) : who.employee.tenant_id;
       if(!["Draft","Need More Info"].includes(claim.status)) return j({ ok:false, error:"Only Draft or Need More Info claims can be submitted." });
       const { data: type } = await sb.from("hr_claim_types").select("*").eq("id",claim.claim_type_id).maybeSingle();
       const { data: sItems } = await sb.from("hr_claim_items").select("amount").eq("claim_id",id);
@@ -6085,7 +6135,7 @@ Deno.serve(async (req)=>{
       const curStep = allSteps.find((s:any)=>cl && s.step_order===cl.current_step);
       // Mirror the decide-time segregation-of-duties rule here so the Approve button hides instead of
       // erroring on click for someone who already acted on an earlier level (or owns the claim).
-      const sodOut = (curStep&&curStep.instance_id) ? await sodViolation("hr_claim_approval_steps","instance_id",curStep.instance_id,curStep.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,cl&&cl.employee_id,"acted_by") : null;
+      const sodOut = (curStep&&curStep.instance_id) ? await sodViolation("hr_claim_approval_steps","instance_id",curStep.instance_id,curStep.id,(me.user&&me.user.id)||null,who.employee&&who.employee.id,cl&&cl.employee_id,"acted_by","acted_emp_id") : null;
       const detActed = allSteps.filter((s:any)=>s.acted_by && (!curStep || s.id!==curStep.id)).map((s:any)=>s.acted_by);
       const canAct = (await canActOrGap(who, curStep, cl&&cl.tenant_id, { requesterEmpId: cl&&cl.employee_id, actedUserIds: detActed })) && !sodOut && ["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"].indexOf(cl&&cl.status)>=0;
       // Finance capability must match the server-side money gates (superAdmin OR finance role), NOT
@@ -6370,7 +6420,7 @@ Deno.serve(async (req)=>{
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v158: risk sweep wave 2. Age is now taken as at the payroll period end, not today. Grid basic/allowance overrides are honoured by the server engine, so pro-rated joiners no longer 409 the whole run. Statutory exports block on a missing EPF/SOCSO/TIN/IC instead of padding zeros, CP38 is reported from real deductions, and fixed-width records are ASCII-folded so an accented name cannot shift every column. Leave approval chains are per company with a group-wide fallback. Tax bands are code-only in both engines." });
+    return j({ ok:true, hint:"portal v159: risk sweep wave 3. Segregation of duties now records WHICH EMPLOYEE approved, so an approver with no portal login can no longer clear two levels of one chain via the email link. Whoever raised a claim cannot also approve it when another approver exists. Claim submit and receipt attach are pinned to the claim own company and receipts are frozen once a claim leaves the approval stages. Claim saves no longer report success after a failed write. Money actions are single-flight so a double click cannot create two Xero bills." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
