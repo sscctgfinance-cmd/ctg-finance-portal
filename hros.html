@@ -1130,6 +1130,39 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
 
 <script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
+// ── v162: client error beacon ────────────────────────────────────────────────────────────────────────
+// This app is one ~500 KB inline script with no build step. Until now a runtime error was completely
+// invisible: the employee saw a dead button or a blank panel, and the operator found out via WhatsApp,
+// if at all. Report uncaught errors so a broken release is visible in minutes rather than days.
+// Deliberately fire-and-forget, capped, and deduped — a beacon must never make a bad situation worse.
+(function(){
+  var sent = 0, seen = {};
+  function beacon(kind, message, stack){
+    try {
+      if (sent >= 8) return;                       // one bad render loop must not flood the endpoint
+      var key = String(message).slice(0,200);
+      if (seen[key]) return;                       // same error once per page load
+      seen[key] = 1; sent++;
+      var tok = null; try { tok = storageGet('ctg_portal_token'); } catch(_e){}
+      fetch(API, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({
+          api: 'client_error', app: 'hros', kind: kind,
+          message: String(message).slice(0,500), stack: String(stack||'').slice(0,4000),
+          page: location.pathname + location.hash, ua: navigator.userAgent,
+          token: tok, tenant: (typeof HR !== 'undefined' && HR && HR.tenant) || null
+        })
+      }).catch(function(){});                      // never surface a beacon failure to the user
+    } catch(_e){}
+  }
+  addEventListener('error', function(e){
+    if (e && e.message) beacon('error', e.message, e.error && e.error.stack);
+  });
+  addEventListener('unhandledrejection', function(e){
+    var r = e && e.reason;
+    if (r) beacon('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+  });
+})();
 // Detect localStorage availability — Safari Private Browsing throws on setItem; some strict-privacy
 // browsers fully disable Storage. Without it, login can't persist. Warn the user instead of
 // silently failing each refresh.

@@ -1,0 +1,94 @@
+name: CI — lint & payroll tests
+
+# Runs on EVERY push and PR, including changes to hros.html.
+#
+# Why this exists: until now nothing checked hros.html at all. It is one ~500 KB inline <script>, so a
+# single syntax error is a white screen for every employee, published straight to GitHub Pages, and
+# discovered by a phone call. The lint gate that has caught real syntax errors during development only
+# existed as a command someone remembered to run by hand.
+#
+# This job does NOT block the deploy workflow (they run independently) — it is the signal. Make it a
+# required status check on main in the repo's branch-protection settings to turn it into a gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Syntax-check the single-file apps
+        # Extract each inline <script> and parse it. `deno lint` reports a SyntaxError for anything that
+        # would not parse in the browser, which is the failure mode that takes the whole app down.
+        run: |
+          set -e
+          fail=0
+          for f in hros.html app.html index.html; do
+            [ -f "$f" ] || continue
+            deno eval "
+              const html = await Deno.readTextFile('$f');
+              const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+              await Deno.writeTextFile('/tmp/_$f.js', blocks.join('\n;\n'));
+              console.log('$f: ' + blocks.length + ' inline script block(s), ' + html.length + ' bytes');
+            "
+            if deno lint "/tmp/_$f.js" 2>&1 | grep -qiE "SyntaxError|Unexpected token|Expression expected"; then
+              echo "::error file=$f::$f does not parse — this would white-screen the app for every user."
+              deno lint "/tmp/_$f.js" 2>&1 | grep -iE -A4 "SyntaxError|Unexpected token|Expression expected" | head -20
+              fail=1
+            else
+              echo "$f parses OK"
+            fi
+          done
+          exit $fail
+
+      - name: Guard against duplicate top-level declarations in hros.html
+        # A duplicate top-level `const`/`let`/`class` has taken the portal down before (BOOT_ERROR 503).
+        # `var`/`function` redeclarations are legal and this codebase has a known baseline of 6 — fail only
+        # if that number GROWS, so the gate stays useful without demanding a big cleanup first.
+        run: |
+          set -e
+          n=$(deno lint /tmp/_hros.html.js 2>&1 | grep -c "no-redeclare" || true)
+          echo "no-redeclare findings: $n (baseline 6)"
+          if [ "$n" -gt 6 ]; then
+            echo "::error::no-redeclare rose to $n (baseline 6). A duplicate top-level declaration can take the whole app down."
+            deno lint /tmp/_hros.html.js 2>&1 | grep -B2 -A6 "no-redeclare" | head -40
+            exit 1
+          fi
+
+      - name: Backend parses
+        run: |
+          set -e
+          if deno lint portal_current.ts 2>&1 | grep -qiE "SyntaxError|Expression expected"; then
+            echo "::error file=portal_current.ts::portal_current.ts does not parse."
+            exit 1
+          fi
+          echo "portal_current.ts parses OK"
+
+      - name: Edge function source matches portal_current.ts
+        # The deploy workflow copies portal_current.ts over supabase/functions/portal/index.ts. If they are
+        # already out of sync in the repo, a reviewer is reading different code from what ships.
+        run: |
+          if ! diff -q portal_current.ts supabase/functions/portal/index.ts >/dev/null; then
+            echo "::error::portal_current.ts and supabase/functions/portal/index.ts differ. Run: cp portal_current.ts supabase/functions/portal/index.ts"
+            exit 1
+          fi
+          echo "Edge function source is in sync."
+
+      - name: Payroll tests — statutory tables & engine parity
+        # The two that matter most:
+        #  - the gazetted SOCSO/EIS anchors (a wrong table over-deducts from every employee, silently)
+        #  - frontend/backend parity (any drift 409s payroll for the whole company, unrecoverably)
+        run: deno test --allow-read tests/

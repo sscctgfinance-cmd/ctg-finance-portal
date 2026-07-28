@@ -1,0 +1,176 @@
+// Frontend/backend payroll engine parity.
+//
+// WHY THIS FILE EXISTS: hr_payroll_finalise recomputes every payslip server-side and REJECTS the whole run
+// with 409 recompute_mismatch if any figure differs by more than a sen. That is the right design — the
+// server must own the statutory record — but it means the two engines are a matched pair, and any drift
+// between them does not cause a small error, it stops payroll for the entire company with an error
+// message that blames a stale cache.
+//
+// Three separate drifts shipped before this test existed:
+//   - basic_set / allow_set: the grid's per-period Basic override was persisted and used by the frontend
+//     but never read by computePayrollMY, so every pro-rated joiner 409'd the run, unrecoverably.
+//   - age: taken as at "today" on both sides, but with local getters on the frontend and UTC on the
+//     backend — they disagreed on a birthday for anyone west of MYT.
+//   - cfg.taxBands: honoured by the server, hard-coded on the client.
+//
+// This walks a matrix through both engines and asserts they agree to the sen.
+
+import { assertEquals } from "jsr:@std/assert@1";
+import {
+  BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, inlineScript, loadEngine,
+} from "../tools/extract.ts";
+
+const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+
+const fe = await loadEngine(inlineScript(html), FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);
+const be = await loadEngine(ts, BACKEND_ENGINE, BACKEND_TABLES, ["computePayrollMY"]);
+// deno-lint-ignore no-explicit-any
+const hrCompute = fe.hrCompute as any;
+// deno-lint-ignore no-explicit-any
+const computePayrollMY = be.computePayrollMY as any;
+
+// The statutory rates row as it actually exists in hr_statutory_rates.rates.
+const CFG = {
+  epf: { eeRate: 0.11, erRateLow: 0.13, erRateHigh: 0.12, threshold: 5000, erSenior: 0.04, eeSenior: 0 },
+  socso: { eeRate: 0.005, erRate: 0.0175, erRate2: 0.0125, ceiling: 6000 },
+  eis: { eeRate: 0.002, erRate: 0.002, ceiling: 6000 },
+  reliefPersonal: 9000, reliefSpouse: 4000, reliefChild: 2000, reliefEpfMax: 4000,
+};
+
+const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "pcb", "net", "employerCost"];
+
+function baseEmp(over: Record<string, unknown> = {}) {
+  return {
+    basic_salary: 3000, fixed_allowance: 0, date_of_birth: "1990-05-14", join_date: "2020-01-01",
+    resign_date: null, resident: true, epf_eligible: true, socso_eligible: true, eis_eligible: true,
+    socso_category: null, epf_ee_rate: null, marital_status: "single", spouse_working: false,
+    num_children: 0, pay_type: "monthly", hourly_rate: null, daily_rate: null, ...over,
+  };
+}
+
+// The two engines are called with DIFFERENT shapes in production, which is the whole reason they drift:
+//
+//   frontend (hrGridRowCompute): builds a SYNTHETIC employee whose basic_salary / fixed_allowance are the
+//     resolved grid values, and passes only bonus / ot / allowance / deduction / unpaid_leave.
+//   backend (hr_payroll_finalise): passes the REAL employee row plus the stored adjustments, which include
+//     the basic_set / allow_set rows hrGridSave persisted when the grid differed from the employee record.
+//
+// Comparing hrCompute and computePayrollMY on identical arguments would therefore test a contract neither
+// side actually uses. This models the real call on each side.
+type Scenario = {
+  emp: Record<string, unknown>;
+  gridBasic?: number;   // what the operator typed in the Basic cell
+  gridAllow?: number;
+  earnings?: { kind: string; amount: number; epf_subject?: boolean }[];
+  deduction?: number;
+  unpaid?: number;
+  ytd?: unknown;
+  period?: { month: number; year: number };
+};
+
+function compare(label: string, sc: Scenario) {
+  const period = sc.period ?? PERIOD;
+  const empBasic = Number(sc.emp.basic_salary) || 0;
+  const empAllow = Number(sc.emp.fixed_allowance) || 0;
+  const basic = sc.gridBasic ?? empBasic;
+  const allow = sc.gridAllow ?? empAllow;
+  const common = [
+    ...(sc.earnings ?? []).map((e) => ({ epf_subject: true, ...e })),
+    ...(sc.deduction ? [{ kind: "deduction", amount: sc.deduction, epf_subject: false }] : []),
+    ...(sc.unpaid ? [{ kind: "unpaid_leave", amount: sc.unpaid, epf_subject: false }] : []),
+  ];
+
+  const synth = { ...sc.emp, basic_salary: basic, fixed_allowance: allow };
+  const a = hrCompute(synth, CFG, common, period, sc.ytd);
+
+  // hrGridSave only writes basic_set / allow_set when the grid differs from the employee record.
+  const stored = [
+    ...common,
+    ...(basic !== empBasic ? [{ kind: "basic_set", amount: basic, epf_subject: true }] : []),
+    ...(allow !== empAllow ? [{ kind: "allow_set", amount: allow, epf_subject: true }] : []),
+  ];
+  const b = computePayrollMY(sc.emp, CFG, stored, undefined, period, sc.ytd);
+
+  for (const k of MONEY) {
+    const av = Math.round((Number(a[k]) || 0) * 100);
+    const bv = Math.round((Number(b[k]) || 0) * 100);
+    assertEquals(av, bv, `${label}: ${k} — frontend ${a[k]} vs backend ${b[k]} (this would 409 the whole run)`);
+  }
+}
+
+const PERIOD = { month: 7, year: 2026 };
+
+Deno.test("parity — salary sweep across every statutory boundary", () => {
+  for (const basic of [0, 800, 2999, 3000, 4999, 5000, 5000.01, 5999, 6000, 6000.01, 8000, 25000]) {
+    compare(`basic ${basic}`, { emp: baseEmp({ basic_salary: basic }) });
+  }
+});
+
+Deno.test("parity — age drives EPF/SOCSO/EIS category, and must use the PERIOD not today", () => {
+  // 1966-08-03 turns 60 during Aug 2026. Processing July in August is normal Malaysian practice, so
+  // "today" and "period end" disagree here — exactly the case that silently applied senior rates
+  // retroactively to an already-finalised July payslip.
+  for (const dob of ["1966-08-03", "1966-07-31", "1966-06-15", "1990-01-01", "2005-12-31"]) {
+    const emp = baseEmp({ date_of_birth: dob, basic_salary: 5000 });
+    compare(`dob ${dob} (Jul 2026)`, { emp });
+    compare(`dob ${dob} (Aug 2026)`, { emp, period: { month: 8, year: 2026 } });
+  }
+});
+
+Deno.test("parity — grid Basic / Allowance overrides (pro-rated joiner)", () => {
+  // The drift that blocked an entire company's payroll: the frontend resolved these into its synthetic
+  // employee, the backend ignored the basic_set / allow_set rows entirely.
+  compare("basic override", { emp: baseEmp(), gridBasic: 1500 });
+  compare("allowance override", { emp: baseEmp(), gridAllow: 250 });
+  compare("both overridden", { emp: baseEmp(), gridBasic: 1500, gridAllow: 250 });
+  compare("override to zero", { emp: baseEmp(), gridBasic: 0 });
+  compare("override upward", { emp: baseEmp(), gridBasic: 7200 });
+  compare("override + earnings", {
+    emp: baseEmp({ basic_salary: 4500 }), gridBasic: 4000,
+    earnings: [{ kind: "bonus", amount: 2000 }, { kind: "ot", amount: 133.33 }],
+    deduction: 80, unpaid: 200,
+  });
+});
+
+Deno.test("parity — earnings, deductions and unpaid leave", () => {
+  compare("bonus", { emp: baseEmp(), earnings: [{ kind: "bonus", amount: 5000 }] });
+  compare("bonus not EPF-subject", { emp: baseEmp(), earnings: [{ kind: "bonus", amount: 5000, epf_subject: false }] });
+  compare("ot + allowance", { emp: baseEmp(), earnings: [{ kind: "ot", amount: 420.5 }, { kind: "allowance", amount: 300 }] });
+  compare("unpaid leave", { emp: baseEmp(), unpaid: 600 });
+  compare("unpaid exceeds salary", { emp: baseEmp({ basic_salary: 1200 }), unpaid: 1500 });
+  compare("deduction", { emp: baseEmp(), deduction: 150 });
+});
+
+Deno.test("parity — eligibility flags and non-residents", () => {
+  compare("no EPF", { emp: baseEmp({ epf_eligible: false }) });
+  compare("no SOCSO", { emp: baseEmp({ socso_eligible: false }) });
+  compare("no EIS", { emp: baseEmp({ eis_eligible: false }) });
+  compare("SOCSO cat 2 forced", { emp: baseEmp({ socso_category: 2 }) });
+  compare("non-resident 30%", { emp: baseEmp({ resident: false, basic_salary: 9000 }) });
+  compare("custom EPF ee rate", { emp: baseEmp({ epf_ee_rate: 0.09 }) });
+});
+
+Deno.test("parity — PCB reliefs and YTD reconciliation", () => {
+  compare("married, spouse not working", { emp: baseEmp({ basic_salary: 9000, marital_status: "married", spouse_working: false }) });
+  compare("married + 3 children", { emp: baseEmp({ basic_salary: 12000, marital_status: "married", spouse_working: false, num_children: 3 }) });
+  compare("mid-year joiner", { emp: baseEmp({ basic_salary: 8000, join_date: "2026-06-16" }) });
+  compare("leaver", { emp: baseEmp({ basic_salary: 8000, resign_date: "2026-09-30" }) });
+  // YTD opening balances (mid-year go-live): none, on-track, under-paid and over-paid.
+  for (const ytd of [
+    { gross: 0, epf: 0, pcb: 0, months: 0 },
+    { gross: 48000, epf: 5280, pcb: 660, months: 6 },
+    { gross: 48000, epf: 5280, pcb: 0, months: 6 },
+    { gross: 48000, epf: 5280, pcb: 5000, months: 6 },
+  ]) {
+    compare(`ytd pcb ${ytd.pcb}`, { emp: baseEmp({ basic_salary: 8000 }), ytd });
+  }
+});
+
+Deno.test("parity — no engine produces a negative or non-finite figure", () => {
+  const a = hrCompute(baseEmp({ basic_salary: 1200 }), CFG, [{ kind: "deduction", amount: 99999 }], PERIOD);
+  for (const k of MONEY) {
+    assertEquals(Number.isFinite(Number(a[k])), true, `${k} is not finite`);
+    if (k !== "net") assertEquals(Number(a[k]) >= 0, true, `${k} went negative`);
+  }
+});

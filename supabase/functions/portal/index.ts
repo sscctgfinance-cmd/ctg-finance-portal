@@ -127,7 +127,7 @@ const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","
 // HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
 const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
-const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
+const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","client_error","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
 async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 // Returns the tenant_ids this caller may touch. FAIL-CLOSED: the RPC returns a non-matching sentinel
 // UUID (not []) for an invalid token or a user with no company assignment, and on any error here we
@@ -6476,7 +6476,37 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       await logAudit(me,"hr_send_payslip",String(p.empNo||p.to),{ to:p.to });
       return j({ ok:true, result:r });
     }
-    return j({ ok:true, hint:"portal v161: bulk statutory-number entry. New hr_stat_ids_get / hr_stat_ids_save let an admin fill IC, EPF member no, SOCSO no and TIN for every active employee of one company in a single grid, with the employee ids pinned to that company. This is the fast path for the v158 rule that blocks KWSP, PERKESO and CP39 exports when a member number is missing rather than padding zeros." });
+    if (api === "client_error") {
+      // v162: landing point for the browser beacon. hros.html / app.html are ~500 KB single-file apps with
+      // no build step and no error capture, so until now a runtime error was invisible — the employee saw a
+      // dead button and, at best, sent a WhatsApp message. Deliberately does NOT require auth: the errors
+      // most worth seeing are the ones that happen during boot, before a session exists.
+      const cut = (v:any, n:number)=> String(v==null?"":v).slice(0,n) || null;
+      const msg = cut(b.message, 500);
+      if (!msg) return j({ ok:true, ignored:true });
+      // Group by message + first stack frame so a repeat does not create a new row every time.
+      const frame = String(b.stack||"").split("\n").map((s:string)=>s.trim()).find((s:string)=>s.startsWith("at ")) || "";
+      const fingerprint = (msg + "|" + frame).slice(0, 300);
+      let who:any = null;
+      try { if (b.token) { const m = await meFromToken(b.token); if (m && m.ok) who = m; } } catch(_e){}
+      const { data: prior } = await sb.from("portal_client_errors")
+        .select("id,seen_count").eq("fingerprint",fingerprint)
+        .gte("at", new Date(Date.now() - 6*3600*1000).toISOString())   // collapse within a 6-hour window
+        .order("at",{ascending:false}).limit(1).maybeSingle();
+      if (prior) {
+        await sb.from("portal_client_errors").update({ seen_count:(prior.seen_count||1)+1, at:new Date().toISOString() }).eq("id",prior.id);
+        return j({ ok:true, grouped:true });
+      }
+      await sb.from("portal_client_errors").insert({
+        app: cut(b.app,20), kind: cut(b.kind,30), message: msg, stack: cut(b.stack,4000),
+        page: cut(b.page,300), user_agent: cut(b.ua,300), fingerprint,
+        user_id: (who && who.user && who.user.id) || null,
+        user_email: (who && who.user && who.user.email) || null,
+        tenant_id: cut(b.tenant,40),
+      });
+      return j({ ok:true });
+    }
+    return j({ ok:true, hint:"portal v162: engineering hardening. New client_error beacon receives uncaught browser errors from the single-file apps, grouped by fingerprint. A CI workflow now parses hros.html and app.html on every push, holds the no-redeclare baseline, checks the edge function source is in sync, and runs a payroll test suite covering the gazetted SOCSO/EIS anchors and frontend/backend engine parity." });
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
 
