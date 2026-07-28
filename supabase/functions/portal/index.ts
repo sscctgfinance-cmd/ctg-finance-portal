@@ -2702,6 +2702,61 @@ Deno.serve(async (req)=>{
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work); else work.catch(()=>{});
       return j({ ok:true, started:true });
     }
+    if (api === "cron_health") {
+      // v169: nothing watched the scheduled jobs. poll-gmail returned 500 every 5 minutes for four weeks
+      // (dead Gmail refresh token) while the AP inbox received nothing, and three of the bookkeeping crons
+      // have been failing on EVERY run against columns that no longer exist. All of it silent. This is the
+      // alarm: one email when something breaks, one when it recovers, and nothing in between.
+      const win = Math.max(15, Math.min(1440, Number(b.window_min) || 60));
+      const { data: h, error: eH } = await sb.rpc("portal_cron_health", { p_window_min: win });
+      if (eH) return j({ ok:false, error:eH.message });
+
+      const jobs = (h && h.jobs) || [];
+      const httpErr = (h && h.http_errors) || { count: 0, samples: [] };
+      const fresh = (h && h.freshness) || {};
+      const problems: string[] = [];
+
+      for (const jb of jobs) problems.push(
+        `cron "${jb.jobname}": ${jb.failures}/${jb.runs} runs failed — ${String(jb.last_message||"").split("\n")[0]}`);
+      if (Number(httpErr.count) > 0) problems.push(
+        `${httpErr.count} failed HTTP call(s) from scheduled jobs. Most common:\n` +
+        (httpErr.samples||[]).map((s:any)=>`      x${s.n}  ${s.msg}`).join("\n"));
+      // Outcome checks — these are what would have caught the dead Gmail token on day one.
+      const apDays = Number(fresh.ap_inbox_age_days);
+      if (isFinite(apDays) && apDays >= 3) problems.push(
+        `AP inbox has received nothing for ${apDays} day(s) (${fresh.ap_inbox_rows} row(s) all-time).`);
+      const xeroMin = Number(fresh.xero_cache_age_min);
+      if (isFinite(xeroMin) && xeroMin >= 180) problems.push(
+        `Xero cache has not been updated for ${Math.round(xeroMin/60)} hour(s).`);
+
+      const summary = problems.join("\n\n");
+      const { data: st } = await sb.from("portal_cron_alerts").select("*").eq("id",1).maybeSingle();
+      const wasAlerting = st && st.state === "alerting";
+      const streak = problems.length ? ((st && st.fail_streak) || 0) + 1 : 0;
+      // Two consecutive bad checks before emailing, so one transient blip stays quiet.
+      const shouldAlert = problems.length > 0 && streak >= 2 && (!wasAlerting || summary !== (st && st.last_summary));
+      const recovered  = problems.length === 0 && wasAlerting;
+
+      let mailed:any = null;
+      if (shouldAlert) {
+        mailed = await sendAlertEmail(
+          "CTG portal — " + problems.length + " scheduled-job problem(s)",
+          "The scheduled-job health check found the following in the last " + win + " minutes:\n\n" +
+          summary + "\n\n--\nYou will not get another email about the same problems until they change or clear.");
+      } else if (recovered) {
+        mailed = await sendAlertEmail("CTG portal — scheduled jobs recovered",
+          "All scheduled jobs and freshness checks are clean again over the last " + win + " minutes.");
+      }
+      await sb.from("portal_cron_alerts").upsert({
+        id: 1,
+        state: problems.length ? "alerting" : "ok",
+        fail_streak: streak,
+        last_summary: summary || null,
+        last_alerted_at: (shouldAlert || recovered) ? new Date().toISOString() : (st && st.last_alerted_at) || null,
+        updated_at: new Date().toISOString(),
+      });
+      return j({ ok:true, problems: problems.length, streak, emailed: !!(shouldAlert||recovered), mail: mailed, health: h });
+    }
     if (api === "cron_watchdog") {
       // v71 (Tier-1 reliability): the SILENT-FAILURE alarm. The real damage last time wasn't that
       // sync broke — it's that nobody knew for 15 days. This cron reads portal_sync_health and
@@ -6592,7 +6647,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v168: an empty or malformed POST no longer crashes the function. b.api is normalised to a string, so the HR viewer gate cannot dereference undefined. This is why the deploy workflow health check had failed on every release since v154 even though the function deployed correctly each time." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v169: scheduled-job alarm. A new cron_health action reads per-job cron failures, failed HTTP calls from scheduled jobs with de-duplicated samples, and freshness of the Xero cache and AP inbox, then emails the operator once when something breaks and once when it clears. Built after finding poll-gmail had returned 500 every five minutes for four weeks and three bookkeeping crons had failed on every single run, all silently." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
