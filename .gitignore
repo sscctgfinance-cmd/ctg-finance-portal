@@ -10,3 +10,7 @@
 *.log
 .DS_Store
 Thumbs.db
+
+# CI scratch: extracted inline scripts
+.ci/
+_l.js

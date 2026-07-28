@@ -30,41 +30,70 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Syntax-check the single-file apps
-        # Extract each inline <script> and parse it. `deno lint` reports a SyntaxError for anything that
-        # would not parse in the browser, which is the failure mode that takes the whole app down.
+      - name: Extract inline scripts
+        # Written to a repo-local dir, not /tmp, so this behaves identically when run by hand on Windows.
+        # FAIL-CLOSED: if extraction produces nothing, the later steps must not silently "pass" because
+        # there was no file to find a SyntaxError in. (The first draft of this workflow had exactly that
+        # bug — a missing file grepped clean and reported OK.)
         run: |
           set -e
-          fail=0
+          mkdir -p .ci
           for f in hros.html app.html index.html; do
             [ -f "$f" ] || continue
             deno eval "
               const html = await Deno.readTextFile('$f');
               const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-              await Deno.writeTextFile('/tmp/_$f.js', blocks.join('\n;\n'));
-              console.log('$f: ' + blocks.length + ' inline script block(s), ' + html.length + ' bytes');
+              if (!blocks.length) { console.error('no inline <script> found in $f'); Deno.exit(1); }
+              await Deno.writeTextFile('.ci/$f.js', blocks.join('\n;\n'));
+              console.log('$f -> .ci/$f.js (' + blocks.length + ' block(s))');
             "
-            if deno lint "/tmp/_$f.js" 2>&1 | grep -qiE "SyntaxError|Unexpected token|Expression expected"; then
-              echo "::error file=$f::$f does not parse — this would white-screen the app for every user."
-              deno lint "/tmp/_$f.js" 2>&1 | grep -iE -A4 "SyntaxError|Unexpected token|Expression expected" | head -20
+            test -s ".ci/$f.js"
+          done
+          # hros.html is the big one; anything tiny means the extraction silently broke.
+          bytes=$(wc -c < .ci/hros.html.js)
+          echo "extracted hros script: $bytes bytes"
+          if [ "$bytes" -lt 200000 ]; then
+            echo "::error::Extracted hros.html script is only $bytes bytes — extraction is broken, so the checks below would be meaningless."
+            exit 1
+          fi
+
+      - name: Syntax-check the single-file apps
+        # A single syntax error here is a white screen for every user, published straight to Pages.
+        run: |
+          set -e
+          fail=0
+          for js in .ci/*.js; do
+            out=$(deno lint "$js" 2>&1 || true)
+            # Fail-closed: no output at all means lint did not actually inspect the file.
+            if [ -z "$out" ]; then
+              echo "::error::deno lint produced no output for $js — treating as a failed check."
+              exit 1
+            fi
+            if echo "$out" | grep -qiE "SyntaxError|Unexpected token|Expression expected"; then
+              echo "::error file=$js::$js does not parse — this would white-screen the app for every user."
+              echo "$out" | grep -iE -A4 "SyntaxError|Unexpected token|Expression expected" | head -20
               fail=1
             else
-              echo "$f parses OK"
+              echo "$js parses OK"
             fi
           done
           exit $fail
 
       - name: Guard against duplicate top-level declarations in hros.html
         # A duplicate top-level `const`/`let`/`class` has taken the portal down before (BOOT_ERROR 503).
-        # `var`/`function` redeclarations are legal and this codebase has a known baseline of 6 — fail only
-        # if that number GROWS, so the gate stays useful without demanding a big cleanup first.
+        # `var`/`function` redeclarations are legal and this codebase has a known baseline of 6 — fail if
+        # that number GROWS, so the gate is useful without demanding a big cleanup first. Also fail if it
+        # cannot be measured at all, rather than reading "0 findings" as good news.
         run: |
           set -e
-          n=$(deno lint /tmp/_hros.html.js 2>&1 | grep -c "no-redeclare" || true)
+          test -s .ci/hros.html.js
+          out=$(deno lint .ci/hros.html.js 2>&1 || true)
+          [ -n "$out" ] || { echo "::error::no lint output — cannot measure the no-redeclare baseline."; exit 1; }
+          n=$(echo "$out" | grep -c "no-redeclare" || true)
           echo "no-redeclare findings: $n (baseline 6)"
           if [ "$n" -gt 6 ]; then
             echo "::error::no-redeclare rose to $n (baseline 6). A duplicate top-level declaration can take the whole app down."
-            deno lint /tmp/_hros.html.js 2>&1 | grep -B2 -A6 "no-redeclare" | head -40
+            echo "$out" | grep -B2 -A6 "no-redeclare" | head -40
             exit 1
           fi
 
