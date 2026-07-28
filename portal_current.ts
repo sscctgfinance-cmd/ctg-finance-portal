@@ -2650,7 +2650,12 @@ Deno.serve(async (req)=>{
     // Pass the secret through `b.secret` as well so the handler's existing check works.
     b = { api: "ap_inbound", payload: b, secret: apInboundSecret };
   }
-  const api = b.api;
+  // v168: normalise to a string. A request with no `api` (an empty POST {}, a health probe, a malformed
+  // client call) used to leave this undefined, and the HR viewer gate below does api.indexOf("hr_") —
+  // which threw "Cannot read properties of undefined (reading 'indexOf')". That crash is why the deploy
+  // workflow's post-deploy health check has failed on EVERY release since v154, emailing a red build each
+  // time even though the function itself deployed fine. An empty api falls through to the friendly banner.
+  const api = (typeof b.api === "string") ? b.api : "";
   // ── Central tenant-isolation guard (v95): ANY tenant-scoped call must target a company on the
   // caller's allowed list. Admins with a partial company assignment are restricted to it (see
   // portal_allowed_tenants). Invalid tokens yield an empty list here and fall through to each
@@ -6587,7 +6592,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v167: TP1 relief declarations. An employee can declare lifestyle, medical, education, insurance, SSPN, childcare and other reliefs to the employer, and LHDN obliges the employer to apply them to MTD. New hr_tp1_get and hr_tp1_save, a per-employee panel in the Payment and Statutory Hub, and both payroll engines now subtract the declared total from chargeable income from the month the declaration takes effect." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v168: an empty or malformed POST no longer crashes the function. b.api is normalised to a string, so the HR viewer gate cannot dereference undefined. This is why the deploy workflow health check had failed on every release since v154 even though the function deployed correctly each time." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
