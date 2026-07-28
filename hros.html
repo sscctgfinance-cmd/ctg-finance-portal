@@ -1505,16 +1505,27 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var statWage=Math.max(0, base+addEarnStat-unpaid);   // unpaid leave lowers the statutory wage too
   var age=hrAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
   // ---- EPF (KWSP) ----
-  var epfOn=emp.epf_eligible!==false;
-  var eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate) : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  var erRate=senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
+  // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
+  // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
+  // Must mirror computePayrollMY exactly.
+  var nonCitizen=String(emp.citizen_status||'citizen')==='non_citizen';
+  var over75=(age!=null && age>=75);          // EPF liability ceases at 75 for everyone
+  var epfOn=emp.epf_eligible!==false && !over75;
+  var ncEe=cfg.epf.nonCitizenEe!=null?cfg.epf.nonCitizenEe:0.02;
+  var ncEr=cfg.epf.nonCitizenEr!=null?cfg.epf.nonCitizenEr:0.02;
+  var eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
+           : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
+  var erRate=nonCitizen ? ncEr
+           : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
   var ep=epfOn?hrEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; var epfEe=ep.ee, epfEr=ep.er;
   // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
   var socsoOn=emp.socso_eligible!==false;
   var scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
   var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table
   // ---- EIS (SIP) — 18 to 60 only ----
-  var eisOn=emp.eis_eligible!==false && !senior;
+  // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
+  // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
+  var eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
   var ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table
   // ---- PCB / MTD (annualised chargeable-income estimate) ----
   // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
@@ -3170,8 +3181,9 @@ function hrEmpForm(){
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Statutory &amp; tax</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
       g('EPF employee rate',sel('epfEeRate',epfRateOpts,(x.epf_ee_rate==null?'':x.epf_ee_rate)))+g('SOCSO category',sel('socsoCategory',scatOpts,(x.socso_category==null?'':x.socso_category)))+g('&nbsp;','<div></div>')+
-      g('Marital status (for PCB)',sel('maritalStatus',msOpts,x.marital_status||'single'))+g('Number of children',inp('numChildren','0',x.num_children==null?0:x.num_children,'type="number" step="1" min="0"'))+g('&nbsp;','<div></div>')+
+      g('Citizenship (EPF &amp; EIS)',sel('citizenStatus',[['citizen','Malaysian citizen'],['pr','Permanent Resident'],['non_citizen','Non-citizen / foreign worker']],x.citizen_status||'citizen'))+g('Marital status (for PCB)',sel('maritalStatus',msOpts,x.marital_status||'single'))+g('Number of children',inp('numChildren','0',x.num_children==null?0:x.num_children,'type="number" step="1" min="0"'))+g('&nbsp;','<div></div>')+
     '</div>'+
+    '<div class="muted" style="font-size:11px;margin:-6px 0 10px;line-height:1.6"><b>Citizenship</b> sets the EPF rate and EIS cover: a non-citizen contributes <b>2% + 2%</b> (mandatory since 1 Oct 2025) and is <b>outside EIS</b>; a Permanent Resident is treated as Malaysian. SOCSO is the same either way. This is separate from <b>Resident</b> below, which is <i>tax</i> residency for PCB.</div>'+
     '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px">'+ck('epf','EPF',x.epf_eligible!==false)+ck('socso','SOCSO',x.socso_eligible!==false)+ck('eis','EIS',x.eis_eligible!==false)+ck('resident','Tax resident',x.resident!==false)+ck('spouseWorking','Spouse working',!!x.spouse_working)+'</div>'+
     // v156: mid-year go-live opening balances — income/EPF/PCB already paid THIS tax year before HR OS. Leave blank/0 for a full-year employee.
     '<details style="margin:0 0 14px"><summary style="cursor:pointer;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">PCB opening balances (only if joined mid-year on another payroll)</summary>'+
@@ -3217,7 +3229,8 @@ async function hrSaveEmp(){
     ytdYear:v('ytdYear'), ytdMonths:v('ytdMonths'), ytdGross:v('ytdGross'), ytdEpf:v('ytdEpf'), ytdPcb:v('ytdPcb'),
     payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
     status:v('status')||'active', resignDate:v('resignDate')||null,
-    epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking') };
+    epf:chk('epf'), socso:chk('socso'), eis:chk('eis'), resident:chk('resident'), spouseWorking:chk('spouseWorking'),
+    citizenStatus:(v('citizenStatus')||'citizen') };
   var r=await call({api:'hr_emp_save',emp:emp,tenant:HR.tenant});
   if(!r||!r.ok){ toast((r&&r.error)||'Save failed',true); return; }
   // Persist the clock-in reminder schedule (shift start + work days + on/off) via its own action.

@@ -194,6 +194,41 @@ Deno.test("parity — zakat and the SOCSO/EIS relief (v165)", () => {
   }
 });
 
+Deno.test("parity — citizenship drives EPF and EIS (v166)", () => {
+  // Rules verified against two independent sources each:
+  //   EPF non-citizen (non-PR): 2% + 2%, mandatory from 1 Oct 2025, ceases at 75.
+  //   EIS (Act 800): Malaysian citizens and PRs only — a foreign worker contributes nothing.
+  //   SOCSO: unchanged — Category 1 under 60, Category 2 at 60+, same as Malaysians.
+  for (const st of ["citizen", "pr", "non_citizen"]) {
+    for (const basic of [1500, 4999, 5000, 7000, 25000]) {
+      compare(`${st} @ ${basic}`, { emp: baseEmp({ citizen_status: st, basic_salary: basic }) });
+    }
+    compare(`${st} aged 62`, { emp: baseEmp({ citizen_status: st, date_of_birth: "1964-01-10", basic_salary: 5000 }) });
+    compare(`${st} aged 76`, { emp: baseEmp({ citizen_status: st, date_of_birth: "1950-01-10", basic_salary: 5000 }) });
+  }
+});
+
+Deno.test("rules — a foreign worker is on 2% EPF and pays no EIS", () => {
+  const P = { month: 7, year: 2026 };
+  const my = computePayrollMY(baseEmp({ citizen_status: "citizen",     basic_salary: 4000 }), CFG, [], undefined, P);
+  const pr = computePayrollMY(baseEmp({ citizen_status: "pr",          basic_salary: 4000 }), CFG, [], undefined, P);
+  const fw = computePayrollMY(baseEmp({ citizen_status: "non_citizen", basic_salary: 4000 }), CFG, [], undefined, P);
+
+  assertEquals(pr.epfEe, my.epfEe, "a Permanent Resident follows the Malaysian rates");
+  assertEquals(pr.eisEe, my.eisEe, "a Permanent Resident is covered by EIS");
+
+  assertEquals(fw.epfEe, 80, "foreign worker EPF employee = 2% of RM4,000");
+  assertEquals(fw.epfEr, 80, "foreign worker EPF employer = 2% of RM4,000");
+  assertEquals(fw.eisEe, 0, "foreign workers are outside EIS (Act 800)");
+  assertEquals(fw.eisEr, 0, "foreign workers are outside EIS (Act 800)");
+  assertEquals(fw.socsoEe, my.socsoEe, "SOCSO is identical — foreign workers joined Category 1 in Jul 2024");
+  assertEquals(fw.socsoEr, my.socsoEr);
+
+  const old = computePayrollMY(baseEmp({ citizen_status: "citizen", date_of_birth: "1950-01-10", basic_salary: 4000 }), CFG, [], undefined, P);
+  assertEquals(old.epfEe, 0, "EPF ceases at 75");
+  assertEquals(old.epfEr, 0, "EPF ceases at 75");
+});
+
 Deno.test("parity — no engine produces a negative or non-finite figure", () => {
   const a = hrCompute(baseEmp({ basic_salary: 1200 }), CFG, [{ kind: "deduction", amount: 99999 }], PERIOD);
   for (const k of MONEY) {

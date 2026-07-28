@@ -1059,16 +1059,27 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   const gross=payRound2(base+addEarn-unpaid);
   const statWage=Math.max(0, base+addEarnStat-unpaid);
   const age=payAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
-  const epfOn=emp.epf_eligible!==false;
-  const eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate) : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  const erRate=senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
+  // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
+  // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
+  const nonCitizen=String(emp.citizen_status||'citizen')==='non_citizen';
+  const over75=(age!=null && age>=75);          // EPF liability ceases at 75 for everyone
+  const epfOn=emp.epf_eligible!==false && !over75;
+  const ncEe=cfg.epf.nonCitizenEe!=null?cfg.epf.nonCitizenEe:0.02;
+  const ncEr=cfg.epf.nonCitizenEr!=null?cfg.epf.nonCitizenEr:0.02;
+  // A non-citizen pays the flat 2% (mandatory since 1 Oct 2025) regardless of the 60+ senior split.
+  const eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
+             : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
+  const erRate=nonCitizen ? ncEr
+             : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
   const ep=epfOn?payEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; const epfEe=ep.ee, epfEr=ep.er;
   // v155: SOCSO & EIS are now EXACT lookups against the official PERKESO Second Schedule / EIS table
   // (the old midpoint×rate formula was 5 sen off on SOCSO employer and wrong on EIS above RM2,000).
   const socsoOn=emp.socso_eligible!==false;
   const scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
   const sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; const socsoEe=sp.ee, socsoEr=sp.er;
-  const eisOn=emp.eis_eligible!==false && !senior;
+  // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
+  // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
+  const eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
   const ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; const eisEe=ip.ee, eisEr=ip.er;
   const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   const statWageNormal=Math.max(0, statWage - bonusStat);
@@ -4911,7 +4922,10 @@ Deno.serve(async (req)=>{
       // MyInvois buyer address), broke the "manager" approval step, and dropped their approver role.
       // Only write each of these when the caller actually sent the key; a brand-new employee may set null.
       const keepIfSent = (key:string, col:string, val:any)=>{ if (f[key] !== undefined || !f.id) patch[col] = val; };
-      keepIfSent("phone",      "phone",      f.phone||null);
+      // v166: citizenship drives the EPF rate and EIS eligibility. Guarded like every other optional field.
+  keepIfSent("citizenStatus","citizen_status",
+    (["citizen","pr","non_citizen"].indexOf(String(f.citizenStatus))>=0 ? String(f.citizenStatus) : "citizen"));
+  keepIfSent("phone",      "phone",      f.phone||null);
       keepIfSent("address",    "address",    f.address||null);
       keepIfSent("managerId",  "manager_id", f.managerId||null);
       keepIfSent("claimRole",  "claim_role", (f.claimRole===""||f.claimRole==null)?null:f.claimRole);
@@ -6513,7 +6527,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v165: two LHDN MTD rules that were missing. The employee SOCSO+EIS contribution is an allowable relief capped at RM350 a year, and zakat reduces MTD ringgit-for-ringgit rather than acting as an ordinary deduction. Without them PCB was over-deducted from everyone, and a zakat payer was charged zakat AND the full PCB on top. Both engines updated in lockstep and covered by the parity suite." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v166: citizenship now drives the statutory split. A non-Malaysian non-PR employee is on the 2% + 2% EPF schedule that became mandatory on 1 Oct 2025 and is outside EIS entirely (Act 800 covers citizens and PRs only); a Permanent Resident is treated as Malaysian; SOCSO is unchanged because foreign workers joined Category 1 in July 2024. EPF also now ceases at age 75. New citizen_status field on the employee, separate from the tax-residency flag." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
