@@ -2870,6 +2870,158 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, approvers: ids.length, results: out });
     }
+    // ── CTG Portal SSO: admin access management (v178) ──────────────────────────────────────────
+    // The CTG app secret is a directory-wide read credential — it lists all 100 staff. It must NEVER
+    // reach a browser, so every call to CTG goes through here and the frontend only ever sees the
+    // resulting rows.
+    if (api === "ctg_access_list" || api === "ctg_access_grant" || api === "ctg_access_revoke") {
+      const me = await meFromToken(b.token);
+      if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const actor = (me.user && me.user.email) || null;
+
+      const { data: secRow } = await sb.from("portal_secrets").select("value").eq("key","ctg_auth_app_secret").maybeSingle();
+      const ctgSecret = secRow && typeof secRow.value === "string" ? secRow.value.trim() : "";
+      if (!ctgSecret) return j({ ok:false, error:"CTG app secret is not configured yet." });
+
+      const CTG = "https://api.ctg-portal.com";
+      async function ctgDirectory(): Promise<any[]> {
+        const r = await fetch(`${CTG}/api/sso/users`, { headers: { Authorization: `Bearer ${ctgSecret}` } });
+        if (!r.ok) throw new Error(`CTG directory returned ${r.status}`);
+        const d = await r.json();
+        return Array.isArray(d && d.users) ? d.users : [];
+      }
+
+      if (api === "ctg_access_list") {
+        let dir: any[];
+        try { dir = await ctgDirectory(); }
+        catch (e:any) { return j({ ok:false, error: String(e && e.message || e) }); }
+
+        const { data: pus } = await sb.from("portal_users")
+          .select("id,email,name,role,active,ctg_sub,auth_source,last_login_at");
+        const bySub = new Map<string,any>(), byEmail = new Map<string,any>();
+        for (const u of (pus||[])) {
+          if (u.ctg_sub) bySub.set(String(u.ctg_sub), u);
+          if (u.email)   byEmail.set(String(u.email).toLowerCase(), u);
+        }
+        const rows = dir.map((u:any)=>{
+          const email = String(u.email||"").toLowerCase();
+          // sub first: an email can be changed or reassigned, the subject id cannot.
+          const linked = bySub.get(String(u.sub)) || byEmail.get(email) || null;
+          return {
+            sub: String(u.sub), email, name: u.display_name || "", employee_code: u.employee_code || null,
+            ctg_active: u.is_active !== false,
+            linked: !!linked,
+            linked_by: linked ? (bySub.has(String(u.sub)) ? "sub" : "email") : null,
+            portal_user_id: linked ? linked.id : null,
+            role: linked ? linked.role : null,
+            portal_active: linked ? linked.active !== false : null,
+            auth_source: linked ? linked.auth_source : null,
+            last_login_at: linked ? linked.last_login_at : null,
+          };
+        }).sort((a:any,b:any)=> (a.name||a.email).localeCompare(b.name||b.email));
+
+        // Portal accounts with no CTG counterpart — they can only ever sign in with a password, so they
+        // are exactly the accounts that will be stranded if SSO ever becomes the only door.
+        const ctgEmails = new Set(rows.map((r:any)=>r.email));
+        const orphans = (pus||[]).filter((u:any)=> u.active !== false && !ctgEmails.has(String(u.email||"").toLowerCase()))
+          .map((u:any)=>({ id:u.id, email:u.email, name:u.name, role:u.role, auth_source:u.auth_source }));
+
+        return j({ ok:true, rows, orphans, counts:{
+          ctg_total: rows.length,
+          ctg_active: rows.filter((r:any)=>r.ctg_active).length,
+          linked: rows.filter((r:any)=>r.linked).length,
+          portal_orphans: orphans.length,
+        }});
+      }
+
+      if (api === "ctg_access_grant") {
+        const sub  = String(b.sub||"").trim();
+        const role = String(b.role||"viewer").trim();
+        if (!sub) return j({ ok:false, error:"sub is required" });
+
+        const { data: roleRow } = await sb.from("portal_roles").select("name").eq("name", role).maybeSingle();
+        if (!roleRow) return j({ ok:false, error:"unknown role: "+role });
+
+        // Always re-read the directory rather than trusting the email/name the browser sent — otherwise a
+        // crafted request could attach any address it liked to a real CTG subject id.
+        let dir: any[];
+        try { dir = await ctgDirectory(); }
+        catch (e:any) { return j({ ok:false, error: String(e && e.message || e) }); }
+        const person = dir.find((u:any)=> String(u.sub) === sub);
+        if (!person) return j({ ok:false, error:"no such CTG user" });
+        if (person.is_active === false) return j({ ok:false, error:"that CTG account is inactive" });
+        const email = String(person.email||"").toLowerCase();
+        const name  = person.display_name || email;
+
+        const { data: existing } = await sb.from("portal_users")
+          .select("id,email,role,active,ctg_sub,auth_source").or(`ctg_sub.eq.${sub},email.ilike.${email}`).maybeSingle();
+
+        let userId: string, action: string;
+        if (existing) {
+          // Existing portal account: link it and widen how it can sign in. Its password keeps working —
+          // the spec's "keep both for the time being".
+          const { error } = await sb.from("portal_users").update({
+            ctg_sub: sub, ctg_employee_code: person.employee_code || null,
+            role, active: true,
+            auth_source: existing.auth_source === "ctg_sso" ? "ctg_sso" : "both",
+          }).eq("id", existing.id);
+          if (error) return j({ ok:false, error:error.message });
+          userId = existing.id; action = existing.ctg_sub ? "role_change" : "relink";
+        } else {
+          // New SSO-only account. pass_hash is NOT NULL, so it gets a random bcrypt nobody can produce —
+          // see portal_unusable_password(). This account can only ever be entered through CTG.
+          const { data: ph } = await sb.rpc("portal_unusable_password");
+          const { data: ins, error } = await sb.from("portal_users").insert({
+            email, name, role, active: true, pass_hash: ph,
+            ctg_sub: sub, ctg_employee_code: person.employee_code || null, auth_source: "ctg_sso",
+          }).select("id").single();
+          if (error) return j({ ok:false, error:error.message });
+          userId = ins.id; action = "grant";
+        }
+
+        await sb.from("portal_ctg_access_log").insert({
+          actor_email: actor, action, ctg_sub: sub, ctg_email: email,
+          portal_user_id: userId, ip, detail: { role, employee_code: person.employee_code || null },
+        });
+        return j({ ok:true, portal_user_id:userId, email, role, action });
+      }
+
+      // ctg_access_revoke
+      const sub = String(b.sub||"").trim();
+      if (!sub) return j({ ok:false, error:"sub is required" });
+      const { data: target } = await sb.from("portal_users")
+        .select("id,email,role,auth_source").eq("ctg_sub", sub).maybeSingle();
+      if (!target) return j({ ok:false, error:"that CTG user is not linked to a portal account" });
+
+      // Lockout guards. Revoking yourself, or the last admin, would leave nobody able to undo it — and
+      // the only way back would be direct SQL.
+      if (actor && String(target.email).toLowerCase() === String(actor).toLowerCase())
+        return j({ ok:false, error:"You cannot revoke your own access." });
+      if (target.role === "admin") {
+        const { count } = await sb.from("portal_users").select("id", { count:"exact", head:true })
+          .eq("role","admin").eq("active", true);
+        if ((count||0) <= 1) return j({ ok:false, error:"That is the last active admin — grant another admin first." });
+      }
+
+      // An SSO-only account has no usable password, so unlinking it alone would strand it: still active,
+      // no way in. Deactivate those; accounts that also have a password just lose the SSO link.
+      const ssoOnly = target.auth_source === "ctg_sso";
+      const { error: uerr } = await sb.from("portal_users").update({
+        ctg_sub: null,
+        active: ssoOnly ? false : true,
+        auth_source: ssoOnly ? "ctg_sso" : "password",
+      }).eq("id", target.id);
+      if (uerr) return j({ ok:false, error:uerr.message });
+
+      // Kill live sessions immediately — otherwise a revoked person keeps working until their token ages out.
+      await sb.from("portal_sessions").delete().eq("user_id", target.id);
+
+      await sb.from("portal_ctg_access_log").insert({
+        actor_email: actor, action:"revoke", ctg_sub: sub, ctg_email: target.email,
+        portal_user_id: target.id, ip, detail: { deactivated: ssoOnly },
+      });
+      return j({ ok:true, deactivated: ssoOnly, email: target.email });
+    }
     if (api === "cron_health") {
       // v169: nothing watched the scheduled jobs. poll-gmail returned 500 every 5 minutes for four weeks
       // (dead Gmail refresh token) while the AP inbox received nothing, and three of the bookkeeping crons
@@ -6882,7 +7034,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v175: a dead Gmail credential no longer hammers. poll-gmail had returned 500 every five minutes for four weeks because Google rejected the refresh token as invalid_grant — 288 doomed calls a day, surfaced by the health alarm only as anonymous HTTP failures. It now records the failure against a fingerprint of the offending token and short-circuits, returning 200 needs_reauth; replacing the token changes the fingerprint so polling resumes on its own. Because that alone would make a stalled intake invisible to an error-counting alarm, portal_cron_health now reports paused integrations explicitly. It also stops conflating the two AP intake paths: documents comes from poll-gmail and is genuinely blocked by the paused token, while portal_ap_inbox comes from the Apps Script bridge on its own account and trigger — a separate 26-day outage that the token has nothing to do with. And the Xero check now measures whether the delta sync RAN rather than whether invoice data changed, so a quiet night stops reporting a healthy system as broken. v177: the alarm was also manufacturing its own alerts — sending mail took longer than pg_net's 5s default, so every alerting run logged a timeout that the next run reported as a failed HTTP call, and since that count is part of the de-dupe key it sent another email. The send now runs in the background and the cron allows 30s." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v178: CTG Portal SSO admin access. New ctg_access_list / ctg_access_grant / ctg_access_revoke actions proxy the CTG staff directory so the app secret never reaches a browser, and an Admin -> CTG Access page grants or revokes portal access per person. Users are matched on the stable CTG subject id, never created implicitly; an SSO-only account gets an unusable random bcrypt because pass_hash is NOT NULL. Revoking kills live sessions, and you cannot revoke yourself or the last admin. Also includes v177: the health alarm was manufacturing its own alerts — sending mail took longer than pg_net s 5s default, so every alerting run logged a timeout that the next run reported as a failed HTTP call, and since that count is part of the de-dupe key it sent another email. The send now runs in the background and the cron allows 30s." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });

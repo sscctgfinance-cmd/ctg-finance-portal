@@ -1089,6 +1089,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="pharm"    data-cat="data"       onclick="tab('pharm')"      id="tab-pharm">🏪 Pharmacies</div>
     <!-- Admin -->
     <div class="tab"        data-t="users"    data-cat="admin"      onclick="tab('users')"      id="tab-users">👥 Users</div>
+    <div class="tab"        data-t="ctgaccess" data-cat="admin"     onclick="tab('ctgaccess')"  id="tab-ctgaccess">🔐 CTG Access</div>
   </div>
 
   <div id="cfo"         class="hide"></div>
@@ -1106,6 +1107,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="close"       class="hide"></div>
   <div id="recon"       class="hide"></div>
   <div id="users"       class="hide"></div>
+  <div id="ctgaccess"   class="hide"></div>
   <div id="info"        class="hide"></div>
   <div id="pharm"       class="hide"></div>
   <div id="calendar"    class="hide"></div>
@@ -1443,6 +1445,7 @@ async function showApp(){
   document.querySelectorAll('.tab').forEach(function(el){
     const t=el.dataset.t;
     if(t==='users') el.classList.toggle('hide', !canManage);
+    if(t==='ctgaccess') el.classList.toggle('hide', !canManage);
     else if(t==='info') el.classList.remove('hide');     // Company Info: always visible (gated server-side)
     else if(t==='pharm') el.classList.remove('hide');    // Pharmacies: gated server-side by SKINDAE access
     else if(t==='calendar') el.classList.remove('hide'); // Compliance Calendar: gated server-side
@@ -1497,9 +1500,9 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','pnl','close','recon','users','info','pharm','calendar','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','pnl','close','recon','users','ctgaccess','info','pharm','calendar','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    const asyncTabs = ['cfo','overview','approvals','collections','pnl','close','users','info','pharm','calendar','ap','selfbill'];
+    const asyncTabs = ['cfo','overview','approvals','collections','pnl','close','users','ctgaccess','info','pharm','calendar','ap','selfbill'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -1539,6 +1542,7 @@ async function render(t){
     if(t==='close')      return renderClose();
     if(t==='recon')      return renderRecon();
     if(t==='users')      return renderUsers();
+    if(t==='ctgaccess')  return renderCtgAccess();
     if(t==='info')       return renderInfo();
     if(t==='pharm')      return renderPharm();
     if(t==='calendar')   return renderCalendar();
@@ -4705,6 +4709,135 @@ function pnlExportCsv(){
 /* ---- Users (SaaS access control, admin only) ---- */
 var USERS_LIST=[], USERS_UC={}, USERS_UC_ROLE={}, USERS_COMPANIES=[], ROLES=[];
 var USERS_VIEW='users';
+/* == CTG ACCESS (v178) =========================================================================
+   Admin -> CTG Access. Lists the CTG Portal staff directory and controls who may enter THIS portal.
+
+   The CTG app secret is a directory-wide read credential for all ~100 staff. It never reaches the
+   browser - every call goes through the portal edge function, which holds the secret and returns only
+   the joined rows. Nothing here is reachable without an admin session. */
+var CTGA = { rows: [], orphans: [], counts: {}, q: '', filter: 'all', busy: false };
+
+async function renderCtgAccess(){
+  document.getElementById('ctgaccess').innerHTML =
+    '<div class="panel"><div class="panel-hd">'+
+      '<h3>CTG Access &middot; who from CTG Portal may sign in here</h3>'+
+      '<button class="btn sm" onclick="ctgaLoad()">&#8635; Refresh</button>'+
+    '</div><div id="ctga_body"><div class="load"><span class="spin"></span>Loading the CTG directory&hellip;</div></div></div>';
+  loaded.ctgaccess = true;
+  ctgaLoad();
+}
+
+async function ctgaLoad(){
+  var body = document.getElementById('ctga_body');
+  if(!body) return;
+  body.innerHTML = '<div class="load"><span class="spin"></span>Loading the CTG directory&hellip;</div>';
+  var r = await call({ api:'ctg_access_list' });
+  if(!r || !r.ok){
+    body.innerHTML = '<div class="empty"><div class="empty-ic">&#128274;</div><h4>Could not load the CTG directory</h4>'+
+      '<p>'+esc((r&&r.error)||'No response from the server.')+'</p></div>';
+    return;
+  }
+  CTGA.rows = r.rows||[]; CTGA.orphans = r.orphans||[]; CTGA.counts = r.counts||{};
+  ctgaRender();
+}
+
+function ctgaRender(){
+  var c = CTGA.counts, q = (CTGA.q||'').toLowerCase();
+  var rows = CTGA.rows.filter(function(x){
+    if(CTGA.filter==='linked'   && !x.linked) return false;
+    if(CTGA.filter==='unlinked' &&  x.linked) return false;
+    if(CTGA.filter==='inactive' &&  x.ctg_active) return false;
+    if(!q) return true;
+    return (x.name||'').toLowerCase().indexOf(q)>=0 || (x.email||'').toLowerCase().indexOf(q)>=0
+        || String(x.employee_code||'').toLowerCase().indexOf(q)>=0;
+  });
+
+  var chips = [['all','All '+(c.ctg_total||0)],['linked','Has access '+(c.linked||0)],
+               ['unlinked','No access '+((c.ctg_total||0)-(c.linked||0))],['inactive','Inactive at CTG']];
+  var html =
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+      chips.map(function(k){ return '<button class="btn sm'+(CTGA.filter===k[0]?' p':'')+'" onclick="ctgaFilter(\''+k[0]+'\')">'+esc(k[1])+'</button>'; }).join('')+
+      '<input id="ctga_q" placeholder="Search name, email or staff code" value="'+esc(CTGA.q)+'" '+
+        'oninput="ctgaSearch(this.value)" style="flex:1;min-width:220px;padding:7px 10px">'+
+    '</div>';
+
+  if(!rows.length){
+    html += '<div class="empty"><div class="empty-ic">&#128269;</div><h4>Nobody matches</h4><p>Try a different search or filter.</p></div>';
+  } else {
+    html += '<div style="overflow-x:auto"><table class="tbl"><thead><tr>'+
+      '<th>Name</th><th>Email</th><th>Staff code</th><th>Portal access</th><th>Role</th><th style="text-align:right">Action</th>'+
+      '</tr></thead><tbody>'+
+      rows.map(function(x){
+        var badge = !x.ctg_active
+          ? '<span class="pill" title="Deactivated in CTG Portal">CTG inactive</span>'
+          : (x.linked
+              ? (x.portal_active===false ? '<span class="pill">suspended</span>'
+                                         : '<span class="pill ok">has access</span>')
+              : '<span class="muted">&mdash;</span>');
+        var roleSel = x.linked
+          ? '<select onchange="ctgaGrant(\''+esc(x.sub)+'\',this.value)" '+(CTGA.busy?'disabled':'')+'>'+
+              ctgaRoleOpts(x.role)+'</select>'
+          : '<select id="ctga_role_'+esc(x.sub)+'">'+ctgaRoleOpts('viewer')+'</select>';
+        var act = x.linked
+          ? '<button class="btn sm danger" onclick="ctgaRevoke(\''+esc(x.sub)+'\',\''+esc(x.email)+'\')" '+(CTGA.busy?'disabled':'')+'>Revoke</button>'
+          : (x.ctg_active
+              ? '<button class="btn sm p" onclick="ctgaGrant(\''+esc(x.sub)+'\')" '+(CTGA.busy?'disabled':'')+'>Grant access</button>'
+              : '<span class="muted" title="Reactivate them in CTG Portal first">n/a</span>');
+        return '<tr><td><b>'+esc(x.name||'-')+'</b></td><td>'+esc(x.email)+'</td>'+
+               '<td>'+esc(x.employee_code||'-')+'</td><td>'+badge+'</td>'+
+               '<td>'+roleSel+'</td><td style="text-align:right">'+act+'</td></tr>';
+      }).join('')+
+      '</tbody></table></div>';
+  }
+
+  // Portal accounts with no CTG counterpart. These are exactly the people who would be locked out if
+  // SSO ever became the only way in, so they must not be invisible.
+  if(CTGA.orphans.length){
+    html += '<div class="panel" style="margin-top:16px"><div class="panel-hd"><h3>Portal accounts not in the CTG directory ('+CTGA.orphans.length+')</h3></div>'+
+      '<p class="muted" style="font-size:12.5px;margin:0 0 10px">These sign in with a password only. If CTG SSO ever becomes the sole login, they lose access &mdash; give them a CTG account, or keep password sign-in enabled.</p>'+
+      '<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead><tbody>'+
+      CTGA.orphans.map(function(o){ return '<tr><td>'+esc(o.name||'-')+'</td><td>'+esc(o.email)+'</td><td>'+esc(o.role)+'</td></tr>'; }).join('')+
+      '</tbody></table></div></div>';
+  }
+
+  document.getElementById('ctga_body').innerHTML = html;
+}
+
+function ctgaRoleOpts(sel){
+  return ['viewer','employee','hr_admin','admin'].map(function(r){
+    return '<option value="'+r+'"'+(r===sel?' selected':'')+'>'+r+'</option>';
+  }).join('');
+}
+function ctgaFilter(f){ CTGA.filter=f; ctgaRender(); }
+function ctgaSearch(v){
+  CTGA.q=v; ctgaRender();
+  var i=document.getElementById('ctga_q'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); }
+}
+
+async function ctgaGrant(sub, role){
+  if(CTGA.busy) return;                                   // no double-submit
+  if(!role){ var sel=document.getElementById('ctga_role_'+sub); role = sel ? sel.value : 'viewer'; }
+  var who = CTGA.rows.filter(function(x){ return x.sub===sub; })[0] || {};
+  if(role==='admin' && !confirm('Give '+(who.name||who.email)+' the ADMIN role?\n\nAdmins can manage users, post to Xero and see every company.')){ ctgaRender(); return; }
+  CTGA.busy=true; ctgaRender();
+  var r = await call({ api:'ctg_access_grant', sub:sub, role:role });
+  CTGA.busy=false;
+  if(!r || !r.ok){ toast((r&&r.error)||'Could not grant access', true); ctgaRender(); return; }
+  toast((who.name||r.email)+' -> '+role);
+  ctgaLoad();
+}
+
+async function ctgaRevoke(sub, email){
+  if(CTGA.busy) return;
+  if(!confirm('Remove '+email+' access to this portal?\n\nAny session they have open right now ends immediately.')) return;
+  CTGA.busy=true; ctgaRender();
+  var r = await call({ api:'ctg_access_revoke', sub:sub });
+  CTGA.busy=false;
+  if(!r || !r.ok){ toast((r&&r.error)||'Could not revoke', true); ctgaRender(); return; }
+  toast(email+' - access removed'+(r.deactivated?' and account deactivated':''));
+  ctgaLoad();
+}
+
 function renderUsers(){
   document.getElementById('users').innerHTML=
     '<div class="subnav" style="display:flex;gap:8px;margin-bottom:14px">'+
