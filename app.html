@@ -1016,7 +1016,12 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
         <span style="color:var(--muted);font-size:11px">or</span>
         <span style="flex:1;height:1px;background:var(--border)"></span>
       </div>
-      <button class="lbtn" type="button" style="background:transparent;border:1px solid var(--border-strong)"
+      <!-- .lbtn is the PRIMARY button: it hard-codes color:#fff and a coral box-shadow to sit on the
+           orange gradient. Borrowing it for a secondary button means overriding all three — dropping
+           only the background left white text on a white card in light mode (invisible) plus an orange
+           glow with no orange button under it. --colour vars are theme-aware, so this reads in both. -->
+      <button class="lbtn" type="button"
+              style="background:transparent;border:1px solid var(--border-strong);color:var(--text);box-shadow:none"
               onclick="ctgSsoSignIn('portal')">Sign in with CTG Portal</button>
     </div>
     <div class="lfoot"><b>CTG</b> &nbsp;·&nbsp; Invite-only · Contact your admin for access</div>
