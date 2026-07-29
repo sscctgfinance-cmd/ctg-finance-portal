@@ -2889,10 +2889,17 @@ Deno.serve(async (req)=>{
       if (Number(httpErr.count) > 0) problems.push(
         `${httpErr.count} failed HTTP call(s) from scheduled jobs. Most common:\n` +
         (httpErr.samples||[]).map((s:any)=>`      x${s.n}  ${s.msg}`).join("\n"));
+      // v175: an integration that stops on a dead credential now returns 200 "paused" instead of hammering
+      // a 500 every five minutes — correct, but it would drop off an error-counting alarm entirely. Report
+      // it explicitly so the quieter behaviour never turns into an unnoticed one.
+      const paused = (h && h.paused) || [];
+      for (const p of paused) problems.push(
+        `PAUSED — ${p.integration} has been stopped for ${p.days} day(s) awaiting re-authorisation.\n      ${p.reason}`);
       // Outcome checks — these are what would have caught the dead Gmail token on day one.
       const apDays = Number(fresh.ap_inbox_age_days);
       if (isFinite(apDays) && apDays >= 3) problems.push(
-        `AP inbox has received nothing for ${apDays} day(s) (${fresh.ap_inbox_rows} row(s) all-time).`);
+        `AP inbox has received nothing for ${apDays} day(s) (${fresh.ap_inbox_rows} row(s) all-time).` +
+        (paused.length ? ` Cause: ${paused[0].integration} is paused (above).` : ""));
       const xeroMin = Number(fresh.xero_cache_age_min);
       if (isFinite(xeroMin) && xeroMin >= 180) problems.push(
         `Xero cache has not been updated for ${Math.round(xeroMin/60)} hour(s).`);
