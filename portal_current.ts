@@ -2933,27 +2933,44 @@ Deno.serve(async (req)=>{
       const shouldAlert = problems.length > 0 && streak >= 2 && !alreadyAlerted;   // 2 checks = no blips
       const recovered   = problems.length === 0 && prevState === "alerting";
 
-      let mailed:any = null;
-      if (shouldAlert) {
-        mailed = await sendAlertEmail(
-          "CTG portal — " + problems.length + " scheduled-job problem(s)",
-          "The scheduled-job health check found the following in the last " + win + " minutes:\n\n" +
-          summary + "\n\n--\nYou will not get another email about the same problems until they change or clear.");
-      } else if (recovered) {
-        mailed = await sendAlertEmail("CTG portal — scheduled jobs recovered",
-          "All scheduled jobs and freshness checks are clean again over the last " + win + " minutes.");
-      }
-      await sb.from("portal_cron_alerts").upsert({
-        id: 1,
-        // Only an actual send flips the state, and last_summary records WHAT WAS ALERTED — so a changed
-        // problem set produces a fresh alert while an unchanged one stays silent.
-        state: shouldAlert ? "alerting" : (recovered ? "ok" : prevState),
-        fail_streak: streak,
-        last_summary: shouldAlert ? summary : (recovered ? null : (prevSummary || null)),
-        last_alerted_at: (shouldAlert || recovered) ? new Date().toISOString() : (st && st.last_alerted_at) || null,
-        updated_at: new Date().toISOString(),
-      });
-      return j({ ok:true, problems: problems.length, streak, emailed: !!(shouldAlert||recovered), mail: mailed, health: h });
+      // v177: THE ALARM WAS MANUFACTURING ITS OWN ALERTS. sendAlertEmail opens an SMTP connection to
+      // Gmail, which routinely took longer than pg_net's 5 s default timeout — so every run that emailed
+      // was recorded in net._http_response as a timed-out call, which the NEXT run then dutifully
+      // reported as "N failed HTTP call(s) from scheduled jobs". And because that count is part of the
+      // de-dupe key, a changing count looked like a changed problem set and sent ANOTHER email. A
+      // self-sustaining loop, at :07 and :37, for as long as anything was wrong.
+      //
+      // The send and the state write move into the background so the handler returns in milliseconds.
+      // Ordering inside `work` is unchanged, so the v170 invariant still holds: `alerting` is only ever
+      // written after the mail has actually been sent.
+      const work = (async () => {
+        let mailed:any = null;
+        if (shouldAlert) {
+          mailed = await sendAlertEmail(
+            "CTG portal — " + problems.length + " scheduled-job problem(s)",
+            "The scheduled-job health check found the following in the last " + win + " minutes:\n\n" +
+            summary + "\n\n--\nYou will not get another email about the same problems until they change or clear.");
+        } else if (recovered) {
+          mailed = await sendAlertEmail("CTG portal — scheduled jobs recovered",
+            "All scheduled jobs and freshness checks are clean again over the last " + win + " minutes.");
+        }
+        await sb.from("portal_cron_alerts").upsert({
+          id: 1,
+          // Only an actual send flips the state, and last_summary records WHAT WAS ALERTED — so a changed
+          // problem set produces a fresh alert while an unchanged one stays silent.
+          state: shouldAlert ? "alerting" : (recovered ? "ok" : prevState),
+          fail_streak: streak,
+          last_summary: shouldAlert ? summary : (recovered ? null : (prevSummary || null)),
+          last_alerted_at: (shouldAlert || recovered) ? new Date().toISOString() : (st && st.last_alerted_at) || null,
+          updated_at: new Date().toISOString(),
+        });
+        return mailed;
+      })();
+      // Without waitUntil (local runs, manual probes) keep the old blocking behaviour so the caller
+      // still sees the outcome.
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work);
+      else await work;
+      return j({ ok:true, problems: problems.length, streak, will_email: !!(shouldAlert||recovered), health: h });
     }
     if (api === "cron_watchdog") {
       // v71 (Tier-1 reliability): the SILENT-FAILURE alarm. The real damage last time wasn't that
@@ -6865,7 +6882,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v175: a dead Gmail credential no longer hammers. poll-gmail had returned 500 every five minutes for four weeks because Google rejected the refresh token as invalid_grant — 288 doomed calls a day, surfaced by the health alarm only as anonymous HTTP failures. It now records the failure against a fingerprint of the offending token and short-circuits, returning 200 needs_reauth; replacing the token changes the fingerprint so polling resumes on its own. Because that alone would make a stalled intake invisible to an error-counting alarm, portal_cron_health now reports paused integrations explicitly. It also stops conflating the two AP intake paths: documents comes from poll-gmail and is genuinely blocked by the paused token, while portal_ap_inbox comes from the Apps Script bridge on its own account and trigger — a separate 26-day outage that the token has nothing to do with. And the Xero check now measures whether the delta sync RAN rather than whether invoice data changed, so a quiet night stops reporting a healthy system as broken." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v175: a dead Gmail credential no longer hammers. poll-gmail had returned 500 every five minutes for four weeks because Google rejected the refresh token as invalid_grant — 288 doomed calls a day, surfaced by the health alarm only as anonymous HTTP failures. It now records the failure against a fingerprint of the offending token and short-circuits, returning 200 needs_reauth; replacing the token changes the fingerprint so polling resumes on its own. Because that alone would make a stalled intake invisible to an error-counting alarm, portal_cron_health now reports paused integrations explicitly. It also stops conflating the two AP intake paths: documents comes from poll-gmail and is genuinely blocked by the paused token, while portal_ap_inbox comes from the Apps Script bridge on its own account and trigger — a separate 26-day outage that the token has nothing to do with. And the Xero check now measures whether the delta sync RAN rather than whether invoice data changed, so a quiet night stops reporting a healthy system as broken. v177: the alarm was also manufacturing its own alerts — sending mail took longer than pg_net's 5s default, so every alerting run logged a timeout that the next run reported as a failed HTTP call, and since that count is part of the de-dupe key it sent another email. The send now runs in the background and the cron allows 30s." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
