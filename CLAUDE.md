@@ -14,11 +14,17 @@ would be silent and would surface as "why is my fix not live?" days later.
 
 ## Never push to `origin/main`
 
-A `pre-push` hook in `.githooks/` refuses it. After a fresh clone, re-arm it:
+A `pre-push` hook refuses it. After a fresh clone, install it:
 
 ```bash
-git config core.hooksPath .githooks
+cp .githooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 ```
+
+It is **copied into `.git/hooks/`, not activated via `core.hooksPath=.githooks`**. That was the first
+attempt and it was wrong: `.githooks/` is version-controlled, so the hook only existed on branches that
+contained it — and `main`, the branch it exists to protect, did not. The guard silently disappeared
+exactly where it mattered, and a test push to `origin/main` sailed straight through.
+`.git/hooks/` is outside version control, so the hook is active whatever is checked out.
 
 Normal flow:
 
