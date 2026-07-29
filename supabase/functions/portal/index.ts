@@ -2896,10 +2896,18 @@ Deno.serve(async (req)=>{
       for (const p of paused) problems.push(
         `PAUSED — ${p.integration} has been stopped for ${p.days} day(s) awaiting re-authorisation.\n      ${p.reason}`);
       // Outcome checks — these are what would have caught the dead Gmail token on day one.
+      // v175b: the two AP intake paths fail INDEPENDENTLY and must never be blamed on each other.
+      // `documents` comes from poll-gmail (the paused OAuth token); `portal_ap_inbox` comes from the Apps
+      // Script bridge, which runs on its own Google account and its own trigger.
+      const docDays = Number(fresh.documents_age_days);
+      if (isFinite(docDays) && docDays >= 3) problems.push(
+        `Gmail → Drive intake has produced no document for ${docDays} day(s) (${fresh.documents_rows} row(s) all-time).` +
+        (paused.length ? ` Cause: ${paused[0].integration} is paused (above).` : ""));
       const apDays = Number(fresh.ap_inbox_age_days);
       if (isFinite(apDays) && apDays >= 3) problems.push(
-        `AP inbox has received nothing for ${apDays} day(s) (${fresh.ap_inbox_rows} row(s) all-time).` +
-        (paused.length ? ` Cause: ${paused[0].integration} is paused (above).` : ""));
+        `AP inbox has received nothing for ${apDays} day(s) (${fresh.ap_inbox_rows} row(s) all-time). This is the ` +
+        `Apps Script ap_inbound bridge — a SEPARATE path from the Gmail/Drive intake above, with its own ` +
+        `Google account and trigger. Check the Apps Script project's time-driven trigger is still installed and authorised.`);
       const xeroMin = Number(fresh.xero_cache_age_min);
       if (isFinite(xeroMin) && xeroMin >= 180) problems.push(
         `Xero cache has not been updated for ${Math.round(xeroMin/60)} hour(s).`);
@@ -6849,7 +6857,7 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     // typo'd or removed action name looked like a success to the caller — the frontend would carry on
     // as though the save had happened. Found by a CI smoke test that probed a non-existent action and
     // got ok:true back. Only __ping__ keeps the friendly banner; anything else is now an error.
-    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v175: a dead Gmail credential no longer hammers. poll-gmail had returned 500 every five minutes for four weeks because Google rejected the refresh token as invalid_grant — 288 doomed calls a day, surfaced by the health alarm only as anonymous HTTP failures. It now records the failure against a fingerprint of the offending token and short-circuits, returning 200 needs_reauth; replacing the token changes the fingerprint so polling resumes on its own. Because that alone would make a stalled intake invisible to an error-counting alarm, portal_cron_health now reports paused integrations explicitly and the AP-inbox-silent finding names the cause." });
+    if (api === "__ping__" || !api) return j({ ok:true, hint:"portal v175: a dead Gmail credential no longer hammers. poll-gmail had returned 500 every five minutes for four weeks because Google rejected the refresh token as invalid_grant — 288 doomed calls a day, surfaced by the health alarm only as anonymous HTTP failures. It now records the failure against a fingerprint of the offending token and short-circuits, returning 200 needs_reauth; replacing the token changes the fingerprint so polling resumes on its own. Because that alone would make a stalled intake invisible to an error-counting alarm, portal_cron_health now reports paused integrations explicitly. It also stops conflating the two AP intake paths: documents comes from poll-gmail and is genuinely blocked by the paused token, while portal_ap_inbox comes from the Apps Script bridge on its own account and trigger — a separate 26-day outage that the token has nothing to do with." });
     return j({ ok:false, error:"unknown action: "+String(api).slice(0,60) }, 400);
   } catch (e) { return j({ ok:false, error: String(e) }, 500); }
 });
