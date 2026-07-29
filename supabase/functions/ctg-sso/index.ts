@@ -180,29 +180,44 @@ Deno.serve(async (req) => {
       return page("Could not reach CTG Portal", `<p>${esc(e?.message || String(e))}</p>`, 502, flow.return_to);
     }
 
-    // The token response shape is not documented; accept the usual places an email can appear rather
-    // than guessing one. If none is present the login fails loudly instead of logging someone in as
-    // nobody.
+    // The token response shape is not documented; accept the usual places these can appear rather than
+    // guessing one. If neither is present the login fails loudly instead of logging someone in as nobody.
     const email = String(tok?.user?.email || tok?.email || tok?.profile?.email || "").trim().toLowerCase();
-    if (!email) {
-      return page("No email in the CTG response",
-        `<p>The sign-in succeeded but carried no email address, so it cannot be matched to a portal user.</p>
+    const sub   = String(tok?.user?.sub || tok?.sub || tok?.profile?.sub || tok?.user?.id || "").trim();
+    if (!email && !sub) {
+      return page("No identity in the CTG response",
+        `<p>The sign-in succeeded but carried neither a subject id nor an email, so it cannot be matched
+          to a portal user.</p>
          <p>Response keys: <code>${esc(Object.keys(tok || {}).join(", ") || "none")}</code></p>`, 502, flow.return_to);
     }
 
     // ── match, never create ──
-    // The Notion spec offers auto-match on HR's verified email list or "Admin links each person first",
-    // and recommends the latter. Creating users here would also mean inventing a pass_hash for a NOT NULL
-    // column — an account nobody deliberately granted. So: match an existing active portal user, or stop.
-    const { data: user } = await sb
-      .from("portal_users").select("id,email,name,active,role")
-      .ilike("email", email).maybeSingle();
+    // The spec offers auto-match on HR's verified email list or "Admin links each person first", and
+    // recommends the latter — so access is granted deliberately in Admin → CTG Access, never here.
+    // Match on `sub` FIRST: an email can be changed, or reassigned to a new joiner, and matching a
+    // recycled address would hand over someone else's account.
+    let user: any = null;
+    if (sub) {
+      const { data } = await sb.from("portal_users")
+        .select("id,email,name,active,role,ctg_sub").eq("ctg_sub", sub).maybeSingle();
+      user = data || null;
+    }
+    if (!user && email) {
+      const { data } = await sb.from("portal_users")
+        .select("id,email,name,active,role,ctg_sub").ilike("email", email).maybeSingle();
+      user = data || null;
+      // First SSO login for an account an admin linked by email — pin the subject id now so every later
+      // login matches on the stable identifier.
+      if (user && sub && !user.ctg_sub) {
+        await sb.from("portal_users").update({ ctg_sub: sub }).eq("id", user.id);
+      }
+    }
 
     if (!user || user.active === false) {
       return page("No portal access for this account",
-        `<p><code>${esc(email)}</code> signed in to CTG Portal successfully, but it is not linked to an
-          active user of this portal.</p>
-         <p>Ask an admin to add it under <strong>Admin → Users</strong>, then sign in again.</p>`,
+        `<p><code>${esc(email || sub)}</code> signed in to CTG Portal successfully, but it has not been
+          granted access to this portal.</p>
+         <p>Ask an admin to grant it under <strong>Admin → CTG Access</strong>, then sign in again.</p>`,
         403, flow.return_to);
     }
 
