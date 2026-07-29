@@ -458,6 +458,10 @@ footer b{ font-weight: 720; }
     <p class="lead">Upload invoices, receipts and bank statements — in any language, even handwriting. CTG Finance <b>extracts every line item, codes it to your chart of accounts, and posts straight to Xero</b>. Then it invoices customers, chases overdue payments, and shows you exactly what to do today.</p>
     <div class="hero-cta">
       <a class="btn p" href="app.html">Log In to your portal →</a>
+      <!-- CTG Portal SSO. This page holds no session of its own — it starts the flow and the callback
+           lands in app.html, which consumes the token. Hidden until an app_id has been issued. -->
+      <a class="btn" id="ssoLink" style="display:none"
+         href="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/ctg-sso/start?app=portal">Sign in with CTG Portal</a>
       <a class="btn" href="#how">See how it works</a>
     </div>
     <div class="badges">
@@ -568,6 +572,17 @@ footer b{ font-weight: 720; }
 </footer>
 
 <script>
+// Reveal the CTG Portal SSO link only once an app_id has been issued. Any failure leaves it hidden —
+// the ordinary "Log In to your portal" button is always the working path.
+(function(){
+  try {
+    fetch("https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/ctg-sso/status")
+      .then(function(r){ return r.json(); })
+      .then(function(s){
+        if (s && s.enabled) { var a = document.getElementById("ssoLink"); if (a) a.style.display = ""; }
+      }).catch(function(){});
+  } catch(_e){}
+})();
 (function(){
   var sel='.feat,.step,.price,.band,.trust-in,section .eyebrow,section h2,section .sub';
   var els=[].slice.call(document.querySelectorAll(sel));

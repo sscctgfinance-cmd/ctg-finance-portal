@@ -1088,6 +1088,16 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
     <div class="fld"><label>Password</label><input id="pass" type="password" autocomplete="current-password" required></div>
     <div class="lerr hide" id="lerr"></div>
     <button class="btn p" id="lbtn" type="submit" style="width:100%;margin-top:6px">Sign In</button>
+    <!-- CTG Portal SSO. Hidden until an app_id has been issued, so nobody is ever shown a sign-in
+         button that dead-ends. The email/password form above keeps working either way. -->
+    <div id="ssoBox" class="hide">
+      <div style="display:flex;align-items:center;gap:10px;margin:16px 0 12px">
+        <span style="flex:1;height:1px;background:var(--border)"></span>
+        <span style="color:var(--muted);font-size:11px">or</span>
+        <span style="flex:1;height:1px;background:var(--border)"></span>
+      </div>
+      <button class="btn" type="button" style="width:100%" onclick="ctgSsoSignIn('hros')">Sign in with CTG Portal</button>
+    </div>
     <p style="text-align:center;color:var(--muted);font-size:11px;margin:16px 0 0">Same account as the CTG Finance portal · <span style="color:var(--text-soft)">payroll data is shared</span></p>
   </form>
 </div>
@@ -1169,6 +1179,30 @@ const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 const STORAGE_OK = (function(){
   try { const k='__ctg_test__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; }
   catch(_e){ return false; }
+})();
+// ── CTG Portal SSO (v176) ──
+// ctg-sso/callback sends the freshly minted session token back in the URL FRAGMENT. Fragments are never
+// transmitted to a server, so the token stays out of access logs, Referer headers and the Supabase
+// request log. Consume and strip it before anything else reads storage, so a copied address bar cannot
+// carry a live session.
+const CTG_SSO = "https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/ctg-sso";
+(function(){
+  try {
+    const m = /[#&]sso_token=([^&]+)/.exec(location.hash || "");
+    if (!m) return;
+    localStorage.setItem("ctg_portal_token", decodeURIComponent(m[1]));
+    history.replaceState(null, "", location.pathname + location.search);
+  } catch(_e){}
+})();
+function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIComponent(app); }
+// Reveal the SSO button only once CTG has issued an app_id. Any failure here leaves it hidden — the
+// password form is always the working path, so a probe that cannot answer must never block sign-in.
+(function(){
+  try {
+    fetch(CTG_SSO + "/status").then(r => r.json()).then(s => {
+      if (s && s.enabled) { const b = document.getElementById("ssoBox"); if (b) b.classList.remove("hide"); }
+    }).catch(()=>{});
+  } catch(_e){}
 })();
 let TOKEN = STORAGE_OK ? (localStorage.getItem("ctg_portal_token")||"") : "";
 // Safe wrappers so the rest of the code can blindly call storage.
