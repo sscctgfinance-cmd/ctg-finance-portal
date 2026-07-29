@@ -180,15 +180,40 @@ Deno.serve(async (req) => {
       return page("Could not reach CTG Portal", `<p>${esc(e?.message || String(e))}</p>`, 502, flow.return_to);
     }
 
-    // The token response shape is not documented; accept the usual places these can appear rather than
-    // guessing one. If neither is present the login fails loudly instead of logging someone in as nobody.
-    const email = String(tok?.user?.email || tok?.email || tok?.profile?.email || "").trim().toLowerCase();
-    const sub   = String(tok?.user?.sub || tok?.sub || tok?.profile?.sub || tok?.user?.id || "").trim();
+    // CTG returns { id_token, token_type, expires_in, session_token } — the identity is INSIDE the JWT,
+    // not at the top level. (Established from the live response; the endpoint is undocumented.)
+    //
+    // The payload is read without verifying the signature, which is safe here for the reason OIDC Core
+    // §3.1.3.7 allows it: this token was fetched by OUR server directly from the token endpoint over
+    // TLS, in a flow we started ourselves and proved with PKCE. There is no browser in the middle to
+    // substitute a token, and no JWKS endpoint is published to verify against anyway.
+    function jwtPayload(jwt: string): any {
+      try {
+        const part = String(jwt).split(".")[1];
+        if (!part) return null;
+        const b64 = part.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - part.length % 4) % 4);
+        // decodeURIComponent/escape round-trip so non-ASCII names survive.
+        return JSON.parse(decodeURIComponent(Array.from(atob(b64))
+          .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
+      } catch (_e) { return null; }
+    }
+
+    const claims = jwtPayload(tok?.id_token || "") || {};
+    const pick = (...vals: any[]) => String(vals.find((v) => v != null && v !== "") ?? "").trim();
+
+    const email = pick(claims.email, tok?.user?.email, tok?.email, tok?.profile?.email).toLowerCase();
+    const sub   = pick(claims.sub, claims.user_id, claims.uid,
+                       tok?.user?.sub, tok?.sub, tok?.profile?.sub, tok?.user?.id);
+
     if (!email && !sub) {
+      // Fail loudly rather than logging someone in as nobody — and name the claims we DID get, so one
+      // more attempt is enough to finish this rather than another round of guessing.
       return page("No identity in the CTG response",
         `<p>The sign-in succeeded but carried neither a subject id nor an email, so it cannot be matched
           to a portal user.</p>
-         <p>Response keys: <code>${esc(Object.keys(tok || {}).join(", ") || "none")}</code></p>`, 502, flow.return_to);
+         <p>Top-level keys: <code>${esc(Object.keys(tok || {}).join(", ") || "none")}</code></p>
+         <p>id_token claims: <code>${esc(Object.keys(claims).join(", ") || "could not decode")}</code></p>`,
+        502, flow.return_to);
     }
 
     // ── match, never create ──
