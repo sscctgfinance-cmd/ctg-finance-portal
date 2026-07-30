@@ -2152,7 +2152,7 @@ function hrRCForm(){
     '<div>'+rows+'</div>'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px"><div style="display:flex;gap:8px;align-items:center"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><button class="btn sm" onclick="hrRCScanTrigger()" title="Point the camera at the receipt — edges are found and it shoots by itself, then Claude reads it and fills a line">📷 Scan receipt / e-invoice</button><button class="btn sm" onclick="hrRCScanPickFile()" title="Attach a PDF e-invoice or an existing photo — Claude reads it and fills a line">📄 PDF / photo</button><input type="file" id="rc_scan_fi" accept="image/*,.pdf" style="display:none" onchange="hrRCScanFile(this)"><span id="rc_scan_status" class="muted" style="font-size:11px"></span></div><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
-    '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipts (attach one or more)</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)"></div>'+
+    '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipts (attach one or more)</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" onchange="hrRCPickReceipts(this)" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)">'+hrRCPendingHtml()+'</div>'+
     scanPanel+
     '<div class="muted" style="font-size:11px;margin:4px 0 0">🧾 e-Invoice <b>buyer</b> = the claimer&rsquo;s HR OS particulars (name / TIN / IC / address), attached automatically. No personal TIN → the IRBM general public TIN is used.</div>'+
     decHtml+
@@ -2198,8 +2198,31 @@ async function hrRCSave(submit){
   var r=await call({api:'hr_rc_save',tenant:HR.tenant,claim:claim});
   if(!r||!r.ok){ toast((r&&r.error)||'Save failed',true); return; }
   var cid=r.id; RC.form.id=cid;
+  // Read from RC.form._files, which survives re-render — NOT from the DOM input, whose FileList is
+  // lost the moment hrRender() rebuilds the form. The live input is still drained as a fallback in
+  // case a file was picked and saved without any intervening re-render.
+  var pend = (Array.isArray(RC.form._files) ? RC.form._files.slice() : []);
   var fi=document.getElementById('rc_file');
-  if(fi&&fi.files&&fi.files.length){ toast('Uploading receipt…'); for(var i=0;i<fi.files.length;i++){ await hrRCUpload(cid, await hrRCPrepImage(fi.files[i])); } }
+  if(fi&&fi.files&&fi.files.length){
+    Array.prototype.slice.call(fi.files).forEach(function(f){
+      var dup = pend.some(function(x){ return x.name===f.name && x.size===f.size && x.lastModified===f.lastModified; });
+      if(!dup) pend.push(f);
+    });
+  }
+  if(pend.length){
+    toast('Uploading '+pend.length+' receipt'+(pend.length>1?'s':'')+'…');
+    var failed=[];
+    for(var i=0;i<pend.length;i++){
+      var ur = await hrRCUpload(cid, await hrRCPrepImage(pend[i]));
+      // A swallowed upload failure is what made this look like a validation problem. Say it out loud.
+      if(!ur || !ur.ok) failed.push((pend[i].name||'receipt')+(ur&&ur.error?(' — '+ur.error):''));
+    }
+    if(failed.length){
+      toast('Could not attach: '+failed.join('; '), true);
+      return;                                    // do not submit a claim whose receipt did not land
+    }
+    RC.form._files=[];                            // uploaded — clear so a later save cannot double-attach
+  }
   // Also attach any files scanned via OCR (the actual receipt / e-invoice image behind the extracted line).
   if(Array.isArray(RC.form._scanFiles) && RC.form._scanFiles.length){ toast('Attaching scanned e-invoice…'); for(var s=0;s<RC.form._scanFiles.length;s++){ await hrRCUpload(cid, RC.form._scanFiles[s]); } RC.form._scanFiles=[]; }
   if(submit){ var s=await call({api:'hr_rc_submit',tenant:HR.tenant,id:cid,declarations:dec}); if(s&&s.ok){ toast('Submitted → '+s.status+((s.warnings&&s.warnings.length)?(' · '+s.warnings.length+' warning(s)'):'')); RC.page='list'; hrRCLoadList(); } else { toast((s&&s.error)||'Submit failed',true); return; } }
@@ -2207,7 +2230,57 @@ async function hrRCSave(submit){
   hrRender();
   } finally { RC._saving=false; }
 }
-function hrRCUpload(cid,file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){ var b64=String(rd.result||''); call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'image/jpeg'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)}).then(res,res); }; rd.onerror=function(){res();}; rd.readAsDataURL(file); }); }
+/* Receipts attached via the plain file input used to vanish. The input is rendered inside the claim
+   form, and hrRender() rebuilds that form with innerHTML — so adding an expense line, changing an
+   expense type or removing a scan destroyed the <input> and took its FileList with it. Nothing held
+   the file in JS state, so save uploaded nothing and submit then failed with "A receipt is required
+   for at least one expense line", which points at the wrong thing entirely.
+   Fix: capture the files into RC.form._files on change (exactly what _scanFiles already does for the
+   scan path) so they survive any number of re-renders, and show what is pending. */
+function hrRCPickReceipts(input){
+  if(!RC.form) return;
+  var fs = (input && input.files) ? Array.prototype.slice.call(input.files) : [];
+  if(!fs.length) return;
+  if(!Array.isArray(RC.form._files)) RC.form._files = [];
+  fs.forEach(function(f){
+    // De-dupe: re-picking the same file (or a re-render round trip) must not attach it twice.
+    var dup = RC.form._files.some(function(x){ return x.name===f.name && x.size===f.size && x.lastModified===f.lastModified; });
+    if(!dup) RC.form._files.push(f);
+  });
+  hrRCSyncItems();
+  hrRender();
+}
+function hrRCReceiptRemove(i){
+  if(RC.form && Array.isArray(RC.form._files)) RC.form._files.splice(i,1);
+  hrRCSyncItems(); hrRender();
+}
+function hrRCPendingHtml(){
+  var fs = (RC.form && Array.isArray(RC.form._files)) ? RC.form._files : [];
+  if(!fs.length) return '';
+  return '<div style="margin-top:7px;display:flex;flex-direction:column;gap:4px">'+
+    fs.map(function(f,i){
+      var kb = f.size ? (f.size>=1048576 ? (f.size/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(f.size/1024))+' KB') : '';
+      return '<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-soft)">'+
+             '<span>'+(/pdf/i.test(f.type||f.name||'')?'&#128196;':'&#128247;')+'</span>'+
+             '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.name||'receipt')+'</span>'+
+             '<span class="muted">'+kb+'</span>'+
+             '<button class="btn sm" onclick="hrRCReceiptRemove('+i+')" title="Remove">&times;</button></div>';
+    }).join('')+
+    '<div class="muted" style="font-size:10.5px">Attached when you save or submit.</div></div>';
+}
+function hrRCUpload(cid,file){ return new Promise(function(res){
+  var rd=new FileReader();
+  rd.onload=function(){
+    var b64=String(rd.result||'');
+    call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'application/octet-stream'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)})
+      // Resolve with the RESULT either way. The old version passed `res` as both handlers, so a rejected
+      // call resolved indistinguishably from a successful one and the caller could not tell.
+      .then(function(r){ res(r||{ok:false,error:'no response from server'}); },
+            function(e){ res({ok:false,error:(e&&e.message)||'network error'}); });
+  };
+  rd.onerror=function(){ res({ok:false,error:'could not read the file'}); };
+  rd.readAsDataURL(file);
+}); }
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
 // 📷 Scan a receipt / MyInvois e-invoice → Claude vision reads it → fills a line + captures e-invoice
 // identifiers. The scanned file is queued and attached to the claim on save.
