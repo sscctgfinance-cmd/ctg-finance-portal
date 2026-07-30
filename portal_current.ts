@@ -2870,6 +2870,52 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, approvers: ids.length, results: out });
     }
+    // ── O2O pharmacy → Xero contact, PER ORGANISATION (v179) ────────────────────────────────────
+    // Each Xero org keeps its own contact list with its own ContactIDs, and all five companies issue
+    // O2O invoices — so the link is keyed by (pharmacy, tenant). Verified against the live data: the
+    // same six pharmacies resolve 6/6 exact in Skindae and Zeero but only 1/6 in Scale Holding, which
+    // a single xero_contact_id column could never have represented.
+    if (api === "o2o_contacts_resolve") {
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant || "");
+      if (!tenant) return j({ ok:false, error:"tenant required" });
+      const alw = await allowedTenants(b.token);
+      if (alw.indexOf(tenant) < 0) return denyTenant(me, "o2o_contacts_resolve", tenant);
+      const names = Array.isArray(b.names) ? b.names.map((x:any)=>String(x||"")).filter(Boolean).slice(0, 500) : [];
+      if (!names.length) return j({ ok:true, rows: [] });
+      const { data, error } = await sb.rpc("o2o_resolve_contacts", { p_tenant: tenant, p_names: names });
+      if (error) return j({ ok:false, error: error.message });
+      return j({ ok:true, rows: data || [] });
+    }
+    if (api === "o2o_contact_link") {
+      const me = await meFromToken(b.token); if (!isAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant || "");
+      if (!tenant) return j({ ok:false, error:"tenant required" });
+      const alw = await allowedTenants(b.token);
+      if (alw.indexOf(tenant) < 0) return denyTenant(me, "o2o_contact_link", tenant);
+      const { data, error } = await sb.rpc("o2o_link_contact", {
+        p_tenant: tenant, p_name: String(b.pharmacy||""), p_contact_id: String(b.contact_id||""),
+        p_contact_name: String(b.contact_name||""), p_source: String(b.source||"manual"),
+        p_by: (me.user && me.user.email) || null,
+      });
+      if (error) return j({ ok:false, error: error.message });
+      return j(data || { ok:false, error:"no result" });
+    }
+    if (api === "o2o_contacts_search") {
+      // Type-ahead for the manual picker. Scoped to ONE organisation — offering another org's
+      // contacts would invite storing a ContactID that cannot work.
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant || "");
+      if (!tenant) return j({ ok:false, error:"tenant required" });
+      const alw = await allowedTenants(b.token);
+      if (alw.indexOf(tenant) < 0) return denyTenant(me, "o2o_contacts_search", tenant);
+      const q = String(b.q || "").trim();
+      let qy = sb.from("xero_contacts_cache").select("contact_id,name").eq("tenant_id", tenant);
+      if (q) qy = qy.ilike("name", "%" + q + "%");
+      const { data, error } = await qy.order("name").limit(40);
+      if (error) return j({ ok:false, error: error.message });
+      return j({ ok:true, contacts: data || [] });
+    }
     // ── CTG Portal SSO: admin access management (v178) ──────────────────────────────────────────
     // The CTG app secret is a directory-wide read credential — it lists all 100 staff. It must NEVER
     // reach a browser, so every call to CTG goes through here and the frontend only ever sees the
