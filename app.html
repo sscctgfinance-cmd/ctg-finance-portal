@@ -2948,7 +2948,28 @@ function o2oParse(buf){
         if(!pkg||typeof price!=='number'||price<=0) continue;
         if(useSkuMode){
           var hit=o2oMatchSku(pkg);
-          if(!hit){ unmatched.push({pkg:String(pkg),price:price}); continue; }
+          if(!hit){
+            // A row we cannot map to a Skindae SKU used to be DROPPED here — its price never reached
+            // `grouped`, so the pharmacy was invoiced less than it actually sold. Bill it instead, at
+            // its raw price, with the Excel Package text as the description.
+            //
+            // The date guard below is essential and is the same one the non-Skindae branch uses: the
+            // summary rows under the data (Total Sales / Commission / Insurans / Billing) also carry a
+            // package-ish label and a number. While unmatched rows were dropped they were harmlessly
+            // dropped too — now that unmatched rows are billed, without this guard they would become
+            // invoice lines and OVER-bill. Real data rows always carry a Date: a JS Date, or an Excel
+            // serial well above 10000 (~1927).
+            if(cDate<0) continue;
+            var dvU = row[cDate];
+            if(!((dvU instanceof Date) || (typeof dvU === 'number' && dvU > 10000))) continue;
+            var descU = String(pkg).trim();
+            var keyU = 'RAW|' + descU + '|' + price;
+            if(!grouped[keyU]) grouped[keyU]={code:null,description:descU,label:descU,unit_price:price,quantity:0,gross:0,unmapped:true};
+            grouped[keyU].quantity++;
+            grouped[keyU].gross+=price;
+            unmatched.push({pkg:String(pkg),price:price});   // still surfaced — billed, but unmapped
+            continue;
+          }
           var key=hit.code;
           if(!grouped[key]) grouped[key]={code:hit.code,description:hit.desc,label:hit.label,unit_price:price,quantity:0,gross:0};
           grouped[key].quantity++;
@@ -3087,7 +3108,7 @@ function o2oRenderPreview(){
       var disc=l.discount_rate?('<span class="muted">Disc '+l.discount_rate+'%</span>'):'<span class="muted">—</span>';
       return '<tr><td>'+sku+esc(l.package||'')+'</td><td class="amt">'+l.quantity+'</td><td class="amt">'+M(l.unit_price)+'</td><td class="amt">'+disc+'</td><td class="amt"><b>'+M(l.amount||(l.unit_price*l.quantity))+'</b></td></tr>';
     }).join('');
-    var unmatchedNote=(p.unmatched&&p.unmatched.length)?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">⚠ '+p.unmatched.length+' row(s) skipped (no SKU match): '+esc(p.unmatched.slice(0,3).map(function(u){return u.pkg;}).join(' · '))+(p.unmatched.length>3?'…':'')+'</div>':'';
+    var unmatchedNote=(p.unmatched&&p.unmatched.length)?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">\u26a0 '+p.unmatched.length+' row(s) billed at their Excel price with no SKU mapping: '+esc(p.unmatched.slice(0,3).map(function(u){return u.pkg;}).join(', '))+(p.unmatched.length>3?' \u2026':'')+'</div>':'';
     var fbNote=p.fallback?'<div style="color:var(--coral-soft);font-size:12px;margin:6px 0 0">⚠ Fallback mode: no per-row data found, using single Total-Sales line.</div>':'';
     return '<div style="border:1px solid var(--panel-border);border-radius:10px;margin-bottom:10px;background:var(--panel)">'+
       '<div style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="document.getElementById(\''+pid+'\').style.display=document.getElementById(\''+pid+'\').style.display===\'none\'?\'block\':\'none\'">'+
@@ -3105,7 +3126,7 @@ function o2oRenderPreview(){
     '<div class="card"><div class="n" style="color:var(--green-soft)">'+M(d.grand_total)+'</div><div class="l">Total billed</div></div></div>'+
     '<div class="status-bar" style="margin:2px 0 6px"><div class="dot-green"></div>Reference → <b>'+esc(d.reference||'')+'</b></div>'+
     '<div class="muted" style="font-size:12px;margin:0 0 12px">From Excel: '+esc(d.period||'')+'</div>'+
-    (anyUnmatched?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ Some rows had no SKU match (Basic A-3 / Basic B-1 / Promo B / Promo C / Promo D). They were skipped — expand a pharmacy to see which.</div>':'')+
+    (anyUnmatched?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ Some rows have no SKU mapping (Basic A-3 / Basic B-1 / Promo B / Promo C / Promo D). They are <b>billed at their Excel price</b> using the Package text as the description \u2014 expand a pharmacy to see which.</div>':'')+
     (anyFallback?'<div style="background:rgba(255,165,89,.08);border:1px solid var(--coral-soft);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;color:var(--coral-soft)">⚠ One or more sheets had no Date/Package/Price rows. Falling back to single Total-Sales line for those.</div>':'')+
     blocks;
   document.getElementById('o2o-issue').disabled=false;
