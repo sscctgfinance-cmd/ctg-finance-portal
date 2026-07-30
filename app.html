@@ -3047,12 +3047,51 @@ function o2oPick(input){
   rd.readAsArrayBuffer(f);
 }
 // Look up each parsed pharmacy in the master and attach the matched record so the preview can show contact info.
+async function o2oLinkContact(pharmacy, contactId, contactName, source){
+  var r = await call({ api:'o2o_contact_link', tenant:O2O_TENANT, pharmacy:pharmacy,
+                       contact_id:contactId, contact_name:contactName, source:source||'manual' });
+  if(!r || !r.ok){ toast((r&&r.error)||'Could not link', true); return; }
+  toast(pharmacy+' \u2192 '+contactName);
+  await o2oEnrichWithPharmacyMaster();     // re-resolve so the badge reflects the saved link
+  o2oRenderPreview();
+}
+async function o2oSearchContacts(pharmacy, q, inputEl){
+  var box = inputEl && inputEl.parentElement && inputEl.parentElement.parentElement
+            ? inputEl.parentElement.parentElement.querySelector('.o2o-sr') : null;
+  if(box) box.innerHTML = '<span class="muted" style="font-size:11.5px">Searching\u2026</span>';
+  var r = await call({ api:'o2o_contacts_search', tenant:O2O_TENANT, q:q||'' });
+  if(!box) return;
+  if(!r || !r.ok){ box.innerHTML = '<span class="muted">'+esc((r&&r.error)||'Search failed')+'</span>'; return; }
+  var cs = r.contacts || [];
+  box.innerHTML = cs.length
+    ? cs.slice(0,12).map(function(c){
+        return '<button class="btn sm" style="margin:0 6px 6px 0" onclick="o2oLinkContact('+
+               JSON.stringify(pharmacy).replace(/"/g,'&quot;')+','+
+               JSON.stringify(c.contact_id).replace(/"/g,'&quot;')+','+
+               JSON.stringify(c.name).replace(/"/g,'&quot;')+',\'manual\')">'+esc(c.name)+'</button>';
+      }).join('')
+    : '<span class="muted" style="font-size:11.5px">No contact in this organisation matches that.</span>';
+}
 async function o2oEnrichWithPharmacyMaster(){
   if(!O2O_DATA) return;
   try {
     if(!PHARM_DATA||!PHARM_DATA.length){
       const r=await call({api:'pharmacy_list'});
       if(r&&r.ok){ PHARM_DATA=r.pharmacies||[]; PHARM_EDITABLE=!!r.editable; }
+    }
+  } catch(_e){}
+  // v179: resolve every pharmacy against the Xero contacts of the company selected in ISSUE INTO.
+  // Each org has its own contact list and its own ContactIDs, so this MUST be redone whenever the
+  // company changes — a ContactID resolved for Skindae cannot be used to invoice from another org.
+  try {
+    var names = O2O_DATA.pharmacies.map(function(x){ return x.pharmacy; }).filter(Boolean);
+    if (names.length && O2O_TENANT) {
+      var rx = await call({ api:'o2o_contacts_resolve', tenant:O2O_TENANT, names:names });
+      if (rx && rx.ok) {
+        var byName = {};
+        (rx.rows||[]).forEach(function(row){ byName[String(row.pharmacy||'').toUpperCase()] = row; });
+        O2O_DATA.pharmacies.forEach(function(x){ x.__xero = byName[String(x.pharmacy||'').toUpperCase()] || null; });
+      }
     }
   } catch(_e){}
   O2O_DATA.pharmacies.forEach(function(p){
@@ -3089,9 +3128,35 @@ function o2oRenderPreview(){
   var blocks=d.pharmacies.map(function(p){
     var pid='o2ode_'+Math.random().toString(36).slice(2,8);
     // Master-data badge — green pill if linked, coral warning if missing.
-    var masterBadge = p.__master
-      ? '<span class="pill pill-green" style="font-size:10px;margin-left:8px" title="Linked to pharmacy master record">✓ master</span>'
-      : '<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px;margin-left:8px" title="No master record — add in Pharmacies tab">⚠ no master</span>';
+    // v179: what matters before issuing is whether this pharmacy resolves to a Xero contact IN THE
+    // COMPANY SELECTED ABOVE — not whether a portal master record exists. The old "no master" badge
+    // pointed at the Pharmacies tab, which is empty and is not what the invoice needs anyway.
+    var xr = p.__xero, xst = xr ? xr.status : null;
+    var masterBadge =
+        xst === 'linked' ? '<span class="pill pill-green" style="font-size:10px;margin-left:8px" title="Saved link → '+esc(xr.contact_name||'')+'">✓ Xero contact</span>'
+      : xst === 'exact'  ? '<span class="pill pill-green" style="font-size:10px;margin-left:8px" title="Name matches → '+esc(xr.contact_name||'')+'">✓ '+esc(xr.contact_name||'Xero contact')+'</span>'
+      : xst === 'suggest'? '<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px;margin-left:8px" title="Closest matches found — confirm below">❓ confirm contact</span>'
+      : xst === 'none'   ? '<span class="pill" style="background:rgba(255,120,120,.16);color:var(--coral-soft);font-size:10px;margin-left:8px" title="No similar contact in this Xero organisation">⚠ no Xero contact</span>'
+      : '';
+    // Suggestions are shown, never auto-applied: a wrong contact means invoicing the wrong customer.
+    var xeroPick = '';
+    if (xr && (xst === 'suggest' || xst === 'none')) {
+      var sug = (xr.suggestions || []).map(function(g){
+        return '<button class="btn sm" style="margin:0 6px 6px 0" onclick="o2oLinkContact('+
+               JSON.stringify(p.pharmacy).replace(/"/g,'&quot;')+','+
+               JSON.stringify(g.contact_id).replace(/"/g,'&quot;')+','+
+               JSON.stringify(g.name).replace(/"/g,'&quot;')+',\'fuzzy\')">'+
+               esc(g.name)+' <span class="muted">'+Math.round((g.score||0)*100)+'%</span></button>';
+      }).join('');
+      xeroPick = '<div style="background:var(--panel-2);padding:8px 12px;border-radius:6px;margin:6px 0 4px;font-size:12px">'+
+        '<div class="muted" style="margin-bottom:6px">Xero contact for <b>'+esc(o2oTenantName())+'</b>'+
+        (sug ? ' — closest matches:' : ' — nothing similar found, search:')+'</div>'+
+        sug +
+        '<div style="display:flex;gap:6px;margin-top:4px">'+
+          '<input placeholder="Search this company\'s Xero contacts…" style="flex:1;padding:6px 9px;font-size:12px" '+
+            'onkeydown="if(event.key===\'Enter\')o2oSearchContacts('+JSON.stringify(p.pharmacy).replace(/"/g,'&quot;')+',this.value,this)">'+
+        '</div><div class="o2o-sr" style="margin-top:6px"></div></div>';
+    }
     var masterInfo = p.__master
       ? '<div style="background:var(--panel-2);padding:8px 12px;border-radius:6px;font-size:12px;margin:6px 0 4px;display:flex;gap:14px;flex-wrap:wrap;color:var(--text-soft)">' +
         (p.__master.pic_name ? '<span><b>PIC:</b> '+esc(p.__master.pic_name)+(p.__master.pic_role?' ('+esc(p.__master.pic_role)+')':'')+'</span>' : '') +
@@ -3118,7 +3183,7 @@ function o2oRenderPreview(){
       '<span class="amt" style="color:var(--coral-soft)">'+(p.commission>0?'-'+M(p.commission):'—')+'</span>'+
       '<span class="amt"><b>'+M(p.total)+'</b></span>'+
       '</div>'+
-      '<div id="'+pid+'" style="display:none;padding:0 14px 12px">'+masterInfo+'<table class="bigtable"><thead><tr><th>Item / Description</th><th class="amt">Qty</th><th class="amt">Unit Price</th><th class="amt">Disc.</th><th class="amt">Amount</th></tr></thead><tbody>'+lineRows+'</tbody></table>'+unmatchedNote+fbNote+'</div>'+
+      '<div id="'+pid+'" style="display:none;padding:0 14px 12px">'+masterInfo+'<table class="bigtable"><thead><tr><th>Item / Description</th><th class="amt">Qty</th><th class="amt">Unit Price</th><th class="amt">Disc.</th><th class="amt">Amount</th></tr></thead><tbody>'+lineRows+'</tbody></table>'+xeroPick+unmatchedNote+fbNote+'</div>'+
       '</div>';
   }).join('');
   document.getElementById('o2o-out').innerHTML=
