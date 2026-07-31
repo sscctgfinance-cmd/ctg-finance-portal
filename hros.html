@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1242,8 +1242,17 @@ function hrSkel(n){ var o=''; for(var i=0;i<(n||4);i++) o+='<div class="skel" st
 function hrApplyTheme(t){ var d=document.documentElement; d.setAttribute('data-theme', t==='dark'?'dark':'light'); var b=document.getElementById('hr_theme_btn'); if(b) b.innerHTML=ic(t==='dark'?'sun':'moon',15)+'<span class="lbl">'+(t==='dark'?'Light mode':'Dark mode')+'</span>'; }
 function hrToggleTheme(){ var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light'; var t=(cur==='dark')?'light':'dark'; storageSet('hros_theme',t); hrApplyTheme(t); if(typeof hrRenderMobileChrome==='function') hrRenderMobileChrome(); }
 function hrToggleNav(){ var s=document.querySelector('.side'); if(!s) return; var c=s.classList.toggle('collapsed'); storageSet('hros_nav_collapsed', c?'1':''); }
-/* v11: DEFAULT is the premium dark CTG theme; only honour an explicit 'light' preference the user set. */
-(function(){ try{ document.documentElement.setAttribute('data-theme', storageGet('hros_theme')==='light'?'light':'dark'); }catch(_e){} })();
+/* 2026-07: LIGHT is now the default, matching app.html and the Xero-benchmarked design — finance and
+   HR staff read numbers all day and a document-weight ground is easier on the eyes than dark chrome.
+   A one-time flip moves anyone still on the old dark default across; an explicit choice made AFTER
+   that is respected forever, because hros_theme is only overwritten while the marker is absent. */
+(function(){ try{
+  if(storageGet('hros_theme_default') !== 'light-v1'){
+    storageSet('hros_theme','light');
+    storageSet('hros_theme_default','light-v1');
+  }
+  document.documentElement.setAttribute('data-theme', storageGet('hros_theme')==='dark'?'dark':'light');
+}catch(_e){ document.documentElement.setAttribute('data-theme','light'); } })();
 function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
