@@ -811,6 +811,20 @@ table[data-list] tbody tr:hover input[type=text]{
    LIGHT MODE — additive. Active only when <html data-theme="light">.
    Dark stays the default; nothing here touches the dark cascade.
    ════════════════════════════════════════════ */
+/* ── Company scope indicator ─────────────────────────────────────────────────────────────────
+   "All companies" is a read-only aggregate; a single company is where invoices get issued. The
+   selector looked the same either way. A left rail in the accent + a state chip make the current
+   scope readable without a second glance, and without adding another loud colour to the page. */
+#cobar{border-left:3px solid transparent;padding-left:11px;transition:border-color .15s}
+#cobar[data-scope="one"]{border-left-color:var(--coral)}
+#cobar .co-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;
+  white-space:nowrap;color:var(--muted)}
+#cobar[data-scope="one"] .co-label{color:var(--coral)}
+#cobar[data-scope="one"] #company{font-weight:650;color:var(--text)}
+.co-scope{font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap;
+  background:var(--surface2);color:var(--muted);border:1px solid var(--border)}
+#cobar[data-scope="one"] .co-scope{background:var(--coral);color:#fff;border-color:var(--coral)}
+@media (max-width:640px){.co-scope{display:none}}
 :root[data-theme="light"]{
   color-scheme:light;
   --bg-deep:#F1F3F7; --bg:#FBFBFC; --surface:#FFFFFF; --surface2:#F6F7F9;
@@ -1053,9 +1067,13 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     </div>
   </div>
 
-  <div class="bar">
-    <span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;white-space:nowrap">Company</span>
+  <!-- The bar carries data-scope="all" | "one". Reading a five-company aggregate and posting into
+       ONE company's Xero are different kinds of act, and the control looked identical in both
+       states — the expensive mistake here is issuing into the wrong organisation. -->
+  <div class="bar" id="cobar" data-scope="all">
+    <span class="co-label">Company</span>
     <select id="company" onchange="onCompany()" style="flex:1;max-width:320px"></select>
+    <span id="co_scope" class="co-scope"></span>
     <button class="btn p" onclick="reloadActive()">↺ Refresh</button>
     <button class="btn" onclick="exportCurrent()" title="Export this view to Excel">⬇ Export</button>
     <div id="last-refresh" class="status-bar" style="margin:0"></div>
@@ -1518,7 +1536,19 @@ function reloadActive(){const a=document.querySelector('.tab.active');const t=a?
   if(t==='pnl'){ PNL_DATA=null; }
   if(t==='overview'){ try{ OV_TREND=null; }catch(_e){} }
   render(t);}
+function syncCompanyScope(){
+  // Derived from the select's own value, so it cannot drift from what the rest of the app reads.
+  try{
+    var sel=document.getElementById('company'), bar=document.getElementById('cobar'),
+        chip=document.getElementById('co_scope');
+    if(!sel||!bar) return;
+    var one = !!(sel.value||'').trim();          // '' is the "all companies" option
+    bar.setAttribute('data-scope', one?'one':'all');
+    if(chip) chip.textContent = one ? 'Posting into this company' : 'All companies \u00b7 read only';
+  }catch(_e){}
+}
 function onCompany(){
+  syncCompanyScope();
   // Switching the top-bar company must re-scope every tenant-aware dashboard tab + drop its cached data.
   loaded.overview=false; loaded.approvals=false; loaded.cfo=false; loaded.pnl=false;
   CFO_DATA=null; FIN_DATA=null; PNL_DATA=null; try{ OV_TREND=null; }catch(_e){}
@@ -5289,6 +5319,7 @@ async function tenantsRefresh(){
     toast('Refreshed '+r.total+' companies · '+r.renamed.length+' renamed');
     // Rebuild the top company selector in place with the refreshed names (buildTabs never existed → dropdown stayed stale).
     try{ var _sel=document.getElementById('company'); if(_sel){ var _cur=_sel.value; _sel.innerHTML='<option value="">— All Companies —</option>'+COMPANIES.map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join(''); _sel.value=_cur; } }catch(_e){}
+  syncCompanyScope();
   }catch(e){ toast(e.message,true); if(out) out.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
   finally { if(btn){ btn.disabled=false; btn.textContent='↻ Refresh from Xero /connections'; } }
 }
