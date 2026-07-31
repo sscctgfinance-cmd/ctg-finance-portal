@@ -885,6 +885,36 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .tab-cats{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border); box-shadow:0 1px 2px rgba(21,35,63,.05); }
 :root[data-theme="light"] .tab-cat{ color:var(--text-soft); }
 :root[data-theme="light"] .tab-cat:hover{ color:var(--text); background:rgba(21,35,63,.05); }
+/* ── Light-mode navigation weight ──────────────────────────────────────────────────────────────
+   The active category was a filled coral gradient with a coral glow — the single heaviest element
+   on a screen whose real content is financial figures. Navigation should say "you are here", not
+   outrank the numbers. Xero marks the active item with a surface change and weight, and keeps the
+   saturated colour for things you can DO. */
+:root[data-theme="light"] .tab-cat.active{
+  color:var(--coral); background:var(--surface); box-shadow:none;
+  font-weight:680; border:1px solid var(--border);
+}
+:root[data-theme="light"] .tab-cats{ background:var(--surface2); box-shadow:none; }
+
+/* The sub-tab used coral-soft text on a coral wash — on white that left the active label (e.g.
+   "CFO Cockpit") the LEAST readable item in its own row. Ink for the label, coral for the underline
+   that carries the state. */
+:root[data-theme="light"] .tab.active{
+  color:var(--text); font-weight:660; background:transparent;
+  border-bottom-color:var(--coral);
+}
+
+/* Panels were white cards on a white-ish page, each with its own shadow, so the eye had to work out
+   which boxes mattered. Hairline only; grouping comes from spacing. */
+:root[data-theme="light"] .panel, :root[data-theme="light"] .card{
+  box-shadow:none; border-color:var(--border);
+}
+/* Routine actions should not wear the primary treatment. Refresh is not a commitment. */
+:root[data-theme="light"] .bar .btn.p{
+  background:var(--surface); color:var(--text); border:1px solid var(--border-strong);
+  box-shadow:none; font-weight:620;
+}
+:root[data-theme="light"] .bar .btn.p:hover{ background:var(--surface2); }
 :root[data-theme="light"] .tab-cat.active{ color:#fff; background:linear-gradient(135deg,var(--coral),var(--coral-deep)); box-shadow:0 2px 8px -2px rgba(224,78,43,.45); }
 :root[data-theme="light"] .tab{ color:var(--muted); }
 :root[data-theme="light"] .sub{ color:var(--muted); }
