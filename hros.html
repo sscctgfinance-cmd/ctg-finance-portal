@@ -1469,7 +1469,12 @@ async function hrEmpBoot(){
   }catch(e){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+' — <a onclick="hrEmpBoot()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>'; }
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
-var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[] } };
+var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[], dirty:false, editFinal:false } };
+// v181: the browser's own guard. hrGridConfirmDiscard covers in-app navigation; this covers closing the
+// tab, reloading, and following a link out — the ways a month of typed entries actually gets lost.
+window.addEventListener('beforeunload', function(e){
+  if(HR && HR.pay && HR.pay.dirty){ e.preventDefault(); e.returnValue=''; return ''; }
+});
 var HR_PROCARE_TENANT='99911869-9e91-4572-b7dc-4db51b45b6a9';
 // Load the Xero companies, populate the header picker, default the tenant, then render.
 async function hrBootCompanies(){
@@ -1489,10 +1494,16 @@ async function hrBootCompanies(){
 }
 function hrPickCompany(tid){
   if(!tid || tid===HR.tenant) return;
+  // Switching company wipes HR.pay wholesale — unsaved payroll entries for the CURRENT company would go
+  // with it, silently.
+  if(!hrGridConfirmDiscard()){
+    var sel=document.getElementById('hr_company'); if(sel) sel.value=HR.tenant;   // undo the visual switch
+    return;
+  }
   HR.tenant=tid; storageSet('hr_tenant',tid);
   // reset all per-company state so nothing leaks across companies
   HR.data=null; HR.view='dashboard'; HR.editEmp=null; HR.submitPack=null;
-  HR.pay={ month:0, year:0, data:null, loading:false, adjEmp:null, dedEmp:null, _rows:[], grid:null };
+  HR.pay={ month:0, year:0, data:null, loading:false, adjEmp:null, dedEmp:null, _rows:[], grid:null, dirty:false, editFinal:false };
   if(typeof HR_YE!=='undefined'){ HR_YE.annual=null; HR_YE.year=0; }
   if(typeof HR_DASH!=='undefined'){ HR_DASH.data=null; HR_DASH.loading=false; }
   // RC.accounts is the XERO CHART OF ACCOUNTS of the previous company — carrying it over would let a
@@ -4190,7 +4201,12 @@ function hrGridAll(){
   });
   HR.pay._rows=rows; return { rows:rows, tot:tot };
 }
-function hrGCell(empId,field){ var g=HR.pay.grid[empId]||{}; return '<input type="number" step="0.01" value="'+(Number(g[field])||0)+'" oninput="hrGridCell(\''+empId+'\',\''+field+'\',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">'; }
+// v181: a finalised month is locked until the operator clicks ✏️ Edit entries. Read-only is enforced on
+// the inputs themselves, not just by hiding the Save button — otherwise the figures still LOOK editable,
+// the operator types, and the work silently goes nowhere.
+function hrGridLocked(){ var p=HR.pay, run=(p.data&&p.data.run)||null; return !!run && run.status==='finalised' && !p.editFinal; }
+function hrGCell(empId,field){ var g=HR.pay.grid[empId]||{}; var lk=hrGridLocked();
+  return '<input type="number" step="0.01" value="'+(Number(g[field])||0)+'"'+(lk?' disabled':'')+' oninput="hrGridCell(\''+empId+'\',\''+field+'\',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right'+(lk?';opacity:.6;cursor:not-allowed':'')+'">'; }
 // ── Itemised deductions ──
 var HR_DED_TYPES=['Salary advance','Loan repayment','PTPTN','Zakat','CP38 (LHDN)','Insurance','Uniform / equipment','Staff welfare','Union / society','Other deduction'];
 function hrDedTot(g){ return (g&&g.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0); }
@@ -4200,27 +4216,28 @@ function hrDedOpen(empId){ HR.pay.dedEmp=(HR.pay.dedEmp===empId?null:empId); hrR
 function hrDedPanel(empId){
   var e=(HR.pay.data.employees||[]).find(function(x){return x.id===empId;}); if(!e) return '';
   var g=HR.pay.grid[empId]||{}; var deds=g.deductions||(g.deductions=[]);
+  var lk=hrGridLocked(), dis=lk?' disabled':'', dsty=lk?';opacity:.6;cursor:not-allowed':'';
   var rows=deds.map(function(x,i){
     return '<div style="display:grid;grid-template-columns:1fr 130px 34px;gap:6px;align-items:center;margin-bottom:6px">'+
-      '<input value="'+esc(x.label||'')+'" oninput="hrDedLabel(\''+empId+'\','+i+',this.value)" placeholder="Deduction name" list="hr_dedtypes" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+
-      '<input type="number" step="0.01" value="'+(Number(x.amount)||0)+'" oninput="hrDedAmt(\''+empId+'\','+i+',this.value)" onfocus="this.select()" placeholder="RM" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right">'+
-      '<button class="btn xs" onclick="hrDedDel(\''+empId+'\','+i+')" title="Remove">✕</button></div>';
+      '<input value="'+esc(x.label||'')+'"'+dis+' oninput="hrDedLabel(\''+empId+'\','+i+',this.value)" placeholder="Deduction name" list="hr_dedtypes" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px'+dsty+'">'+
+      '<input type="number" step="0.01" value="'+(Number(x.amount)||0)+'"'+dis+' oninput="hrDedAmt(\''+empId+'\','+i+',this.value)" onfocus="this.select()" placeholder="RM" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right'+dsty+'">'+
+      '<button class="btn xs"'+dis+' onclick="hrDedDel(\''+empId+'\','+i+')" title="Remove">✕</button></div>';
   }).join('')||'<div class="muted" style="font-size:12px;padding:4px 0 8px">No deductions yet — add advances, loans, PTPTN, zakat, CP38, etc.</div>';
   return '<div class="panel" id="hr_dedpanel" style="max-width:560px;margin-top:14px;border-color:var(--coral-soft)">'+
     '<div class="panel-hd"><h3>Deductions — '+esc(e.name)+' · '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'</h3><button class="btn sm" onclick="hrDedOpen(\''+empId+'\')">✕ Close</button></div>'+
     '<datalist id="hr_dedtypes">'+HR_DED_TYPES.map(function(t){return '<option value="'+t+'">';}).join('')+'</datalist>'+
     rows+
     '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">'+
-      '<button class="btn p sm" onclick="hrDedAdd(\''+empId+'\')">+ Add deduction</button>'+
-      '<select onchange="if(this.value){hrDedAdd(\''+empId+'\',this.value);this.value=\'\';}" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"><option value="">Quick add…</option>'+HR_DED_TYPES.map(function(t){return '<option value="'+t+'">'+t+'</option>';}).join('')+'</select>'+
+      '<button class="btn p sm"'+dis+' onclick="hrDedAdd(\''+empId+'\')">+ Add deduction</button>'+
+      '<select'+dis+' onchange="if(this.value){hrDedAdd(\''+empId+'\',this.value);this.value=\'\';}" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"><option value="">Quick add…</option>'+HR_DED_TYPES.map(function(t){return '<option value="'+t+'">'+t+'</option>';}).join('')+'</select>'+
       '<span id="hr_dedtotal" style="margin-left:auto;font-weight:700">Total: '+M(hrDedTot(g))+'</span>'+
     '</div>'+
     '<div class="muted" style="font-size:11px;margin-top:8px">These reduce net pay only (not EPF/SOCSO/EIS/PCB) and appear as separate lines on the payslip. Zakat &amp; CP38 have tax effects — confirm with your tax agent.</div></div>';
 }
-function hrDedAdd(empId,label){ var g=HR.pay.grid[empId]; if(!g)return; if(!g.deductions)g.deductions=[]; g.deductions.push({label:label||'',amount:0}); hrRender(); }
-function hrDedDel(empId,i){ var g=HR.pay.grid[empId]; if(!g||!g.deductions)return; g.deductions.splice(i,1); hrRender(); }
-function hrDedLabel(empId,i,v){ var g=HR.pay.grid[empId]; if(g&&g.deductions&&g.deductions[i]) g.deductions[i].label=v; }
-function hrDedAmt(empId,i,v){ var g=HR.pay.grid[empId]; if(!g||!g.deductions||!g.deductions[i])return; g.deductions[i].amount=(v===''||v==null)?0:Number(v); if(isNaN(g.deductions[i].amount))g.deductions[i].amount=0; hrGridRecalc(); var dt=document.getElementById('hr_dedtotal'); if(dt) dt.textContent='Total: '+M(hrDedTot(g)); }
+function hrDedAdd(empId,label){ var g=HR.pay.grid[empId]; if(!g)return; if(!g.deductions)g.deductions=[]; g.deductions.push({label:label||'',amount:0}); HR.pay.dirty=true; hrRender(); }
+function hrDedDel(empId,i){ var g=HR.pay.grid[empId]; if(!g||!g.deductions)return; g.deductions.splice(i,1); HR.pay.dirty=true; hrRender(); }
+function hrDedLabel(empId,i,v){ var g=HR.pay.grid[empId]; if(g&&g.deductions&&g.deductions[i]){ g.deductions[i].label=v; hrGridDirty(); } }
+function hrDedAmt(empId,i,v){ var g=HR.pay.grid[empId]; if(!g||!g.deductions||!g.deductions[i])return; g.deductions[i].amount=(v===''||v==null)?0:Number(v); if(isNaN(g.deductions[i].amount))g.deductions[i].amount=0; hrGridDirty(); hrGridRecalc(); var dt=document.getElementById('hr_dedtotal'); if(dt) dt.textContent='Total: '+M(hrDedTot(g)); }
 function hrPaySumHtml(tot){
   var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
   return stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('');
@@ -4483,8 +4500,16 @@ function hrPayroll(){
     '<th colspan="5" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
     '<th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>'+
     '<th colspan="6" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th></tr>';
-  var table='<div class="panel"><div class="panel-hd"><h3>Payroll grid — '+HR_MONTHS[p.month]+' '+p.year+(finalised?' <span class="pill pill-green" style="font-size:10px">FINALISED</span>':'')+'</h3>'+
-    '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+hrRW('<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button>')+'</span></div>'+
+  // v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it. Payslips are
+  // already written (and may have been emailed) — silently accepting edits over them is how a payslip and
+  // its EA-form figure end up disagreeing with no record of which is right.
+  var locked=finalised && !p.editFinal;
+  var actions = locked
+    ? hrRW('<button class="btn sm" onclick="hrEditFinalised()" title="Payslips are already written for this month. Unlock to change the entries; you must re-finalise afterwards for the payslips to match.">✏️ Edit entries</button>')
+    : hrRW('<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button>');
+  var table='<div class="panel"><div class="panel-hd"><h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Payroll grid — '+HR_MONTHS[p.month]+' '+p.year+hrGridStateHtml()+'</h3>'+
+    '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+actions+'</span></div>'+
+    (locked?'<div class="muted" style="font-size:11.5px;padding:0 2px 8px;color:var(--amber)">This month is finalised — payslips are written, so the entries are locked. Click <b>✏️ Edit entries</b> to change them, then re-finalise so the payslips match.</div>':'')+
     '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
     '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt">PCB</th><th class="amt">Net</th></tr></thead><tbody>'+trs+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
@@ -4602,7 +4627,39 @@ async function hrRatesSave(){ return hrOnce('hrRatesSave', async function(){
   var r=await call({api:'hr_rates_save',rates:rates});
   if(r&&r.ok){ toast('Statutory rates saved ✓'); HR.pay.data.rates=rates; HR.pay.showRates=false; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }); }
-function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g[field]=(val===''||val==null)?0:Number(val); if(isNaN(g[field]))g[field]=0; hrGridRecalc(); }
+function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g[field]=(val===''||val==null)?0:Number(val); if(isNaN(g[field]))g[field]=0; hrGridDirty(); hrGridRecalc(); }
+// v181: every path that mutates HR.pay.grid must come through here. Typing 19 employees' bonuses and
+// losing them to a period switch is the expensive mistake this prevents; the badge is also the only way
+// to tell "saved" from "typed but not saved", which is exactly what the operator asked for.
+function hrGridDirty(){
+  if(HR.pay.dirty) { hrGridStatePaint(); return; }
+  HR.pay.dirty=true; hrGridStatePaint();
+}
+// Repaint the state chip in place — a full hrRender() here would tear down the input being typed in.
+function hrGridStatePaint(){ var el=document.getElementById('hr_paystate'); if(el) el.outerHTML=hrGridStateHtml(); }
+function hrGridStateHtml(){
+  var p=HR.pay, run=(p.data&&p.data.run)||null;
+  var fin=!!run && run.status==='finalised';
+  var fmt=function(t){ if(!t) return ''; var d=new Date(t); if(isNaN(d)) return '';
+    return d.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); };
+  var s, cls, tip;
+  if(p.dirty){ s='● Unsaved changes'; cls='pill-amber'; tip='These figures are only in this browser. Save entries to keep them.'; }
+  else if(fin){
+    // Entries edited after the payslips were written: the payslips no longer match the entries.
+    var stale = run.entries_saved_at && run.finalised_at && (new Date(run.entries_saved_at) > new Date(run.finalised_at));
+    if(stale){ s='⚠ Edited after finalising'; cls='pill-amber'; tip='Entries were saved at '+fmt(run.entries_saved_at)+', after this month was finalised at '+fmt(run.finalised_at)+'. The payslips still show the OLD figures — re-finalise to update them.'; }
+    else { s='✓ Finalised'+(run.finalised_at?(' · '+fmt(run.finalised_at)):''); cls='pill-green'; tip='Payslips are written for this month.'; }
+  }
+  else if(run&&run.entries_saved_at){ s='Draft saved · '+fmt(run.entries_saved_at); cls='pill-blue'; tip='Entries are saved. Nothing is final until you finalise.'; }
+  else { s='Draft — not saved yet'; cls=''; tip='Nothing has been saved for this month yet.'; }
+  return '<span id="hr_paystate" class="pill '+cls+'" style="font-size:10px;font-weight:600" title="'+esc(tip)+'">'+esc(s)+'</span>';
+}
+// One gate for "may I throw away what is on screen?" — used by the period picker, the company switcher
+// and the browser's own unload prompt.
+function hrGridConfirmDiscard(){
+  if(!HR.pay.dirty) return true;
+  return confirm('You have unsaved payroll entries for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'.\n\nLeave without saving? The figures you typed will be lost.');
+}
 function hrGridRecalc(){
   var p=HR.pay, emps=p.data.employees||[]; var A=hrGridAll(); var tot=A.tot;
   var set=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=M(v); };
@@ -4624,9 +4681,28 @@ async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
   });
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
-  if(r&&r.ok){ toast('Payroll entries saved ✓'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
+  // Clear dirty ONLY on a confirmed ok — clearing it optimistically would drop the unload guard while the
+  // figures were still only in the browser.
+  if(r&&r.ok){ p.dirty=false; toast('Payroll entries saved ✓ — not final until you finalise'); p.data=null; p.grid=null; p.dedEmp=null; hrRender(); }
+  else toast((r&&r.error)||'Save failed',true);
 }); }
-function hrPickPeriod(){ HR.pay.month=Number(document.getElementById('hr_pm').value); HR.pay.year=Number(document.getElementById('hr_py').value); HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; HR.submitPack=null; hrRender(); }
+// Unlock a finalised month for editing. UI-only: status stays 'finalised' and the payslips stay exactly
+// as issued until a re-finalise rewrites them, so the stored record never drifts from what was approved.
+function hrEditFinalised(){
+  if(!confirm('This month is already finalised and payslips are written.\n\nUnlock the entries for editing?\n\nThe payslips will NOT change until you re-finalise.')) return;
+  HR.pay.editFinal=true; hrRender();
+}
+function hrPickPeriod(){
+  var m=Number(document.getElementById('hr_pm').value), y=Number(document.getElementById('hr_py').value);
+  if((m!==HR.pay.month||y!==HR.pay.year) && !hrGridConfirmDiscard()){
+    // Put the selects back — leaving them showing the period the operator did NOT switch to would make
+    // the grid's header and the pickers disagree about which month is on screen.
+    var a=document.getElementById('hr_pm'), b=document.getElementById('hr_py');
+    if(a) a.value=String(HR.pay.month); if(b) b.value=String(HR.pay.year);
+    return;
+  }
+  HR.pay.month=m; HR.pay.year=y; HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; HR.pay.dirty=false; HR.pay.editFinal=false; HR.submitPack=null; hrRender();
+}
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
   // Capture the request identity: if the operator switches company or period while this request is in
@@ -4637,16 +4713,21 @@ async function hrLoadPayroll(){
     var r=await call({api:'hr_payroll_data',month:req.m,year:req.y,tenant:req.t});
     HR.pay.loading=false;
     if(HR.tenant!==req.t || HR.pay.month!==req.m || HR.pay.year!==req.y){ hrLoadPayroll(); return; } // stale — reload for the current selection
-    if(r&&r.ok){ HR.pay.data=r; hrRender(); } else toast((r&&r.error)||'Load failed',true);
+    // Fresh server data replaces the grid entirely, so nothing on screen is unsaved any more.
+    if(r&&r.ok){ HR.pay.data=r; HR.pay.dirty=false; hrRender(); } else toast((r&&r.error)||'Load failed',true);
   }
   catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
 }
 async function hrFinalise(){ return hrOnce('hrFinalise', async function(){
   var rows=(HR.pay._rows||[]).map(function(r){ var q=r.p; return { employeeId:r.e.id, gross:q.gross, epfEe:q.epfEe, epfEr:q.epfEr, socsoEe:q.socsoEe, socsoEr:q.socsoEr, eisEe:q.eisEe, eisEr:q.eisEr, pcb:q.pcb, net:q.net, employerCost:q.employerCost }; });
   if(!rows.length){ toast('No active employees',true); return; }
+  // Finalising sends the ON-SCREEN rows, but the server recomputes from the SAVED adjustments and rejects
+  // any disagreement (409 recompute_mismatch). Unsaved entries therefore fail anyway — just with a message
+  // about stale caches that sends the operator hunting for the wrong problem. Say the real thing instead.
+  if(HR.pay.dirty){ toast('Save your entries first — click 💾 Save entries, then finalise',true); return; }
   if(!confirm('Finalise payroll for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' ('+rows.length+' employees)? Saves payslips for the period.')) return;
   var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows,tenant:HR.tenant});
-  if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
+  if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.dirty=false; HR.pay.editFinal=false; HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
 }); }
 function hrAdjOpen(id){ HR.pay.adjEmp=(HR.pay.adjEmp===id?null:id); hrRender(); if(HR.pay.adjEmp){ setTimeout(function(){var el=document.getElementById('hr_adjpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});},50); } }
 function hrAdjPanel(empId){

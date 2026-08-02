@@ -5995,7 +5995,9 @@ Deno.serve(async (req)=>{
           error:"Server recomputation disagrees with the on-screen figures — refusing to finalise. This usually means the page is showing a stale/cached calculation, or the statutory rates changed. Reload HR OS, reopen Payroll for this month, and finalise again.",
           details: mism.slice(0,6) }, 409);
       }
-      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
+      // v181: finalised_at is its own column, NOT updated_at — saving draft entries also touches the row,
+      // so a shared timestamp could not answer "were the entries edited after the payslips were issued?".
+      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised", finalised_at:new Date().toISOString(), updated_at:new Date().toISOString() }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
       // Write the SERVER-recomputed figures (authoritative), not the client's.
@@ -6984,8 +6986,25 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
           p_tenant: tenant, p_month: mo, p_year: yr, p_rows: items,
         });
         if (eRpc) return j({ ok:false, error: eRpc.message });
+        // v181: record the DRAFT. hr_payroll_runs.status already defaulted to 'draft' but no row was ever
+        // written until finalise, so a saved-but-not-finalised month left no trace at all and the grid
+        // could not tell the operator whether what was on screen had been saved. Never touch `status`
+        // here — a save against an already-finalised month must not silently un-finalise it.
+        //
+        // Best-effort and non-fatal: the adjustments are ALREADY committed by the RPC above. Failing the
+        // request now would tell the operator the save failed when their figures are safely stored, and
+        // they would re-enter everything. Metadata must never be able to do that.
+        let savedAt: string|null = null;
+        try {
+          const nowIso = new Date().toISOString();
+          const { data: existing } = await sb.from("hr_payroll_runs").select("id")
+            .eq("tenant_id",tenant).eq("period_month",mo).eq("period_year",yr).maybeSingle();
+          if (existing) await sb.from("hr_payroll_runs").update({ entries_saved_at:nowIso, updated_at:nowIso }).eq("id",existing.id);
+          else await sb.from("hr_payroll_runs").insert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"draft", entries_saved_at:nowIso });
+          savedAt = nowIso;
+        } catch (_e) { /* draft stamp is cosmetic; the entries are already saved */ }
         await logAudit(me,"hr_payroll_grid_save",String(mo)+"/"+String(yr),{ n:items.length });
-        return j({ ok:true, n:items.length });
+        return j({ ok:true, n:items.length, entries_saved_at: savedAt });
       }
     }
     if (api === "hr_annual") {
