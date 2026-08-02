@@ -4179,8 +4179,15 @@ function hrGridInit(){
   p.gridPeriod=p.month+'-'+p.year;
 }
 function hrGridRowCompute(e,g){
+  // ⚠️ This whitelist must carry EVERY employee field hrCompute reads. The backend recompute uses the
+  // REAL employee row, so anything dropped here makes the two engines disagree and 409s the entire
+  // company's payroll with a message about stale caches. citizen_status was missing (v182) — a foreign
+  // worker is 2%+2% EPF and no EIS on the server, but full Malaysian rates on screen. Latent only because
+  // all 19 staff are citizens today. tests/engine_parity_test.ts now derives the required list from
+  // hrCompute's own source, so the next field added to the engine fails the build instead of payroll.
   var synth={ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, epf_eligible:e.epf_eligible, socso_eligible:e.socso_eligible, eis_eligible:e.eis_eligible, resident:e.resident,
     date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children,
+    citizen_status:e.citizen_status,
     join_date:e.join_date, resign_date:e.resign_date };   // v155: needed for MTD service-month annualisation
   var adj=[];
   if(Number(g.bonus)) adj.push({kind:'bonus',amount:Number(g.bonus),epf_subject:true});

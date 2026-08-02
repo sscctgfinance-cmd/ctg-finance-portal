@@ -17,10 +17,11 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import {
-  BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, inlineScript, loadEngine,
+  BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, fnSource, inlineScript, loadEngine,
 } from "../tools/extract.ts";
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
+const feSrc = inlineScript(html);
 const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
 
 const fe = await loadEngine(inlineScript(html), FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);
@@ -242,6 +243,25 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(some.pcb < none.pcb, true, "a declared relief must reduce PCB");
   assertEquals(huge.pcb, 0, "relief beyond the chargeable income floors PCB at zero, never negative");
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
+});
+
+Deno.test("the grid's synthetic employee carries EVERY field hrCompute reads (v182)", () => {
+  // In production the frontend does NOT hand hrCompute the employee row — hrGridRowCompute builds a
+  // hand-written WHITELIST of fields. The backend recompute uses the real row. So any field the engine
+  // reads but the whitelist forgets makes the engines disagree, and hr_payroll_finalise 409s the whole
+  // company's payroll with an error blaming a stale cache.
+  //
+  // citizen_status was missing exactly this way: a foreign worker is 2%+2% EPF and no EIS on the server,
+  // but full Malaysian rates on screen. It was invisible only because every current employee is a citizen.
+  //
+  // Derive the requirement from the engine's own source rather than listing fields here, so a field added
+  // to hrCompute later fails this test instead of failing payroll.
+  const engine = fnSource(feSrc, "hrCompute");
+  const synth = fnSource(feSrc, "hrGridRowCompute");
+  const reads = [...new Set([...engine.matchAll(/\bemp\.([a-zA-Z_][\w]*)/g)].map((m) => m[1]))].sort();
+  assertEquals(reads.length > 8, true, "sanity: hrCompute should read many employee fields, got " + reads.length);
+  const missing = reads.filter((f) => !new RegExp("\\b" + f + "\\s*:").test(synth));
+  assertEquals(missing, [], "hrGridRowCompute's synthetic employee drops field(s) hrCompute reads");
 });
 
 Deno.test("rule — bonus is EPF wages but NOT SOCSO/EIS wages (v180)", () => {
