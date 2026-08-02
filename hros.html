@@ -1546,6 +1546,15 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var base=Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0);
   var gross=hrRound2(base+addEarn-unpaid);
   var statWage=Math.max(0, base+addEarnStat-unpaid);   // unpaid leave lowers the statutory wage too
+  var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
+  // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
+  // from the employee and over-contributed for the company. The Employees' Social Security Act 1969
+  // definition of wages excludes bonus, and EIS (Act 800) uses the same definition. EPF is the opposite:
+  // bonus IS EPF wages, so EPF keeps using statWage.
+  // Cross-checked against payroll.my on 3,500 + 369 bonus: it charges SOCSO/EIS on 3,500 (EIS 6.90) while
+  // charging EPF on 3,869 (EPF ee 427.00) — EPF already agreed to the sen; SOCSO/EIS did not.
+  // Must mirror computePayrollMY exactly or hr_payroll_finalise rejects with 409 recompute_mismatch.
+  var statWageExBonus=Math.max(0, statWage - bonusStat);
   var age=hrAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
   // ---- EPF (KWSP) ----
   // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
@@ -1564,18 +1573,17 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
   var socsoOn=emp.socso_eligible!==false;
   var scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table
+  var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWageExBonus):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table / v180: ex-bonus
   // ---- EIS (SIP) — 18 to 60 only ----
   // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
   // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
   var eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
-  var ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table
+  var ip=eisOn?myStatLookup(MY_EIS, statWageExBonus):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table / v180: ex-bonus
   // ---- PCB / MTD (annualised chargeable-income estimate) ----
   // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
   // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).
   // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
-  var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var statWageNormal=Math.max(0, statWage - bonusStat);
+  var statWageNormal=statWageExBonus;   // same quantity — one definition only
   // v155/v156: LHDN MTD — annualise over ACTUAL service months, reconcile against income & PCB already
   // paid earlier this year (ytd), LHDN rounding (truncate 2dp → up to 5 sen), MTD < RM10 = nil.
   var N=myServiceMonths(emp, period);

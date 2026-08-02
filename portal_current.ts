@@ -1128,6 +1128,14 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
              : ((bSet!=null?bSet:Number(emp.basic_salary||0)) + (aSet!=null?aSet:Number(emp.fixed_allowance||0)));
   const gross=payRound2(base+addEarn-unpaid);
   const statWage=Math.max(0, base+addEarnStat-unpaid);
+  const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
+  // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
+  // from the employee and over-contributed for the company. The Employees' Social Security Act 1969
+  // definition of wages excludes bonus, and EIS (Act 800) uses the same definition. EPF is the opposite:
+  // bonus IS EPF wages, so EPF keeps using statWage.
+  // Cross-checked against payroll.my on 3,500 + 369 bonus: it charges SOCSO/EIS on 3,500 (EIS 6.90) while
+  // charging EPF on 3,869 (EPF ee 427.00) — EPF already agreed to the sen; SOCSO/EIS did not.
+  const statWageExBonus=Math.max(0, statWage - bonusStat);
   const age=payAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
   // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
   // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
@@ -1146,13 +1154,13 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   // (the old midpoint×rate formula was 5 sen off on SOCSO employer and wrong on EIS above RM2,000).
   const socsoOn=emp.socso_eligible!==false;
   const scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  const sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; const socsoEe=sp.ee, socsoEr=sp.er;
+  const sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWageExBonus):{ee:0,er:0}; const socsoEe=sp.ee, socsoEr=sp.er;
   // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
   // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
   const eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
-  const ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; const eisEe=ip.ee, eisEr=ip.er;
-  const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
-  const statWageNormal=Math.max(0, statWage - bonusStat);
+  const ip=eisOn?myStatLookup(MY_EIS, statWageExBonus):{ee:0,er:0}; const eisEe=ip.ee, eisEr=ip.er;
+  const statWageNormal=statWageExBonus;   // same quantity — one definition only
+
   // v155/v156: PCB per the LHDN MTD net formula. Annualise over the employee's ACTUAL service months
   // in the tax year (mid-year joiner taxed on months worked, not flat ×12), reconcile against income &
   // PCB ALREADY paid earlier this year (ytd = go-live opening balances + prior finalised HR payslips):

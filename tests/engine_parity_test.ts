@@ -244,6 +244,46 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
 });
 
+Deno.test("rule — bonus is EPF wages but NOT SOCSO/EIS wages (v180)", () => {
+  // Both engines charged SOCSO and EIS on a wage that included the bonus, so a bonus month over-deducted
+  // from the employee and over-contributed for the company — and the PERKESO filing would not reconcile.
+  // The Employees' Social Security Act 1969 definition of wages excludes bonus; EIS (Act 800) adopts the
+  // same definition. EPF is the opposite: bonus IS EPF wages.
+  //
+  // Anchor is a real side-by-side against payroll.my: RM3,500 salary + RM369 bonus. It charges SOCSO/EIS
+  // on 3,500 and EPF on 3,869 — EPF already agreed to the sen, SOCSO/EIS did not.
+  const emp = baseEmp({ basic_salary: 3500 });
+  const bonus = [{ kind: "bonus", amount: 369 }];
+  compare("3500 + 369 bonus", { emp, earnings: bonus });
+
+  const withB = computePayrollMY(emp, CFG, [{ kind: "bonus", amount: 369, epf_subject: true }], undefined, PERIOD);
+  assertEquals(withB.socsoEe, 17.25, "SOCSO employee must be the RM3,400.01-3,500 band, not the bonus-inflated one");
+  assertEquals(withB.socsoEr, 60.35, "SOCSO employer likewise");
+  assertEquals(withB.eisEe, 6.90, "EIS on RM3,500 — payroll.my agrees; the bug gave 7.70");
+  assertEquals(withB.eisEr, 6.90);
+  assertEquals(withB.epfEe, 427.00, "EPF DOES include the bonus: Third Schedule band for RM3,869");
+
+  // And the structural claim, independent of the anchor: a bonus moves EPF and never moves SOCSO/EIS.
+  const noB = computePayrollMY(emp, CFG, [], undefined, PERIOD);
+  assertEquals(withB.socsoEe, noB.socsoEe, "a bonus must not change SOCSO");
+  assertEquals(withB.socsoEr, noB.socsoEr);
+  assertEquals(withB.eisEe, noB.eisEe, "a bonus must not change EIS");
+  assertEquals(withB.eisEr, noB.eisEr);
+  assertEquals(withB.epfEe > noB.epfEe, true, "a bonus MUST raise EPF");
+
+  // A bonus big enough to cross the ceiling must not sneak the wage over it either.
+  const huge = computePayrollMY(baseEmp({ basic_salary: 4000 }), CFG,
+    [{ kind: "bonus", amount: 50000, epf_subject: true }], undefined, PERIOD);
+  const plain = computePayrollMY(baseEmp({ basic_salary: 4000 }), CFG, [], undefined, PERIOD);
+  assertEquals(huge.socsoEr, plain.socsoEr, "a RM50k bonus must not push SOCSO to the ceiling band");
+  assertEquals(huge.eisEe, plain.eisEe);
+
+  // An allowance is NOT a bonus — it stays in the SOCSO/EIS wage. Narrowing this fix past bonus would
+  // under-contribute, which is the expensive direction (back-payment plus penalties).
+  const allow = computePayrollMY(emp, CFG, [{ kind: "allowance", amount: 369, epf_subject: true }], undefined, PERIOD);
+  assertEquals(allow.socsoEe > noB.socsoEe, true, "an allowance still counts as SOCSO wages");
+});
+
 Deno.test("parity — no engine produces a negative or non-finite figure", () => {
   const a = hrCompute(baseEmp({ basic_salary: 1200 }), CFG, [{ kind: "deduction", amount: 99999 }], PERIOD);
   for (const k of MONEY) {
