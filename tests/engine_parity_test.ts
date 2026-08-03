@@ -245,6 +245,40 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
 });
 
+Deno.test("parity + rule — employer EPF rate override (v183)", () => {
+  // payroll.my exposes "Employer EPF Rate" as a plain dropdown; HR OS could only DERIVE it, so an
+  // above-statutory contribution (directors, senior staff) could not be paid at all.
+  for (const er of [null, 0, 0.04, 0.12, 0.13, 0.15, 0.19]) {
+    for (const basic of [3000, 5000, 5000.01, 8000]) {
+      compare(`epf_er_rate ${er} @ ${basic}`, { emp: baseEmp({ basic_salary: basic, epf_er_rate: er }) });
+    }
+  }
+
+  const P = { month: 7, year: 2026 };
+  const at = (over: Record<string, unknown>) => computePayrollMY(baseEmp(over), CFG, [], undefined, P);
+
+  // The override must actually bite, and must NOT touch the employee side.
+  const dflt = at({ basic_salary: 4000 });                      // statutory: 13% at or below RM5,000
+  const high = at({ basic_salary: 4000, epf_er_rate: 0.19 });
+  assertEquals(dflt.epfEr, 520.00, "statutory employer 13% on RM4,000");
+  assertEquals(high.epfEr, 760.00, "19% override applies");
+  assertEquals(high.epfEe, dflt.epfEe, "the employer override must not move the employee's EPF");
+
+  // It outranks the derived threshold, the 60+ rate and the non-citizen rate — same precedence as the
+  // employee override, otherwise "I set 15%" would silently not apply to exactly the staff it is for.
+  assertEquals(at({ basic_salary: 8000, epf_er_rate: 0.13 }).epfEr, 1040.00, "beats the >RM5,000 12% rate");
+  assertEquals(at({ basic_salary: 4000, date_of_birth: "1960-01-01", epf_er_rate: 0.13 }).epfEr, 520.00, "beats the 60+ 4% rate");
+  assertEquals(at({ basic_salary: 4000, citizen_status: "non_citizen", epf_er_rate: 0.13 }).epfEr, 520.00, "beats the non-citizen 2% rate");
+
+  // 0 must mean zero, not "fall back to statutory" — the classic falsy-override bug.
+  assertEquals(at({ basic_salary: 4000, epf_er_rate: 0 }).epfEr, 0, "an explicit 0% must contribute nothing");
+  assertEquals(at({ basic_salary: 4000, epf_er_rate: 0 }).epfEe, dflt.epfEe, "and must not disturb the employee side");
+
+  // Ineligible still wins: no EPF means no EPF, whatever rate is set.
+  assertEquals(at({ basic_salary: 4000, epf_eligible: false, epf_er_rate: 0.19 }).epfEr, 0, "EPF-ineligible stays zero");
+  assertEquals(at({ basic_salary: 4000, date_of_birth: "1945-01-01", epf_er_rate: 0.19 }).epfEr, 0, "EPF ceases at 75");
+});
+
 Deno.test("the grid's synthetic employee carries EVERY field hrCompute reads (v182)", () => {
   // In production the frontend does NOT hand hrCompute the employee row — hrGridRowCompute builds a
   // hand-written WHITELIST of fields. The backend recompute uses the real row. So any field the engine

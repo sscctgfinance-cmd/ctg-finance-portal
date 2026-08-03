@@ -1578,7 +1578,9 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var ncEr=cfg.epf.nonCitizenEr!=null?cfg.epf.nonCitizenEr:0.02;
   var eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
            : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  var erRate=nonCitizen ? ncEr
+  // v183: employer rate override (above-statutory contribution). Must mirror computePayrollMY exactly.
+  var erRate=(emp.epf_er_rate!=null&&emp.epf_er_rate!=='') ? Number(emp.epf_er_rate)
+           : nonCitizen ? ncEr
            : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
   var ep=epfOn?hrEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; var epfEe=ep.ee, epfEr=ep.er;
   // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
@@ -3297,6 +3299,9 @@ function hrEmpForm(){
   var sel=function(k,opts,val){return '<select id="hr_'+k+'" style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+((String(val==null?'':val)===String(o[0]))?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';};
   var etOpts=[['Full-time','Full-time'],['Part-time','Part-time'],['Contract','Contract'],['Intern','Intern'],['Probation','Probation']];
   var epfRateOpts=[['','Statutory default (11% / 0% if 60+)'],['0.11','11%'],['0.09','9%'],['0.08','8%'],['0.07','7%'],['0.055','5.5%'],['0','0% (exempt)']];
+  // v183: employers may contribute ABOVE the statutory minimum (directors / senior staff). Blank keeps the
+  // derived rate: 13% at or below the RM5,000 threshold, 12% above, 4% at 60+, 2% for a non-PR foreigner.
+  var epfErRateOpts=[['','Statutory default (13% / 12% / 4% / 2%)'],['0.13','13%'],['0.12','12%'],['0.14','14%'],['0.15','15%'],['0.16','16%'],['0.17','17%'],['0.18','18%'],['0.19','19%'],['0.20','20%'],['0.04','4%'],['0','0% (exempt)']];
   var msOpts=[['single','Single'],['married','Married'],['divorced','Divorced'],['widowed','Widowed']];
   var scatOpts=[['','Auto (Cat 1, or Cat 2 if 60+)'],['1','Category 1 (EE + ER)'],['2','Category 2 (ER only)']];
   var dob=x.date_of_birth?String(x.date_of_birth).slice(0,10):'';
@@ -3317,7 +3322,7 @@ function hrEmpForm(){
     '</div>'+
     '<div class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:2px 0 8px">Statutory &amp; tax</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
-      g('EPF employee rate',sel('epfEeRate',epfRateOpts,(x.epf_ee_rate==null?'':x.epf_ee_rate)))+g('SOCSO category',sel('socsoCategory',scatOpts,(x.socso_category==null?'':x.socso_category)))+g('&nbsp;','<div></div>')+
+      g('EPF employee rate',sel('epfEeRate',epfRateOpts,(x.epf_ee_rate==null?'':x.epf_ee_rate)))+g('EPF employer rate <span style="opacity:.7">(above-statutory)</span>',sel('epfErRate',epfErRateOpts,(x.epf_er_rate==null?'':x.epf_er_rate)))+g('SOCSO category',sel('socsoCategory',scatOpts,(x.socso_category==null?'':x.socso_category)))+
       g('Citizenship (EPF &amp; EIS)',sel('citizenStatus',[['citizen','Malaysian citizen'],['pr','Permanent Resident'],['non_citizen','Non-citizen / foreign worker']],x.citizen_status||'citizen'))+g('Marital status (for PCB)',sel('maritalStatus',msOpts,x.marital_status||'single'))+g('Number of children',inp('numChildren','0',x.num_children==null?0:x.num_children,'type="number" step="1" min="0"'))+g('&nbsp;','<div></div>')+
     '</div>'+
     '<div class="muted" style="font-size:11px;margin:-6px 0 10px;line-height:1.6"><b>Citizenship</b> sets the EPF rate and EIS cover: a non-citizen contributes <b>2% + 2%</b> (mandatory since 1 Oct 2025) and is <b>outside EIS</b>; a Permanent Resident is treated as Malaysian. SOCSO is the same either way. This is separate from <b>Resident</b> below, which is <i>tax</i> residency for PCB.</div>'+
@@ -3362,7 +3367,7 @@ async function hrSaveEmp(){
   var acct=String(v('bankAccount')||'').replace(/[^0-9]/g,'').slice(0,20); if(!acct){ toast('Bank account number is required (digits only)',true); return; }
   var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'), employmentType:v('empType')||'Full-time',
     basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
-    dob:v('dob')||null, joinDate:v('joinDate')||null, epfEeRate:v('epfEeRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
+    dob:v('dob')||null, joinDate:v('joinDate')||null, epfEeRate:v('epfEeRate'), epfErRate:v('epfErRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
     ytdYear:v('ytdYear'), ytdMonths:v('ytdMonths'), ytdGross:v('ytdGross'), ytdEpf:v('ytdEpf'), ytdPcb:v('ytdPcb'),
     payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
     status:v('status')||'active', resignDate:v('resignDate')||null,
@@ -4186,7 +4191,7 @@ function hrGridRowCompute(e,g){
   // all 19 staff are citizens today. tests/engine_parity_test.ts now derives the required list from
   // hrCompute's own source, so the next field added to the engine fails the build instead of payroll.
   var synth={ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, epf_eligible:e.epf_eligible, socso_eligible:e.socso_eligible, eis_eligible:e.eis_eligible, resident:e.resident,
-    date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children,
+    date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, epf_er_rate:e.epf_er_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children,
     citizen_status:e.citizen_status,
     join_date:e.join_date, resign_date:e.resign_date };   // v155: needed for MTD service-month annualisation
   var adj=[];
@@ -5137,20 +5142,26 @@ async function hrPostXero(runId){
 }
 
 // ===== 🧮 Malaysia Payroll Calculator — configurable per-item statutory flags + override + audit =====
-var HR_CALC={ empId:'', inp:{basic:'',allowance:'',claim:'',bonus:'',deduction:''},
-  flags:{ allowance:{taxable:true,epf:true,socso:true,eis:true,pcb:true}, bonus:{taxable:true,epf:true,socso:true,eis:true,pcb:true}, claim:{taxable:false,epf:false,socso:false,eis:false,pcb:false} },
-  settings:{ epfEeRate:'', socsoCat:'', resident:true, married:false, spouseWorking:false, children:0, senior:false, epfOn:true, socsoOn:true, eisOn:true },
+var HR_CALC={ empId:'', inp:{basic:'',allowance:'',claim:'',bonus:'',deduction:'',zakat:'',relief:''},
+  // v183: bonus defaults to socso:false / eis:false to match the payroll engine — the Employees' Social
+  // Security Act 1969 wage definition excludes bonus, and EIS (Act 800) shares it. Leaving them on made
+  // this tab quote SOCSO/EIS the payslip then contradicted, which is the exact failure v159 fixed for the
+  // contribution tables. EPF stays on: bonus IS EPF wages.
+  flags:{ allowance:{taxable:true,epf:true,socso:true,eis:true,pcb:true}, bonus:{taxable:true,epf:true,socso:false,eis:false,pcb:true}, claim:{taxable:false,epf:false,socso:false,eis:false,pcb:false} },
+  settings:{ epfEeRate:'', epfErRate:'', socsoCat:'', resident:true, married:false, spouseWorking:false, children:0, senior:false, epfOn:true, socsoOn:true, eisOn:true },
   ov:{ on:false, epfEe:'',epfEr:'',socsoEe:'',socsoEr:'',eisEe:'',eisEr:'',pcb:'', reason:'' }, result:null };
 function hrCalcNum(v){ v=Number(v); return isNaN(v)?0:v; }
 function hrCalcCompute(){
   var C=HR_CALC, inp=C.inp, fl=C.flags, s=C.settings;
   var cfg=(HR.data&&HR.data.rates)||(HR.pay&&HR.pay.data&&HR.pay.data.rates)||null; if(!cfg) return null;
   var basic=hrCalcNum(inp.basic), allow=hrCalcNum(inp.allowance), claim=hrCalcNum(inp.claim), bonus=hrCalcNum(inp.bonus), ded=hrCalcNum(inp.deduction);
+  var zakat=hrCalcNum(inp.zakat), relief=hrCalcNum(inp.relief);
   var items=[ {a:basic,f:{taxable:1,epf:1,socso:1,eis:1,pcb:1}}, {a:allow,f:fl.allowance}, {a:bonus,f:fl.bonus}, {a:claim,f:fl.claim} ];
   var baseFor=function(k){ var t=0; items.forEach(function(it){ if(it.f&&it.f[k]) t+=it.a; }); return t; };
   var epfWage=baseFor('epf'), socsoWage=baseFor('socso'), eisWage=baseFor('eis'), taxWage=baseFor('pcb'), grossPay=basic+allow+bonus, senior=!!s.senior;
   var eeRate=(s.epfEeRate!==''&&s.epfEeRate!=null)?Number(s.epfEeRate):(senior?(cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0):cfg.epf.eeRate);
-  var erRate=senior?(cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04):(epfWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
+  var erRate=(s.epfErRate!==''&&s.epfErRate!=null)?Number(s.epfErRate)
+           :senior?(cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04):(epfWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh);
   var ep=(s.epfOn!==false)?hrEpfParts(epfWage,eeRate,erRate):{ee:0,er:0};
   var scat=(s.socsoCat!==''&&s.socsoCat!=null)?Number(s.socsoCat):(senior?2:1);
   // v159: use the SAME statutory source as payroll. This tab still ran the pre-v155 midpoint x rate
@@ -5168,18 +5179,38 @@ function hrCalcCompute(){
   else{
     var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
     var cat2=!!s.married && s.spouseWorking===false, kids=hrCalcNum(s.children);
-    var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf);
-    var chargeable=Math.max(0, taxWage*12-reliefs), tax=hrProgTax(chargeable), rebate=chargeable<=35000?(400+(cat2?400:0)):0;
-    var pcbC=myPcbRoundUp5(Math.max(0,(tax-rebate)/12));
+    // v183: bonus is ADDITIONAL remuneration. This tab annualised the whole taxable wage x12, so a bonus
+    // was taxed as if it recurred every month — the exact over-deduction the payroll engine stopped doing
+    // at v155, leaving this tab quoting a PCB the payslip contradicts. Split it the same way the engine
+    // does: annualise the NORMAL wage, then add tax(normal+bonus) − tax(normal) once.
+    var bonusTax=(fl.bonus&&fl.bonus.pcb)?bonus:0;
+    var normalWage=Math.max(0, taxWage - bonusTax);
+    // v183: SOCSO/EIS employee contributions are an allowable relief (RM350/yr cap), and TP1-style
+    // declared reliefs ("Allowable Deduction" on payroll.my) reduce chargeable income. Both were missing
+    // here but present in the payroll engine.
+    var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
+    var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf)+Math.min((sp.ee+ip.ee)*12,rSocsoEis)+Math.max(0,relief);
+    var chargeable=Math.max(0, normalWage*12-reliefs), tax=hrProgTax(chargeable), rebate=chargeable<=35000?(400+(cat2?400:0)):0;
+    var addl=0;
+    if(bonusTax>0){
+      var chargeableB=Math.max(0, normalWage*12+bonusTax-reliefs);
+      var taxB=hrProgTax(chargeableB), rebateB=chargeableB<=35000?(400+(cat2?400:0)):0;
+      addl=Math.max(0,(taxB-rebateB)-(tax-rebate));
+    }
+    var pcbC=myPcbRoundUp5(Math.max(0,(tax-rebate)/12)+addl);
     pcb = pcbC < 10 ? 0 : pcbC;   // LHDN: monthly MTD of less than RM10 is nil
   }
+  // v183: zakat reduces MTD ringgit-for-ringgit (LHDN: net MTD = MTD − zakat for the month), matching the
+  // payroll engine. It still leaves net pay as a deduction below; the displaced PCB is what squares it.
+  if(zakat>0) pcb=Math.max(0, hrRound2(pcb-zakat));
   var res={ epfEe:ep.ee, epfEr:ep.er, socsoEe:sp.ee, socsoEr:sp.er, eisEe:ip.ee, eisEr:ip.er, pcb:pcb, gross:hrRound2(grossPay),
     epfWage:hrRound2(epfWage), socsoWage:hrRound2(socsoWage), eisWage:hrRound2(eisWage), taxWage:hrRound2(taxWage), _eeRate:eeRate, _erRate:erRate, _scat:scat };
   var ov=C.ov; res.overridden=false;
   if(ov.on){ ['epfEe','epfEr','socsoEe','socsoEr','eisEe','eisEr','pcb'].forEach(function(k){ var v=ov[k]; if(v!==''&&v!=null&&!isNaN(Number(v))){ res[k]=Number(v); res.overridden=true; } }); }
-  res.net=hrRound2(res.gross-res.epfEe-res.socsoEe-res.eisEe-res.pcb-ded+claim);
+  // Zakat still leaves net pay — it displaces PCB above, it does not replace it.
+  res.net=hrRound2(res.gross-res.epfEe-res.socsoEe-res.eisEe-res.pcb-ded-zakat+claim);
   res.employerCost=hrRound2(res.gross+res.epfEr+res.socsoEr+res.eisEr);
-  res.deduction=ded; res.claim=claim; return res;
+  res.deduction=ded; res.claim=claim; res.zakat=zakat; res.relief=relief; return res;
 }
 function hrCalcOutHtml(res){
   if(!res) return '<div class="muted" style="padding:16px;font-size:12.5px">Enter a Basic Salary to calculate. (If nothing shows, open 💰 Payroll once so the statutory rates load.)</div>';
@@ -5190,11 +5221,12 @@ function hrCalcOutHtml(res){
     ln('EIS (SIP)',res.eisEe,{neg:true,col:'var(--coral-soft)'})+
     ln('PCB / MTD (estimate)',res.pcb,{neg:true,col:'var(--coral-soft)'})+
     (res.deduction?ln('Other deduction',res.deduction,{neg:true,col:'var(--coral-soft)'}):'')+
+    (res.zakat?ln('Zakat (displaces PCB)',res.zakat,{neg:true,col:'var(--coral-soft)'}):'')+
     (res.claim?ln('Claim / reimbursement',res.claim,{col:'var(--green-soft)'}):'')+
     ln('Gross salary',res.gross,{b:true})+
     ln('NET PAY',res.net,{b:true,col:'var(--green-soft)'})+
     '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--sky-soft);font-weight:700;margin:14px 0 2px">Employer contributions</div>'+
-    ln('EPF (KWSP)',res.epfEr)+ln('SOCSO (PERKESO)',res.socsoEr)+ln('EIS (SIP)',res.eisEr)+ln('Employer total cost',res.employerCost,{b:true})+
+    ln('EPF (KWSP) '+(Math.round(res._erRate*1000)/10)+'%',res.epfEr)+ln('SOCSO (PERKESO)',res.socsoEr)+ln('EIS (SIP)',res.eisEr)+ln('Employer total cost',res.employerCost,{b:true})+
     (res.overridden?'<div style="margin-top:8px;font-size:11px;color:var(--amber)">⚠ Some values were manually overridden.</div>':'')+
     '<div class="muted" style="font-size:10px;margin-top:10px;line-height:1.5">Statutory bases → EPF '+M(res.epfWage)+' · SOCSO '+M(res.socsoWage)+' · EIS '+M(res.eisWage)+' · Taxable(PCB) '+M(res.taxWage)+'. PCB is an LHDN MTD estimate — verify before filing.</div>';
 }
@@ -5208,7 +5240,7 @@ function hrCalcPickEmp(id){
   HR_CALC.empId=id; var e=id?((HR.data.employees||[]).find(function(x){return x.id===id;})):null;
   if(e){ HR_CALC.inp.basic=Number(e.basic_salary)||''; HR_CALC.inp.allowance=Number(e.fixed_allowance)||'';
     var age=hrAge(e.date_of_birth);
-    HR_CALC.settings={ epfEeRate:(e.epf_ee_rate!=null?String(e.epf_ee_rate):''), socsoCat:(e.socso_category!=null?String(e.socso_category):''),
+    HR_CALC.settings={ epfEeRate:(e.epf_ee_rate!=null?String(e.epf_ee_rate):''), epfErRate:(e.epf_er_rate!=null?String(e.epf_er_rate):''), socsoCat:(e.socso_category!=null?String(e.socso_category):''),
       resident:e.resident!==false, married:String(e.marital_status||'')==='married', spouseWorking:!!e.spouse_working, children:Number(e.num_children)||0,
       senior:(age!=null&&age>=60), epfOn:e.epf_eligible!==false, socsoOn:e.socso_eligible!==false, eisOn:e.eis_eligible!==false }; }
   hrRender();
@@ -5222,12 +5254,12 @@ function hrCalculator(){
   var flagTbl='<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;font-size:10.5px" class="muted">ITEM</th><th class="muted" style="font-size:10.5px">Taxable</th><th class="muted" style="font-size:10.5px">EPF</th><th class="muted" style="font-size:10.5px">SOCSO</th><th class="muted" style="font-size:10.5px">EIS</th><th class="muted" style="font-size:10.5px">PCB</th></tr></thead><tbody>'+fRow('allowance','Allowance')+fRow('bonus','Bonus / Commission')+fRow('claim','Claim / reimbursement')+'</tbody></table><div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5">Basic salary is always fully statutory. Deduction reduces net only. Toggle a box to include/exclude that item from a statutory base — e.g. a travel claim can be excluded from EPF/SOCSO/EIS/PCB.</div>';
   var ck=function(k,lbl){ return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0"><input type="checkbox" '+(C.settings[k]?'checked':'')+' onchange="hrCS(\''+k+'\',this.checked)" style="accent-color:var(--coral)">'+lbl+'</label>'; };
   var sel=function(k,opts){ return '<select onchange="hrCS(\''+k+'\',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(C.settings[k])===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'; };
-  var settings='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:8px"><span class="muted">EPF EE</span>'+sel('epfEeRate',[['','Default'],['0.11','11%'],['0.09','9%'],['0.08','8%'],['0.07','7%'],['0.055','5.5%'],['0','0%']])+'<span class="muted">SOCSO cat</span>'+sel('socsoCat',[['','Auto'],['1','Cat 1'],['2','Cat 2']])+'<span class="muted">Children</span><input type="number" min="0" value="'+(C.settings.children||0)+'" oninput="hrCS(\'children\',this.value)" style="width:54px;padding:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px"></div><div>'+ck('resident','Tax resident')+ck('married','Married')+ck('spouseWorking','Spouse working')+ck('senior','Age 60+')+ck('epfOn','EPF')+ck('socsoOn','SOCSO')+ck('eisOn','EIS')+'</div>';
+  var settings='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:8px"><span class="muted">EPF EE</span>'+sel('epfEeRate',[['','Default'],['0.11','11%'],['0.09','9%'],['0.08','8%'],['0.07','7%'],['0.055','5.5%'],['0','0%']])+'<span class="muted">EPF ER</span>'+sel('epfErRate',[['','Default'],['0.13','13%'],['0.12','12%'],['0.14','14%'],['0.15','15%'],['0.16','16%'],['0.17','17%'],['0.18','18%'],['0.19','19%'],['0.20','20%'],['0.04','4%'],['0','0%']])+'<span class="muted">SOCSO cat</span>'+sel('socsoCat',[['','Auto'],['1','Cat 1'],['2','Cat 2']])+'<span class="muted">Children</span><input type="number" min="0" value="'+(C.settings.children||0)+'" oninput="hrCS(\'children\',this.value)" style="width:54px;padding:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px"></div><div>'+ck('resident','Tax resident')+ck('married','Married')+ck('spouseWorking','Spouse working')+ck('senior','Age 60+')+ck('epfOn','EPF')+ck('socsoOn','SOCSO')+ck('eisOn','EIS')+'</div>';
   var ov=C.ov;
   var ovIn=function(k,lbl){ return '<div><label class="muted" style="font-size:10px">'+lbl+'</label><input type="number" step="0.01" value="'+(ov[k]===''?'':ov[k])+'" oninput="hrCO(\''+k+'\',this.value)" placeholder="auto" style="width:100%;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right"></div>'; };
   var ovPanel = ov.on ? ('<div class="panel" style="margin-top:12px;border-color:var(--amber)"><div class="panel-hd"><h3>✏️ Manual override</h3><button class="btn sm" onclick="hrCalcOvToggle()">✕ Close</button></div><div class="muted" style="font-size:11px;padding:0 2px 8px">Blank = keep the computed value. A <b>reason is required</b> to save an overridden calculation (stored in the audit log).</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'+ovIn('epfEe','EPF EE')+ovIn('epfEr','EPF ER')+ovIn('socsoEe','SOCSO EE')+ovIn('socsoEr','SOCSO ER')+ovIn('eisEe','EIS EE')+ovIn('eisEr','EIS ER')+ovIn('pcb','PCB')+'</div><div style="margin-top:10px"><label class="muted" style="font-size:11px">Reason for override *</label><input value="'+esc(ov.reason||'')+'" oninput="hrCO(\'reason\',this.value)" placeholder="e.g. LHDN CP38 directive, arrears adjustment…" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></div></div>') : '';
   return '<div style="display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:16px;align-items:start">'+
-    '<div><div class="panel"><div class="panel-hd"><h3>🧮 Payroll inputs</h3></div>'+g('Prefill from employee (optional)',empSel)+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+g('Basic salary (RM) *',money('basic'))+g('Allowance (RM)',money('allowance'))+g('Bonus / Commission (RM)',money('bonus'))+g('Claim / reimbursement (RM)',money('claim'),'Excluded from statutory by default')+g('Deduction (RM)',money('deduction'),'Reduces net only')+'</div></div>'+
+    '<div><div class="panel"><div class="panel-hd"><h3>🧮 Payroll inputs</h3></div>'+g('Prefill from employee (optional)',empSel)+'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+g('Basic salary (RM) *',money('basic'))+g('Allowance (RM)',money('allowance'))+g('Bonus / Commission (RM)',money('bonus'))+g('Claim / reimbursement (RM)',money('claim'),'Excluded from statutory by default')+g('Deduction (RM)',money('deduction'),'Reduces net only')+g('Muslim zakat (RM)',money('zakat'),'Reduces PCB ringgit-for-ringgit')+g('Allowable deduction / TP1 (RM)',money('relief'),'Annual declared relief')+'</div></div>'+
       '<div class="panel"><div class="panel-hd"><h3>⚙️ Statutory flags per item</h3></div>'+flagTbl+'</div>'+
       '<div class="panel"><div class="panel-hd"><h3>🧾 Statutory settings</h3></div>'+settings+'</div></div>'+
     '<div><div class="panel"><div class="panel-hd"><h3>💵 Result</h3><span style="display:flex;gap:6px"><button class="btn xs" onclick="hrCalcOvToggle()">✏️ Override</button><button class="btn xs" onclick="hrCalcPayslip()">📄 Payslip</button><button class="btn xs p" onclick="hrCalcSave()">💾 Save</button></span></div><div id="hrcalc_out">'+hrCalcOutHtml(res)+'</div></div>'+ovPanel+'<div style="margin-top:12px"><button class="btn sm" onclick="hrCalcHistory()">🕓 Calculation audit log</button><div id="hrcalc_hist" style="margin-top:10px"></div></div></div>'+

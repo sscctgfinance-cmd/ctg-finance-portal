@@ -1147,7 +1147,11 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   // A non-citizen pays the flat 2% (mandatory since 1 Oct 2025) regardless of the 60+ senior split.
   const eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
              : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  const erRate=nonCitizen ? ncEr
+  // v183: an employer may contribute ABOVE the statutory minimum (common for directors / senior staff),
+  // which HR OS could only derive. Same precedence as the employee override: an explicit rate wins over
+  // everything, including the non-citizen and 60+ schedules.
+  const erRate=(emp.epf_er_rate!=null&&emp.epf_er_rate!=='') ? Number(emp.epf_er_rate)
+             : nonCitizen ? ncEr
              : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
   const ep=epfOn?payEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; const epfEe=ep.ee, epfEr=ep.er;
   // v155: SOCSO & EIS are now EXACT lookups against the official PERKESO Second Schedule / EIS table
@@ -5409,6 +5413,7 @@ Deno.serve(async (req)=>{
         date_of_birth:f.dob||null,
         join_date:f.joinDate||null,
         epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
+        epf_er_rate:(f.epfErRate===""||f.epfErRate==null)?null:Number(f.epfErRate),
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
         pay_type:(["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"),
         hourly_rate:(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate),

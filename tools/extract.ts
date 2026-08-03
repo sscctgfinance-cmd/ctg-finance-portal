@@ -80,8 +80,13 @@ export async function loadEngine(
   fns: string[],
   tables: string[],
   exposed: string[],
+  // Extra source prepended to the module. Needed for functions that read app-level globals rather than
+  // taking them as arguments — hrCalcCompute reads HR_CALC and HR — so a test can stand those up without
+  // test-only hooks having to exist in the shipped app.
+  prelude?: string,
 ): Promise<Record<string, unknown>> {
   const parts = [
+    ...(prelude ? [prelude] : []),
     ...tables.map((t) => arrSource(src, t)),
     // No annotation stripping: the module is served as TypeScript, so the backend's `adj:any[]` is valid
     // as-is and the frontend's plain JS is valid TypeScript too. (Stripping by regex turned `tbl:any[]`
