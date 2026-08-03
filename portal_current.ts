@@ -1079,6 +1079,31 @@ const MY_SOCSO_CAT2:[number,number,number][]=[[30,0,0.30],[50,0,0.50],[70,0,0.80
 // EIS / SIP (employee = employer), RM6,000 ceiling.
 const MY_EIS:[number,number,number][]=[[30,0.05,0.05],[50,0.10,0.10],[70,0.10,0.10],[100,0.15,0.15],[140,0.25,0.25],[200,0.35,0.35],[300,0.50,0.50],[400,0.70,0.70],[500,0.90,0.90],[600,1.10,1.10],[700,1.30,1.30],[800,1.50,1.50],[900,1.70,1.70],[1000,1.90,1.90],[1100,2.10,2.10],[1200,2.30,2.30],[1300,2.50,2.50],[1400,2.70,2.70],[1500,2.90,2.90],[1600,3.10,3.10],[1700,3.30,3.30],[1800,3.50,3.50],[1900,3.70,3.70],[2000,3.90,3.90],[2100,4.10,4.10],[2200,4.30,4.30],[2300,4.50,4.50],[2400,4.70,4.70],[2500,4.90,4.90],[2600,5.10,5.10],[2700,5.30,5.30],[2800,5.50,5.50],[2900,5.70,5.70],[3000,5.90,5.90],[3100,6.10,6.10],[3200,6.30,6.30],[3300,6.50,6.50],[3400,6.70,6.70],[3500,6.90,6.90],[3600,7.10,7.10],[3700,7.30,7.30],[3800,7.50,7.50],[3900,7.70,7.70],[4000,7.90,7.90],[4100,8.10,8.10],[4200,8.30,8.30],[4300,8.50,8.50],[4400,8.70,8.70],[4500,8.90,8.90],[4600,9.10,9.10],[4700,9.30,9.30],[4800,9.50,9.50],[4900,9.70,9.70],[5000,9.90,9.90],[5100,10.10,10.10],[5200,10.30,10.30],[5300,10.50,10.50],[5400,10.70,10.70],[5500,10.90,10.90],[5600,11.10,11.10],[5700,11.30,11.30],[5800,11.50,11.50],[5900,11.70,11.70],[6000,11.90,11.90]];
 function myStatLookup(tbl:[number,number,number][],wage:number){ if(!(wage>0)) return {ee:0,er:0}; for(let i=0;i<tbl.length;i++){ if(wage<=tbl[i][0]) return {ee:tbl[i][1],er:tbl[i][2]}; } const L=tbl[tbl.length-1]; return {ee:L[1],er:L[2]}; }
+// ── PERKESO LINDUNG 24 Jam (SKBBK) — Act A1788, in force 1 June 2026 ────────────────────────────────
+// Employee-only, banded like the rest of Act 4, RM6,000 ceiling. Phase 1 (1 Jun 2026 – 31 May 2028) is
+// 0.75%; it rises to 1.00% and then 1.25% in later phases.
+//
+// DERIVED, not transcribed. PERKESO publishes this only as a scanned table, and the v155 disaster was
+// exactly a hand-entered contribution table that was wrong for weeks. The gazetted schedule columns HR OS
+// already holds are 0.5% (Cat 1 employee) and 1.25% (Cat 2 employer), and the published Phase-1 TOTAL
+// employee contribution is 1.25% = 0.5% invalidity + 0.75% SKBBK. So:
+//        SKBBK(phase 1) = Cat2_employer − Cat1_employee
+// This reproduces BOTH published anchors exactly — RM44.65 at the RM6,000 ceiling and RM22.85 in the
+// RM3,000.01–3,100 band — and is non-negative, a clean 5-sen multiple and monotonic across all 64 bands.
+// A naive "band midpoint × 0.75% rounded to 5 sen" disagrees on 32 of those 64 bands, so the derivation
+// is doing real work; do NOT "simplify" it to a percentage. See tests/statutory_test.ts.
+function myLindung24(wage:number){
+  const a=myStatLookup(MY_SOCSO_CAT2,wage).er, b=myStatLookup(MY_SOCSO_CAT1,wage).ee;
+  return Math.round((a-b)*100)/100;
+}
+// The scheme does not exist before June 2026 — deducting it from an earlier period would be inventing a
+// liability. Phase 1's rate is only correct to 31 May 2028; after that this must be revisited.
+function myLindungActive(period?:any){
+  const now=new Date();
+  const y=Number(period&&period.year)||now.getUTCFullYear();
+  const m=Number(period&&period.month)||(now.getUTCMonth()+1);
+  return (y>2026) || (y===2026 && m>=6);
+}
 // LHDN MTD rounding: truncate to 2 dp, then round UP to the next 5 sen (123.02→123.05, 123.06→123.10).
 function myPcbRoundUp5(n:number){ n=Math.floor((Number(n)||0)*100)/100; return Math.round(Math.ceil(n/0.05-1e-9)*0.05*100)/100; }
 // Months the employee is on payroll in the tax year — for MTD annualisation of a mid-year joiner/leaver.
@@ -1128,6 +1153,14 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
              : ((bSet!=null?bSet:Number(emp.basic_salary||0)) + (aSet!=null?aSet:Number(emp.fixed_allowance||0)));
   const gross=payRound2(base+addEarn-unpaid);
   const statWage=Math.max(0, base+addEarnStat-unpaid);
+  const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
+  // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
+  // from the employee and over-contributed for the company. The Employees' Social Security Act 1969
+  // definition of wages excludes bonus, and EIS (Act 800) uses the same definition. EPF is the opposite:
+  // bonus IS EPF wages, so EPF keeps using statWage.
+  // Cross-checked against payroll.my on 3,500 + 369 bonus: it charges SOCSO/EIS on 3,500 (EIS 6.90) while
+  // charging EPF on 3,869 (EPF ee 427.00) — EPF already agreed to the sen; SOCSO/EIS did not.
+  const statWageExBonus=Math.max(0, statWage - bonusStat);
   const age=payAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
   // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
   // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
@@ -1139,20 +1172,29 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   // A non-citizen pays the flat 2% (mandatory since 1 Oct 2025) regardless of the 60+ senior split.
   const eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
              : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  const erRate=nonCitizen ? ncEr
+  // v183: an employer may contribute ABOVE the statutory minimum (common for directors / senior staff),
+  // which HR OS could only derive. Same precedence as the employee override: an explicit rate wins over
+  // everything, including the non-citizen and 60+ schedules.
+  const erRate=(emp.epf_er_rate!=null&&emp.epf_er_rate!=='') ? Number(emp.epf_er_rate)
+             : nonCitizen ? ncEr
              : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
   const ep=epfOn?payEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; const epfEe=ep.ee, epfEr=ep.er;
   // v155: SOCSO & EIS are now EXACT lookups against the official PERKESO Second Schedule / EIS table
   // (the old midpoint×rate formula was 5 sen off on SOCSO employer and wrong on EIS above RM2,000).
   const socsoOn=emp.socso_eligible!==false;
   const scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  const sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWage):{ee:0,er:0}; const socsoEe=sp.ee, socsoEr=sp.er;
+  const sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWageExBonus):{ee:0,er:0}; const socsoEe=sp.ee, socsoEr=sp.er;
   // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
   // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
   const eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
-  const ip=eisOn?myStatLookup(MY_EIS, statWage):{ee:0,er:0}; const eisEe=ip.ee, eisEr=ip.er;
-  const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
-  const statWageNormal=Math.max(0, statWage - bonusStat);
+  const ip=eisOn?myStatLookup(MY_EIS, statWageExBonus):{ee:0,er:0}; const eisEe=ip.ee, eisEr=ip.er;
+  // v184: PERKESO LINDUNG 24 Jam / SKBBK (Act A1788, in force 1 June 2026) — 24-hour cover for accidents
+  // OUTSIDE work. 100% employee-borne, no employer share; same Act 4 wage definition as SOCSO, so bonus is
+  // excluded and the RM6,000 ceiling applies.
+  const lindungOn = myLindungActive(period) && (nonCitizen ? true : emp.lindung24!==false) && socsoOn;
+  const lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
+  const statWageNormal=statWageExBonus;   // same quantity — one definition only
+
   // v155/v156: PCB per the LHDN MTD net formula. Annualise over the employee's ACTUAL service months
   // in the tax year (mid-year joiner taxed on months worked, not flat ×12), reconcile against income &
   // PCB ALREADY paid earlier this year (ytd = go-live opening balances + prior finalised HR payslips):
@@ -1173,7 +1215,9 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
     // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year. Leaving
     // it out over-deducted PCB from every employee — small per month, but it is a rule LHDN's own
     // computerised-calculation spec applies and any commercial payroll system applies too.
-    const projSocsoEis=Number(ytd&&ytd.socsoEis||0) + (socsoEe+eisEe)*remain;
+    // v184: SKBBK is a contribution to PERKESO under Act 4, so it falls in the same MTD relief as SOCSO
+    // and EIS (s.46(1)(h), RM350/yr combined cap). In practice it usually just pins the relief at the cap.
+    const projSocsoEis=Number(ytd&&ytd.socsoEis||0) + (socsoEe+eisEe+lindung)*remain;
     const rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
     // v167: TP1 — reliefs the employee declared to the employer (lifestyle, medical, education,
     // insurance, SSPN, childcare…). LHDN obliges the employer to apply them to MTD; without this the
@@ -1201,9 +1245,10 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   const zakatMonth=adj.filter((a:any)=>a.kind==='deduction' && /^zakat/i.test(String(a.label||"")))
                       .reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   if(zakatMonth>0) pcb = Math.max(0, payRound2(pcb - zakatMonth));
-  const net=payRound2(gross-epfEe-socsoEe-eisEe-pcb-otherDed);
+  // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
+  const net=payRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   const employerCost=payRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, pcb, net, employerCost };
+  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, lindung, pcb, net, employerCost };
 }
 // v156: PCB-YTD per employee for the current period — go-live opening balances (emp.ytd_* when ytd_year
 // matches the payroll year) PLUS every finalised HR payslip earlier this tax year. Used IDENTICALLY by
@@ -5397,10 +5442,14 @@ Deno.serve(async (req)=>{
         epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
         resident:f.resident!==false,
         epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
+        // v184: LINDUNG 24 Jam (SKBBK). Default true — mandatory from 1 Jun 2026, voluntary for Malaysians
+        // only from 13 Jul 2026 and only on an explicit TIDAK MENYERTAI opt-out.
+        lindung24:f.lindung24!==false,
         marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
         date_of_birth:f.dob||null,
         join_date:f.joinDate||null,
         epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
+        epf_er_rate:(f.epfErRate===""||f.epfErRate==null)?null:Number(f.epfErRate),
         socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
         pay_type:(["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"),
         hourly_rate:(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate),
@@ -5942,7 +5991,7 @@ Deno.serve(async (req)=>{
       // verbatim, so validate every figure is a finite non-negative number and every employee belongs to this
       // company, before they become the official statutory record.
       if (!rows.length) return j({ ok:false, error:"No payroll rows to finalise." });
-      const NUMF=["gross","epfEe","epfEr","socsoEe","socsoEr","eisEe","eisEr","pcb","net","employerCost"];
+      const NUMF=["gross","epfEe","epfEr","socsoEe","socsoEr","eisEe","eisEr","lindung","pcb","net","employerCost"];
       const empIds = rows.map((r:any)=>r.employeeId).filter(Boolean);
       // v151: SERVER-SIDE RECOMPUTE. The statutory figures used to be computed client-side and written
       // verbatim into hr_payslips (the EA/Form-E record). Now the server independently recomputes every
@@ -5987,11 +6036,13 @@ Deno.serve(async (req)=>{
           error:"Server recomputation disagrees with the on-screen figures — refusing to finalise. This usually means the page is showing a stale/cached calculation, or the statutory rates changed. Reload HR OS, reopen Payroll for this month, and finalise again.",
           details: mism.slice(0,6) }, 409);
       }
-      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised" }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
+      // v181: finalised_at is its own column, NOT updated_at — saving draft entries also touches the row,
+      // so a shared timestamp could not answer "were the entries edited after the payslips were issued?".
+      const { data:run, error:e1 } = await sb.from("hr_payroll_runs").upsert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"finalised", finalised_at:new Date().toISOString(), updated_at:new Date().toISOString() }, { onConflict:"tenant_id,period_month,period_year" }).select().single();
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
       // Write the SERVER-recomputed figures (authoritative), not the client's.
-      const payload = server.map((s:any)=>({ run_id:run.id, employee_id:s.eid, gross:s.c.gross, epf_ee:s.c.epfEe, epf_er:s.c.epfEr, socso_ee:s.c.socsoEe, socso_er:s.c.socsoEr, eis_ee:s.c.eisEe, eis_er:s.c.eisEr, pcb:s.c.pcb, net:s.c.net, employer_cost:s.c.employerCost }));
+      const payload = server.map((s:any)=>({ run_id:run.id, employee_id:s.eid, gross:s.c.gross, epf_ee:s.c.epfEe, epf_er:s.c.epfEr, socso_ee:s.c.socsoEe, socso_er:s.c.socsoEr, eis_ee:s.c.eisEe, eis_er:s.c.eisEr, lindung24:s.c.lindung, pcb:s.c.pcb, net:s.c.net, employer_cost:s.c.employerCost }));
       if (payload.length){ const { error:e2 } = await sb.from("hr_payslips").insert(payload); if (e2) return j({ ok:false, error:e2.message }); }
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length, server_recomputed:true });
       return j({ ok:true, runId:run.id, server_recomputed:true });
@@ -6976,8 +7027,25 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
           p_tenant: tenant, p_month: mo, p_year: yr, p_rows: items,
         });
         if (eRpc) return j({ ok:false, error: eRpc.message });
+        // v181: record the DRAFT. hr_payroll_runs.status already defaulted to 'draft' but no row was ever
+        // written until finalise, so a saved-but-not-finalised month left no trace at all and the grid
+        // could not tell the operator whether what was on screen had been saved. Never touch `status`
+        // here — a save against an already-finalised month must not silently un-finalise it.
+        //
+        // Best-effort and non-fatal: the adjustments are ALREADY committed by the RPC above. Failing the
+        // request now would tell the operator the save failed when their figures are safely stored, and
+        // they would re-enter everything. Metadata must never be able to do that.
+        let savedAt: string|null = null;
+        try {
+          const nowIso = new Date().toISOString();
+          const { data: existing } = await sb.from("hr_payroll_runs").select("id")
+            .eq("tenant_id",tenant).eq("period_month",mo).eq("period_year",yr).maybeSingle();
+          if (existing) await sb.from("hr_payroll_runs").update({ entries_saved_at:nowIso, updated_at:nowIso }).eq("id",existing.id);
+          else await sb.from("hr_payroll_runs").insert({ tenant_id:tenant, period_month:mo, period_year:yr, status:"draft", entries_saved_at:nowIso });
+          savedAt = nowIso;
+        } catch (_e) { /* draft stamp is cosmetic; the entries are already saved */ }
         await logAudit(me,"hr_payroll_grid_save",String(mo)+"/"+String(yr),{ n:items.length });
-        return j({ ok:true, n:items.length });
+        return j({ ok:true, n:items.length, entries_saved_at: savedAt });
       }
     }
     if (api === "hr_annual") {

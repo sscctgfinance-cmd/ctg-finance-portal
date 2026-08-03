@@ -17,10 +17,11 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import {
-  BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, inlineScript, loadEngine,
+  BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, fnSource, inlineScript, loadEngine,
 } from "../tools/extract.ts";
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
+const feSrc = inlineScript(html);
 const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
 
 const fe = await loadEngine(inlineScript(html), FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);
@@ -38,7 +39,7 @@ const CFG = {
   reliefPersonal: 9000, reliefSpouse: 4000, reliefChild: 2000, reliefEpfMax: 4000,
 };
 
-const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "pcb", "net", "employerCost"];
+const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "lindung", "pcb", "net", "employerCost"];
 
 function baseEmp(over: Record<string, unknown> = {}) {
   return {
@@ -242,6 +243,143 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(some.pcb < none.pcb, true, "a declared relief must reduce PCB");
   assertEquals(huge.pcb, 0, "relief beyond the chargeable income floors PCB at zero, never negative");
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
+});
+
+Deno.test("parity + rule — LINDUNG 24 Jam / SKBBK (v184)", () => {
+  const JUN26 = { month: 6, year: 2026 }, MAY26 = { month: 5, year: 2026 }, JUL26 = { month: 7, year: 2026 };
+  for (const period of [MAY26, JUN26, JUL26]) {
+    for (const basic of [1200, 3050, 5000, 6000, 9000]) {
+      for (const l of [true, false]) {
+        compare(`lindung ${l} @ ${basic} ${period.month}/${period.year}`, { emp: baseEmp({ basic_salary: basic, lindung24: l }), period });
+      }
+    }
+  }
+
+  const at2 = (over: Record<string, unknown>, period = JUL26) => computePayrollMY(baseEmp(over), CFG, [], undefined, period);
+
+  // Employee-only: it must reduce net pay and must NOT appear in employer cost.
+  const on = at2({ basic_salary: 3050 }), off = at2({ basic_salary: 3050, lindung24: false });
+  assertEquals(on.lindung, 22.85, "the published RM3,000.01–3,100 figure");
+  assertEquals(off.lindung, 0, "opted out contributes nothing");
+  assertEquals(on.employerCost, off.employerCost, "there is NO employer share");
+  assertEquals(Math.round((off.net - on.net) * 100) / 100, 22.85, "it comes straight out of net pay");
+
+  // The scheme did not exist before June 2026 — deducting it earlier would invent a liability.
+  assertEquals(at2({ basic_salary: 3050 }, MAY26).lindung, 0, "May 2026: scheme not yet in force");
+  assertEquals(at2({ basic_salary: 3050 }, JUN26).lindung, 22.85, "June 2026: in force");
+
+  // Mandatory for foreign workers — their opt-out flag must be ignored.
+  assertEquals(at2({ basic_salary: 3050, citizen_status: "non_citizen", lindung24: false }).lindung, 22.85,
+    "a foreign worker cannot opt out");
+  // ...but EIS still excludes them, so the two must not be confused for each other.
+  assertEquals(at2({ basic_salary: 3050, citizen_status: "non_citizen" }).eisEe, 0, "EIS still excludes non-citizens");
+
+  // 60+ (SOCSO Cat 2) still contribute: both renamed categories include Non-Employment Injury.
+  const senior = at2({ basic_salary: 3050, date_of_birth: "1960-01-01" });
+  assertEquals(senior.socsoEe, 0, "Cat 2 pays no ordinary employee SOCSO");
+  assertEquals(senior.lindung, 22.85, "but SKBBK still applies at 60+");
+
+  // No SOCSO coverage at all → no SKBBK either; the ceiling clamps.
+  assertEquals(at2({ basic_salary: 3050, socso_eligible: false }).lindung, 0, "not SOCSO-covered, not SKBBK-covered");
+  assertEquals(at2({ basic_salary: 99999 }).lindung, 44.65, "clamped at the RM6,000 ceiling");
+
+  // Act 4 wage definition — bonus is excluded here exactly as it is for SOCSO/EIS (v180).
+  const withBonus = computePayrollMY(baseEmp({ basic_salary: 3050 }), CFG,
+    [{ kind: "bonus", amount: 5000, epf_subject: true }], undefined, JUL26);
+  assertEquals(withBonus.lindung, 22.85, "a bonus must not raise SKBBK");
+});
+
+Deno.test("parity + rule — employer EPF rate override (v183)", () => {
+  // payroll.my exposes "Employer EPF Rate" as a plain dropdown; HR OS could only DERIVE it, so an
+  // above-statutory contribution (directors, senior staff) could not be paid at all.
+  for (const er of [null, 0, 0.04, 0.12, 0.13, 0.15, 0.19]) {
+    for (const basic of [3000, 5000, 5000.01, 8000]) {
+      compare(`epf_er_rate ${er} @ ${basic}`, { emp: baseEmp({ basic_salary: basic, epf_er_rate: er }) });
+    }
+  }
+
+  const P = { month: 7, year: 2026 };
+  const at = (over: Record<string, unknown>) => computePayrollMY(baseEmp(over), CFG, [], undefined, P);
+
+  // The override must actually bite, and must NOT touch the employee side.
+  const dflt = at({ basic_salary: 4000 });                      // statutory: 13% at or below RM5,000
+  const high = at({ basic_salary: 4000, epf_er_rate: 0.19 });
+  assertEquals(dflt.epfEr, 520.00, "statutory employer 13% on RM4,000");
+  assertEquals(high.epfEr, 760.00, "19% override applies");
+  assertEquals(high.epfEe, dflt.epfEe, "the employer override must not move the employee's EPF");
+
+  // It outranks the derived threshold, the 60+ rate and the non-citizen rate — same precedence as the
+  // employee override, otherwise "I set 15%" would silently not apply to exactly the staff it is for.
+  assertEquals(at({ basic_salary: 8000, epf_er_rate: 0.13 }).epfEr, 1040.00, "beats the >RM5,000 12% rate");
+  assertEquals(at({ basic_salary: 4000, date_of_birth: "1960-01-01", epf_er_rate: 0.13 }).epfEr, 520.00, "beats the 60+ 4% rate");
+  assertEquals(at({ basic_salary: 4000, citizen_status: "non_citizen", epf_er_rate: 0.13 }).epfEr, 520.00, "beats the non-citizen 2% rate");
+
+  // 0 must mean zero, not "fall back to statutory" — the classic falsy-override bug.
+  assertEquals(at({ basic_salary: 4000, epf_er_rate: 0 }).epfEr, 0, "an explicit 0% must contribute nothing");
+  assertEquals(at({ basic_salary: 4000, epf_er_rate: 0 }).epfEe, dflt.epfEe, "and must not disturb the employee side");
+
+  // Ineligible still wins: no EPF means no EPF, whatever rate is set.
+  assertEquals(at({ basic_salary: 4000, epf_eligible: false, epf_er_rate: 0.19 }).epfEr, 0, "EPF-ineligible stays zero");
+  assertEquals(at({ basic_salary: 4000, date_of_birth: "1945-01-01", epf_er_rate: 0.19 }).epfEr, 0, "EPF ceases at 75");
+});
+
+Deno.test("the grid's synthetic employee carries EVERY field hrCompute reads (v182)", () => {
+  // In production the frontend does NOT hand hrCompute the employee row — hrGridRowCompute builds a
+  // hand-written WHITELIST of fields. The backend recompute uses the real row. So any field the engine
+  // reads but the whitelist forgets makes the engines disagree, and hr_payroll_finalise 409s the whole
+  // company's payroll with an error blaming a stale cache.
+  //
+  // citizen_status was missing exactly this way: a foreign worker is 2%+2% EPF and no EIS on the server,
+  // but full Malaysian rates on screen. It was invisible only because every current employee is a citizen.
+  //
+  // Derive the requirement from the engine's own source rather than listing fields here, so a field added
+  // to hrCompute later fails this test instead of failing payroll.
+  const engine = fnSource(feSrc, "hrCompute");
+  const synth = fnSource(feSrc, "hrGridRowCompute");
+  const reads = [...new Set([...engine.matchAll(/\bemp\.([a-zA-Z_][\w]*)/g)].map((m) => m[1]))].sort();
+  assertEquals(reads.length > 8, true, "sanity: hrCompute should read many employee fields, got " + reads.length);
+  const missing = reads.filter((f) => !new RegExp("\\b" + f + "\\s*:").test(synth));
+  assertEquals(missing, [], "hrGridRowCompute's synthetic employee drops field(s) hrCompute reads");
+});
+
+Deno.test("rule — bonus is EPF wages but NOT SOCSO/EIS wages (v180)", () => {
+  // Both engines charged SOCSO and EIS on a wage that included the bonus, so a bonus month over-deducted
+  // from the employee and over-contributed for the company — and the PERKESO filing would not reconcile.
+  // The Employees' Social Security Act 1969 definition of wages excludes bonus; EIS (Act 800) adopts the
+  // same definition. EPF is the opposite: bonus IS EPF wages.
+  //
+  // Anchor is a real side-by-side against payroll.my: RM3,500 salary + RM369 bonus. It charges SOCSO/EIS
+  // on 3,500 and EPF on 3,869 — EPF already agreed to the sen, SOCSO/EIS did not.
+  const emp = baseEmp({ basic_salary: 3500 });
+  const bonus = [{ kind: "bonus", amount: 369 }];
+  compare("3500 + 369 bonus", { emp, earnings: bonus });
+
+  const withB = computePayrollMY(emp, CFG, [{ kind: "bonus", amount: 369, epf_subject: true }], undefined, PERIOD);
+  assertEquals(withB.socsoEe, 17.25, "SOCSO employee must be the RM3,400.01-3,500 band, not the bonus-inflated one");
+  assertEquals(withB.socsoEr, 60.35, "SOCSO employer likewise");
+  assertEquals(withB.eisEe, 6.90, "EIS on RM3,500 — payroll.my agrees; the bug gave 7.70");
+  assertEquals(withB.eisEr, 6.90);
+  assertEquals(withB.epfEe, 427.00, "EPF DOES include the bonus: Third Schedule band for RM3,869");
+
+  // And the structural claim, independent of the anchor: a bonus moves EPF and never moves SOCSO/EIS.
+  const noB = computePayrollMY(emp, CFG, [], undefined, PERIOD);
+  assertEquals(withB.socsoEe, noB.socsoEe, "a bonus must not change SOCSO");
+  assertEquals(withB.socsoEr, noB.socsoEr);
+  assertEquals(withB.eisEe, noB.eisEe, "a bonus must not change EIS");
+  assertEquals(withB.eisEr, noB.eisEr);
+  assertEquals(withB.epfEe > noB.epfEe, true, "a bonus MUST raise EPF");
+
+  // A bonus big enough to cross the ceiling must not sneak the wage over it either.
+  const huge = computePayrollMY(baseEmp({ basic_salary: 4000 }), CFG,
+    [{ kind: "bonus", amount: 50000, epf_subject: true }], undefined, PERIOD);
+  const plain = computePayrollMY(baseEmp({ basic_salary: 4000 }), CFG, [], undefined, PERIOD);
+  assertEquals(huge.socsoEr, plain.socsoEr, "a RM50k bonus must not push SOCSO to the ceiling band");
+  assertEquals(huge.eisEe, plain.eisEe);
+
+  // An allowance is NOT a bonus — it stays in the SOCSO/EIS wage. Narrowing this fix past bonus would
+  // under-contribute, which is the expensive direction (back-payment plus penalties).
+  const allow = computePayrollMY(emp, CFG, [{ kind: "allowance", amount: 369, epf_subject: true }], undefined, PERIOD);
+  assertEquals(allow.socsoEe > noB.socsoEe, true, "an allowance still counts as SOCSO wages");
 });
 
 Deno.test("parity — no engine produces a negative or non-finite figure", () => {

@@ -60,6 +60,42 @@ Deno.test("SOCSO Category 2 (age 60+) — gazetted anchors", () => {
   assertEquals(feCat2.every((r) => r[1] === 0), true, "no Cat 2 band may charge the employee");
 });
 
+Deno.test("LINDUNG 24 Jam (SKBBK) — published anchors, and the naive formula is NOT good enough", () => {
+  // PERKESO publishes this table only as a scanned image, so it is DERIVED from two gazetted columns HR OS
+  // already holds: Phase-1 total employee contribution is 1.25% (0.5% invalidity + 0.75% SKBBK), the 1.25%
+  // column is MY_SOCSO_CAT2's employer side and the 0.5% column is MY_SOCSO_CAT1's employee side.
+  //     SKBBK = Cat2_employer − Cat1_employee
+  // If either source column is ever edited, these anchors are what catches it.
+  const lin = (w: number) => Math.round((at(feCat2, w).er - at(feCat1, w).ee) * 100) / 100;
+
+  assertEquals(lin(6000), 44.65, "published maximum at the RM6,000 ceiling");
+  assertEquals(lin(3050), 22.85, "published figure for the RM3,000.01–3,100 band");
+  assertEquals(at(feCat2, 6000).er, 74.40, "the 1.25% column this is derived from");
+  assertEquals(lin(9999), lin(6000), "above the ceiling must clamp, not fall through to zero");
+  assertEquals(lin(0), 0, "no wage, no contribution");
+
+  // Whole schedule must behave: never negative, always a clean 5 sen, never decreasing as wages rise.
+  let prev = -1;
+  for (const [cap] of feCat1) {
+    const v = lin(cap);
+    assertEquals(v >= 0, true, `negative SKBBK at ${cap}: ${v}`);
+    assertEquals(Math.round(v * 100) % 5, 0, `SKBBK at ${cap} is not a 5-sen multiple: ${v}`);
+    assertEquals(v >= prev, true, `SKBBK went down at ${cap}: ${v} < ${prev}`);
+    prev = v;
+  }
+
+  // The reason this is derived rather than computed: a naive "band midpoint × 0.75%, round to 5 sen"
+  // disagrees on half the schedule. If someone ever "simplifies" the code to that formula, it would look
+  // reasonable and be wrong for 32 of 64 wage bands — the v155 failure exactly.
+  const midOf = (i: number) => ((i === 0 ? 0 : feCat1[i - 1][0]) + feCat1[i][0]) / 2;
+  let disagree = 0;
+  feCat1.forEach((_r, i) => {
+    const naive = Math.round(midOf(i) * 0.0075 * 20) / 20;
+    if (Math.abs(naive - lin(feCat1[i][0])) > 0.001) disagree++;
+  });
+  assertEquals(disagree > 20, true, `expected the naive formula to be widely wrong, it differed on ${disagree}/64`);
+});
+
 Deno.test("EIS / SIP — gazetted anchors", () => {
   assertEquals(at(feEis, 6000).ee, 11.90, "published maximum is RM11.90 each side; the wrong table said 11.95");
   assertEquals(at(feEis, 2050).ee, 4.10, "the wrong table's RM500 bands gave 4.95 here");

@@ -61,14 +61,14 @@ export function inlineScript(html: string): string {
 }
 
 export const FRONTEND_ENGINE = [
-  "myStatLookup", "myPcbRoundUp5", "myServiceMonths",
+  "myStatLookup", "myPcbRoundUp5", "myServiceMonths", "myLindung24", "myLindungActive",
   "hrRoundUp", "hrRound2", "hrRound5", "hrBandMid",
   "hrEpfParts", "hrTableParts", "hrProgTax", "hrAge", "hrCompute",
 ];
 export const FRONTEND_TABLES = ["MY_SOCSO_CAT1", "MY_SOCSO_CAT2", "MY_EIS", "HR_TAX_BANDS"];
 
 export const BACKEND_ENGINE = [
-  "myStatLookup", "myPcbRoundUp5", "myServiceMonths",
+  "myStatLookup", "myPcbRoundUp5", "myServiceMonths", "myLindung24", "myLindungActive",
   "payRoundUp", "payRound2", "payRound5", "payBandMid",
   "payEpfParts", "payTableParts", "payProgTax", "payAge", "computePayrollMY",
 ];
@@ -80,8 +80,13 @@ export async function loadEngine(
   fns: string[],
   tables: string[],
   exposed: string[],
+  // Extra source prepended to the module. Needed for functions that read app-level globals rather than
+  // taking them as arguments — hrCalcCompute reads HR_CALC and HR — so a test can stand those up without
+  // test-only hooks having to exist in the shipped app.
+  prelude?: string,
 ): Promise<Record<string, unknown>> {
   const parts = [
+    ...(prelude ? [prelude] : []),
     ...tables.map((t) => arrSource(src, t)),
     // No annotation stripping: the module is served as TypeScript, so the backend's `adj:any[]` is valid
     // as-is and the frontend's plain JS is valid TypeScript too. (Stripping by regex turned `tbl:any[]`
