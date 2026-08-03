@@ -61,14 +61,14 @@ export function inlineScript(html: string): string {
 }
 
 export const FRONTEND_ENGINE = [
-  "myStatLookup", "myPcbRoundUp5", "myServiceMonths",
+  "myStatLookup", "myPcbRoundUp5", "myServiceMonths", "myLindung24", "myLindungActive",
   "hrRoundUp", "hrRound2", "hrRound5", "hrBandMid",
   "hrEpfParts", "hrTableParts", "hrProgTax", "hrAge", "hrCompute",
 ];
 export const FRONTEND_TABLES = ["MY_SOCSO_CAT1", "MY_SOCSO_CAT2", "MY_EIS", "HR_TAX_BANDS"];
 
 export const BACKEND_ENGINE = [
-  "myStatLookup", "myPcbRoundUp5", "myServiceMonths",
+  "myStatLookup", "myPcbRoundUp5", "myServiceMonths", "myLindung24", "myLindungActive",
   "payRoundUp", "payRound2", "payRound5", "payBandMid",
   "payEpfParts", "payTableParts", "payProgTax", "payAge", "computePayrollMY",
 ];

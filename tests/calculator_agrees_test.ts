@@ -79,7 +79,7 @@ function engine(basic: number, bonus = 0) {
   return computePayrollMY(emp, CFG, adj, undefined, { month: 12, year: 2026 });
 }
 
-const CONTRIB = ["epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr"] as const;
+const CONTRIB = ["epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "lindung"] as const;
 
 Deno.test("the SHIPPED default flags exclude bonus from SOCSO/EIS", () => {
   // The tests below pass their own flags, so they would happily pass while the app still shipped the old

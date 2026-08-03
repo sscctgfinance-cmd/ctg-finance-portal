@@ -39,7 +39,7 @@ const CFG = {
   reliefPersonal: 9000, reliefSpouse: 4000, reliefChild: 2000, reliefEpfMax: 4000,
 };
 
-const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "pcb", "net", "employerCost"];
+const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "lindung", "pcb", "net", "employerCost"];
 
 function baseEmp(over: Record<string, unknown> = {}) {
   return {
@@ -243,6 +243,50 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(some.pcb < none.pcb, true, "a declared relief must reduce PCB");
   assertEquals(huge.pcb, 0, "relief beyond the chargeable income floors PCB at zero, never negative");
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
+});
+
+Deno.test("parity + rule — LINDUNG 24 Jam / SKBBK (v184)", () => {
+  const JUN26 = { month: 6, year: 2026 }, MAY26 = { month: 5, year: 2026 }, JUL26 = { month: 7, year: 2026 };
+  for (const period of [MAY26, JUN26, JUL26]) {
+    for (const basic of [1200, 3050, 5000, 6000, 9000]) {
+      for (const l of [true, false]) {
+        compare(`lindung ${l} @ ${basic} ${period.month}/${period.year}`, { emp: baseEmp({ basic_salary: basic, lindung24: l }), period });
+      }
+    }
+  }
+
+  const at2 = (over: Record<string, unknown>, period = JUL26) => computePayrollMY(baseEmp(over), CFG, [], undefined, period);
+
+  // Employee-only: it must reduce net pay and must NOT appear in employer cost.
+  const on = at2({ basic_salary: 3050 }), off = at2({ basic_salary: 3050, lindung24: false });
+  assertEquals(on.lindung, 22.85, "the published RM3,000.01–3,100 figure");
+  assertEquals(off.lindung, 0, "opted out contributes nothing");
+  assertEquals(on.employerCost, off.employerCost, "there is NO employer share");
+  assertEquals(Math.round((off.net - on.net) * 100) / 100, 22.85, "it comes straight out of net pay");
+
+  // The scheme did not exist before June 2026 — deducting it earlier would invent a liability.
+  assertEquals(at2({ basic_salary: 3050 }, MAY26).lindung, 0, "May 2026: scheme not yet in force");
+  assertEquals(at2({ basic_salary: 3050 }, JUN26).lindung, 22.85, "June 2026: in force");
+
+  // Mandatory for foreign workers — their opt-out flag must be ignored.
+  assertEquals(at2({ basic_salary: 3050, citizen_status: "non_citizen", lindung24: false }).lindung, 22.85,
+    "a foreign worker cannot opt out");
+  // ...but EIS still excludes them, so the two must not be confused for each other.
+  assertEquals(at2({ basic_salary: 3050, citizen_status: "non_citizen" }).eisEe, 0, "EIS still excludes non-citizens");
+
+  // 60+ (SOCSO Cat 2) still contribute: both renamed categories include Non-Employment Injury.
+  const senior = at2({ basic_salary: 3050, date_of_birth: "1960-01-01" });
+  assertEquals(senior.socsoEe, 0, "Cat 2 pays no ordinary employee SOCSO");
+  assertEquals(senior.lindung, 22.85, "but SKBBK still applies at 60+");
+
+  // No SOCSO coverage at all → no SKBBK either; the ceiling clamps.
+  assertEquals(at2({ basic_salary: 3050, socso_eligible: false }).lindung, 0, "not SOCSO-covered, not SKBBK-covered");
+  assertEquals(at2({ basic_salary: 99999 }).lindung, 44.65, "clamped at the RM6,000 ceiling");
+
+  // Act 4 wage definition — bonus is excluded here exactly as it is for SOCSO/EIS (v180).
+  const withBonus = computePayrollMY(baseEmp({ basic_salary: 3050 }), CFG,
+    [{ kind: "bonus", amount: 5000, epf_subject: true }], undefined, JUL26);
+  assertEquals(withBonus.lindung, 22.85, "a bonus must not raise SKBBK");
 });
 
 Deno.test("parity + rule — employer EPF rate override (v183)", () => {
