@@ -245,6 +245,65 @@ Deno.test("parity + rule — TP1 declared reliefs reduce PCB (v167)", () => {
   assertEquals(none.net < some.net, true, "less PCB means more take-home");
 });
 
+Deno.test("parity + rule — PCB method: payroll.my vs LHDN (v185)", () => {
+  // The operator asked for payroll.my's method after being shown that it differs from LHDN's. It differs
+  // in exactly two ways, both confirmed against payroll.my's own documentation:
+  //   (a) SOCSO/EIS are not treated as tax relief;
+  //   (b) the bonus is charged the residual annual tax MINUS the normal MTD that will actually be
+  //       deducted — and a normal MTD under RM10 is nil, so the whole year's tax can land on the bonus.
+  const MY = { ...CFG, pcbMethod: "payroll_my" };
+  const LH = { ...CFG, pcbMethod: "lhdn" };
+  const P = { month: 7, year: 2026 };
+  const emp = baseEmp({ basic_salary: 3500 });
+  const bonus = [{ kind: "bonus", amount: 369, epf_subject: true }];
+
+  // The operator's own side-by-side. This is the whole point of the change.
+  assertEquals(computePayrollMY(emp, MY, bonus, undefined, P).pcb, 31.10, "payroll.my figure");
+  // LHDN mode reads 11.90, not the 12.05 quoted before v184: adding SKBBK to the SOCSO/EIS relief pushed
+  // this employee to the RM350 annual cap, which shaved ~15 sen off the monthly MTD. That the payroll.my
+  // figure is UNCHANGED by v184 is itself the tell — that method grants no SOCSO/EIS relief at all.
+  assertEquals(computePayrollMY(emp, LH, bonus, undefined, P).pcb, 11.90, "LHDN figure, still available");
+
+  // Default must be payroll.my (cfg with no pcbMethod at all).
+  assertEquals(computePayrollMY(emp, CFG, bonus, undefined, P).pcb, 31.10, "default is payroll.my");
+
+  // Without a bonus the two methods differ ONLY by the SOCSO/EIS relief, and both stay nil here.
+  assertEquals(computePayrollMY(emp, MY, [], undefined, P).pcb, 0);
+  assertEquals(computePayrollMY(emp, LH, [], undefined, P).pcb, 0);
+
+  // Both engines must agree under BOTH methods, or finalise 409s the whole run.
+  for (const cfgName of ["payroll_my", "lhdn"]) {
+    for (const basic of [1200, 3500, 5000, 9000, 25000]) {
+      for (const b of [0, 369, 12000]) {
+        const label = `${cfgName} ${basic}+${b}`;
+        const a = hrCompute({ ...emp, basic_salary: basic }, { ...CFG, pcbMethod: cfgName },
+          b ? [{ kind: "bonus", amount: b, epf_subject: true }] : [], P, undefined);
+        const s = computePayrollMY({ ...emp, basic_salary: basic }, { ...CFG, pcbMethod: cfgName },
+          b ? [{ kind: "bonus", amount: b, epf_subject: true }] : [], undefined, P, undefined);
+        for (const k of MONEY) {
+          assertEquals(Math.round((Number(a[k]) || 0) * 100), Math.round((Number(s[k]) || 0) * 100),
+            `${label}: ${k} — frontend ${a[k]} vs backend ${s[k]}`);
+        }
+      }
+    }
+  }
+
+  // payroll.my's method must never deduct MORE than the whole year's tax on the combined income — that
+  // is its own upper bound, and a sanity floor on the "everything lands in the bonus month" behaviour.
+  const big = computePayrollMY(baseEmp({ basic_salary: 4000 }), MY,
+    [{ kind: "bonus", amount: 12000, epf_subject: true }], undefined, P);
+  assertEquals(big.pcb > 0, true);
+  assertEquals(big.pcb <= 4000 * 12 + 12000, true, "cannot exceed the income it is taxing");
+
+  // A high earner already paying real monthly MTD: the normal part is NOT nil, so it IS subtracted, and
+  // the two methods converge to within the SOCSO/EIS relief. This is the case that shows (b) only bites
+  // when the normal MTD was suppressed.
+  const hiMy = computePayrollMY(baseEmp({ basic_salary: 9000 }), MY, bonus, undefined, P);
+  const hiLh = computePayrollMY(baseEmp({ basic_salary: 9000 }), LH, bonus, undefined, P);
+  assertEquals(Math.abs(hiMy.pcb - hiLh.pcb) < 15, true,
+    `high earner should be close, got ${hiMy.pcb} vs ${hiLh.pcb}`);
+});
+
 Deno.test("parity + rule — LINDUNG 24 Jam / SKBBK (v184)", () => {
   const JUN26 = { month: 6, year: 2026 }, MAY26 = { month: 5, year: 2026 }, JUL26 = { month: 7, year: 2026 };
   for (const period of [MAY26, JUN26, JUL26]) {

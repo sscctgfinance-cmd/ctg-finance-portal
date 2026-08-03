@@ -1641,20 +1641,32 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
     // v167: TP1 declared reliefs. Must mirror computePayrollMY exactly.
     var tp1=Math.max(0, Number((ytd&&ytd.tp1))||0);
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis) + tp1;
+    // v185: PCB method (cfg.pcbMethod). Must mirror computePayrollMY exactly.
+    //   "payroll_my" (default, operator's choice) — no SOCSO/EIS relief, and the bonus is charged the
+    //   residual annual tax minus the normal MTD that will ACTUALLY be deducted (nil under RM10).
+    //   "lhdn" — the prescribed method HR OS used through v184.
+    var pcbMy = String(cfg.pcbMethod||'payroll_my')==='payroll_my';
+    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf)
+              + (pcbMy ? 0 : Math.min(projSocsoEis, rSocsoEis)) + tp1;
     var chargeable=Math.max(0, projGross - reliefs);
     var tax=hrProgTax(chargeable);
     var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
     var monthlyBase=Math.max(0, ((tax-rebate) - yp) / remain);
-    var addlTax=0;
-    if(bonusStat>0){
+    var bonusAnnual=function(){
       var chargeableB=Math.max(0, projGross + bonusStat - reliefs);
       var taxB=hrProgTax(chargeableB);
       var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
-      addlTax=Math.max(0,(taxB-rebateB)-(tax-rebate));
+      return (taxB-rebateB);
+    };
+    if(pcbMy){
+      var norm=myPcbRoundUp5(monthlyBase); if(norm<10) norm=0;
+      var addl = bonusStat>0 ? Math.max(0, (bonusAnnual() - yp) - norm*remain) : 0;
+      pcb = hrRound2(norm + (addl>0 ? myPcbRoundUp5(addl) : 0));
+    } else {
+      var addlTax = bonusStat>0 ? Math.max(0, bonusAnnual()-(tax-rebate)) : 0;
+      var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
+      pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
     }
-    var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
-    pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
   }
   // v165: zakat reduces tax RINGGIT-FOR-RINGGIT (net MTD = MTD − zakat for the month), it is not an
   // ordinary deduction. Must mirror computePayrollMY exactly. HR OS offered "Zakat" as a payroll
@@ -5217,17 +5229,27 @@ function hrCalcCompute(){
     // v183: SOCSO/EIS employee contributions are an allowable relief (RM350/yr cap), and TP1-style
     // declared reliefs ("Allowable Deduction" on payroll.my) reduce chargeable income. Both were missing
     // here but present in the payroll engine.
+    // v185: same PCB method switch as the payroll engine — this tab must not quote a figure the payslip
+    // then contradicts.
+    var pcbMy=String(cfg.pcbMethod||'payroll_my')==='payroll_my';
     var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
-    var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf)+Math.min((sp.ee+ip.ee+lindung)*12,rSocsoEis)+Math.max(0,relief);
+    var reliefs=rPers+(cat2?rSp:0)+kids*rCh+Math.min(ep.ee*12,rEpf)
+              +(pcbMy?0:Math.min((sp.ee+ip.ee+lindung)*12,rSocsoEis))+Math.max(0,relief);
     var chargeable=Math.max(0, normalWage*12-reliefs), tax=hrProgTax(chargeable), rebate=chargeable<=35000?(400+(cat2?400:0)):0;
-    var addl=0;
-    if(bonusTax>0){
+    var bAnnual=function(){
       var chargeableB=Math.max(0, normalWage*12+bonusTax-reliefs);
       var taxB=hrProgTax(chargeableB), rebateB=chargeableB<=35000?(400+(cat2?400:0)):0;
-      addl=Math.max(0,(taxB-rebateB)-(tax-rebate));
+      return (taxB-rebateB);
+    };
+    if(pcbMy){
+      var norm=myPcbRoundUp5(Math.max(0,(tax-rebate)/12)); if(norm<10) norm=0;
+      var addlM = bonusTax>0 ? Math.max(0, bAnnual()-norm*12) : 0;
+      pcb = hrRound2(norm + (addlM>0 ? myPcbRoundUp5(addlM) : 0));
+    } else {
+      var addl = bonusTax>0 ? Math.max(0, bAnnual()-(tax-rebate)) : 0;
+      var pcbC=myPcbRoundUp5(Math.max(0,(tax-rebate)/12)+addl);
+      pcb = pcbC < 10 ? 0 : pcbC;   // LHDN: monthly MTD of less than RM10 is nil
     }
-    var pcbC=myPcbRoundUp5(Math.max(0,(tax-rebate)/12)+addl);
-    pcb = pcbC < 10 ? 0 : pcbC;   // LHDN: monthly MTD of less than RM10 is nil
   }
   // v183: zakat reduces MTD ringgit-for-ringgit (LHDN: net MTD = MTD − zakat for the month), matching the
   // payroll engine. It still leaves net pay as a deduction below; the displaced PCB is what squares it.

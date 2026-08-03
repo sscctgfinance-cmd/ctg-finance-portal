@@ -1223,20 +1223,41 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
     // insurance, SSPN, childcare…). LHDN obliges the employer to apply them to MTD; without this the
     // employee over-paid PCB all year and waited for the assessment refund.
     const tp1=Math.max(0, Number(ytd&&ytd.tp1)||0);
-    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf) + Math.min(projSocsoEis, rSocsoEis) + tp1;
+    // v185: PCB method, operator-selectable. Both engines read cfg, so this is safe to make configurable
+    // — unlike cfg.taxBands, which the frontend could not read and which therefore bricked payroll (v157).
+    //
+    //   "lhdn"       — LHDN's prescribed method (what HR OS did through v184).
+    //   "payroll_my" — reproduces payroll.my, which the operator asked for. It differs in TWO ways, both
+    //                  confirmed against payroll.my's own documentation and its output:
+    //                    (a) SOCSO/EIS (and SKBBK) are NOT treated as tax relief.
+    //                    (b) the bonus is charged the residual annual tax minus the normal MTD that will
+    //                        ACTUALLY be deducted — and a normal MTD under RM10 is nil, so in a low-tax
+    //                        month the entire year's tax lands in the bonus month.
+    //                  On the operator's own case (RM3,500 + RM369) that is 31.10 against LHDN's 12.05.
+    const pcbMy = String(cfg.pcbMethod||"payroll_my")==="payroll_my";
+    const reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf)
+                + (pcbMy ? 0 : Math.min(projSocsoEis, rSocsoEis)) + tp1;
     const chargeable=Math.max(0, projGross - reliefs);
     const tax=payProgTax(chargeable, bands);
     const rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;
     const monthlyBase=Math.max(0, ((tax-rebate) - yp) / remain);   // spread the REMAINING annual tax over the remaining months
-    let addlTax=0;
-    if(bonusStat>0){
+    const bonusAnnual=()=>{
       const chargeableB=Math.max(0, projGross + bonusStat - reliefs);
       const taxB=payProgTax(chargeableB, bands);
       const rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
-      addlTax=Math.max(0,(taxB-rebateB)-(tax-rebate));
+      return (taxB-rebateB);
+    };
+    if(pcbMy){
+      // The normal part first, with the under-RM10 rule applied to IT, because that is the figure
+      // payroll.my subtracts ("combined PCB − salary-only PCB").
+      let norm=myPcbRoundUp5(monthlyBase); if(norm<10) norm=0;
+      const addl = bonusStat>0 ? Math.max(0, (bonusAnnual() - yp) - norm*remain) : 0;
+      pcb = payRound2(norm + (addl>0 ? myPcbRoundUp5(addl) : 0));
+    } else {
+      const addlTax = bonusStat>0 ? Math.max(0, bonusAnnual()-(tax-rebate)) : 0;
+      const pcbR=myPcbRoundUp5(monthlyBase + addlTax);
+      pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
     }
-    const pcbR=myPcbRoundUp5(monthlyBase + addlTax);
-    pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
   }
   // v165: zakat reduces tax RINGGIT-FOR-RINGGIT, it is not an ordinary deduction — LHDN's rule is
   // net MTD = MTD for the month − zakat paid for the month. HR OS offered "Zakat" as a payroll deduction
