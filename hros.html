@@ -2277,9 +2277,12 @@ async function hrRCSave(submit){
     });
   }
   if(pend.length){
-    toast('Uploading '+pend.length+' receipt'+(pend.length>1?'s':'')+'…');
     var failed=[];
     for(var i=0;i<pend.length;i++){
+      // v186: name the file and its size. A 40 MB scan takes minutes on mobile data, and a bare
+      // "Uploading…" that sits there is indistinguishable from the button having done nothing.
+      var mb=(pend[i].size||0)/1048576;
+      toast('Uploading '+(i+1)+'/'+pend.length+': '+(pend[i].name||'receipt')+(mb>=1?(' ('+mb.toFixed(1)+' MB — this can take a while)'):'')+'…');
       var ur = await hrRCUpload(cid, await hrRCPrepImage(pend[i]));
       // A swallowed upload failure is what made this look like a validation problem. Say it out loud.
       if(!ur || !ur.ok) failed.push((pend[i].name||'receipt')+(ur&&ur.error?(' — '+ur.error):''));
@@ -2309,11 +2312,15 @@ function hrRCPickReceipts(input){
   var fs = (input && input.files) ? Array.prototype.slice.call(input.files) : [];
   if(!fs.length) return;
   if(!Array.isArray(RC.form._files)) RC.form._files = [];
+  var tooBig=[];
   fs.forEach(function(f){
+    // v186: say NO here, not after they have filled in the whole form and ticked four declarations.
+    if(f.size > HR_RC_MAX_BYTES){ tooBig.push((f.name||'file')+' ('+(f.size/1048576).toFixed(1)+' MB)'); return; }
     // De-dupe: re-picking the same file (or a re-render round trip) must not attach it twice.
     var dup = RC.form._files.some(function(x){ return x.name===f.name && x.size===f.size && x.lastModified===f.lastModified; });
     if(!dup) RC.form._files.push(f);
   });
+  if(tooBig.length) toast('Too large to attach: '+tooBig.join(', ')+'. Limit is '+(HR_RC_MAX_BYTES/1048576)+' MB — split the PDF or scan at a lower resolution.', true);
   hrRCSyncItems();
   hrRender();
 }
@@ -2335,19 +2342,59 @@ function hrRCPendingHtml(){
     }).join('')+
     '<div class="muted" style="font-size:10.5px">Attached when you save or submit.</div></div>';
 }
-function hrRCUpload(cid,file){ return new Promise(function(res){
-  var rd=new FileReader();
-  rd.onload=function(){
-    var b64=String(rd.result||'');
-    call({api:'hr_rc_attach',claim_id:cid,file_name:(file.name||'receipt.jpg'),file_type:(file.type||'application/octet-stream'),file_size:file.size,file_b64:b64,receipt_hash:rcHash(b64)})
-      // Resolve with the RESULT either way. The old version passed `res` as both handlers, so a rejected
-      // call resolved indistinguishably from a successful one and the caller could not tell.
-      .then(function(r){ res(r||{ok:false,error:'no response from server'}); },
-            function(e){ res({ok:false,error:(e&&e.message)||'network error'}); });
-  };
-  rd.onerror=function(){ res({ok:false,error:'could not read the file'}); };
-  rd.readAsDataURL(file);
-}); }
+// v186: receipts go STRAIGHT to storage via a signed URL.
+//
+// They used to be base64'd into the JSON body of hr_rc_attach. A real phone scan breaks that three ways
+// at once: a 41.8 MB PDF becomes ~56 MB of base64 (and ~110 MB of UTF-16 string in the phone's memory),
+// the edge function has to atob it back, and call()'s own 30-second AbortController fires long before any
+// of it finishes. The result was a Submit button that did nothing at all — no toast, no error.
+// hrRCPrepImage did not save us either: it only downscales images, so PDFs passed through untouched.
+//
+// A raw PUT has none of those problems: no base64 inflation, no edge-function body, no 30s cap.
+var HR_RC_MAX_BYTES = 45*1024*1024;   // storage's own ceiling is what really binds; this is the early, clear "no"
+function hrRCUpload(cid,file){
+  return (async function(){
+    var name = (file && file.name) || 'receipt.jpg';
+    var type = (file && file.type) || 'application/octet-stream';
+    var size = (file && file.size) || 0;
+    if(size > HR_RC_MAX_BYTES){
+      return { ok:false, error:name+' is '+(size/1048576).toFixed(1)+' MB — the limit is '+(HR_RC_MAX_BYTES/1048576)+' MB. Split the PDF or scan at a lower resolution.' };
+    }
+    // 1) ask for a one-shot signed URL (small JSON call, well inside the 30s budget)
+    var sg;
+    try{ sg = await call({api:'hr_rc_attach_sign',claim_id:cid,file_name:name}); }
+    catch(e){ sg = null; }
+    if(sg && sg.ok && sg.url){
+      try{
+        // 2) PUT the bytes directly. No AbortController here on purpose — a 40 MB upload over mobile data
+        // legitimately takes minutes, and cutting it off at 30s is exactly the bug being fixed.
+        var put = await fetch(sg.url, { method:'PUT', headers:{ 'Content-Type':type, 'x-upsert':'true' }, body:file });
+        if(!put.ok){
+          var txt=''; try{ txt=(await put.text()).slice(0,200); }catch(_e){}
+          return { ok:false, error:'upload failed ('+put.status+(txt?(' '+txt):'')+')' };
+        }
+        // 3) record the row, now that the bytes are definitely there
+        var r = await call({api:'hr_rc_attach',claim_id:cid,file_name:name,file_type:type,file_size:size,file_path:sg.path,receipt_hash:'sz_'+size});
+        return r || { ok:false, error:'no response from server' };
+      }catch(e){ return { ok:false, error:(e&&e.message)||'network error during upload' }; }
+    }
+    // Fallback: the old base64 path, but only for files small enough to survive it.
+    if(size > 4*1024*1024) return { ok:false, error:(sg&&sg.error) || 'could not start the upload — please try again' };
+    return await new Promise(function(res){
+      var rd=new FileReader();
+      rd.onload=function(){
+        var b64=String(rd.result||'');
+        call({api:'hr_rc_attach',claim_id:cid,file_name:name,file_type:type,file_size:size,file_b64:b64,receipt_hash:rcHash(b64)})
+          // Resolve with the RESULT either way. An older version passed `res` as both handlers, so a
+          // rejected call resolved indistinguishably from success and the caller could not tell.
+          .then(function(r){ res(r||{ok:false,error:'no response from server'}); },
+                function(e){ res({ok:false,error:(e&&e.message)||'network error'}); });
+      };
+      rd.onerror=function(){ res({ok:false,error:'could not read the file'}); };
+      rd.readAsDataURL(file);
+    });
+  })();
+}
 function hrRCFileB64(file){ return new Promise(function(res){ var rd=new FileReader(); rd.onload=function(){res(String(rd.result||''));}; rd.onerror=function(){res('');}; rd.readAsDataURL(file); }); }
 // 📷 Scan a receipt / MyInvois e-invoice → Claude vision reads it → fills a line + captures e-invoice
 // identifiers. The scanned file is queued and attached to the claim on save.
