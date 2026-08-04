@@ -5239,7 +5239,19 @@ Deno.serve(async (req)=>{
       const ids = (uc||[]).map((r:any)=>r.user_id);
       if (!ids.length) return j({ ok:false, error:"no users assigned to this company" });
       const { data: users } = await sb.from("portal_users").select("id,email,name,role").in("id", ids).eq("role","employee").order("name");
-      const targets = (users||[]).filter((u:any)=> u.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email));
+      let targets = (users||[]).filter((u:any)=> u.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email));
+      // v188: optional per-person targeting. Without it the only way to (re)invite ONE new joiner was to
+      // reset the WHOLE company — including everyone already logged in, whose working password would be
+      // silently replaced. The filter is applied to the tenant's own user list, so it cannot be used to
+      // reach a user outside the caller's company.
+      if (Array.isArray(b.emails) && b.emails.length){
+        const want = new Set(b.emails.map((e:any)=>String(e||"").trim().toLowerCase()).filter(Boolean));
+        const before = targets.map((u:any)=>String(u.email).toLowerCase());
+        targets = targets.filter((u:any)=> want.has(String(u.email).toLowerCase()));
+        const missing = [...want].filter((e)=> before.indexOf(e)<0);
+        if (missing.length) return j({ ok:false, error:"not an employee login in this company: "+missing.join(", ") });
+        if (!targets.length) return j({ ok:false, error:"no matching employee logins" });
+      }
       const results:any[] = [];
       for (const u of targets){
         const pass = "Ctg"+Math.random().toString(36).slice(2,7)+Math.floor(Math.random()*90+10)+"!";
