@@ -4275,7 +4275,21 @@ function sbiRecalc(){
   s('sbi_t_gross',M(gross)); s('sbi_t_wht',M(wht)); s('sbi_t_net',M(net));
   var wr=document.getElementById('sbi_t_whtr'); if(wr)wr.textContent=rate?('('+rate+'%)'):'';
 }
-function sbiFilesRead(){return new Promise(function(res){var inp=document.getElementById('sbi_files');if(!inp||!inp.files||!inp.files.length){res([]);return;}var out=[],n=inp.files.length,done=0;[].forEach.call(inp.files,function(file){var rd=new FileReader();rd.onload=function(){out.push({name:file.name,mime:file.type,b64:String(rd.result).split(',')[1]});if(++done===n)res(out);};rd.onerror=function(){if(++done===n)res(out);};rd.readAsDataURL(file);});});}
+// v187: one size guard for every base64-through-JSON upload in this app.
+// A 41.8 MB PDF in HR OS proved what happens without one: base64 inflates the body ~33%, call() aborts at
+// 30s, and the user gets NO error at all — the button simply does nothing. Fail loudly and early instead.
+// (Claim receipts now bypass base64 entirely via a signed storage URL; these paths still use the JSON body,
+// so their ceiling is what the body can realistically carry.)
+var UP_MAX_MB = 10;
+function upTooBig(file, maxMb, what){
+  var mx=(maxMb||UP_MAX_MB)*1024*1024;
+  if(file && file.size > mx){
+    toast((file.name||'File')+' is '+(file.size/1048576).toFixed(1)+' MB — '+(what||'the limit')+' is '+(maxMb||UP_MAX_MB)+' MB. Compress it or scan at a lower resolution.', true);
+    return true;
+  }
+  return false;
+}
+function sbiFilesRead(){return new Promise(function(res){var inp=document.getElementById('sbi_files');if(!inp||!inp.files||!inp.files.length){res([]);return;}var big=[].filter.call(inp.files,function(f){return upTooBig(f,UP_MAX_MB,'the attachment limit');});if(big.length){res(null);return;}var out=[],n=inp.files.length,done=0;[].forEach.call(inp.files,function(file){var rd=new FileReader();rd.onload=function(){out.push({name:file.name,mime:file.type,b64:String(rd.result).split(',')[1]});if(++done===n)res(out);};rd.onerror=function(){if(++done===n)res(out);};rd.readAsDataURL(file);});});}
 async function sbiSave(){
   var co=document.getElementById('sbi_co').value, payee=document.getElementById('sbi_payee').value;
   if(!co){toast('Select the paying company',true);return;} if(!payee){toast('Select the payee',true);return;}
@@ -4284,6 +4298,7 @@ async function sbiSave(){
   var wt=document.getElementById('sbi_wht').value;
   var rate= wt==='custom'? (parseFloat(document.getElementById('sbi_wht_rate').value)||0) : (SBI_WHT.find(function(w){return w.v===wt;})||{}).rate||0;
   var files=await sbiFilesRead();
+  if(files===null) return;   // an attachment was over the limit; upTooBig already told the user
   var inv={id:SBI.editId,tenant_id:co,individual_id:parseInt(payee,10),
     buyer_name:document.getElementById('sbi_bname').value,buyer_ssm:document.getElementById('sbi_bssm').value,buyer_tin:document.getElementById('sbi_btin').value,buyer_sst:document.getElementById('sbi_bsst').value,buyer_address:document.getElementById('sbi_baddr').value,
     invoice_date:document.getElementById('sbi_date').value||null,due_date:document.getElementById('sbi_due').value||null,
@@ -6101,6 +6116,7 @@ async function infoDocUpload(){
   if(st){st.textContent='Uploading…'; st.style.color='var(--text-soft)';}
   await runOnce('info-doc-upload-btn','Uploading…', async()=>{
     try {
+      if(upTooBig(file,20,'the document limit')){ if(st){st.textContent='Too large'; st.style.color='var(--amber)';} return; }
       const b64 = await infoFileToB64(file);
       const r = await call({
         api:'company_doc_upload', tenant:INFO_ACTIVE,
@@ -7281,6 +7297,7 @@ function renderOcr(){
 }
 function ocrPick(input){
   const f=input.files[0]; if(!f) return;
+  if(upTooBig(f,UP_MAX_MB,'the OCR limit')){ input.value=''; return; }
   OCR_FILE_NAME=f.name; OCR_MIME=f.type||'image/jpeg'; OCR_SCAN_PDF=null;
   const rd=new FileReader();
   rd.onload=function(e){ OCR_FILE_B64=String(e.target.result||'').split(',').pop(); document.getElementById('ocr_extract_btn').disabled=false; document.getElementById('ocr_out').innerHTML='<div class="muted" style="font-size:12px">📎 '+esc(f.name)+' ready ('+(f.size/1024).toFixed(0)+' KB) · click <b>Extract with AI</b></div>'; };
