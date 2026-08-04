@@ -6345,6 +6345,27 @@ Deno.serve(async (req)=>{
       }
       return j({ ok:true, id:claimId, amount });
     }
+    // v186: mint a one-shot signed URL so the browser PUTs the file straight to storage. Same permission
+    // checks as hr_rc_attach — this hands out write access to a path, so it cannot be the loose one.
+    if (api === "hr_rc_attach_sign") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      const claimId=b.claim_id; if(!claimId) return j({ ok:false, error:"claim_id required" });
+      const { data: ac } = await sb.from("hr_claim_requests").select("tenant_id,status,employee_id").eq("id",claimId).maybeSingle();
+      if(!ac) return j({ ok:false, error:"claim not found" });
+      if(who.isAdmin && ac.tenant_id){
+        const alwA=await allowedTenants(b.token);
+        if(alwA.indexOf(String(ac.tenant_id))<0) return denyTenant(me,"hr_rc_attach_sign",String(ac.tenant_id));
+      }
+      const ATTACHABLE=["Draft","Need More Info","Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval"];
+      if(ATTACHABLE.indexOf(String(ac.status))<0) return j({ ok:false, error:"This claim is "+ac.status+" — receipts can no longer be changed." }, 403);
+      if(!who.isAdmin){ if(!who.employee || ac.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403); }
+      const name=String(b.file_name||"receipt").replace(/[^A-Za-z0-9._-]/g,"_");
+      const path="claim/"+claimId+"/"+Date.now()+"_"+name;
+      const { data: su, error: se } = await sb.storage.from("hr-claim-receipts").createSignedUploadUrl(path);
+      if(se || !su) return j({ ok:false, error:"could not start the upload ("+((se&&se.message)||"storage error")+")" });
+      return j({ ok:true, path, token:su.token, url:(Deno.env.get("SUPABASE_URL")||"")+"/storage/v1/object/upload/sign/hr-claim-receipts/"+path+"?token="+encodeURIComponent(su.token) });
+    }
     if (api === "hr_rc_attach") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
@@ -6364,7 +6385,26 @@ Deno.serve(async (req)=>{
         if(ATTACHABLE.indexOf(String(ac.status))<0) return j({ ok:false, error:"This claim is "+ac.status+" — receipts can no longer be changed." }, 403);
       }
       if(!who.isAdmin){ const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",claimId).maybeSingle(); if(!oc || !who.employee || oc.employee_id!==who.employee.id) return j({ ok:false, error:"forbidden" }, 403); }
-      const name=String(b.file_name||"receipt"); const b64=String(b.file_b64||""); let path:any=null; let upErr:any=null;
+      const name=String(b.file_name||"receipt");
+      // v186: the file may already be in storage, uploaded straight from the browser via a signed URL
+      // (hr_rc_attach_sign). That path exists because base64-through-JSON could not carry a real scan: a
+      // 41.8 MB PDF becomes ~56 MB of base64 inside the request body, which blows past the edge function
+      // and past the client's own 30-second abort — the submit button simply did nothing.
+      if(b.file_path){
+        const p=String(b.file_path);
+        // The path must be inside THIS claim's folder, or a caller could point the row at someone else's
+        // receipt (or at a file they never uploaded) and satisfy the receipt-required gate with it.
+        if(p.indexOf("claim/"+claimId+"/")!==0) return j({ ok:false, error:"bad file path" }, 400);
+        // Verify it actually landed. A rowed-but-not-stored receipt would let a claim through the
+        // "receipt required" gate with nothing on file — the same trap the base64 branch guards below.
+        const dir=p.slice(0, p.lastIndexOf("/")); const base=p.slice(p.lastIndexOf("/")+1);
+        const { data: ls } = await sb.storage.from("hr-claim-receipts").list(dir, { search: base, limit: 100 });
+        const found = (ls||[]).some((o:any)=>o.name===base);
+        if(!found) return j({ ok:false, error:"Upload did not complete — please try again." });
+        await sb.from("hr_claim_attachments").insert({ claim_id:claimId, file_name:name, file_path:p, file_type:b.file_type||null, file_size:Number(b.file_size)||null, receipt_hash:b.receipt_hash||null, uploaded_by:(me.user&&me.user.id)||null });
+        return j({ ok:true, stored:true });
+      }
+      const b64=String(b.file_b64||""); let path:any=null; let upErr:any=null;
       if(b64){ try{ const bytes=Uint8Array.from(atob(b64.split(",").pop()), (ch)=>ch.charCodeAt(0)); path="claim/"+claimId+"/"+Date.now()+"_"+name.replace(/[^A-Za-z0-9._-]/g,"_"); const up=await sb.storage.from("hr-claim-receipts").upload(path, bytes, { contentType:b.file_type||"application/octet-stream", upsert:true }); if(up.error){ upErr=up.error.message||String(up.error); path=null; } }catch(e){ upErr=String(e).slice(0,200); path=null; } }
       // A failed upload must NOT leave a phantom attachment row — the "receipt required" gate counts rows,
       // so a rowed-but-not-stored receipt would let a claim through with no receipt on file.
