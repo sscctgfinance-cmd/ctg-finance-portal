@@ -5245,10 +5245,10 @@ Deno.serve(async (req)=>{
       // silently replaced. The filter is applied to the tenant's own user list, so it cannot be used to
       // reach a user outside the caller's company.
       if (Array.isArray(b.emails) && b.emails.length){
-        const want = new Set(b.emails.map((e:any)=>String(e||"").trim().toLowerCase()).filter(Boolean));
-        const before = targets.map((u:any)=>String(u.email).toLowerCase());
-        targets = targets.filter((u:any)=> want.has(String(u.email).toLowerCase()));
-        const missing = [...want].filter((e)=> before.indexOf(e)<0);
+        const want: string[] = b.emails.map((e:any)=>String(e||"").trim().toLowerCase()).filter(Boolean);
+        const before: string[] = targets.map((u:any)=>String(u.email).toLowerCase());
+        targets = targets.filter((u:any)=> want.indexOf(String(u.email).toLowerCase())>=0);
+        const missing = want.filter((e:string)=> before.indexOf(e)<0);
         if (missing.length) return j({ ok:false, error:"not an employee login in this company: "+missing.join(", ") });
         if (!targets.length) return j({ ok:false, error:"no matching employee logins" });
       }
