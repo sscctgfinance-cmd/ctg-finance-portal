@@ -2310,6 +2310,10 @@ async function ovChartsLoad(){
   el.innerHTML='<div class="panel"><div class="panel-hd"><h3>💹 Profit & Expense Analysis</h3></div><div class="muted" style="padding:24px;text-align:center"><div class="spinner" style="margin:0 auto 10px"></div>Pulling live Profit &amp; Loss from Xero… (a few seconds)</div></div>';
   try{
     const r=await call(Object.assign({api:'pnl_report'}, tenant?{tenant}:{}, from?{from,to}:{}));
+    // v190: the other four tenant-aware loaders discard a late response after a company switch; this one
+    // did not. Its cache key saved it from showing the WRONG company's figures, but an A-response landing
+    // after the operator moved to B was filtered down to nothing and blanked the charts.
+    if((curCo()||'')!==tenant) return;
     if(!r||!r.ok){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">📉</div><div>'+esc((r&&r.error)||'Could not load P&L')+'</div></div></div>'; return; }
     OV_PNL=r; OV_PNL_KEY=key; ovChartsRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
