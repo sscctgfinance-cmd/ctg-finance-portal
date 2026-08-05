@@ -5212,7 +5212,15 @@ Deno.serve(async (req)=>{
       const loginUrl = String(b.login_url||"https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html");
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", tenant).maybeSingle();
       const coName = (tn && tn.tenant_name) || "your company";
-      const mkBody = (name, email, pass)=>(
+      // v189: point the person at the app they can actually use. An admin sent to hros.html is not
+      // wrong exactly, but the Finance Portal is their home screen and the HR-only URL looks like a
+      // downgrade.
+      const portalUrl = "https://sscctgfinance-cmd.github.io/ctg-finance-portal/app.html";
+      const mkBody = (name:string, email:string, pass:string, role:string)=>{
+        const isEmp = String(role||"employee")==="employee";
+        const url = isEmp ? loginUrl : portalUrl;
+        const what = isEmp ? "HR OS" : "CTG Finance Portal";
+        return (
         "Hi "+name+",\n\n"+
         "Your HR OS login for "+coName+" is ready.\n\n"+
         "Portal: "+loginUrl+"\n"+
@@ -5227,7 +5235,7 @@ Deno.serve(async (req)=>{
         "临时密码："+pass+"\n\n"+
         "首次登入后系统会要求您设置自己的新密码。\n\n"+
         "— CTG HR OS"
-      );
+      );};
       // TEST MODE — verify SMTP end-to-end without changing a single password.
       if (b.test === true){
         const probe = await sendEmailTo(me.user.email, "HR OS — test email (no action taken)",
@@ -5238,7 +5246,13 @@ Deno.serve(async (req)=>{
       const { data: uc } = await sb.from("portal_user_companies").select("user_id").eq("tenant_id", tenant);
       const ids = (uc||[]).map((r:any)=>r.user_id);
       if (!ids.length) return j({ ok:false, error:"no users assigned to this company" });
-      const { data: users } = await sb.from("portal_users").select("id,email,name,role").in("id", ids).eq("role","employee").order("name");
+      // v189: the role filter exists so a BULK run cannot silently reset every admin's password. When the
+      // caller names people explicitly it is not a bulk run, and admins forget passwords too — so the
+      // filter applies only to the un-targeted case. Still scoped to this tenant's own user list.
+      const named = Array.isArray(b.emails) && b.emails.length>0;
+      let uq = sb.from("portal_users").select("id,email,name,role").in("id", ids);
+      if (!named) uq = uq.eq("role","employee");
+      const { data: users } = await uq.order("name");
       let targets = (users||[]).filter((u:any)=> u.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email));
       // v188: optional per-person targeting. Without it the only way to (re)invite ONE new joiner was to
       // reset the WHOLE company — including everyone already logged in, whose working password would be
@@ -5257,7 +5271,8 @@ Deno.serve(async (req)=>{
         const pass = "Ctg"+Math.random().toString(36).slice(2,7)+Math.floor(Math.random()*90+10)+"!";
         const { data: rr, error: re } = await sb.rpc("portal_admin_reset_password", { p_user_id: u.id, p_new_pass: pass });
         if (re || !(rr && rr.ok)){ results.push({ name:u.name, email:u.email, reset:false, emailed:false, error: (re && re.message) || (rr && rr.error) || "reset failed" }); continue; }
-        const em = await sendEmailTo(u.email, "Your HR OS login — "+coName, mkBody(u.name||u.email, u.email, pass), "CTG HR OS");
+        const em = await sendEmailTo(u.email, "Your "+(String(u.role||"employee")==="employee"?"HR OS":"CTG Finance Portal")+" login — "+coName,
+                                    mkBody(u.name||u.email, u.email, pass, u.role), "CTG HR OS");
         results.push({ name:u.name, email:u.email, temp_password:pass, reset:true, emailed:em.ok, error: em.ok?undefined:em.error });
       }
       const emailedN = results.filter((r)=>r.emailed).length;
