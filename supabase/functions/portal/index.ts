@@ -6757,7 +6757,33 @@ Deno.serve(async (req)=>{
         const dueDate = new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
         const inv:any = { Type:"ACCPAY", Contact:contact,
           Reference: reference, Date: c.claim_date||undefined, DueDate: dueDate, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
-        const idem = "rc-"+id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
+        // v192: the key used to be just claim id + reference, so it NEVER changed between attempts. Xero
+        // remembers a key for 24 hours and rejects it if the body differs — so the moment a post failed
+        // and the payload was then corrected (exactly what the missing-DueDate fix did), every retry died
+        // with "Idempotency Key ... is used with a different request" and the claim was stuck for a day.
+        // Hashing the payload keeps the real protection — an identical retry still dedupes — while a
+        // corrected payload is allowed through.
+        const idemBody = JSON.stringify(inv);
+        let h = 5381; for (let i=0;i<idemBody.length;i++) h = ((h*33) ^ idemBody.charCodeAt(i)) >>> 0;
+        const idem = ("rc-"+id+"-"+h.toString(36)).slice(0,128);
+
+        // Because the key no longer blocks a changed payload, guard the duplicate case directly: if a
+        // previous attempt actually reached Xero and we lost the response, the bill already exists under
+        // this Reference. Adopt it instead of creating a second one.
+        try {
+          const q = 'Type=="ACCPAY" AND Reference=="' + reference.replace(/"/g,'') + '" AND Status!="VOIDED"';
+          const ex = await fetch("https://api.xero.com/api.xro/2.0/Invoices?where="+encodeURIComponent(q), { headers: xh });
+          if (ex.ok) {
+            const exj = await ex.json();
+            const hit = (exj.Invoices||[])[0];
+            if (hit && hit.InvoiceID) {
+              await sb.from("hr_claim_requests").update({ xero_bill_id: hit.InvoiceID, xero_posted_at:new Date().toISOString(), xero_reference: reference }).eq("id", id);
+              return j({ ok:true, adopted:true, bill_id:hit.InvoiceID, invoice_number:hit.InvoiceNumber||null,
+                         note:"This claim was already in Xero under "+reference+" — linked to it instead of creating a duplicate." });
+            }
+          }
+        } catch(_e){ /* best-effort: a lookup failure must not block posting */ }
+
         const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
         const out = await r.json();
         if (!r.ok){
