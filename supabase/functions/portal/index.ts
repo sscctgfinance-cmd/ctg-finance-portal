@@ -4119,7 +4119,11 @@ Deno.serve(async (req)=>{
         if (Number(v.wht_amount)>0){ lines.push({ Description:"Less: Withholding tax "+(v.wht_rate||0)+"% — to remit to LHDN", Quantity:1, UnitAmount:-(Number(v.wht_amount)||0), AccountCode: v.wht_gl_account || gl }); }
         // Safety red line: SUBMITTED (Awaiting Approval), never AUTHORISED — payment stays a human click in Xero.
         const inv: any = { Type:"ACCPAY", Contact:{ Name:String(v.payee_name||"Individual").slice(0,500) },
-          Reference: reference, Date: v.invoice_date||undefined, DueDate: v.due_date||undefined,
+          // v191: `|| undefined` dropped the field entirely when due_date was blank, and Xero rejects a
+          // SUBMITTED bill with no due date ("Due Date cannot be empty") — same failure the reimbursement
+          // path hit on every single attempt. Fall back rather than omit.
+          Reference: reference, Date: v.invoice_date||undefined,
+          DueDate: v.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10),
           Status:"SUBMITTED", LineAmountTypes:"Exclusive", LineItems: lines };
         const idem = "sbi-"+v.id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
         const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
@@ -6744,8 +6748,15 @@ Deno.serve(async (req)=>{
       } else {
         // Contact = the claimer; stamp their HR OS TIN so the e-invoice buyer identity flows to Xero/MyInvois.
         const contact:any = { Name:String(empName).slice(0,500) }; if(empTin) contact.TaxNumber = empTin.slice(0,50);
+        // v191: DueDate was missing entirely, so EVERY attempt failed with
+        // "Xero 400: Due Date cannot be empty" — reimbursements had never once posted. Xero tolerates a
+        // missing due date on a DRAFT but rejects it on SUBMITTED, and this posts as SUBMITTED by design
+        // (payment stays a human click inside Xero). Every other ACCPAY builder in this file already
+        // passes one; this was the only one that did not.
+        // Same 30-day term the rest of the file uses, MYT-adjusted, and editable in Xero before payment.
+        const dueDate = new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
         const inv:any = { Type:"ACCPAY", Contact:contact,
-          Reference: reference, Date: c.claim_date||undefined, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
+          Reference: reference, Date: c.claim_date||undefined, DueDate: dueDate, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
         const idem = "rc-"+id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");
         const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers:{ ...xh, "Idempotency-Key": idem }, body: JSON.stringify({ Invoices:[inv] }) });
         const out = await r.json();
