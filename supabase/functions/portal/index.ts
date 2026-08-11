@@ -1584,7 +1584,9 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
       //   (a) the first candidate began answering 400 INVALID_ARGUMENT, and
       //   (b) the loop treated any non-404/429 as fatal and returned WITHOUT trying the other five models.
       // One alias moving took the whole ladder down. Now: a bad request is per-model, not fatal.
-      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash", "gemini-1.5-flash"]
+      // gemini-1.5-flash was dropped: verified 404 "not found for API version v1beta" on 2026-08-11, so it
+      // only ever costs a round-trip. Keep this list pruned — an unreadable photo walks the whole ladder.
+      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash"]
         .filter((v,i,a)=>v && a.indexOf(v)===i);
       const gemBody = (mdl:string, thinking:boolean)=>{
         const gc:any = { maxOutputTokens: Math.max(maxTokens, 2048), responseMimeType:"application/json" };
@@ -1603,7 +1605,7 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
           const out = await r.json();
           if (r.ok){
             const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || "";
-            if (txt) return { ok:true, text: txt };
+            if (txt) return { ok:true, text: txt, model: mdl };
             lastErr = "Gemini 200 but empty ("+mdl+(thinking?", thinking off":", thinking default")+")";
             continue;
           }
@@ -6522,7 +6524,7 @@ Deno.serve(async (req)=>{
       const tries:string[]=[]; let txt=""; let used="";
       for (const prov of ["anthropic","gemini","openai"]){
         const res = await callVisionLLM(prov, resolveModel(prov,""), sys, neutral, 800);
-        if (res.ok && res.text){ txt=res.text; used=prov; tries.push(prov+": ok"); break; }
+        if (res.ok && res.text){ txt=res.text; used=prov+(res.model?(" / "+res.model):""); tries.push(prov+": ok"); break; }
         tries.push(prov+": "+String(res.error||"failed").slice(0,160));
       }
       if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
