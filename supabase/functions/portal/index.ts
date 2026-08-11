@@ -1584,9 +1584,16 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
       //   (a) the first candidate began answering 400 INVALID_ARGUMENT, and
       //   (b) the loop treated any non-404/429 as fatal and returned WITHOUT trying the other five models.
       // One alias moving took the whole ladder down. Now: a bad request is per-model, not fatal.
-      // gemini-1.5-flash was dropped: verified 404 "not found for API version v1beta" on 2026-08-11, so it
-      // only ever costs a round-trip. Keep this list pruned — an unreadable photo walks the whole ladder.
-      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash"]
+      // Probed live against this key on 2026-08-11. Every DATED model id is gone:
+      //   gemini-2.5-flash        404 no longer available
+      //   gemini-2.5-flash-lite   404 no longer available
+      //   gemini-2.0-flash-001    404 no longer available
+      //   gemini-2.0-flash        404 "no longer available. Please update your code to use a newer model"
+      //   gemini-1.5-flash        404 not found for API version v1beta
+      // Only the *-latest aliases still resolve, which is the point of them: Google retires the dated ids
+      // and keeps the aliases pointing at something current. Pinning a dated id here buys nothing except a
+      // dead entry in six months — so the ladder is aliases only, cheapest first.
+      const candidates = [model, "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest"]
         .filter((v,i,a)=>v && a.indexOf(v)===i);
       const gemBody = (mdl:string, thinking:boolean)=>{
         const gc:any = { maxOutputTokens: Math.max(maxTokens, 2048), responseMimeType:"application/json" };
