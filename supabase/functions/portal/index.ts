@@ -1618,11 +1618,11 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
           trail.push(mdl+":"+r.status);
           // 401/403 is the key itself — no other model will help, so stop. Everything else (400 bad
           // argument, 404 unknown model, 429 quota, 5xx) is specific to this attempt: move on.
-          if (r.status === 401 || r.status === 403) return { ok:false, error: lastErr+" [tried "+trail.join(", ")+"]" };
+          if (r.status === 401 || r.status === 403) return { ok:false, error: "["+trail.join(" ")+"] "+lastErr };
           if (r.status !== 400) break;   // not an argument problem → retrying without thinking won't help
         }
       }
-      return { ok:false, error: (lastErr || "Gemini: no available model")+" [tried "+trail.join(", ")+"]" };
+      return { ok:false, error: "["+trail.join(" ")+"] "+(lastErr || "Gemini: no available model") };
     }
     // default: anthropic
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -6531,7 +6531,7 @@ Deno.serve(async (req)=>{
       for (const prov of ["anthropic","gemini","openai"]){
         const res = await callVisionLLM(prov, resolveModel(prov,""), sys, neutral, 800);
         if (res.ok && res.text){ txt=res.text; used=prov+(res.model?(" / "+res.model):""); tries.push(prov+": ok"); break; }
-        tries.push(prov+": "+String(res.error||"failed").slice(0,160));
+        tries.push(prov+": "+String(res.error||"failed").slice(0,240));
       }
       if (!txt) return j({ ok:false, error:"Receipt OCR unavailable — "+tries.join(" · ")+". Add credits or set GEMINI_API_KEY (free tier) as a Supabase Edge secret." });
       let parsed:any=null; const m=txt.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(_e){} }
