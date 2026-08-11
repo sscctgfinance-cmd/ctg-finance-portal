@@ -1577,20 +1577,42 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
         if (b.kind === "pdf")   return { inline_data:{ mime_type:"application/pdf", data: b.b64 } };
         return { text:"" };
       });
-      // Model availability + free-tier quota shift over time (some names 404 for new keys, some 429).
-      // Try the requested model, then current free-tier flash aliases, until one answers.
-      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash", "gemini-1.5-flash"]
+      // Model availability, free-tier quota AND the accepted generationConfig all shift over time, and
+      // `gemini-flash-latest` is an ALIAS Google re-points — so a request that worked in July can start
+      // returning 400 with nothing on our side having changed. That is exactly what happened: receipt OCR
+      // last succeeded on 2026-07-20 and then every scan failed, because
+      //   (a) the first candidate began answering 400 INVALID_ARGUMENT, and
+      //   (b) the loop treated any non-404/429 as fatal and returned WITHOUT trying the other five models.
+      // One alias moving took the whole ladder down. Now: a bad request is per-model, not fatal.
+      const candidates = [model, "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-001", "gemini-2.0-flash", "gemini-1.5-flash"]
         .filter((v,i,a)=>v && a.indexOf(v)===i);
+      const gemBody = (mdl:string, thinking:boolean)=>{
+        const gc:any = { maxOutputTokens: Math.max(maxTokens, 2048), responseMimeType:"application/json" };
+        // thinkingBudget:0 disables 2.5-series "thinking", which otherwise eats the whole output-token
+        // budget and returns empty text. But not every model accepts the field — the ones that don't reply
+        // 400 INVALID_ARGUMENT rather than ignoring it, so it can only ever be an attempt, never a given.
+        if (thinking) gc.thinkingConfig = { thinkingBudget: 0 };
+        return JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig: gc });
+      };
       let lastErr = "";
       for (const mdl of candidates){
-        // thinkingBudget:0 disables 2.5-series "thinking" (it silently eats the output-token budget and
-        // returns empty text otherwise); ignored by models that don't support it. Give headroom on tokens too.
-        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(mdl)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig:{ maxOutputTokens: Math.max(maxTokens, 2048), responseMimeType:"application/json", thinkingConfig:{ thinkingBudget: 0 } } }) });
-        const out = await r.json();
-        if (r.ok){ const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || ""; return { ok:true, text: txt }; }
-        lastErr = "Gemini "+r.status+" ("+mdl+"): "+JSON.stringify(out.error||out).slice(0,200);
-        // 404 = model unavailable → try next; 429 = quota for this model → try next; anything else (400/403 key issues) → stop.
-        if (r.status !== 404 && r.status !== 429) return { ok:false, error: lastErr };
+        // Try with the thinking switch, then without it. An empty answer is also a failure worth retrying:
+        // a thinking model that swallowed the budget returns 200 with no text at all.
+        for (const thinking of [true, false]){
+          const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(mdl)+":generateContent?key="+encodeURIComponent(key), { method:"POST", headers:{ "Content-Type":"application/json" }, body: gemBody(mdl, thinking) });
+          const out = await r.json();
+          if (r.ok){
+            const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || "";
+            if (txt) return { ok:true, text: txt };
+            lastErr = "Gemini 200 but empty ("+mdl+(thinking?", thinking off":", thinking default")+")";
+            continue;
+          }
+          lastErr = "Gemini "+r.status+" ("+mdl+"): "+JSON.stringify(out.error||out).slice(0,160);
+          // 401/403 is the key itself — no other model will help, so stop. Everything else (400 bad
+          // argument, 404 unknown model, 429 quota, 5xx) is specific to this attempt: move on.
+          if (r.status === 401 || r.status === 403) return { ok:false, error: lastErr };
+          if (r.status !== 400) break;   // not an argument problem → retrying without thinking won't help
+        }
       }
       return { ok:false, error: lastErr || "Gemini: no available model" };
     }
