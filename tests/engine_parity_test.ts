@@ -448,3 +448,62 @@ Deno.test("parity — no engine produces a negative or non-finite figure", () =>
     if (k !== "net") assertEquals(Number(a[k]) >= 0, true, `${k} went negative`);
   }
 });
+
+Deno.test("rule — pcb_set overrides the computed MTD, identically in both engines (v195)", () => {
+  // HR OS only knows the months it ran itself. A company that goes live mid-year (or hands over a payroll
+  // summary from another system) has YTD income and PCB the engine has never seen, so the MTD it derives
+  // from first principles is right in method and wrong in amount — and hr_payroll_finalise then rejects
+  // the whole company's run rather than let the operator enter the real figure. pcb_set is that entry.
+  const emp = baseEmp({ basic_salary: 8000, marital_status: "married", num_children: 2 });
+  const set = (amount: number) => [{ kind: "pcb_set", amount, epf_subject: false }];
+
+  const plain = computePayrollMY(emp, CFG, [], undefined, PERIOD);
+  const over = computePayrollMY(emp, CFG, set(123.45), undefined, PERIOD);
+  assertEquals(over.pcb, 123.45, "the entered figure IS the PCB");
+  assertEquals(over.pcb === plain.pcb, false, "the test is worthless if the computed figure happens to match");
+
+  // The override is a tax figure only. It must not touch a single statutory contribution — those are
+  // employer liabilities filed separately and are never the operator's to type over.
+  for (const k of ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "lindung", "employerCost"]) {
+    assertEquals(over[k], plain[k], `pcb_set must not change ${k}`);
+  }
+  // ...but it MUST move net pay, by exactly the PCB difference.
+  assertEquals(Math.round((plain.net - over.net) * 100) / 100,
+    Math.round((over.pcb - plain.pcb) * 100) / 100, "net must absorb the whole PCB change");
+
+  // Both engines, same answer — this is the invariant that keeps finalise from 409'ing.
+  for (const amt of [0, 0.01, 123.45, 5000, 12345.67]) {
+    const a = hrCompute(emp, CFG, set(amt), PERIOD);
+    const b = computePayrollMY(emp, CFG, set(amt), undefined, PERIOD);
+    for (const k of MONEY) {
+      assertEquals(Math.abs(Number(a[k]) - Number(b[k])) <= 0.01, true,
+        `pcb_set ${amt}: ${k} — frontend ${a[k]} vs backend ${b[k]}`);
+    }
+    assertEquals(b.pcb, amt, `pcb_set ${amt} must survive verbatim`);
+  }
+
+  // ZERO is a real override, not "unset". Several staff genuinely have nil MTD, and treating 0 as absent
+  // would silently re-impose the calculated tax on exactly those people.
+  assertEquals(computePayrollMY(emp, CFG, set(0), undefined, PERIOD).pcb, 0, "0 must mean zero PCB");
+  assertEquals(hrCompute(emp, CFG, set(0), PERIOD).pcb, 0);
+
+  // Last row wins, on both sides — the grid writes one row but the table has no uniqueness constraint.
+  const dup = [{ kind: "pcb_set", amount: 10 }, { kind: "pcb_set", amount: 20 }];
+  assertEquals(computePayrollMY(emp, CFG, dup, undefined, PERIOD).pcb, 20);
+  assertEquals(hrCompute(emp, CFG, dup, PERIOD).pcb, 20);
+
+  // It is applied AFTER zakat, so what the operator types is the final MTD — not a base the code then
+  // reduces again. Ordering the two the other way round would quietly under-deduct every zakat payer.
+  const zk = [{ kind: "deduction", label: "Zakat", amount: 200, epf_subject: false },
+              { kind: "pcb_set", amount: 300, epf_subject: false }];
+  assertEquals(computePayrollMY(emp, CFG, zk, undefined, PERIOD).pcb, 300, "zakat must not reduce an entered PCB");
+  assertEquals(hrCompute(emp, CFG, zk, PERIOD).pcb, 300);
+
+  // And it is inert everywhere else: not an earning, not a deduction, not part of any statutory wage.
+  const asEarn = computePayrollMY(baseEmp({ basic_salary: 3000 }), CFG,
+    [{ kind: "pcb_set", amount: 9999 }], undefined, PERIOD);
+  const bare = computePayrollMY(baseEmp({ basic_salary: 3000 }), CFG, [], undefined, PERIOD);
+  assertEquals(asEarn.gross, bare.gross, "pcb_set must never be counted as pay");
+  assertEquals(asEarn.socsoEe, bare.socsoEe);
+  assertEquals(asEarn.epfEe, bare.epfEe);
+});

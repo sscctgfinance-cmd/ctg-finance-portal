@@ -1266,6 +1266,10 @@ function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:number, per
   const zakatMonth=adj.filter((a:any)=>a.kind==='deduction' && /^zakat/i.test(String(a.label||"")))
                       .reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   if(zakatMonth>0) pcb = Math.max(0, payRound2(pcb - zakatMonth));
+  // v195: an explicit PCB for this period overrides everything above. Used when migrating mid-year from an
+  // outsourced payroll, where the true MTD depends on year-to-date figures this system does not hold.
+  // Applied LAST so it also wins over the zakat adjustment — the entered figure is the final MTD.
+  const pcbSet=lastAdjAmt('pcb_set'); if(pcbSet!=null) pcb=Math.max(0, payRound2(pcbSet));
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   const net=payRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   const employerCost=payRound2(gross+epfEr+socsoEr+eisEr);

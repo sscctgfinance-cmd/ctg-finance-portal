@@ -1674,6 +1674,10 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var zakatMonth=adj.filter(function(a){ return a.kind==='deduction' && /^zakat/i.test(String(a.label||'')); })
                     .reduce(function(s,a){ return s+Number(a.amount||0); },0);
   if(zakatMonth>0) pcb = Math.max(0, hrRound2(pcb - zakatMonth));
+  // v195: explicit PCB for this period wins over everything above. Must mirror computePayrollMY exactly,
+  // including being applied AFTER zakat — otherwise finalise 409s the whole run.
+  var pcbSetRows=adj.filter(function(a){return a.kind==='pcb_set';});
+  if(pcbSetRows.length){ pcb=Math.max(0, hrRound2(Number(pcbSetRows[pcbSetRows.length-1].amount)||0)); }
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
@@ -4286,7 +4290,7 @@ function hrGridInit(){
     if(e.pay_type==='hourly') autoBasic=Math.round((Number(att.hours)||0)*(Number(e.hourly_rate)||0)*100)/100;
     else if(e.pay_type==='daily') autoBasic=Math.round((Number(att.days)||0)*(Number(e.daily_rate)||0)*100)/100;
     var baseVal=(bset!=null?bset:(autoBasic!=null?autoBasic:Number(e.basic_salary||0)));
-    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
+    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }
@@ -4307,6 +4311,9 @@ function hrGridRowCompute(e,g){
   if(Number(g.allowance)) adj.push({kind:'allowance',amount:Number(g.allowance),epf_subject:true});
   var dedTot=hrDedTot(g); if(dedTot) adj.push({kind:'deduction',amount:dedTot,epf_subject:false});
   if(Number(g.unpaid)) adj.push({kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
+  // v195: blank = let the engine compute. 0 is a REAL override (some staff genuinely have nil MTD),
+  // so this must test for null/'' — not falsiness.
+  if(g.pcbSet!=null&&g.pcbSet!=='') adj.push({kind:'pcb_set',amount:Number(g.pcbSet)||0,epf_subject:false});
   return hrCompute(synth,HR.pay.data.rates,adj,{month:HR.pay.month,year:HR.pay.year},(HR.pay.data.ytd||{})[e.id]);   // v155/v156: same period + YTD basis the server uses
 }
 function hrGridAll(){
@@ -4326,6 +4333,16 @@ function hrGridAll(){
 function hrGridLocked(){ var p=HR.pay, run=(p.data&&p.data.run)||null; return !!run && run.status==='finalised' && !p.editFinal; }
 function hrGCell(empId,field){ var g=HR.pay.grid[empId]||{}; var lk=hrGridLocked();
   return '<input type="number" step="0.01" value="'+(Number(g[field])||0)+'"'+(lk?' disabled':'')+' oninput="hrGridCell(\''+empId+'\',\''+field+'\',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right'+(lk?';opacity:.6;cursor:not-allowed':'')+'">'; }
+// v195: PCB is the one statutory figure the operator sometimes has to type in — HR OS only knows the
+// months it ran itself, so a mid-year go-live (or a figure straight off the previous payroll's summary)
+// will not reconcile from first principles. Blank = computed by the engine; any entry overrides it and
+// is stored as a pcb_set adjustment, so the server recomputes to exactly the same number.
+function hrGPcbCell(empId,computed){ var g=HR.pay.grid[empId]||{}; var lk=hrGridLocked();
+  var ov=(g.pcbSet!=null&&g.pcbSet!=='');
+  return '<input type="number" step="0.01" min="0" id="pcb_'+empId+'" value="'+(ov?Number(g.pcbSet):'')+'" placeholder="'+M(computed)+'"'+(lk?' disabled':'')+
+    ' oninput="hrGridPcbCell(\''+empId+'\',this.value)" onfocus="this.select()"'+
+    ' title="'+(ov?'Manual PCB override — clear the box to go back to the calculated '+M(computed):'Calculated by the MTD engine. Type a figure to override it for this month only.')+'"'+
+    ' style="width:78px;padding:4px 6px;background:var(--panel-2);border:1px solid '+(ov?'var(--amber)':'var(--border)')+';border-radius:5px;color:'+(ov?'var(--amber)':'var(--text)')+';font-size:11.5px;text-align:right;font-weight:'+(ov?'700':'400')+(lk?';opacity:.6;cursor:not-allowed':'')+'">'; }
 // ── Itemised deductions ──
 var HR_DED_TYPES=['Salary advance','Loan repayment','PTPTN','Zakat','CP38 (LHDN)','Insurance','Uniform / equipment','Staff welfare','Union / society','Other deduction'];
 function hrDedTot(g){ return (g&&g.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0); }
@@ -4611,7 +4628,7 @@ function hrPayroll(){
     var badge='<div class="muted" style="font-size:9.5px;margin-top:1px">EPF '+Math.round((mt.epfEeRate||0)*1000)/10+'% · SOC C'+(mt.socsoCat||1)+(mt.senior?' · <span style="color:var(--amber)">60+</span>':'')+(e.resident===false?' · <span style="color:var(--amber)">non-res</span>':'')+'</div>';
     return '<tr><td style="white-space:nowrap"><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</td>'+
       '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
-      ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+ec('lin_'+id,q.lindung)+ec('pcb_'+id,q.pcb)+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
+      ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+ec('lin_'+id,q.lindung)+'<td class="amt">'+hrGPcbCell(id,q.pcb)+'</td>'+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
   }).join('');
   var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+')</td><td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
     ec('t_g',tot.gross)+ec('t_epf',tot.epfEe)+ec('t_soc',tot.socsoEe)+ec('t_eis',tot.eisEe)+ec('t_lin',tot.lindung)+ec('t_pcb',tot.pcb)+ec('t_net',tot.net,' style="color:var(--green-soft)"')+'</tr>';
@@ -4747,6 +4764,13 @@ async function hrRatesSave(){ return hrOnce('hrRatesSave', async function(){
   if(r&&r.ok){ toast('Statutory rates saved ✓'); HR.pay.data.rates=rates; HR.pay.showRates=false; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }); }
 function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g[field]=(val===''||val==null)?0:Number(val); if(isNaN(g[field]))g[field]=0; hrGridDirty(); hrGridRecalc(); }
+// v195: PCB override. Empty box = no override (fall back to the engine); everything else, INCLUDING 0,
+// is a real figure the operator entered.
+function hrGridPcbOn(g){ return !!g && g.pcbSet!=null && g.pcbSet!==''; }
+function hrGridPcbCell(empId,val){ var g=HR.pay.grid[empId]; if(!g) return;
+  if(val===''||val==null){ g.pcbSet=null; }
+  else { var n=Number(val); g.pcbSet=isNaN(n)?null:Math.max(0,n); }
+  hrGridDirty(); hrGridRecalc(); }
 // v181: every path that mutates HR.pay.grid must come through here. Typing 19 employees' bonuses and
 // losing them to a period switch is the expensive mistake this prevents; the badge is also the only way
 // to tell "saved" from "typed but not saved", which is exactly what the operator asked for.
@@ -4782,7 +4806,10 @@ function hrGridConfirmDiscard(){
 function hrGridRecalc(){
   var p=HR.pay, emps=p.data.employees||[]; var A=hrGridAll(); var tot=A.tot;
   var set=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=M(v); };
-  A.rows.forEach(function(r){ var id=r.e.id,q=r.p; set('g_'+id,q.gross); set('epf_'+id,q.epfEe); set('soc_'+id,q.socsoEe); set('eis_'+id,q.eisEe); set('lin_'+id,q.lindung); set('pcb_'+id,q.pcb); set('net_'+id,q.net);
+  A.rows.forEach(function(r){ var id=r.e.id,q=r.p; set('g_'+id,q.gross); set('epf_'+id,q.epfEe); set('soc_'+id,q.socsoEe); set('eis_'+id,q.eisEe); set('lin_'+id,q.lindung); set('net_'+id,q.net);
+    // PCB is an input, not a cell: never write .textContent over it (that wipes what the operator typed).
+    // Only the placeholder — the calculated figure shown when no override is set — changes.
+    var pe=document.getElementById('pcb_'+id); if(pe){ var ov=hrGridPcbOn(p.grid[id]); pe.placeholder=M(q.pcb); pe.style.borderColor=ov?'var(--amber)':'var(--border)'; pe.style.color=ov?'var(--amber)':'var(--text)'; pe.style.fontWeight=ov?'700':'400'; }
     var db=document.getElementById('ded_'+id); if(db){ var gg=p.grid[id]||{}; var nn=(gg.deductions||[]).filter(function(x){return Number(x.amount);}).length; db.textContent=M(hrDedTot(gg))+(nn?(' · '+nn):'')+' ▾'; } });
   set('t_g',tot.gross); set('t_epf',tot.epfEe); set('t_soc',tot.socsoEe); set('t_eis',tot.eisEe); set('t_lin',tot.lindung); set('t_pcb',tot.pcb); set('t_net',tot.net);
   var sc=document.getElementById('hr_paysum'); if(sc) sc.innerHTML=hrPaySumHtml(tot);
@@ -4798,6 +4825,7 @@ async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
     if(Number(g.allowance)) out.push({employee_id:e.id,kind:'allowance',amount:Number(g.allowance),epf_subject:true});
     (g.deductions||[]).forEach(function(x){ if(Number(x.amount)) out.push({employee_id:e.id,kind:'deduction',label:(x.label||'Other deduction'),amount:Number(x.amount),epf_subject:false}); });
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
+    if(hrGridPcbOn(g)) out.push({employee_id:e.id,kind:'pcb_set',amount:Number(g.pcbSet)||0,epf_subject:false});
   });
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
   // Clear dirty ONLY on a confirmed ok — clearing it optimistically would drop the unload guard while the
