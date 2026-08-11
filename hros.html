@@ -5029,8 +5029,17 @@ function hrMissingIds(rows, need){
   if(!bad.length) return '';
   return bad.slice(0,6).join(' · ')+(bad.length>6?(' · +'+(bad.length-6)+' more'):'');
 }
-function hrPadR(s,n){ s=String(s==null?'':s); return s.length>=n?s.slice(0,n):s+new Array(n-s.length+1).join(' '); }
-function hrPadL(s,n,c){ s=String(s==null?'':s); c=c||'0'; return s.length>=n?s.slice(-n):new Array(n-s.length+1).join(c)+s; }
+// A name legitimately gets clipped to the layout width — that is normal and harmless. An identifier is not:
+// pass `what` for those and the file is blocked instead. See hrPadL (v199).
+function hrPadR(s,n,what){ s=String(s==null?'':s); if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(0,n); } return s+new Array(n-s.length+1).join(' '); }
+// v199: a fixed-width statutory record must never be silently trimmed to fit. hrPadR truncated with
+// slice(0,n) and hrPadL with slice(-n), so an over-long value produced a syntactically perfect record
+// carrying a number that belongs to nobody — the CP39 file was shipping every employee's TIN two
+// characters short. Overflows are now recorded and the builders refuse to emit the file.
+var HR_FIT_ERR=[];
+function hrFitReset(){ HR_FIT_ERR=[]; }
+function hrFitNote(what,val,n){ HR_FIT_ERR.push(what+' "'+val+'" is '+String(val).length+' chars, the layout allows '+n); }
+function hrPadL(s,n,c,what){ s=String(s==null?'':s); c=c||'0'; if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(-n); } return new Array(n-s.length+1).join(c)+s; }
 function hrCents(n){ return String(Math.round((Number(n)||0)*100)); }
 // EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
 function hrExpKwsp(ret){
@@ -5039,15 +5048,18 @@ function hrExpKwsp(ret){
   var miss=hrMissingIds(rows,[{k:'epfNo',label:'EPF member no'},{k:'ic',label:'IC'}]);
   if(miss){ var m1='KWSP file blocked — missing EPF member no / IC: '+miss+'. Fill them in Employees, then export again.';
             if(ret) return { error:m1 }; toast(m1,true); return; }
+  hrFitReset();   // v199: refuse to emit a record whose member number or amount had to be trimmed to fit
   var per=hrPeriod(); var total=0;
   var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.epfEe+p.epfEr;
-    return hrPadL(String(e.epfNo||'').replace(/\D/g,''),12)      // EPF member no (12)
-         + hrPadL(String(e.ic||'').replace(/\D/g,''),12)          // new IC (12)
-         + hrPadR(hrAscii(e.name).toUpperCase(),40)               // name (40)
-         + hrPadL(hrCents(p.gross),11)                            // wages in cents (11)
-         + hrPadL(hrCents(p.epfEe),9)                             // employee share cents (9)
-         + hrPadL(hrCents(p.epfEr),9);                            // employer share cents (9)
+    return hrPadL(String(e.epfNo||'').replace(/\D/g,''),12,'0','EPF member no for '+e.name)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12,'0','IC for '+e.name)
+         + hrPadR(hrAscii(e.name).toUpperCase(),40)               // name (40) — clipping a name is fine
+         + hrPadL(hrCents(p.gross),11,'0','EPF wages for '+e.name)
+         + hrPadL(hrCents(p.epfEe),9,'0','EPF employee share for '+e.name)
+         + hrPadL(hrCents(p.epfEr),9,'0','EPF employer share for '+e.name);
   });
+  if(HR_FIT_ERR.length){ var mK='KWSP file blocked — a value does not fit the layout, and a trimmed one would be credited to the wrong member: '+HR_FIT_ERR.join(' · ');
+                         if(ret) return { error:mK }; toast(mK,true); return; }
   var out={ name:'KWSP_iAkaun_'+per.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
   if(ret) return out;
   hrDownload(out.name, out.text, out.mime);
@@ -5081,6 +5093,15 @@ function hrExpCp39(ret){
   var miss=hrMissingIds(rows,[{k:'taxNo',label:'tax no (TIN)'},{k:'ic',label:'IC'}]);
   if(miss){ var m2='CP39 blocked — missing TIN / IC: '+miss+'. Fill them in Employees, then export again.';
             if(ret) return { error:m2 }; toast(m2,true); return; }
+  // v199: the TIN field is the 11-digit income-tax NUMBER, not the printed reference. Every TIN on file is
+  // stored the way LHDN prints it — "IG28765801050" — and the old code kept the alphabetic prefix and then
+  // truncated to 11, emitting "IG287658010": the right length, the wrong taxpayer, on every single record.
+  // CP8D already strips to digits (String(taxNo).replace(/\D/g,'')), which is what made the mismatch visible.
+  var badTin=rows.filter(function(x){ return String(x.e.taxNo||'').replace(/\D/g,'').length>11; })
+                 .map(function(x){ return x.e.name+' ('+x.e.taxNo+')'; });
+  if(badTin.length){ var mT='CP39 blocked — these income-tax numbers are longer than the 11 digits the layout allows, and truncating one would file the payment against the wrong taxpayer: '+badTin.join(' · ')+'. Correct them in Employees.';
+                     if(ret) return { error:mT }; toast(mT,true); return; }
+  hrFitReset();
   var per=hrPeriod(); var total=0;
   var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.pcb;
     // v157: CP38 was hard-coded to zero while "CP38 (LHDN)" is an offered payroll deduction that really is
@@ -5088,18 +5109,20 @@ function hrExpCp39(ret){
     // employer already deducted, and the employer holds undeclared trust money. Report what was deducted.
     var cp38=(x.d&&x.d.deductions?x.d.deductions:[]).filter(function(dd){ return /^CP38/i.test(String(dd.label||'')); })
               .reduce(function(s,dd){ return s+(Number(dd.amount)||0); },0);
-    return hrPadR(hrAscii(e.taxNo).replace(/[^0-9A-Za-z]/g,''),11)      // income-tax no / TIN (11)
-         + hrPadL(String(e.ic||'').replace(/\D/g,''),12)                // new IC (12)
-         + hrPadR(hrAscii(e.name).toUpperCase(),60)                     // name (60)
-         + hrPadL(hrCents(p.pcb),8)                                     // PCB/MTD cents (8)
-         + hrPadL(hrCents(cp38),8);                                     // CP38 cents (8)
+    return hrPadL(String(e.taxNo||'').replace(/\D/g,''),11,' ','TIN for '+e.name)  // income-tax no, digits only (11)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12,'0','IC for '+e.name)      // new IC (12)
+         + hrPadR(hrAscii(e.name).toUpperCase(),60)                                // name (60) — clipping a name is fine
+         + hrPadL(hrCents(p.pcb),8,'0','PCB for '+e.name)                          // PCB/MTD cents (8)
+         + hrPadL(hrCents(cp38),8,'0','CP38 for '+e.name);                         // CP38 cents (8)
   });
+  if(HR_FIT_ERR.length){ var mF='CP39 blocked — a value does not fit the layout, and a trimmed one would be filed against the wrong person: '+HR_FIT_ERR.join(' · ');
+                         if(ret) return { error:mF }; toast(mF,true); return; }
   var out={ name:'LHDN_CP39_'+per.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
   if(ret) return out;
   hrDownload(out.name, out.text, out.mime);
   toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
-var HR_BANK_CODE={maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
+var HR_BANK_CODE={'maybank islamic':'MBISMYKL','ambank islamic':'AISLMYKL','cimb islamic':'CTBBMYKL','rhb islamic':'RHBAMYKL','hong leong islamic':'HLIBMYKL','public islamic':'PIBEMYKL',maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
 // ── Employee bank picker: searchable dropdown backed by the hr_banks master list (HR.banks). Stores the bank CODE, shows the name. ──
 function hrBanksSorted(){ return (HR.banks||[]).filter(function(b){return b.active;}).slice().sort(function(a,b){return String(a.name).localeCompare(String(b.name));}); }
 function hrBankPicker(x){
@@ -5133,10 +5156,18 @@ function hrBankPick(code){ var b=hrBanksSorted().find(function(x){return x.code=
 }
 function hrBankBlur(){ setTimeout(function(){ var b=document.getElementById('hr_bankList'); if(b) b.style.display='none'; },160); }
 function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
+// v199: the salary files wrote `e.bankCode || hrBankCode(e.bankName)` into a column labelled SWIFT/BIC.
+// Since the bank master list landed, bank_code is ALWAYS set — to HR OS's own code ("MAYBANK",
+// "HONG_LEONG_BANK") — so the fallback never ran and every file carried an identifier no bank recognises.
+// Resolve the real BIC from the bank name, then from the code read as words, and leave it BLANK rather
+// than emit something wrong: a blank field gets rejected at upload, a plausible wrong one gets routed.
+function hrSwift(e){
+  return hrBankCode(e&&e.bankName) || hrBankCode(String((e&&e.bankCode)||'').replace(/_/g,' ')) || '';
+}
 function hrExpGiro(){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
   var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
-  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',(e.bankCode||hrBankCode(e.bankName)),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   // v157 CRITICAL: never append a "TOTAL" trailer to a BANK file. The row shape is a payment instruction,
   // so the trailer became a real credit line (account="TOTAL", amount=whole payroll) that the uploader
   // either rejects outright or, worse, queues as a second full-payroll debit. Totals belong in the UI only.
@@ -5160,7 +5191,7 @@ function hrExpBank(bank,ret){
   if(bank==='maybank'){
     name='Maybank_M2E_Salary_'+tag+'.csv';
     head=['Payment Mode','Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Amount (RM)','Recipient Reference','Payment Description','Beneficiary ID (New IC)','Beneficiary Email'];
-    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',(e.bankCode||hrBankCode(e.bankName)),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
+    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrSwift(e),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+per.label,e.ic||'',e.email||'']; });
     // v157 CRITICAL: no "TOTAL" trailer in a bank file — see hrExpGiro. It landed in SWIFT/BIC with the
     // whole payroll in Amount, i.e. a phantom payment instruction.
   } else {
@@ -5171,7 +5202,7 @@ function hrExpBank(bank,ret){
     if(!cd) toast('Tip: pick a Crediting date in the Payment Hub — UOB needs the date salaries reach staff.',true);
     name='UOB_Infinity_IBG_Payroll_'+tag+'.csv';
     head=['Crediting Date','Debit Account','Beneficiary Name','Beneficiary Bank','SWIFT/BIC','Beneficiary Account No','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Payment Advice Email','Payment Type'];
-    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',(e.bankCode||hrBankCode(e.bankName)),e.bankAccount||'',f2(x.p.net),('SALARY '+per.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
+    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',f2(x.p.net),('SALARY '+per.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
     // v157 CRITICAL: no "TOTAL" trailer in a bank file — see hrExpGiro. It landed in Beneficiary Account No
     // with the whole payroll in Amount, i.e. a phantom full-payroll credit line.
   }

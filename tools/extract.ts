@@ -8,7 +8,33 @@
 const BS = "\\";
 const QUOTES = ['"', "'", "`"];
 
-/** Index of the brace/bracket that closes the one at `open`, skipping strings, comments and regex-ish text. */
+/** Keywords after which a `/` starts a regex literal rather than a division. */
+const REGEX_KEYWORDS = [
+  "return", "typeof", "case", "in", "of", "do", "else", "void", "delete", "instanceof", "new", "yield",
+  "throw", "await",
+];
+
+/** True when the `/` at index k opens a regex literal rather than being a division operator. */
+function regexStartsHere(s: string, k: number): boolean {
+  let j = k - 1;
+  while (j >= 0 && /\s/.test(s[j])) j--;
+  if (j < 0) return true;                                  // start of input
+  if (/[({[,;:!?&|=+\-*%<>~^]/.test(s[j])) return true;    // after an operator or opener
+  if (!/[A-Za-z_$]/.test(s[j])) return false;              // after ) ] . digit → division
+  let i = j;                                               // collect the identifier / keyword
+  while (i >= 0 && /[A-Za-z_$0-9]/.test(s[i])) i--;
+  return REGEX_KEYWORDS.indexOf(s.slice(i + 1, j + 1)) >= 0;
+}
+
+/**
+ * Index of the brace/bracket that closes the one at `open`, skipping strings, comments and regex literals.
+ *
+ * Regex literals must be skipped as a unit, not scanned character by character: hrCsv contains
+ * `/[",\r\n]/`, whose `"` was read as the start of a string, which then swallowed the rest of the file and
+ * failed with "unbalanced". A regex can only appear where a value can, so the character before it decides —
+ * after an operator, `(`, `,`, `[`, `{`, `;`, `:`, `!`, `?`, `&`, `|`, `=`, `return` etc. it is a regex;
+ * after an identifier, `)`, `]` or a literal it is division.
+ */
 function closeIdx(s: string, open: number): number {
   const openCh = s[open];
   const closeCh = openCh === "{" ? "}" : openCh === "[" ? "]" : ")";
@@ -24,6 +50,21 @@ function closeIdx(s: string, open: number): number {
     }
     if (c === "/" && s[k + 1] === "/") { k = s.indexOf("\n", k); if (k < 0) k = s.length; continue; }
     if (c === "/" && s[k + 1] === "*") { k = s.indexOf("*/", k) + 2; continue; }
+    if (c === "/" && regexStartsHere(s, k)) {
+      k++;                                   // past the opening slash
+      let inClass = false;
+      while (k < s.length) {
+        const d = s[k];
+        if (d === BS) { k += 2; continue; }
+        if (d === "[") inClass = true;
+        else if (d === "]") inClass = false;
+        else if (d === "/" && !inClass) { k++; break; }
+        else if (d === "\n") break;          // not a regex after all — bail rather than run away
+        k++;
+      }
+      while (/[a-z]/.test(s[k] || "")) k++;  // flags
+      continue;
+    }
     if (c === openCh) depth++;
     else if (c === closeCh) depth--;
     k++;
