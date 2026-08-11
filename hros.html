@@ -1165,6 +1165,11 @@ const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
       }).catch(function(){});                      // never surface a beacon failure to the user
     } catch(_e){}
   }
+  // v206: reachable on purpose. The listeners below only see UNCAUGHT errors — but the app catches a lot,
+  // and a caught error is exactly the kind that leaves a screen wedged with nobody told. hrLoadPayroll
+  // wrapped hrRender in try/catch, so a ReferenceError in the payroll renderer became a toast and an
+  // endless "Loading payroll…", with nothing in portal_client_errors to find afterwards.
+  window.hrBeacon = beacon;
   addEventListener('error', function(e){
     if (e && e.message) beacon('error', e.message, e.error && e.error.stack);
   });
@@ -4654,6 +4659,13 @@ function hrPayroll(){
     '<select id="hr_pm" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+HR_MONTHS.slice(1).map(function(m,i){return '<option value="'+(i+1)+'"'+((i+1)===p.month?' selected':'')+'>'+m+'</option>';}).join('')+'</select>'+
     '<select id="hr_py" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+[p.year-1,p.year,p.year+1].map(function(y){return '<option value="'+y+'"'+(y===p.year?' selected':'')+'>'+y+'</option>';}).join('')+'</select>'+
     '<button class="btn sm" onclick="hrPickPeriod()">Load</button></div>';
+  // v206: a spinner that never resolves is indistinguishable from a spinner that is still working. If the
+  // load (or the render) failed, say what happened and offer the retry — do not sit there turning.
+  if(!p.data && p.err){ return picker+'<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div>'+
+    '<div style="font-weight:700;margin-bottom:4px">Payroll could not be loaded</div>'+
+    '<div class="muted" style="font-size:12px;max-width:520px;margin:0 auto 12px">'+esc(p.err)+'</div>'+
+    '<button class="btn p sm" onclick="HR.pay.err=null;HR.pay.data=null;hrLoadPayroll();hrRender()">Try again</button>'+
+    '</div></div>'; }
   if(!p.data){ hrLoadPayroll(); return picker+'<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading payroll…</div></div>'; }
   var cfg=p.data.rates; if(!cfg) return picker+'<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>No statutory rates configured (hr_statutory_rates)</div></div></div>';
   if(!p.grid || p.gridPeriod!==p.month+'-'+p.year) hrGridInit();
@@ -4664,11 +4676,19 @@ function hrPayroll(){
   var ec=function(id,v,extra){ return '<td class="amt"'+(extra||'')+' id="'+id+'">'+M(v)+'</td>'; };
   var trs=A.rows.map(function(r){ var e=r.e,q=r.p,id=e.id,mt=q._meta||{};
     var badge='<div class="muted" style="font-size:9.5px;margin-top:1px">EPF '+Math.round((mt.epfEeRate||0)*1000)/10+'% · SOC C'+(mt.socsoCat||1)+(mt.senior?' · <span style="color:var(--amber)">60+</span>':'')+(e.resident===false?' · <span style="color:var(--amber)">non-res</span>':'')+'</div>';
-    return '<tr><td style="white-space:nowrap"><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</td>'+
+    return '<tr><td style="white-space:nowrap"><span style="display:inline-flex;align-items:baseline;gap:6px">'+hrGRowMenuBtn(id)+'<span><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</span></span></td>'+
       '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
       ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+ec('lin_'+id,q.lindung)+'<td class="amt">'+hrGPcbCell(id,q.pcb)+'</td>'+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
   }).join('');
-  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+')</td><td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
+  // Skipped staff are out of A.rows (hrGridAll drops them), so they get their own greyed rows here. An
+  // exclusion you cannot see is one you forget you made.
+  var skipped=(p.data.employees||[]).filter(function(e){ return (p.grid[e.id]||{}).skip; });
+  var skipRows=skipped.map(function(e){
+    return '<tr style="opacity:.55"><td style="white-space:nowrap"><span style="display:inline-flex;align-items:baseline;gap:6px">'+hrGRowMenuBtn(e.id)+'<span><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+
+      '<div style="font-size:9.5px;margin-top:1px;color:var(--amber)">Skipped — no payslip this month</div></span></span></td>'+
+      '<td colspan="13" class="muted" style="font-size:11px">Not in this run. '+hrRW('<button class="btn xs" onclick="hrGridSkip(\''+e.id+'\',false)">Include</button>')+'</td></tr>';
+  }).join('');
+  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+(skipped.length?(' · '+skipped.length+' skipped'):'')+')</td><td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
     ec('t_g',tot.gross)+ec('t_epf',tot.epfEe)+ec('t_soc',tot.socsoEe)+ec('t_eis',tot.eisEe)+ec('t_lin',tot.lindung)+ec('t_pcb',tot.pcb)+ec('t_net',tot.net,' style="color:var(--green-soft)"')+'</tr>';
   var grpHd='<tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em"><th></th>'+
     '<th colspan="5" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
@@ -4964,9 +4984,17 @@ async function hrLoadPayroll(){
     HR.pay.loading=false;
     if(HR.tenant!==req.t || HR.pay.month!==req.m || HR.pay.year!==req.y){ hrLoadPayroll(); return; } // stale — reload for the current selection
     // Fresh server data replaces the grid entirely, so nothing on screen is unsaved any more.
-    if(r&&r.ok){ HR.pay.data=r; HR.pay.dirty=false; hrRender(); } else toast((r&&r.error)||'Load failed',true);
+    if(r&&r.ok){ HR.pay.data=r; HR.pay.dirty=false; HR.pay.err=null; hrRender(); }
+    else { HR.pay.err=(r&&r.error)||'Load failed'; toast(HR.pay.err,true); hrRender(); }
   }
-  catch(e){ HR.pay.loading=false; toast(e.message||e,true); }
+  // v206: this catch also swallows anything hrRender() throws. When it did, the page kept the spinner it
+  // was already showing, for ever, and the operator had to ask whether it was broken. Say so on screen,
+  // and report it — a caught error never reaches window.onerror, so nothing landed in portal_client_errors.
+  catch(e){ HR.pay.loading=false; HR.pay.err=String((e&&e.message)||e);
+    try{ if(window.hrBeacon) window.hrBeacon('payroll-render', HR.pay.err, e&&e.stack); }catch(_e){}
+    toast(HR.pay.err,true);
+    try{ hrRender(); }catch(_e2){}   // the error panel must not depend on the renderer that just failed
+  }
 }
 async function hrFinalise(){ return hrOnce('hrFinalise', async function(){
   var rows=(HR.pay._rows||[]).map(function(r){ var q=r.p; return { employeeId:r.e.id, gross:q.gross, epfEe:q.epfEe, epfEr:q.epfEr, socsoEe:q.socsoEe, socsoEr:q.socsoEr, eisEe:q.eisEe, eisEr:q.eisEr, lindung:q.lindung, pcb:q.pcb, net:q.net, employerCost:q.employerCost }; });
