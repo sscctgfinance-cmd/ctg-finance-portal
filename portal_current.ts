@@ -5490,34 +5490,55 @@ Deno.serve(async (req)=>{
       if (bankCode){ const { data: bk } = await sb.from("hr_banks").select("name").eq("code",bankCode).maybeSingle(); if (bk) bankName = bk.name; else bankCode = null; }
       const bankAccount = String(f.bankAccount||"").replace(/\D/g,"").slice(0,20) || null; // digits only, max 20, trimmed
       const bankHolder = String(f.bankHolder||"").trim() || null;
-      const patch: any = {
-        name:f.name, ic_no:f.ic||null, email:f.email||null, position:f.position||null,
-        employment_type: (["Full-time","Part-time","Contract","Intern","Probation"].indexOf(String(f.employmentType))>=0 ? f.employmentType : "Full-time"),
-        basic_salary:Number(f.basic)||0, fixed_allowance:Number(f.allowance)||0,
-        bank_code:bankCode, bank_name:bankName, bank_account:bankAccount, bank_holder:bankHolder,
-        epf_no:f.epfNo||null, socso_no:f.socsoNo||null, tax_no:f.taxNo||null,
-        resident:f.resident!==false,
-        epf_eligible:f.epf!==false, socso_eligible:f.socso!==false, eis_eligible:f.eis!==false,
-        // v184: LINDUNG 24 Jam (SKBBK). Default true — mandatory from 1 Jun 2026, voluntary for Malaysians
-        // only from 13 Jul 2026 and only on an explicit TIDAK MENYERTAI opt-out.
-        lindung24:f.lindung24!==false,
-        marital_status:f.maritalStatus||"single", spouse_working:!!f.spouseWorking, num_children:Number(f.numChildren)||0,
-        date_of_birth:f.dob||null,
-        join_date:f.joinDate||null,
-        epf_ee_rate:(f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate),
-        epf_er_rate:(f.epfErRate===""||f.epfErRate==null)?null:Number(f.epfErRate),
-        socso_category:(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory),
-        pay_type:(["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"),
-        hourly_rate:(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate),
-        daily_rate:(f.dailyRate===""||f.dailyRate==null)?null:Number(f.dailyRate),
-        clock_reminder:!!f.clockReminder,
-      };
       // v157 (data-loss fix, same class as the v148 dept bug). The employee form does NOT post address /
       // managerId / claimRole / shift times, so writing them unconditionally set them to null on EVERY save:
       // editing a salary silently erased the home address the employee entered in My Profile (which is the
       // MyInvois buyer address), broke the "manager" approval step, and dropped their approver role.
       // Only write each of these when the caller actually sent the key; a brand-new employee may set null.
+      const patch: any = { name:f.name };   // name is validated above and always sent
       const keepIfSent = (key:string, col:string, val:any)=>{ if (f[key] !== undefined || !f.id) patch[col] = val; };
+      // v196: the same guard now covers EVERY field, not just the four v157 caught. The rest were still
+      // written unconditionally, so any caller that sent a subset — a partial update, a future bulk import,
+      // an integration — silently nulled date_of_birth (which drives the 60+ senior EPF rate and SOCSO
+      // Category 2), the EPF/SOCSO/LHDN member numbers the statutory upload files are blocked without, the
+      // bank details salaries are paid to, and the hourly/daily rate a part-timer is paid by. Worse, the
+      // boolean flags used `!== false`, so an absent key did not null them — it flipped them back ON,
+      // quietly re-enrolling an exempt employee into EPF, EIS or LINDUNG.
+      // Verified live: a two-field save wiped date_of_birth to null.
+      keepIfSent("ic",       "ic_no",   f.ic||null);
+      keepIfSent("email",    "email",   f.email||null);
+      keepIfSent("position", "position",f.position||null);
+      keepIfSent("employmentType","employment_type",
+        (["Full-time","Part-time","Contract","Intern","Probation"].indexOf(String(f.employmentType))>=0 ? f.employmentType : "Full-time"));
+      keepIfSent("basic",    "basic_salary",    Number(f.basic)||0);
+      keepIfSent("allowance","fixed_allowance", Number(f.allowance)||0);
+      // Bank details move as one unit — a caller that sends any one of them is editing the payment
+      // instruction, and a caller that sends none must not blank an account salaries are paid into.
+      if (f.bankCode!==undefined || f.bankName!==undefined || f.bankAccount!==undefined || f.bankHolder!==undefined || !f.id){
+        patch.bank_code=bankCode; patch.bank_name=bankName; patch.bank_account=bankAccount; patch.bank_holder=bankHolder;
+      }
+      keepIfSent("epfNo",  "epf_no",  f.epfNo||null);
+      keepIfSent("socsoNo","socso_no",f.socsoNo||null);
+      keepIfSent("taxNo",  "tax_no",  f.taxNo||null);
+      keepIfSent("resident","resident",f.resident!==false);
+      keepIfSent("epf",  "epf_eligible",  f.epf!==false);
+      keepIfSent("socso","socso_eligible",f.socso!==false);
+      keepIfSent("eis",  "eis_eligible",  f.eis!==false);
+      // v184: LINDUNG 24 Jam (SKBBK). Default true — mandatory from 1 Jun 2026, voluntary for Malaysians
+      // only from 13 Jul 2026 and only on an explicit TIDAK MENYERTAI opt-out.
+      keepIfSent("lindung24","lindung24",f.lindung24!==false);
+      keepIfSent("maritalStatus","marital_status",f.maritalStatus||"single");
+      keepIfSent("spouseWorking","spouse_working",!!f.spouseWorking);
+      keepIfSent("numChildren",  "num_children",  Number(f.numChildren)||0);
+      keepIfSent("dob",      "date_of_birth",f.dob||null);
+      keepIfSent("joinDate", "join_date",    f.joinDate||null);
+      keepIfSent("epfEeRate","epf_ee_rate",  (f.epfEeRate===""||f.epfEeRate==null)?null:Number(f.epfEeRate));
+      keepIfSent("epfErRate","epf_er_rate",  (f.epfErRate===""||f.epfErRate==null)?null:Number(f.epfErRate));
+      keepIfSent("socsoCategory","socso_category",(f.socsoCategory===""||f.socsoCategory==null)?null:Number(f.socsoCategory));
+      keepIfSent("payType",  "pay_type",   (["monthly","hourly","daily"].indexOf(String(f.payType))>=0?f.payType:"monthly"));
+      keepIfSent("hourlyRate","hourly_rate",(f.hourlyRate===""||f.hourlyRate==null)?null:Number(f.hourlyRate));
+      keepIfSent("dailyRate", "daily_rate", (f.dailyRate===""||f.dailyRate==null)?null:Number(f.dailyRate));
+      keepIfSent("clockReminder","clock_reminder",!!f.clockReminder);
       // v166: citizenship drives the EPF rate and EIS eligibility. Guarded like every other optional field.
   keepIfSent("citizenStatus","citizen_status",
     (["citizen","pr","non_citizen"].indexOf(String(f.citizenStatus))>=0 ? String(f.citizenStatus) : "citizen"));
