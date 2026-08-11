@@ -4028,7 +4028,13 @@ function hrLeaveAdminRender(){
     var t0=todayLocalISO();
     applyPanel='<div class="panel" style="margin-bottom:14px;max-width:660px"><div class="panel-hd"><h3>Apply leave on behalf</h3><button class="btn sm" onclick="LVA.applyOpen=false;hrRender()">✕ Close</button></div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
-        fld('Employee','<select id="lvob_emp" style="'+LV_SS+'"><option value="">— pick employee —</option>'+empOpt()+'</select>')+
+        // v198: default to the admin's OWN record and say out loud whose leave this is. The dropdown used to
+        // open blank, so an admin applying for themselves had to find their own name among 19 — and two of
+        // them differ by one word (ONG SOO FANG / ONG SOO CHEEN). A director's own leave was filed against a
+        // colleague and the approval email went out in that colleague's name, with nothing anywhere in the
+        // flow naming who it was actually for. Repaints only the caption, never the whole form.
+        fld('Employee','<select id="lvob_emp" onchange="hrObWhoPaint()" style="'+LV_SS+'"><option value="">— pick employee —</option>'+empOpt(hrMyEmpId())+'</select>'+
+          '<div id="lvob_who">'+hrObWhoHtml(hrMyEmpId())+'</div>')+
         fld('Leave type','<select id="lvob_type" style="'+LV_SS+'">'+types.map(function(t){return '<option value="'+esc(t.id)+'">'+esc(t.name)+(t.paid?'':' (unpaid)')+'</option>';}).join('')+'</select>')+
         fld('From','<input type="date" id="lvob_from" value="'+t0+'" style="'+LV_SS+'">')+
         fld('To','<input type="date" id="lvob_to" value="'+t0+'" style="'+LV_SS+'">')+
@@ -4083,13 +4089,28 @@ function hrLeaveBalPanelHtml(){
 }
 async function hrLeaveBalPick(empId){ LVA.balEmp=empId||null; LVA.balData=null; if(!empId){hrRender();return;} LVA.balLoading=true; hrRender(); try{ var r=await call({api:'hr_leave_my',employee_id:empId}); if(r&&r.ok) LVA.balData=r; else toast((r&&r.error)||'Failed',true); }catch(e){ toast(e.message||e,true); } LVA.balLoading=false; hrRender(); }
 async function hrLeaveBalSave(ltId){ if(!LVA.balEmp){toast('Pick an employee',true);return;} var ent=document.getElementById('bal_ent_'+ltId), tk=document.getElementById('bal_tk_'+ltId); var year=(LVA.balData&&LVA.balData.year)||undefined; var r=await call({api:'hr_leave_balance_save',employee_id:LVA.balEmp,leave_type_id:ltId,year:year,entitled:Number(ent&&ent.value)||0,taken:Number(tk&&tk.value)||0}); if(r&&r.ok){ toast('Balance saved ✓'); hrLeaveBalPick(LVA.balEmp); } else toast((r&&r.error)||'Failed',true); }
+// v198: who is this leave actually for? The admin's own id when they have an employee record.
+function hrMyEmpId(){ return (RC.me&&RC.me.employee&&RC.me.employee.id)||''; }
+function hrObName(id){ var e=((LVA.data&&LVA.data.employees)||[]).find(function(x){return x.id===id;}); return (e&&e.name)||''; }
+function hrObWhoHtml(id){
+  if(!id) return '<div class="muted" style="font-size:10.5px;margin-top:3px">Pick whose leave this is.</div>';
+  if(id===hrMyEmpId()) return '<div class="muted" style="font-size:10.5px;margin-top:3px">Your own leave.</div>';
+  return '<div style="font-size:10.5px;margin-top:3px;color:var(--amber);font-weight:600">⚠ On behalf of '+esc(hrObName(id)||'another employee')+' — not you.</div>';
+}
+function hrObWhoPaint(){ var s=document.getElementById('lvob_emp'), w=document.getElementById('lvob_who'); if(s&&w) w.innerHTML=hrObWhoHtml(s.value); }
 async function hrLeaveApplyOnBehalf(){
   var emp=(document.getElementById('lvob_emp')||{}).value; if(!emp){ toast('Pick an employee',true); return; }
+  // Filing against the wrong person is silent and expensive: the request, the balance deduction and the
+  // approval email all carry that person's name. Confirm by name whenever it is not the admin themselves.
+  if(emp!==hrMyEmpId() && !confirm('Submit this leave for '+(hrObName(emp)||'this employee')+'?\n\nThis is NOT your own leave — it will be recorded against them and their balance.')) return;
   var type=(document.getElementById('lvob_type')||{}).value; if(!type){ toast('Pick a leave type',true); return; }
   var from=(document.getElementById('lvob_from')||{}).value, to=(document.getElementById('lvob_to')||{}).value;
   if(!from||!to){ toast('Pick the dates',true); return; } if(to<from){ toast('End date can’t be before start',true); return; }
   var r=await call({api:'hr_leave_apply', employee_id:emp, leave_type_id:type, date_from:from, date_to:to, half_day:(document.getElementById('lvob_half')||{}).checked, reason:(document.getElementById('lvob_reason')||{}).value, auto_approve:(document.getElementById('lvob_auto')||{}).checked });
-  if(r&&r.ok){ toast(r.approved?('Recorded & approved ('+r.days+'d) ✓'):('Leave submitted ('+r.days+'d) → routed for approval')); LVA.applyOpen=false; LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true);
+  // v198: name the person in the result. "Leave submitted" told the operator nothing about WHOSE leave,
+  // so a mis-picked employee looked exactly like a correct one.
+  var forWho=hrObName(emp)||'employee';
+  if(r&&r.ok){ toast(r.approved?('Recorded & approved for '+forWho+' ('+r.days+'d) ✓'):('Leave submitted for '+forWho+' ('+r.days+'d) → routed for approval')); LVA.applyOpen=false; LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true);
 }
 function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return;
   if(v && v.indexOf('emp:')===0){ var id=v.slice(4); var e=((LVA.data&&LVA.data.employees)||[]).find(function(x){return x.id===id;}); LVA.flowEdit[i]={name:(e&&e.name)||'Employee',approver_type:'employee',approver_employee_id:id}; }
