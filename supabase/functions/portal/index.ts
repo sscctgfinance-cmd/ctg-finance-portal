@@ -1596,6 +1596,10 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
         if (thinking) gc.thinkingConfig = { thinkingBudget: 0 };
         return JSON.stringify({ system_instruction:{ parts:[{ text: systemPrompt }] }, contents:[{ role:"user", parts }], generationConfig: gc });
       };
+      // v202: report EVERY attempt, not just the last one. With only the final error visible, a ladder that
+      // died on "quota exceeded" at the first model looked identical to one where all six are retired —
+      // and telling those apart is the whole diagnosis. The trail is short: "model:status, model:status".
+      const trail:string[] = [];
       let lastErr = "";
       for (const mdl of candidates){
         // Try with the thinking switch, then without it. An empty answer is also a failure worth retrying:
@@ -1607,16 +1611,18 @@ async function callVisionLLM(provider, model, systemPrompt, neutral, maxTokens){
             const txt = (out.candidates && out.candidates[0] && out.candidates[0].content && out.candidates[0].content.parts && out.candidates[0].content.parts[0] && out.candidates[0].content.parts[0].text) || "";
             if (txt) return { ok:true, text: txt, model: mdl };
             lastErr = "Gemini 200 but empty ("+mdl+(thinking?", thinking off":", thinking default")+")";
+            trail.push(mdl+":empty");
             continue;
           }
           lastErr = "Gemini "+r.status+" ("+mdl+"): "+JSON.stringify(out.error||out).slice(0,160);
+          trail.push(mdl+":"+r.status);
           // 401/403 is the key itself — no other model will help, so stop. Everything else (400 bad
           // argument, 404 unknown model, 429 quota, 5xx) is specific to this attempt: move on.
-          if (r.status === 401 || r.status === 403) return { ok:false, error: lastErr };
+          if (r.status === 401 || r.status === 403) return { ok:false, error: lastErr+" [tried "+trail.join(", ")+"]" };
           if (r.status !== 400) break;   // not an argument problem → retrying without thinking won't help
         }
       }
-      return { ok:false, error: lastErr || "Gemini: no available model" };
+      return { ok:false, error: (lastErr || "Gemini: no available model")+" [tried "+trail.join(", ")+"]" };
     }
     // default: anthropic
     const key = Deno.env.get("ANTHROPIC_API_KEY");
