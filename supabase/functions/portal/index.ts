@@ -6669,6 +6669,39 @@ Deno.serve(async (req)=>{
       await rcAuditLog(b.id,"cancel",me,c&&c.status,"Cancelled",{});
       return j({ ok:true });
     }
+    // v193: adjust the amount on a claim that is no longer awaiting approval.
+    // "Override amount" already existed, but only inside the approver's pending-decision panel and it
+    // approves at the same time — so once a claim was Approved there was no way to correct a wrong figure
+    // short of cancelling and re-submitting the whole thing.
+    if (api === "hr_rc_adjust_amount") {
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me);
+      // Admin-only on purpose: this changes what gets paid AFTER the approvers signed off on a figure.
+      if (!who.isAdmin) return j({ ok:false, error:"Only an admin can adjust an approved amount." }, 403);
+      const { data:c } = await sb.from("hr_claim_requests")
+        .select("status,amount,tenant_id,claim_no,xero_bill_id").eq("id", b.id).maybeSingle();
+      if(!c) return j({ ok:false, error:"not found" });
+      { const alw = await allowedTenants(b.token);
+        if (alw.length && c.tenant_id && alw.indexOf(c.tenant_id) < 0) return denyTenant(me,"hr_rc_adjust_amount",String(c.tenant_id)); }
+
+      if (c.status === "Paid")      return j({ ok:false, error:"This claim is already paid — adjust it with a separate correction instead." });
+      if (c.status === "Cancelled") return j({ ok:false, error:"This claim is cancelled." });
+      // Once it is a bill in Xero, silently changing the amount here would leave the two disagreeing with
+      // nothing to reconcile against. Make the operator deal with the bill first.
+      if (c.xero_bill_id) return j({ ok:false, error:"This claim is already posted to Xero as a bill. Void or edit the bill in Xero first, then adjust here." });
+
+      const amt = Number(b.amount);
+      if (!isFinite(amt) || amt <= 0) return j({ ok:false, error:"Enter an amount greater than zero." });
+      const reason = String(b.reason||"").trim();
+      if (!reason) return j({ ok:false, error:"A reason is required — it is written to the claim's audit trail." });
+      if (Math.round(amt*100) === Math.round(Number(c.amount||0)*100)) return j({ ok:false, error:"That is the same amount." });
+
+      await sb.from("hr_claim_requests")
+        .update({ amount: amt, override_amount: amt, override_reason: reason }).eq("id", b.id);
+      await rcAuditLog(b.id, "adjust_amount", me, c.status, c.status, { from: c.amount, to: amt, reason });
+      await logAudit(me, "hr_rc_adjust_amount", String(b.id), { claim_no: c.claim_no, from: c.amount, to: amt, reason });
+      return j({ ok:true, from: c.amount, to: amt });
+    }
     if (api === "hr_rc_mark_paid") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can mark claims paid." }, 403);

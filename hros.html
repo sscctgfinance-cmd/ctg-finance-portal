@@ -3138,6 +3138,11 @@ function hrRCDetail(){
   if(d.declaration){ var dd=d.declaration; decPanel='<div class="panel"><div class="panel-hd"><h3>Declaration</h3></div>'+[['business_purpose','Claim is for business purpose'],['not_claimed_before','Not claimed before'],['receipts_valid','Receipts / invoices are valid'],['understand_disciplinary','Understands false claims → disciplinary action']].map(function(x){ return '<div style="font-size:12px;padding:2px 0;color:'+(dd[x[0]]?'var(--green-soft)':'var(--coral-soft)')+'">'+(dd[x[0]]?'✓':'✗')+' <span style="color:var(--text-soft)">'+x[1]+'</span></div>'; }).join('')+'<div class="muted" style="font-size:10.5px;margin-top:4px">Declared '+esc(String(dd.declared_at||'').slice(0,16).replace('T',' '))+'</div></div>'; }
   var editRow='<button class="btn xs" onclick="hrRCFormAndReceipts()">📄 Form + receipts (PDF)</button> <button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
   if(['Draft','Need More Info'].indexOf(c.status)>=0) editRow+='<button class="btn sm" onclick="hrRCEdit()">Edit</button> <button class="btn p sm" onclick="hrRCResubmit()">'+(c.status==='Need More Info'?'Resubmit →':'Submit →')+'</button> ';
+  // v193: "Override amount" only ever appeared inside the approver's pending panel, so once a claim was
+  // Approved a wrong figure could not be corrected at all — you had to cancel and re-submit the lot.
+  // Admin-only, blocked once Paid or already a bill in Xero.
+  if(RC.me && RC.me.isAdmin && ['Paid','Cancelled','Rejected'].indexOf(c.status)<0 && !c.xero_bill_id)
+    editRow+=hrRW('<button class="btn xs" onclick="hrRCAdjustAmount()" title="Correct the payable amount on this claim. A reason is required and is written to the audit trail.">✏️ Adjust amount</button> ');
   if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
   return head+warns+buyerPanel+mile+decPanel+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
 }
@@ -3151,6 +3156,24 @@ async function hrRCSetGl(itemId){
 }
 async function hrRCPostXero(){ return hrOnce('hrRCPostXero', async function(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }); }
 async function hrRCCancel(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+// v193: correct the amount on a claim that is past the approval step. Deliberately separate from
+// hrRCOverride, which approves at the same time and so only makes sense while a decision is pending.
+async function hrRCAdjustAmount(){ return hrOnce('hrRCAdjustAmount', async function(){
+  var c=RC.detail&&RC.detail.claim; if(!c) return;
+  var cur=Number(c.amount)||0;
+  var amt=prompt('Adjust the payable amount for '+(c.claim_no||'this claim')+'\n\nCurrent: RM '+cur.toFixed(2)+'\n\nNew amount (RM):', cur.toFixed(2));
+  if(amt==null) return;
+  var n=Number(amt);
+  if(!isFinite(n)||n<=0){ toast('Enter an amount greater than zero',true); return; }
+  if(Math.round(n*100)===Math.round(cur*100)){ toast('That is the same amount',true); return; }
+  var reason=prompt('Reason for the adjustment (required — it is written to the audit trail):');
+  if(reason==null) return;
+  if(!reason.trim()){ toast('A reason is required',true); return; }
+  if(!confirm('Change '+(c.claim_no||'this claim')+' from RM '+cur.toFixed(2)+' to RM '+n.toFixed(2)+'?\n\nThe approvers already signed off on RM '+cur.toFixed(2)+'.')) return;
+  var r=await call({api:'hr_rc_adjust_amount',id:c.id,amount:n,reason:reason.trim()});
+  if(r&&r.ok){ toast('Amount adjusted: RM '+Number(r.from).toFixed(2)+' → RM '+Number(r.to).toFixed(2)); await hrRCOpen(c.id); hrRCLoadList(); }
+  else toast((r&&r.error)||'Could not adjust the amount',true);
+}); }
 async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
 function hrRCEdit(){ var c=RC.detail.claim;
   var items=(RC.detail.items||[]).map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date?String(it.item_date).slice(0,10):'', description:it.description, amount:it.amount, total_km:it.total_km, mileage_rate:it.mileage_rate,
