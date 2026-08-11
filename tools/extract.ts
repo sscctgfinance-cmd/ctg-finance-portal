@@ -72,9 +72,15 @@ function closeIdx(s: string, open: number): number {
   return k - 1;
 }
 
-/** Source text of `function NAME(...){...}` at column 0. */
+/**
+ * Source text of `function NAME(...){...}` — or `async function NAME(...)` — at column 0.
+ *
+ * The `async` form was not matched at all, which quietly put every async top-level function out of reach
+ * of the tests: hrFinalise, hrGridSave, hrGRowResign and the rest of the save/submit paths. "Function not
+ * found" reads like a rename, not like a gap in the extractor, so it was easy to shrug at.
+ */
 export function fnSource(src: string, name: string): string {
-  const re = new RegExp("^function\\s+" + name + "\\s*\\(", "m");
+  const re = new RegExp("^(?:async\\s+)?function\\s+" + name + "\\s*\\(", "m");
   const m = re.exec(src);
   if (!m) throw new Error("function not found: " + name);
   const start = m.index;

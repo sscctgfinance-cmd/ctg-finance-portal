@@ -3383,15 +3383,18 @@ function hrCredsCopy(){ var t=document.getElementById('hr_creds_txt'); if(t){ t.
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
 function hrIsResigned(x){ var s=String((x&&x.status)||'').toLowerCase(); return s==='resigned'||s==='inactive'||s==='terminated'||s==='left'||!!(x&&x.resign_date); }
 async function hrEmpDelete(id){
-  var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
+  // Callable from the Employees list AND from the payroll grid, which loads its own roster — look in both,
+  // or a resigned employee reads as {} here and is told to go and resign themselves first.
+  var e=(((HR.data&&HR.data.employees)||[]).find(function(x){return x.id===id;}))
+      ||(((HR.pay&&HR.pay.data&&HR.pay.data.employees)||[]).find(function(x){return x.id===id;}))||{};
   if(!hrIsResigned(e)){ toast('Mark this employee as Resigned first',true); return; }
   if(!confirm('Delete '+(e.name||'this employee')+' permanently?\n\nRemoves their profile plus leave / claim / attendance records. This cannot be undone.')) return;
   var r=await call({api:'hr_emp_delete',id:id,tenant:HR.tenant});
-  if(r&&r.ok){ toast('Employee deleted'+(r.payslips?' (+ '+r.payslips+' payslip records)':'')); renderHR(); return; }
+  if(r&&r.ok){ toast('Employee deleted'+(r.payslips?' (+ '+r.payslips+' payslip records)':'')); if(HR.pay){ HR.pay.rowMenu=null; HR.pay.data=null; } if(HR.view==='payroll') hrLoadPayroll(); else renderHR(); return; }
   if(r&&r.needs_confirm){
     if(confirm('⚠️ '+(r.error||'')+'\n\nDelete anyway and permanently erase '+r.payslips+' payslip record(s)? Payroll history / EA source data will be lost.')){
       var r2=await call({api:'hr_emp_delete',id:id,tenant:HR.tenant,force:true});
-      if(r2&&r2.ok){ toast('Employee + payroll history deleted'); renderHR(); } else toast((r2&&r2.error)||'Delete failed',true);
+      if(r2&&r2.ok){ toast('Employee + payroll history deleted'); if(HR.pay){ HR.pay.rowMenu=null; HR.pay.data=null; } if(HR.view==='payroll') hrLoadPayroll(); else renderHR(); } else toast((r2&&r2.error)||'Delete failed',true);
     }
     return;
   }
@@ -4311,7 +4314,7 @@ function hrGridInit(){
     if(e.pay_type==='hourly') autoBasic=Math.round((Number(att.hours)||0)*(Number(e.hourly_rate)||0)*100)/100;
     else if(e.pay_type==='daily') autoBasic=Math.round((Number(att.days)||0)*(Number(e.daily_rate)||0)*100)/100;
     var baseVal=(bset!=null?bset:(autoBasic!=null?autoBasic:Number(e.basic_salary||0)));
-    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
+    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), skip:mine.some(function(a){return a.kind==='skip';}), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }
@@ -4338,7 +4341,10 @@ function hrGridRowCompute(e,g){
   return hrCompute(synth,HR.pay.data.rates,adj,{month:HR.pay.month,year:HR.pay.year},(HR.pay.data.ytd||{})[e.id]);   // v155/v156: same period + YTD basis the server uses
 }
 function hrGridAll(){
-  var p=HR.pay, emps=p.data.employees||[]; var rows=[];
+  // v205: `skip` takes somebody out of THIS month's run without touching their record — they keep their
+  // profile, leave balances and history, and simply get no payslip. hrFinalise sends these rows, so an
+  // excluded employee has to be gone from here or the server writes them a payslip anyway.
+  var p=HR.pay, emps=(p.data.employees||[]).filter(function(e){ return !((p.grid[e.id]||{}).skip); }); var rows=[];
   var tot={gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,cost:0};
   emps.forEach(function(e){ var g=p.grid[e.id]||{}; var q=hrGridRowCompute(e,g);
     var eff=Object.assign({},e,{ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0 });
@@ -4358,12 +4364,21 @@ function hrGCell(empId,field){ var g=HR.pay.grid[empId]||{}; var lk=hrGridLocked
 // months it ran itself, so a mid-year go-live (or a figure straight off the previous payroll's summary)
 // will not reconcile from first principles. Blank = computed by the engine; any entry overrides it and
 // is stored as a pcb_set adjustment, so the server recomputes to exactly the same number.
+// v205: this cell shipped showing the calculated figure as a PLACEHOLDER. Placeholder text renders grey,
+// and at 78px "RM 3,340.15" clipped to "RM 3,34" — so the one editable statutory column looked like a
+// disabled, half-drawn field and nobody could tell it took input. It now shows the number the same way
+// every other editable cell does: real value, normal text, wide enough for five figures. Typing marks it
+// as an override (amber + ↺ to go back to auto); leaving it alone persists nothing.
 function hrGPcbCell(empId,computed){ var g=HR.pay.grid[empId]||{}; var lk=hrGridLocked();
-  var ov=(g.pcbSet!=null&&g.pcbSet!=='');
-  return '<input type="number" step="0.01" min="0" id="pcb_'+empId+'" value="'+(ov?Number(g.pcbSet):'')+'" placeholder="'+M(computed)+'"'+(lk?' disabled':'')+
+  var ov=hrGridPcbOn(g);
+  var shown=(ov?Number(g.pcbSet):Number(computed)||0).toFixed(2);
+  return '<span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">'+
+    '<input type="number" step="0.01" min="0" id="pcb_'+empId+'" value="'+shown+'"'+(lk?' disabled':'')+
     ' oninput="hrGridPcbCell(\''+empId+'\',this.value)" onfocus="this.select()"'+
-    ' title="'+(ov?'Manual PCB override — clear the box to go back to the calculated '+M(computed):'Calculated by the MTD engine. Type a figure to override it for this month only.')+'"'+
-    ' style="width:78px;padding:4px 6px;background:var(--panel-2);border:1px solid '+(ov?'var(--amber)':'var(--border)')+';border-radius:5px;color:'+(ov?'var(--amber)':'var(--text)')+';font-size:11.5px;text-align:right;font-weight:'+(ov?'700':'400')+(lk?';opacity:.6;cursor:not-allowed':'')+'">'; }
+    ' title="'+(ov?'Manual PCB for this month. ↺ goes back to the calculated figure.':'Calculated from the MTD tables. Type over it to set the real figure for this month.')+'"'+
+    ' style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid '+(ov?'var(--amber)':'var(--border)')+';border-radius:5px;color:'+(ov?'var(--amber)':'var(--text)')+';font-size:11.5px;text-align:right;font-weight:'+(ov?'700':'400')+(lk?';opacity:.6;cursor:not-allowed':'')+'">'+
+    (lk ? '' : '<button id="pcbu_'+empId+'" onclick="hrGridPcbAuto(\''+empId+'\')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:'+(ov?'inline':'none')+'">↺</button>')+
+    '</span>'; }
 // ── Itemised deductions ──
 var HR_DED_TYPES=['Salary advance','Loan repayment','PTPTN','Zakat','CP38 (LHDN)','Insurance','Uniform / equipment','Staff welfare','Union / society','Other deduction'];
 function hrDedTot(g){ return (g&&g.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0); }
@@ -4669,13 +4684,13 @@ function hrPayroll(){
   var table='<div class="panel"><div class="panel-hd"><h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Payroll grid — '+HR_MONTHS[p.month]+' '+p.year+hrGridStateHtml()+'</h3>'+
     '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+actions+'</span></div>'+
     (locked?'<div class="muted" style="font-size:11.5px;padding:0 2px 8px;color:var(--amber)">This month is finalised — payslips are written, so the entries are locked. Click <b>✏️ Edit entries</b> to change them, then re-finalise so the payslips match.</div>':'')+
-    '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
-    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt">PCB</th><th class="amt">Net</th></tr></thead><tbody>'+trs+totRow+'</tbody></table></div></div>';
+    '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
+    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var employerPanel = p.showEmployer ? hrEmployerPanel() : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
   var exp=hrPayHub(tot,finalised,p);
-  var dedPanel = p.dedEmp ? hrDedPanel(p.dedEmp) : '';
+  var dedPanel = (p.dedEmp ? hrDedPanel(p.dedEmp) : '') + (p.rowMenu ? hrGRowMenuPanel(p.rowMenu) : '');
   return picker+employerPanel+ratesPanel+table+sum+exp+dedPanel;
 }
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
@@ -4791,9 +4806,67 @@ function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g
 // is a real figure the operator entered.
 function hrGridPcbOn(g){ return !!g && g.pcbSet!=null && g.pcbSet!==''; }
 function hrGridPcbCell(empId,val){ var g=HR.pay.grid[empId]; if(!g) return;
+  // Touching the box IS the override — including clearing it to zero, which is a real MTD figure for a lot
+  // of staff. Only the ↺ button goes back to the calculated number.
   if(val===''||val==null){ g.pcbSet=null; }
   else { var n=Number(val); g.pcbSet=isNaN(n)?null:Math.max(0,n); }
   hrGridDirty(); hrGridRecalc(); }
+function hrGridPcbAuto(empId){ var g=HR.pay.grid[empId]; if(!g) return; g.pcbSet=null; hrGridDirty(); hrRender(); }
+// ── v205: per-row actions, so the whole month can be run from the grid ──────────────────────────────
+// Three different things get called "remove this person", and conflating them is how payroll history gets
+// destroyed by someone who only meant "don't pay them in August":
+//   skip     — out of THIS run only. Reversible, keeps everything, no payslip written.
+//   resign   — they have left. Drops out of every future run; history and EA form preserved.
+//   delete   — erases the person. Guarded server-side (resigned only, and payslip history needs a
+//              second explicit confirm) because LHDN needs the EA form for anyone paid this year.
+function hrGRowMenuBtn(empId){
+  if(hrGridLocked()) return '';
+  var on=(HR.pay.rowMenu===empId);
+  return '<button onclick="hrGRowMenu(\''+empId+'\')" title="Skip this month, mark resigned, or delete" style="background:none;border:none;color:'+(on?'var(--coral)':'var(--muted)')+';cursor:pointer;font-size:14px;line-height:1;padding:0 2px">⋯</button>';
+}
+function hrGRowMenu(empId){ HR.pay.rowMenu=(HR.pay.rowMenu===empId?null:empId); hrRender();
+  if(HR.pay.rowMenu) setTimeout(function(){ var el=document.getElementById('hr_rowmenu'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'}); },50); }
+function hrGridSkip(empId,on){
+  var g=HR.pay.grid[empId]; if(!g) return;
+  var e=((HR.pay.data&&HR.pay.data.employees)||[]).find(function(x){return x.id===empId;})||{};
+  if(on && !confirm('Leave '+(e.name||'this employee')+' out of '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'?\n\nThey get no payslip and drop out of the bank file and every statutory total for this month. Their profile and history are untouched, and you can put them back any time.')) return;
+  g.skip=!!on; HR.pay.rowMenu=null; hrGridDirty(); hrRender();
+  toast(on ? ((e.name||'Employee')+' skipped this month — remember to Save entries') : ((e.name||'Employee')+' back in this month'));
+}
+async function hrGRowResign(empId){
+  var e=((HR.pay.data&&HR.pay.data.employees)||[]).find(function(x){return x.id===empId;})||{};
+  var d=(document.getElementById('hr_rm_resign')||{}).value||'';
+  if(!d){ toast('Pick their last working day',true); return; }
+  if(!confirm('Mark '+(e.name||'this employee')+' as resigned on '+d+'?\n\nThey stay in the system with their full history — they just stop appearing in future payroll.')) return;
+  // Send only status + resign date: hr_emp_save leaves every field it was not given alone (v197).
+  var r=await call({api:'hr_emp_save',tenant:HR.tenant,emp:{ id:empId, name:e.name, status:'resigned', resignDate:d }});
+  if(r&&r.ok){ toast((e.name||'Employee')+' marked resigned'); HR.pay.rowMenu=null; HR.pay.data=null; HR.data=null; hrLoadPayroll(); }
+  else toast((r&&r.error)||'Could not update',true);
+}
+function hrGRowMenuPanel(empId){
+  var e=((HR.pay.data&&HR.pay.data.employees)||[]).find(function(x){return x.id===empId;}); if(!e) return '';
+  var g=HR.pay.grid[empId]||{}, gone=hrIsResigned(e);
+  var today=todayLocalISO();
+  var box=function(t,body){ return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px">'+t+'</div>'+body+'</div>'; };
+  return '<div class="panel" id="hr_rowmenu" style="max-width:720px;margin-top:14px;border-color:var(--coral-soft)">'+
+    '<div class="panel-hd"><h3>'+esc(e.emp_no||'')+' '+esc(e.name||'')+'</h3><button class="btn sm" onclick="hrGRowMenu(\''+empId+'\')">✕ Close</button></div>'+
+    '<div style="display:grid;gap:10px">'+
+      box('This month only',
+        '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Keeps everything, just leaves them out of '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' — no payslip, no bank line, out of every statutory total. Reversible.</div>'+
+        (g.skip ? hrRW('<button class="btn sm" onclick="hrGridSkip(\''+empId+'\',false)">↩ Put back in this month</button>')
+                : hrRW('<button class="btn sm" onclick="hrGridSkip(\''+empId+'\',true)">⊘ Skip this month</button>')))+
+      box('They have left',
+        gone ? '<div style="font-size:12px;color:var(--amber)">Already marked resigned'+(e.resign_date?(' on '+esc(e.resign_date)):'')+'.</div>'
+             : '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Drops them out of every future payroll. History, payslips and the EA form are all kept.</div>'+
+               '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><label class="muted" style="font-size:11px">Last working day</label>'+
+               '<input type="date" id="hr_rm_resign" value="'+today+'" style="padding:6px 8px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">'+
+               hrRW('<button class="btn sm" onclick="hrGRowResign(\''+empId+'\')">🚪 Mark resigned</button>')+'</div>')+
+      box('Delete permanently',
+        gone ? '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Erases the profile and their leave / claim / attendance records. If they have payslips this year you still need the EA form, so that needs a second confirmation.</div>'+
+               hrRW('<button class="btn sm d" onclick="hrEmpDelete(\''+empId+'\')">🗑 Delete '+esc(e.name||'')+'</button>')
+             : '<div class="muted" style="font-size:11.5px">Only a resigned employee can be deleted — mark them resigned first. That is deliberate: deleting someone who was paid this year destroys the EA / Form E source data.</div>')+
+    '</div></div>';
+}
 // v181: every path that mutates HR.pay.grid must come through here. Typing 19 employees' bonuses and
 // losing them to a period switch is the expensive mistake this prevents; the badge is also the only way
 // to tell "saved" from "typed but not saved", which is exactly what the operator asked for.
@@ -4831,8 +4904,14 @@ function hrGridRecalc(){
   var set=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=M(v); };
   A.rows.forEach(function(r){ var id=r.e.id,q=r.p; set('g_'+id,q.gross); set('epf_'+id,q.epfEe); set('soc_'+id,q.socsoEe); set('eis_'+id,q.eisEe); set('lin_'+id,q.lindung); set('net_'+id,q.net);
     // PCB is an input, not a cell: never write .textContent over it (that wipes what the operator typed).
-    // Only the placeholder — the calculated figure shown when no override is set — changes.
-    var pe=document.getElementById('pcb_'+id); if(pe){ var ov=hrGridPcbOn(p.grid[id]); pe.placeholder=M(q.pcb); pe.style.borderColor=ov?'var(--amber)':'var(--border)'; pe.style.color=ov?'var(--amber)':'var(--text)'; pe.style.fontWeight=ov?'700':'400'; }
+    // When it is NOT overridden it mirrors the live calculation, so typing a bonus updates it like every
+    // other statutory column; when it IS overridden the typed figure is left strictly alone. Skip the
+    // element being typed into, or the caret jumps to the end mid-entry.
+    var pe=document.getElementById('pcb_'+id);
+    if(pe){ var ov=hrGridPcbOn(p.grid[id]);
+      if(!ov && document.activeElement!==pe) pe.value=(Number(q.pcb)||0).toFixed(2);
+      pe.style.borderColor=ov?'var(--amber)':'var(--border)'; pe.style.color=ov?'var(--amber)':'var(--text)'; pe.style.fontWeight=ov?'700':'400';
+      var pu=document.getElementById('pcbu_'+id); if(pu) pu.style.display=ov?'inline':'none'; }
     var db=document.getElementById('ded_'+id); if(db){ var gg=p.grid[id]||{}; var nn=(gg.deductions||[]).filter(function(x){return Number(x.amount);}).length; db.textContent=M(hrDedTot(gg))+(nn?(' · '+nn):'')+' ▾'; } });
   set('t_g',tot.gross); set('t_epf',tot.epfEe); set('t_soc',tot.socsoEe); set('t_eis',tot.eisEe); set('t_lin',tot.lindung); set('t_pcb',tot.pcb); set('t_net',tot.net);
   var sc=document.getElementById('hr_paysum'); if(sc) sc.innerHTML=hrPaySumHtml(tot);
@@ -4849,6 +4928,7 @@ async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
     (g.deductions||[]).forEach(function(x){ if(Number(x.amount)) out.push({employee_id:e.id,kind:'deduction',label:(x.label||'Other deduction'),amount:Number(x.amount),epf_subject:false}); });
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
     if(hrGridPcbOn(g)) out.push({employee_id:e.id,kind:'pcb_set',amount:Number(g.pcbSet)||0,epf_subject:false});
+    if(g.skip) out.push({employee_id:e.id,kind:'skip',amount:0,epf_subject:false});
   });
   var r=await call({api:'hr_payroll_grid_save',month:p.month,year:p.year,adjustments:out,tenant:HR.tenant});
   // Clear dirty ONLY on a confirmed ok — clearing it optimistically would drop the unload guard while the
