@@ -5723,8 +5723,15 @@ Deno.serve(async (req)=>{
       if (b.half_day && from===to) days = 0.5;
       else { let d=new Date(from+"T00:00:00Z"); const end=new Date(to+"T00:00:00Z"); let n=0, guard=0; while(d<=end && guard<400){ const dow=d.getUTCDay(); if(dow!==0&&dow!==6) n++; d=new Date(d.getTime()+86400000); guard++; } days=n; }
       if (days<=0) return j({ ok:false, error:"That range has no working days (weekends are excluded)." });
-      const { data: ins, error } = await sb.from("hr_leave_requests").insert({ employee_id:empId, leave_type:typeName, date_from:from, date_to:to, days, reason:String(b.reason||"").slice(0,500)||null, status:"Submitted", current_step:1 }).select().single();
-      if (error) return j({ ok:false, error: error.message });
+      // v194: this inserted status:"Submitted", which the hr_leave_requests status CHECK does not allow
+      // (it permits Pending / Pending * Approval / Approved / Rejected / Cancelled). So EVERY leave
+      // application ever made was rejected by the database — hr_leave_requests had 0 rows, and the whole
+      // module had never worked once. "Submitted" appears nowhere else in the leave code; it is only used
+      // for claims, which have their own status set.
+      // A moment later this row is updated to the real first step (e.g. "Pending HR Approval"), so the
+      // initial value only has to be a legal placeholder — "Pending" is also the column default.
+      const { data: ins, error } = await sb.from("hr_leave_requests").insert({ employee_id:empId, leave_type:typeName, date_from:from, date_to:to, days, reason:String(b.reason||"").slice(0,500)||null, status:"Pending", current_step:1 }).select().single();
+      if (error) return j({ ok:false, error: "Could not save the leave request: "+error.message });
       // Build the multi-level approval chain (configurable in hr_leave_flow_steps: a specific employee, the
       // applicant's direct manager, or a role holder).
       let firstStatus = "Pending";
