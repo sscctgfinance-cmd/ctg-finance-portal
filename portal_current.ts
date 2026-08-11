@@ -5648,7 +5648,9 @@ Deno.serve(async (req)=>{
       const sumK=(list:any[],k:string)=> (list||[]).filter((a:any)=>a.kind===k).reduce((s:number,a:any)=>s+(Number(a.amount)||0),0);
       const payslips = slips.map((s:any)=>{ const r=runById[s.run_id]||{}; const key=r.period_year+"-"+r.period_month; const adj=adjByPeriod[key]||[];
         return { month:r.period_month, year:r.period_year, run_date:r.run_date,
-          p:{ gross:Number(s.gross)||0, epfEe:Number(s.epf_ee)||0, epfEr:Number(s.epf_er)||0, socsoEe:Number(s.socso_ee)||0, socsoEr:Number(s.socso_er)||0, eisEe:Number(s.eis_ee)||0, eisEr:Number(s.eis_er)||0, pcb:Number(s.pcb)||0, net:Number(s.net)||0, employerCost:Number(s.employer_cost)||0, _meta:{} },
+          // v196: lindung was stored on the payslip but never returned, so the employee's own payslip
+          // listed deductions that did not add up to their net pay — short by exactly the LINDUNG amount.
+          p:{ gross:Number(s.gross)||0, epfEe:Number(s.epf_ee)||0, epfEr:Number(s.epf_er)||0, socsoEe:Number(s.socso_ee)||0, socsoEr:Number(s.socso_er)||0, eisEe:Number(s.eis_ee)||0, eisEr:Number(s.eis_er)||0, lindung:Number(s.lindung24)||0, pcb:Number(s.pcb)||0, net:Number(s.net)||0, employerCost:Number(s.employer_cost)||0, _meta:{} },
           d:{ bonus:sumK(adj,"bonus"), ot:sumK(adj,"ot"), allowance:sumK(adj,"allowance"), unpaid:sumK(adj,"unpaid_leave"), deductions:(adj.filter((a:any)=>a.kind==="deduction").map((a:any)=>({ label:a.label||"Deduction", amount:Number(a.amount)||0 }))) } };
       }).sort((a:any,b:any)=> (b.year-a.year) || (b.month-a.month));
       // paid-leave balances (current year) for the payslip footer
@@ -5773,6 +5775,11 @@ Deno.serve(async (req)=>{
         await logAudit(me,"hr_leave_apply",String(ins.id),{ on_behalf:true, auto_approve:true, days });
         return j({ ok:true, request:{...ins, status:"Approved"}, days, approved:true });
       }
+      // v196: log every application, not just the admin-on-behalf branch. A request notified at 19:47 on
+      // 2026-08-11 later could not be found in hr_leave_requests, and with no audit row there was no way to
+      // tell whether it was created, by whom, or what removed it. An approval email that cannot be traced
+      // back to a record is worse than no email.
+      await logAudit(me,"hr_leave_apply",String(ins.id),{ employee_id:empId, type:typeName, from, to, days, status:firstStatus });
       try { await leaveNotifyStep(ins.id); } catch(_e){}
       return j({ ok:true, request: {...ins, status:firstStatus}, days });
     }
@@ -7234,9 +7241,11 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const map:any = {};
       slips.forEach((s:any)=>{
         const k = s.employee_id;
-        const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, pcb:0, net:0, months:0 });
+        // v196: lindung was dropped here, so the EA form and CP8D under-reported the employee's PERKESO
+        // contribution for the whole year — and with it the RM350 SOCSO/EIS relief they can claim.
+        const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, lindung:0, pcb:0, net:0, months:0 });
         t.gross+=Number(s.gross); t.epfEe+=Number(s.epf_ee); t.epfEr+=Number(s.epf_er);
-        t.socsoEe+=Number(s.socso_ee); t.socsoEr+=Number(s.socso_er);
+        t.socsoEe+=Number(s.socso_ee); t.socsoEr+=Number(s.socso_er); t.lindung+=Number(s.lindung24)||0;
         t.eisEe+=Number(s.eis_ee); t.eisEr+=Number(s.eis_er);
         t.pcb+=Number(s.pcb); t.net+=Number(s.net); t.months+=1;
       });

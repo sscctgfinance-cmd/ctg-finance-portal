@@ -3780,7 +3780,7 @@ function hrEmpPayslipsRender(){
   var d=EPS.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(EPS.err||'Could not load payslips')+' — <a onclick="EPS.data=null;EPS.err=null;EPS.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
   var slips=d.payslips||[];
   if(!slips.length) return hrEmpty('payslip','No payslips yet — they’ll appear here once a month’s payroll is finalised by HR.');
-  var dedTot=function(s){ return (Number(s.p.epfEe)||0)+(Number(s.p.socsoEe)||0)+(Number(s.p.eisEe)||0)+(Number(s.p.pcb)||0)+((s.d&&s.d.deductions)||[]).reduce(function(a,x){return a+(Number(x.amount)||0);},0); };
+  var dedTot=function(s){ return (Number(s.p.epfEe)||0)+(Number(s.p.socsoEe)||0)+(Number(s.p.lindung)||0)+(Number(s.p.eisEe)||0)+(Number(s.p.pcb)||0)+((s.d&&s.d.deductions)||[]).reduce(function(a,x){return a+(Number(x.amount)||0);},0); };   // v196: lindung was omitted, so Gross - Deductions did not equal Net on the employee's own screen
   // ── totals: how much has this employee actually earned (per year + all-time) ──
   var byYear={};
   slips.forEach(function(s){ var o=byYear[s.year]||(byYear[s.year]={year:s.year,gross:0,ded:0,net:0,n:0}); o.gross+=Number(s.p.gross)||0; o.ded+=dedTot(s); o.net+=Number(s.p.net)||0; o.n++; });
@@ -4375,7 +4375,9 @@ function hrDedDel(empId,i){ var g=HR.pay.grid[empId]; if(!g||!g.deductions)retur
 function hrDedLabel(empId,i,v){ var g=HR.pay.grid[empId]; if(g&&g.deductions&&g.deductions[i]){ g.deductions[i].label=v; hrGridDirty(); } }
 function hrDedAmt(empId,i,v){ var g=HR.pay.grid[empId]; if(!g||!g.deductions||!g.deductions[i])return; g.deductions[i].amount=(v===''||v==null)?0:Number(v); if(isNaN(g.deductions[i].amount))g.deductions[i].amount=0; hrGridDirty(); hrGridRecalc(); var dt=document.getElementById('hr_dedtotal'); if(dt) dt.textContent='Total: '+M(hrDedTot(g)); }
 function hrPaySumHtml(tot){
-  var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
+  // v196: PERKESO is billed the Second-Schedule contribution AND LINDUNG 24 together. Leaving lindung out
+  // understated what has to be paid over — RM515.40 on CTG4U's July run alone.
+  var stat=[['EPF (KWSP) payable',tot.epfEe+tot.epfEr],['SOCSO (PERKESO) payable',tot.socsoEe+tot.lindung+tot.socsoEr],['EIS payable',tot.eisEe+tot.eisEr],['PCB (LHDN) payable',tot.pcb],['Employer total cost',tot.cost]];
   return stat.map(function(s){return '<div class="panel" style="padding:12px;margin:0"><div class="muted" style="font-size:11px">'+s[0]+'</div><div style="font-size:16px;font-weight:700;margin-top:2px">'+M(s[1])+'</div></div>';}).join('');
 }
 // ══ 💸 Payment & Statutory Hub — the monthly payroll ecosystem: UOB Infinity salaries + EPF + PERKESO + PCB + Xero, one place ══
@@ -4592,7 +4594,7 @@ function hrPayHub(tot,finalised,p){
     sec('🏛️','EPF — KWSP', M(tot.epfEe+tot.epfEr)+' <span class="muted" style="font-size:10px">EE '+M(tot.epfEe)+' + ER '+M(tot.epfEr)+'</span>', dd,
       '<button class="btn xs p" onclick="hrExpKwsp()">⬇ KWSP i-Akaun file</button>',
       'Upload + pay at <b>i-Akaun (Majikan)</b>, or in UOB Infinity → Upload Bulk Files → file type <b>&ldquo;EPF Payment (Employee)&rdquo;</b>.','epf')+
-    sec('🏛️','SOCSO + EIS — PERKESO', M(tot.socsoEe+tot.socsoEr+tot.eisEe+tot.eisEr)+' <span class="muted" style="font-size:10px">SOCSO '+M(tot.socsoEe+tot.socsoEr)+' · EIS '+M(tot.eisEe+tot.eisEr)+'</span>', dd,
+    sec('🏛️','SOCSO + EIS — PERKESO', M(tot.socsoEe+tot.lindung+tot.socsoEr+tot.eisEe+tot.eisEr)+' <span class="muted" style="font-size:10px">SOCSO '+M(tot.socsoEe+tot.socsoEr)+(tot.lindung?(' · LINDUNG 24 '+M(tot.lindung)):'')+' · EIS '+M(tot.eisEe+tot.eisEr)+'</span>', dd,   // v196: LINDUNG is payable to PERKESO too
       '<button class="btn xs p" onclick="hrExpAssist()">⬇ PERKESO ASSIST file</button>',
       'Upload + pay at the <b>ASSIST portal</b>, or in UOB Infinity → <b>Services → Send to UOB</b> → &ldquo;SOCSO Monthly Contribution&rdquo; / &ldquo;EIS Contribution&rdquo;.','perkeso')+
     sec('🏛️','PCB — LHDN', M(tot.pcb), dd,
@@ -4948,6 +4950,9 @@ function hrDrawPayslip(doc,e,p,period,d){
   section('Deductions (employee)');
   row(pctLbl('EPF (KWSP)',mt.epfEeRate),p.epfEe,{neg:true,color:HR_RED});
   row('SOCSO (PERKESO)'+(mt.socsoCat?(' · Cat '+mt.socsoCat):''),p.socsoEe,{neg:true,color:HR_RED});
+  // v196: LINDUNG 24 Jam was deducted from net but never printed, so the listed deductions did not add up
+  // to the net pay shown right below them — an unexplained gap on every payslip since 1 Jun 2026.
+  if(Number(p.lindung)) row('LINDUNG 24 Jam (SKBBK)',p.lindung,{neg:true,color:HR_RED});
   row('EIS (SIP)',p.eisEe,{neg:true,color:HR_RED});
   row('PCB / MTD (estimate)'+(mt.pcbCat===0?' · non-resident':''),p.pcb,{neg:true,color:HR_RED});
   if(d.deductions&&d.deductions.length){ d.deductions.forEach(function(x){ if(Number(x.amount)) row(x.label||'Other deduction',x.amount,{neg:true,color:HR_RED}); }); }
@@ -4976,7 +4981,11 @@ function hrExpStatutory(kind){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var head,body=[],totals,name;
   if(kind==='epf'){ name='EPF_KWSP_'+tag+'.csv'; head=['No','EPF Member No','IC (New)','Name','EPF Wages (RM)','Employee 11% (RM)','Employer 12-13% (RM)','Total (RM)']; var a1=0,a2=0,a3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.epfEe+p.epfEr; a1+=p.epfEe;a2+=p.epfEr;a3+=t; body.push([i+1,e.epfNo||'',e.ic||'',e.name,f2(p.gross),f2(p.epfEe),f2(p.epfEr),f2(t)]); }); totals=['','','','TOTAL','',f2(a1),f2(a2),f2(a3)]; }
-  else if(kind==='socso'){ name='SOCSO_PERKESO_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.5% (RM)','Employer 1.75% (RM)','Total (RM)']; var b1=0,b2=0,b3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.socsoEe+p.socsoEr; b1+=p.socsoEe;b2+=p.socsoEr;b3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.socsoEe),f2(p.socsoEr),f2(t)]); }); totals=['','','','TOTAL','',f2(b1),f2(b2),f2(b3)]; }
+  // v196: the employee column carried only the Second-Schedule contribution. LINDUNG 24 Jam (SKBBK) is
+  // deducted from the same employee and paid over to the same PERKESO account — leaving it out under-
+  // declared CTG4U's July filing by RM515.40. It gets its own column so the file still reconciles line by
+  // line against the ASSIST portal, and the employee total is the sum of both.
+  else if(kind==='socso'){ name='SOCSO_PERKESO_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.5% (RM)','LINDUNG 24 (RM)','Employee total (RM)','Employer 1.75% (RM)','Total (RM)']; var b1=0,b1l=0,b2=0,b3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,li=Number(p.lindung)||0,ee=p.socsoEe+li,t=ee+p.socsoEr; b1+=p.socsoEe;b1l+=li;b2+=p.socsoEr;b3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.socsoEe),f2(li),f2(ee),f2(p.socsoEr),f2(t)]); }); totals=['','','','TOTAL','',f2(b1),f2(b1l),f2(b1+b1l),f2(b2),f2(b3)]; }
   else if(kind==='eis'){ name='EIS_SIP_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.2% (RM)','Employer 0.2% (RM)','Total (RM)']; var c1=0,c2=0,c3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.eisEe+p.eisEr; c1+=p.eisEe;c2+=p.eisEr;c3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.eisEe),f2(p.eisEr),f2(t)]); }); totals=['','','','TOTAL','',f2(c1),f2(c2),f2(c3)]; }
   else { name='PCB_CP39_'+tag+'.csv'; head=['No','IC (New)','TIN (Income Tax No)','Name','Country','Remuneration (RM)','PCB/MTD (RM)','CP38 (RM)']; var d1=0; rows.forEach(function(x,i){ var e=x.e,p=x.p; d1+=p.pcb; body.push([i+1,e.ic||'',e.taxNo||'',e.name,'MY',f2(p.gross),f2(p.pcb),'0.00']); }); totals=['','','','TOTAL','','',f2(d1),'0.00']; }
   hrDownload(name,hrCsv([head].concat(body,[totals]))); toast(kind.toUpperCase()+' CSV downloaded');
@@ -5033,11 +5042,13 @@ function hrExpAssist(ret){
   if(miss){ var m3='PERKESO ASSIST blocked — missing SOCSO no / IC: '+miss+'. Fill them in Employees, then export again.';
             if(ret) return { error:m3 }; toast(m3,true); return; }
   var per=hrPeriod(); var f2=function(n){ return Number(n).toFixed(2); };
-  var head=['No','No. KP Baru (New IC)','Nama Pekerja','No. Pekerja (SOCSO)','Gaji/Upah (RM)','Caruman SOCSO Pekerja','Caruman SOCSO Majikan','Caruman SIP/EIS Pekerja','Caruman SIP/EIS Majikan'];
-  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.ic||'',e.name,e.socsoNo||'',f2(p.gross),f2(p.socsoEe),f2(p.socsoEr),f2(p.eisEe),f2(p.eisEr)]; });
-  var t=rows.reduce(function(a,x){ a.a+=x.p.socsoEe;a.b+=x.p.socsoEr;a.c+=x.p.eisEe;a.d+=x.p.eisEr; return a; },{a:0,b:0,c:0,d:0});
+  // v196: LINDUNG 24 Jam (SKBBK) gets its own column. It is an employee-borne PERKESO contribution and was
+  // simply absent from the submission — the employee had it deducted and PERKESO was never told.
+  var head=['No','No. KP Baru (New IC)','Nama Pekerja','No. Pekerja (SOCSO)','Gaji/Upah (RM)','Caruman SOCSO Pekerja','Caruman LINDUNG 24 (SKBBK)','Caruman SOCSO Majikan','Caruman SIP/EIS Pekerja','Caruman SIP/EIS Majikan'];
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.ic||'',e.name,e.socsoNo||'',f2(p.gross),f2(p.socsoEe),f2(Number(p.lindung)||0),f2(p.socsoEr),f2(p.eisEe),f2(p.eisEr)]; });
+  var t=rows.reduce(function(a,x){ a.a+=x.p.socsoEe;a.l+=(Number(x.p.lindung)||0);a.b+=x.p.socsoEr;a.c+=x.p.eisEe;a.d+=x.p.eisEr; return a; },{a:0,l:0,b:0,c:0,d:0});
   // v157: no TOTAL trailer — ASSIST parses it as a 10th employee (TOTAL landed in "Nama Pekerja").
-  var out={ name:'PERKESO_ASSIST_'+per.label.replace(' ','')+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:(t.a+t.b+t.c+t.d) };
+  var out={ name:'PERKESO_ASSIST_'+per.label.replace(' ','')+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:(t.a+t.l+t.b+t.c+t.d) };
   if(ret) return out;
   hrDownload(out.name, out.text, out.mime);
   toast('PERKESO ASSIST file (SOCSO+EIS) — '+rows.length+' staff. Confirm columns on ASSIST.');
@@ -5211,14 +5222,15 @@ function hrExpSummary(){
   var per=hrPeriod();
   var numCell=function(v,dir){ v=Number(v)||0; var st='border:1px solid #B8C4D9;padding:4px 8px;text-align:right;'+(dir?'font-weight:bold;':''); if(!v) return '<td style="'+st+'">-</td>'; return '<td style="'+st+'mso-number-format:\'#,##0.00\'">'+v.toFixed(2)+'</td>'; };
   var txtCell=function(v,dir){ return '<td style="border:1px solid #B8C4D9;padding:4px 8px;text-align:left;'+(dir?'font-weight:bold;':'')+'">'+esc(String(v==null?'':v))+'</td>'; };
-  var cols=['Employee','Role','Basic','Additional / Allowance','Gross Pay','EPF (Employee)','SOCSO (Employee)','EIS (Employee)','PCB (Tax)','Advance / Other Ded.','Total Deductions','Net Pay','EPF (Employer)','SOCSO (Employer)','EIS (Employer)','HRDF','Notes'];
-  var tot={basic:0,add:0,gross:0,ee_epf:0,ee_soc:0,ee_eis:0,pcb:0,oded:0,tded:0,net:0,er_epf:0,er_soc:0,er_eis:0,hrdf:0};
+  var cols=['Employee','Role','Basic','Additional / Allowance','Gross Pay','EPF (Employee)','SOCSO (Employee)','LINDUNG 24','EIS (Employee)','PCB (Tax)','Advance / Other Ded.','Total Deductions','Net Pay','EPF (Employer)','SOCSO (Employer)','EIS (Employer)','HRDF','Notes'];
+  var tot={basic:0,add:0,gross:0,ee_epf:0,ee_soc:0,ee_lin:0,ee_eis:0,pcb:0,oded:0,tded:0,net:0,er_epf:0,er_soc:0,er_eis:0,hrdf:0};
   var trs=rows.map(function(r){
     var e=r.e,p=r.p,d=r.d||{};
     var basic=Number(d.basic!=null?d.basic:e.basic)||0;
     var add=(Number(d.allow)||0)+(Number(d.bonus)||0)+(Number(d.ot)||0)+(Number(d.allowance)||0);
     var oded=(d.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0);
-    var tded=p.epfEe+p.socsoEe+p.eisEe+p.pcb+oded;
+    var lin=Number(p.lindung)||0;
+    var tded=p.epfEe+p.socsoEe+lin+p.eisEe+p.pcb+oded;   // v196: lindung was missing, so Gross - Total Deductions did not equal Net Pay
     var hrdf=Math.round(basic*HR_HRDF_RATE*100)/100;
     var isDir=/director/i.test(e.position||'');
     var notes=[];
@@ -5227,11 +5239,11 @@ function hrExpSummary(){
     if(d.allowance) notes.push('Allowance '+Number(d.allowance).toFixed(2));
     (d.deductions||[]).forEach(function(x){ if(Number(x.amount)) notes.push('Less '+(x.label||'Deduction')+' '+Number(x.amount).toFixed(2)); });
     if(d.unpaid) notes.push('Unpaid leave '+Number(d.unpaid).toFixed(2));
-    tot.basic+=basic; tot.add+=add; tot.gross+=p.gross; tot.ee_epf+=p.epfEe; tot.ee_soc+=p.socsoEe; tot.ee_eis+=p.eisEe; tot.pcb+=p.pcb; tot.oded+=oded; tot.tded+=tded; tot.net+=p.net; tot.er_epf+=p.epfEr; tot.er_soc+=p.socsoEr; tot.er_eis+=p.eisEr; tot.hrdf+=hrdf;
-    return '<tr'+(isDir?' style="background:#FFF7E6"':'')+'>'+txtCell(e.name,isDir)+txtCell(e.position||'',isDir)+numCell(basic,isDir)+numCell(add,isDir)+numCell(p.gross,isDir)+numCell(p.epfEe,isDir)+numCell(p.socsoEe,isDir)+numCell(p.eisEe,isDir)+numCell(p.pcb,isDir)+numCell(oded,isDir)+numCell(tded,isDir)+numCell(p.net,isDir)+numCell(p.epfEr,isDir)+numCell(p.socsoEr,isDir)+numCell(p.eisEr,isDir)+numCell(hrdf,isDir)+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-style:italic;color:#555">'+esc(notes.join('; '))+'</td></tr>';
+    tot.basic+=basic; tot.add+=add; tot.gross+=p.gross; tot.ee_epf+=p.epfEe; tot.ee_soc+=p.socsoEe; tot.ee_lin+=lin; tot.ee_eis+=p.eisEe; tot.pcb+=p.pcb; tot.oded+=oded; tot.tded+=tded; tot.net+=p.net; tot.er_epf+=p.epfEr; tot.er_soc+=p.socsoEr; tot.er_eis+=p.eisEr; tot.hrdf+=hrdf;
+    return '<tr'+(isDir?' style="background:#FFF7E6"':'')+'>'+txtCell(e.name,isDir)+txtCell(e.position||'',isDir)+numCell(basic,isDir)+numCell(add,isDir)+numCell(p.gross,isDir)+numCell(p.epfEe,isDir)+numCell(p.socsoEe,isDir)+numCell(lin,isDir)+numCell(p.eisEe,isDir)+numCell(p.pcb,isDir)+numCell(oded,isDir)+numCell(tded,isDir)+numCell(p.net,isDir)+numCell(p.epfEr,isDir)+numCell(p.socsoEr,isDir)+numCell(p.eisEr,isDir)+numCell(hrdf,isDir)+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-style:italic;color:#555">'+esc(notes.join('; '))+'</td></tr>';
   }).join('');
   var totRow='<tr style="background:#DCE6F1">'+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-weight:bold">TOTAL</td><td style="border:1px solid #B8C4D9"></td>'+
-    numCell(tot.basic,1)+numCell(tot.add,1)+numCell(tot.gross,1)+numCell(tot.ee_epf,1)+numCell(tot.ee_soc,1)+numCell(tot.ee_eis,1)+numCell(tot.pcb,1)+numCell(tot.oded,1)+numCell(tot.tded,1)+numCell(tot.net,1)+numCell(tot.er_epf,1)+numCell(tot.er_soc,1)+numCell(tot.er_eis,1)+numCell(tot.hrdf,1)+'<td style="border:1px solid #B8C4D9"></td></tr>';
+    numCell(tot.basic,1)+numCell(tot.add,1)+numCell(tot.gross,1)+numCell(tot.ee_epf,1)+numCell(tot.ee_soc,1)+numCell(tot.ee_lin,1)+numCell(tot.ee_eis,1)+numCell(tot.pcb,1)+numCell(tot.oded,1)+numCell(tot.tded,1)+numCell(tot.net,1)+numCell(tot.er_epf,1)+numCell(tot.er_soc,1)+numCell(tot.er_eis,1)+numCell(tot.hrdf,1)+'<td style="border:1px solid #B8C4D9"></td></tr>';
   var thead='<tr>'+cols.map(function(c){ var left=(['Employee','Role','Notes'].indexOf(c)>=0); return '<th style="background:#1F4E79;color:#ffffff;border:1px solid #163A5C;padding:6px 8px;font-weight:bold;text-align:'+(left?'left':'center')+';vertical-align:middle">'+esc(c)+'</th>'; }).join('')+'</tr>';
   var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'+
     '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>'+esc(per.label)+'</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->'+
@@ -5420,7 +5432,7 @@ function hrCalcPayslip(){
   hrLoadJsPDF(function(){
     var C=HR_CALC, emp=C.empId?(HR.data.employees||[]).find(function(x){return x.id===C.empId;}):null;
     var e={ empNo:emp?emp.emp_no:'CALC', name:emp?emp.name:'Payroll Calculation', ic:emp?emp.ic_no:'', position:emp?emp.position:'', dept:emp?emp.dept:'', basic:hrCalcNum(C.inp.basic), allowance:hrCalcNum(C.inp.allowance), bank:'', resident:C.settings.resident };
-    var p={ gross:hrRound2(res.gross+res.claim), epfEe:res.epfEe, epfEr:res.epfEr, socsoEe:res.socsoEe, socsoEr:res.socsoEr, eisEe:res.eisEe, eisEr:res.eisEr, pcb:res.pcb, net:res.net, employerCost:res.employerCost, _meta:{epfEeRate:res._eeRate,epfErRate:res._erRate,socsoCat:res._scat,pcbCat:(C.settings.resident===false?0:1),senior:C.settings.senior} };
+    var p={ gross:hrRound2(res.gross+res.claim), epfEe:res.epfEe, epfEr:res.epfEr, socsoEe:res.socsoEe, socsoEr:res.socsoEr, eisEe:res.eisEe, eisEr:res.eisEr, lindung:res.lindung, pcb:res.pcb, net:res.net, employerCost:res.employerCost, _meta:{epfEeRate:res._eeRate,epfErRate:res._erRate,socsoCat:res._scat,pcbCat:(C.settings.resident===false?0:1),senior:C.settings.senior} };
     var d={ bonus:hrCalcNum(C.inp.bonus), ot:0, allowance:hrCalcNum(C.inp.claim), deductions:(hrCalcNum(C.inp.deduction)?[{label:'Deduction',amount:hrCalcNum(C.inp.deduction)}]:[]), unpaid:0 };
     var now=new Date(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
     hrDrawPayslip(doc,e,p,{month:now.getMonth()+1,year:now.getFullYear(),label:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear()},d);
@@ -5460,7 +5472,7 @@ function hrYearend(){
   var warn = empNo? '' : '<div class="panel" style="border-color:var(--amber);background:rgba(240,180,40,.06);padding:10px 14px;margin-bottom:12px;font-size:12.5px">⚠️ Employer E-number is not set in <b>hr_employer_info</b>. EA / Form E / CP8D will print a placeholder — set it before filing with LHDN.</div>';
   var cards=[['Employees paid in '+ye.year,withPay.length,'var(--sky-soft)'],['Total gross remuneration',M(tg),'var(--green-soft)'],['Total PCB / MTD',M(tp),'var(--coral)'],['Subject to MTD',subj,'var(--muted)']];
   var cardHtml='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">'+cards.map(function(c){return '<div class="panel" style="padding:14px;margin:0"><div class="muted" style="font-size:11px">'+c[0]+'</div><div style="font-size:20px;font-weight:700;margin-top:4px;color:'+c[2]+'">'+c[1]+'</div></div>';}).join('')+'</div>';
-  var rows=withPay.map(function(e){ var t=ann[e.id]; return '<tr><td><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+'</td><td class="amt">'+t.months+'</td><td class="amt">'+M(t.gross)+'</td><td class="amt">'+M(t.epfEe)+'</td><td class="amt">'+M(t.socsoEe)+'</td><td class="amt">'+M(t.pcb)+'</td><td><button class="btn xs" onclick="hrExpEA(\''+e.id+'\')">EA PDF</button></td></tr>'; }).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No finalised payslips for '+ye.year+' yet. Finalise monthly payroll first.</td></tr>';
+  var rows=withPay.map(function(e){ var t=ann[e.id]; return '<tr><td><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+'</td><td class="amt">'+t.months+'</td><td class="amt">'+M(t.gross)+'</td><td class="amt">'+M(t.epfEe)+'</td><td class="amt">'+M((Number(t.socsoEe)||0)+(Number(t.lindung)||0))+'</td><td class="amt">'+M(t.pcb)+'</td><td><button class="btn xs" onclick="hrExpEA(\''+e.id+'\')">EA PDF</button></td></tr>'; }).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No finalised payslips for '+ye.year+' yet. Finalise monthly payroll first.</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Year-end '+ye.year+' — annual per-employee totals</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th class="amt">Months</th><th class="amt">Gross</th><th class="amt">EPF (ee)</th><th class="amt">SOCSO (ee)</th><th class="amt">PCB</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   var exp='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:14px"><span class="muted" style="font-size:11px">LHDN forms:</span>'+
     '<button class="btn xs" onclick="hrExpEA(0)">📄 All EA forms (C.P.8A)</button>'+
@@ -5476,7 +5488,7 @@ async function hrYeLoad(){
   try{ var r=await call({api:'hr_annual',year:HR_YE.year,tenant:HR.tenant}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
   catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
 }
-var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,pcb:0,net:0,months:0 };
+var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,months:0 };
 function hrDrawEA(doc,e,t,year,emp){
   var W=210,H=297,m=16; var amt=function(n){return 'RM '+HR_money2(n);};
   doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
@@ -5513,7 +5525,7 @@ function hrDrawEA(doc,e,t,year,emp){
   money2('3.  Zakat paid via salary deduction',0); y+=2;
   head('E.  Contributions to approved fund & SOCSO');
   money2("EPF (KWSP) — employee's contribution",t.epfEe);
-  money2("SOCSO (PERKESO) — employee's contribution",t.socsoEe);
+  money2("SOCSO (PERKESO) — employee's contribution",(Number(t.socsoEe)||0)+(Number(t.lindung)||0));   // v196: includes LINDUNG 24 Jam — same employee, same PERKESO account, and it counts toward the RM350 relief
   money2('EIS (SIP) — employee\'s contribution',t.eisEe); y+=3;
   doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-28,W-m,H-28);
   doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
@@ -5594,11 +5606,11 @@ function hrExpCp8d(fmt){
   if(fmt==='txt'){
     var eno=(String(emp.employer_no||'').replace(/\D/g,''))||'0000000000';
     var lines=list.map(function(o){ var e=o.emp,t=o.tot; var ic=(String(e.ic||'').replace(/[\s-]/g,''))||'000000000000'; var children=e.numChildren||0;
-      return [ String(e.name||'').slice(0,60), e.taxNo?String(e.taxNo).replace(/\D/g,''):'', ic.slice(0,12), hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, children, hrIntNoSen(children*2000), hrIntNoSen(t.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen(t.socsoEe) ].join('|'); });
+      return [ String(e.name||'').slice(0,60), e.taxNo?String(e.taxNo).replace(/\D/g,''):'', ic.slice(0,12), hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, children, hrIntNoSen(children*2000), hrIntNoSen(t.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ].join('|'); });   // v196: SOCSO field now includes LINDUNG 24
     hrDownload('P'+eno+'_'+year+'.txt',lines.join('\r\n')+'\r\n'); toast('CP8D TXT generated');
   } else {
     var head=['No','Name','TIN','IC/Passport','Category','Status','End date','Tax borne','Children','Child relief','Gross remuneration','BIK','VOLA','ESOS','Exempt','TP1','Zakat (TP1)','EPF','Zakat (salary)','MTD','CP38','Medical ins.','SOCSO'];
-    var body=list.map(function(o,i){ var e=o.emp,t=o.tot; return [ i+1, e.name, e.taxNo||'', (String(e.ic||'').replace(/[\s-]/g,''))||'000000000000', hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, e.numChildren||0, hrIntNoSen((e.numChildren||0)*2000), hrIntNoSen(t.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen(t.socsoEe) ]; });
+    var body=list.map(function(o,i){ var e=o.emp,t=o.tot; return [ i+1, e.name, e.taxNo||'', (String(e.ic||'').replace(/[\s-]/g,''))||'000000000000', hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, e.numChildren||0, hrIntNoSen((e.numChildren||0)*2000), hrIntNoSen(t.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ]; });   // v196: SOCSO field now includes LINDUNG 24
     hrDownload('CP8D_YA'+year+'.csv',hrCsv([head].concat(body))); toast('CP8D CSV generated');
   }
 }
