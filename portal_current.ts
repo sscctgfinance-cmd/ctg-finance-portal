@@ -5208,7 +5208,19 @@ Deno.serve(async (req)=>{
                  can_edit: cos.length ? cos.every((t:string)=> alw.indexOf(t) >= 0) : false };
       });
       const adminCount=(users||[]).filter((u:any)=>u.role==="admin").length;   // group-wide count: the last-admin guard must not be fooled by filtering
-      return j({ ok:true, users: rows, me_id:(me.user&&me.user.id)||null, admin_count:adminCount, scoped_tenant: want });
+      // v207: who could still be given an Employee login. An employee login is only useful when it is
+      // LINKED to an hr_employees row — rcMe resolves the caller by hr_employees.user_id, so an unlinked
+      // one just tells them "your login isn't linked to an employee profile yet". Offering the roster
+      // here is what lets the invite form create a linked login instead of a broken account.
+      let candidates:any[] = [];
+      if (want){
+        const { data: emps } = await sb.from("hr_employees")
+          .select("id,name,emp_no,email,user_id").eq("tenant_id",want).eq("status","active").order("emp_no");
+        candidates = (emps||[]).filter((e:any)=>!e.user_id)
+          .map((e:any)=>({ id:e.id, name:e.name, emp_no:e.emp_no, email:e.email||null }));
+      }
+      return j({ ok:true, users: rows, me_id:(me.user&&me.user.id)||null, admin_count:adminCount, scoped_tenant: want,
+                 employee_candidates: candidates });
     }
     if (api === "hr_user_role_set") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
@@ -5233,6 +5245,10 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const email=String(b.email||"").trim().toLowerCase(); const name=String(b.name||"").trim()||email; const role=String(b.role||"viewer").toLowerCase();
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return j({ ok:false, error:"Enter a valid email address." });
+      // v207: "employee" is a valid role, but NOT one this action can create. It builds a bare portal_users
+      // row, and an employee login only works when hr_employees.user_id points at it — otherwise the person
+      // signs in and is told their login isn't linked to a profile. hr_rc_enable_login does the link.
+      if(role==="employee") return j({ ok:false, error:"Employee logins are created from the employee record so they are linked to it — use the Employee option, which picks the person." });
       if(["admin","hr_admin","viewer"].indexOf(role)<0) return j({ ok:false, error:"Invalid role." });
       const { data: existing } = await sb.from("portal_users").select("id").eq("email",email).maybeSingle();
       if(existing) return j({ ok:false, error:"A user with that email already exists — change their role in the list instead." });

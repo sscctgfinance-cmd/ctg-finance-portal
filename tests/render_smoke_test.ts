@@ -55,7 +55,8 @@ function loadApp(): any {
   const prev: Record<string, unknown> = {};
   for (const k of Object.keys(g)) { prev[k] = (globalThis as never)[k as never]; (globalThis as never as Record<string, unknown>)[k] = g[k]; }
   (globalThis as never as Record<string, unknown>).window = globalThis;
-  const mod = new Function(src + "\n;return { HR:(typeof HR!=='undefined'?HR:null), hrPayroll:(typeof hrPayroll!=='undefined'?hrPayroll:null) };");
+  const mod = new Function(src + "\n;return { HR:(typeof HR!=='undefined'?HR:null), hrPayroll:(typeof hrPayroll!=='undefined'?hrPayroll:null)," +
+    " HRA:(typeof HRA!=='undefined'?HRA:null), hrAccessRender:(typeof hrAccessRender!=='undefined'?hrAccessRender:null) };");
   return mod();
 }
 
@@ -127,4 +128,47 @@ Deno.test("it renders with the row menu open", () => {
 Deno.test("it renders with no employees at all", () => {
   const html = render({ ...BASE, employees: [] });
   assertEquals(/No active employees/.test(html), true, "an empty company should say so, not throw");
+});
+
+// ── Access & Roles ────────────────────────────────────────────────────────────────────────────────
+// deno-lint-ignore no-explicit-any
+function renderAccess(data: any, role?: string): string {
+  const app = loadApp();
+  assertEquals(!!app.HRA && !!app.hrAccessRender, true, "hros.html did not expose HRA / hrAccessRender");
+  app.HRA.data = data;
+  if (role) app.HRA.role = role;
+  return app.hrAccessRender();
+}
+const ACCESS = {
+  ok: true, me_id: "u1", admin_count: 2, scoped_tenant: "t1",
+  users: [{ id: "u1", email: "boss@x.test", name: "BOSS", role: "admin", self: true, company_count: 1, can_edit: true },
+          { id: "u2", email: "staff@x.test", name: "STAFF", role: "employee", employee: "STAFF", company_count: 1, can_edit: true }],
+  employee_candidates: [{ id: "e9", name: "NEW JOINER", emp_no: "E099", email: "joiner@x.test" },
+                        { id: "e8", name: "NO EMAIL GUY", emp_no: "E098", email: null }],
+};
+
+Deno.test("Access & Roles offers an Employee login, and it is the default", () => {
+  const html = renderAccess(ACCESS);
+  assertEquals(/value="employee"/.test(html), true, "the invite form has no Employee role option");
+  assertEquals(/hra_emp/.test(html), true, "picking Employee must offer the employee picker");
+  assertEquals(html.indexOf("NEW JOINER") >= 0, true, "candidates without a login are not listed");
+});
+
+Deno.test("the picker only offers staff who do not already have a login", () => {
+  const html = renderAccess({ ...ACCESS, employee_candidates: [] });
+  assertEquals(/already has a login/.test(html), true,
+    "with nobody left to invite it should say so, not show an empty dropdown");
+  assertEquals(/hra_emp/.test(html), false, "an empty picker should not render at all");
+});
+
+Deno.test("an employee with no email on file is flagged in the picker", () => {
+  const html = renderAccess(ACCESS);
+  assertEquals(/no email on file/.test(html), true,
+    "an employee with no address must be visibly flagged — the login cannot be delivered otherwise");
+});
+
+Deno.test("the other roles still render their plain email/name form", () => {
+  const html = renderAccess(ACCESS, "hr_admin");
+  assertEquals(/hra_emp/.test(html), false, "the employee picker should only appear for the Employee role");
+  assertEquals(/hra_email/.test(html), true, "the email field vanished for admin roles");
 });

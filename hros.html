@@ -1781,7 +1781,7 @@ function hrRender(){
   hrRenderMobileChrome();
 }
 // ===== 🛡 Access & Roles (Master Admin only) =====
-var HRA={ data:null, loading:false, err:null };
+var HRA={ data:null, loading:false, err:null, role:'employee', emp:'', email:'', name:'' };   // v207: the invite form's own state — a re-render must not lose what was typed or picked
 function hrRoleLabel(r){ return r==='admin'?'Master Admin':r==='hr_admin'?'HR Admin':r==='viewer'?'Viewer':r==='approver'?'Approver':r==='employee'?'Employee':r; }
 function hrRolePill(r){ var c=r==='admin'?'pill-ok':r==='hr_admin'?'pill-warn':r==='viewer'?'pill-info':'pill-neu'; return '<span class="pill '+c+'">'+esc(hrRoleLabel(r))+'</span>'; }
 function hrAccess(){
@@ -1821,13 +1821,30 @@ function hrAccessRender(){
   var table='<div class="panel"><div class="panel-hd"><h3>Users &amp; access ('+users.length+')</h3></div>'+
     '<div class="muted" style="font-size:11.5px;margin-bottom:10px;line-height:1.55"><b>'+ic('shield',13)+' Master Admin</b> = full control incl. managing users. &nbsp;<b>'+ic('shield',13)+' HR Admin</b> = full HR management (no user management, no Finance Portal). &nbsp;<b>'+ic('eye',13)+' Viewer</b> = sees everything but changes nothing. HR Admin, Viewer &amp; Employee logins have <b>no access to the Finance Portal</b>. You can’t change the last Master Admin, or your own role here.</div>'+
     '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Email</th><th>Access role</th><th>HR employee</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  // v207: an Employee login has to be LINKED to their hr_employees row — the app resolves "who am I" by
+  // hr_employees.user_id, so an unlinked one signs in and is told it isn't linked to a profile. So for
+  // that role we pick the person instead of typing an address, and the email comes from their record.
+  var isEmp=((HRA.role||'employee')==='employee');
+  var cands=(d.employee_candidates||[]);
+  var empPick = !isEmp ? '' :
+    '<div style="margin-top:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px">'+
+      '<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Which employee?</label>'+
+      (cands.length
+        ? '<select id="hra_emp" onchange="hrInvEmpPick(this.value)" style="'+S+';width:100%"><option value="">— pick an employee —</option>'+
+            cands.map(function(e){ return '<option value="'+esc(e.id)+'" data-email="'+esc(e.email||'')+'">'+esc((e.emp_no?e.emp_no+' — ':'')+e.name)+(e.email?'':'  (no email on file)')+'</option>'; }).join('')+'</select>'+
+          '<div class="muted" style="font-size:10.5px;margin-top:5px">Only active staff in this company who don’t have a login yet. Their login is tied to their record, so payslips, leave and claims all resolve to them.</div>'
+        : '<div class="muted" style="font-size:12px">Everyone active in this company already has a login. Add the employee under <b>Employees</b> first, or switch company at the top left.</div>')+
+    '</div>';
   var inv='<div class="panel" style="max-width:580px"><div class="panel-hd"><h3>Invite a user</h3></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
-      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Email</label><input id="hra_email" placeholder="name@company.com" style="'+S+';width:100%"></div>'+
-      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Name</label><input id="hra_name" placeholder="Full name" style="'+S+';width:100%"></div>'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Email'+(isEmp?' <span style="font-size:10px">(from their record — override if needed)</span>':'')+'</label><input id="hra_email" value="'+esc(HRA.email||'')+'" placeholder="name@company.com" style="'+S+';width:100%"></div>'+
+      '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Name</label><input id="hra_name" value="'+esc(HRA.name||'')+'"'+(isEmp?' disabled':'')+' placeholder="Full name" style="'+S+';width:100%'+(isEmp?';opacity:.6':'')+'"></div>'+
     '</div>'+
-    '<div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label><select id="hra_role" style="'+S+';width:100%"><option value="hr_admin">HR Admin (full HR, no Finance)</option><option value="viewer">Viewer (read-only)</option><option value="admin">Master Admin (full control)</option></select></div>'+
+    '<div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label><select id="hra_role" onchange="HRA.role=this.value;hrRender()" style="'+S+';width:100%">'+
+      [['employee','Employee (own payslips, leave &amp; claims)'],['hr_admin','HR Admin (full HR, no Finance)'],['viewer','Viewer (read-only)'],['admin','Master Admin (full control)']]
+        .map(function(r){ return '<option value="'+r[0]+'"'+((HRA.role||'employee')===r[0]?' selected':'')+'>'+r[1]+'</option>'; }).join('')+'</select></div>'+
     '<button class="btn p sm" onclick="hrUserInvite()">Create login</button></div>'+
+    empPick+
     '<div class="muted" style="font-size:11px;margin-top:8px">Creates an HR OS login and shows a one-time password to share. Only <b>Master Admin</b> can also open the Finance Portal.</div></div>';
   return table+inv;
 }
@@ -1837,11 +1854,34 @@ async function hrUserRoleSet(uid,role){
   var r=await call({api:'hr_user_role_set',user_id:uid,role:role});
   if(r&&r.ok){ toast('Access role updated ✓'); HRA.data=null; hrAccessLoad(); } else { toast((r&&r.error)||'Failed',true); hrRender(); }
 }
+// v207: picking the employee fills in the address and the name from their record, so the operator is not
+// retyping (and mistyping) something the system already knows.
+function hrInvEmpPick(id){
+  var e=(((HRA.data&&HRA.data.employee_candidates)||[]).find(function(x){return x.id===id;}))||{};
+  HRA.emp=id||''; HRA.email=e.email||''; HRA.name=e.name||''; hrRender();
+}
 async function hrUserInvite(){
-  var email=((document.getElementById('hra_email')||{}).value||'').trim(); var name=((document.getElementById('hra_name')||{}).value||'').trim(); var role=(document.getElementById('hra_role')||{}).value||'viewer';
+  var email=((document.getElementById('hra_email')||{}).value||'').trim();
+  var name=((document.getElementById('hra_name')||{}).value||'').trim();
+  var role=(document.getElementById('hra_role')||{}).value||'viewer';
+  // An employee login goes through hr_rc_enable_login, which creates the account AND points the employee
+  // record at it. hr_user_invite deliberately refuses this role — it can only make an unlinked account.
+  if(role==='employee'){
+    var empId=((document.getElementById('hra_emp')||{}).value||'').trim();
+    if(!empId){ toast('Pick which employee this login is for',true); return; }
+    var e=(((HRA.data&&HRA.data.employee_candidates)||[]).find(function(x){return x.id===empId;}))||{};
+    if(!email && !e.email){ toast('This employee has no email — add one on their profile, or type it here',true); return; }
+    var re=await call({api:'hr_rc_enable_login',employee_id:empId,email:email||e.email});
+    if(re&&re.ok){
+      if(re.already){ toast((e.name||'They')+' already has a login',true); }
+      else hrShowCreds([{name:e.name||re.email,email:re.email,temp_password:re.temp_password}]);
+      HRA.data=null; HRA.emp=''; HRA.email=''; HRA.name=''; hrAccessLoad();
+    } else toast((re&&re.error)||'Could not create the login',true);
+    return;
+  }
   if(!email){ toast('Enter an email',true); return; }
   var r=await call({api:'hr_user_invite',email:email,name:name,role:role});
-  if(r&&r.ok){ hrShowCreds([{name:name||email,email:r.email,temp_password:r.temp_password}]); HRA.data=null; hrAccessLoad(); } else toast((r&&r.error)||'Failed',true);
+  if(r&&r.ok){ hrShowCreds([{name:name||email,email:r.email,temp_password:r.temp_password}]); HRA.email=''; HRA.name=''; HRA.data=null; hrAccessLoad(); } else toast((r&&r.error)||'Failed',true);
 }
 // ===== 📊 HR OS Analytics Dashboard (Overview / Headcount / Payroll / Attendance / Cost) =====
 var HR_DASH={ month:0, year:0, page:'overview', data:null, loading:false, steps:0, tenant:'' };
