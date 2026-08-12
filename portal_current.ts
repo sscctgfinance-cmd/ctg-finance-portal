@@ -4024,13 +4024,22 @@ Deno.serve(async (req)=>{
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const alw = await allowedTenants(b.token);
       const { data: payees } = await sb.from("portal_wht_payees").select("*").eq("active",true).order("name");
-      // The payer's TIN comes from Company Info, so that number is never keyed twice or drifts.
-      let cq = sb.from("portal_company_info").select("tenant_id,tax_no,name");
-      if (alw.length) cq = cq.in("tenant_id", alw);
-      const { data: cos } = await cq;
+      // Companies come from xero_tenants, which is always populated; the TIN is joined in from Company
+      // Info, which may not be. Driving the list off Company Info instead gave an EMPTY dropdown — the
+      // rows exist for all five companies but every field in them is still null.
+      let tq = sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
+      if (alw.length) tq = tq.in("tenant_id", alw);
+      const { data: tens } = await tq;
+      const { data: infos } = await sb.from("portal_company_info").select("tenant_id,legal_name,income_tax_no,myinvois_tin");
+      const byTenant:any = {}; (infos||[]).forEach((c:any)=>{ byTenant[c.tenant_id]=c; });
+      const entities = (tens||[]).map((t:any)=>{
+        const ci = byTenant[t.tenant_id]||{};
+        return { tenant_id:t.tenant_id, name: ci.legal_name || t.tenant_name,
+                 tax_no: ci.income_tax_no || ci.myinvois_tin || null };
+      });
       return j({ ok:true,
         payees: (payees||[]).filter((p:any)=> !p.tenant_id || !alw.length || alw.indexOf(p.tenant_id)>=0),
-        entities: cos||[] });
+        entities });
     }
     if (api === "wht_payee_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
