@@ -4015,6 +4015,150 @@ Deno.serve(async (req)=>{
       await logAudit(me, "individual_delete", String(b.id), {});
       return j({ ok:true });
     }
+    // ═══ Withholding tax on payments to non-residents (ITA 1967 s.109 / s.109B) ═══════════════════
+    // Replaces Malaysia_WHT_Summary.xlsx. The rule that matters, and that the spreadsheet got right while
+    // most do not: WHT is charged on the FEE, never on the fee plus Malaysian service tax. Service tax on
+    // imported taxable services is the payer's own self-accounted liability under s.26A Service Tax Act
+    // 2018 — it is shown for completeness and deliberately kept out of the WHT base.
+    if (api === "wht_config") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const alw = await allowedTenants(b.token);
+      const { data: payees } = await sb.from("portal_wht_payees").select("*").eq("active",true).order("name");
+      // The payer's TIN comes from Company Info, so that number is never keyed twice or drifts.
+      let cq = sb.from("portal_company_info").select("tenant_id,tax_no,name");
+      if (alw.length) cq = cq.in("tenant_id", alw);
+      const { data: cos } = await cq;
+      return j({ ok:true,
+        payees: (payees||[]).filter((p:any)=> !p.tenant_id || !alw.length || alw.indexOf(p.tenant_id)>=0),
+        entities: cos||[] });
+    }
+    if (api === "wht_payee_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const p = b.payee||{};
+      const name = String(p.name||"").trim(); if(!name) return j({ ok:false, error:"Payee name is required." });
+      const rate = Number(p.wht_rate);
+      // A net-basis gross-up divides by (1 - rate), so 100% is both unreal and a division by zero.
+      if(!isFinite(rate) || rate < 0 || rate >= 1) return j({ ok:false, error:"The WHT rate must be between 0 and 1 (0.10 = 10%)." });
+      const row:any = { name, tin:String(p.tin||"").trim()||null, country:String(p.country||"").trim()||null,
+        wht_rate:rate, wht_type:(["royalty","s4a_special","interest","contract","other"].indexOf(String(p.wht_type))>=0?String(p.wht_type):"royalty"),
+        statutory_rate:(p.statutory_rate===""||p.statutory_rate==null)?null:Number(p.statutory_rate),
+        treaty_relief:!!p.treaty_relief, has_cor:!!p.has_cor, notes:String(p.notes||"").trim()||null,
+        active:p.active!==false, updated_at:new Date().toISOString() };
+      let out:any;
+      if(p.id){ const r=await sb.from("portal_wht_payees").update(row).eq("id",Number(p.id)).select().single();
+                if(r.error) return j({ ok:false, error:r.error.message }); out=r.data; }
+      else { const r=await sb.from("portal_wht_payees").insert(row).select().single();
+             if(r.error) return j({ ok:false, error:r.error.message }); out=r.data; }
+      await logAudit(me,"wht_payee_save",String(out.id),{ name, rate });
+      return j({ ok:true, payee: out });
+    }
+    if (api === "wht_payee_delete") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // Never hard-delete: filed computations reference the payee and the FK is RESTRICT.
+      const { error } = await sb.from("portal_wht_payees").update({ active:false, updated_at:new Date().toISOString() }).eq("id",Number(b.id));
+      if(error) return j({ ok:false, error:error.message });
+      await logAudit(me,"wht_payee_delete",String(b.id),{});
+      return j({ ok:true });
+    }
+    if (api === "wht_list") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      let q = sb.from("portal_wht_summaries").select("*").order("created_at",{ascending:false}).limit(Math.min(Number(b.limit)||200,500));
+      { const alw = await allowedTenants(b.token); if (alw.length) q = q.in("tenant_id", alw); }
+      if (b.tenant) q = q.eq("tenant_id", String(b.tenant));
+      const { data } = await q;
+      const ids = (data||[]).map((r:any)=>r.id);
+      const sums:any = {};
+      if (ids.length){
+        const { data: lines } = await sb.from("portal_wht_lines").select("summary_id,amount").in("summary_id", ids);
+        (lines||[]).forEach((l:any)=>{ sums[l.summary_id]=(sums[l.summary_id]||0)+Number(l.amount||0); });
+      }
+      return j({ ok:true, summaries: (data||[]).map((r:any)=>({ ...r, fee_total: Math.round((sums[r.id]||0)*100)/100 })) });
+    }
+    if (api === "wht_get") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_wht_summaries").select("*").eq("id",Number(b.id)).maybeSingle();
+      if(!data) return j({ ok:false, error:"Not found." });
+      { const alw = await allowedTenants(b.token); if (alw.length && data.tenant_id && alw.indexOf(data.tenant_id)<0)
+          return denyTenant(me,"wht_get",data.tenant_id); }
+      const { data: lines } = await sb.from("portal_wht_lines").select("*").eq("summary_id",data.id).order("line_no");
+      return j({ ok:true, summary: data, lines: lines||[] });
+    }
+    if (api === "wht_save") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const s = b.summary||{}; const lines = Array.isArray(b.lines)?b.lines:[];
+      const tenant = String(s.tenant_id||b.tenant||"").trim();
+      if(!tenant) return j({ ok:false, error:"Pick the paying company." });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(tenant)<0) return denyTenant(me,"wht_save",tenant); }
+      if(!String(s.payee_name||"").trim()) return j({ ok:false, error:"Pick the payee." });
+      const rate = Number(s.wht_rate);
+      if(!isFinite(rate) || rate < 0 || rate >= 1) return j({ ok:false, error:"The WHT rate must be between 0 and 1 (0.10 = 10%)." });
+      const basis = (String(s.basis)==="net") ? "net" : "gross";
+      // Validate every amount BEFORE writing anything. A NaN here silently becomes 0 and understates the
+      // tax due — the computation still looks complete on screen, which is the worst possible failure.
+      for (const l of lines){
+        const a = Number(l.amount);
+        if(!isFinite(a) || a < 0) return j({ ok:false, error:"Every line amount must be a number of 0 or more." });
+      }
+      const head:any = {
+        tenant_id: tenant, payee_id: s.payee_id?Number(s.payee_id):null,
+        payee_name: String(s.payee_name).trim(), payee_tin: String(s.payee_tin||"").trim()||null,
+        payee_country: String(s.payee_country||"").trim()||null, entity_tin: String(s.entity_tin||"").trim()||null,
+        period_label: String(s.period_label||"").trim()||null,
+        period_from: s.period_from||null, period_to: s.period_to||null,
+        wht_rate: rate, wht_type: String(s.wht_type||"royalty"), basis,
+        sst_rate: (s.sst_rate==null||s.sst_rate==="")?0.08:Number(s.sst_rate),
+        penalty_pct: (s.penalty_pct==null||s.penalty_pct==="")?0.10:Number(s.penalty_pct),
+        penalty_on: !!s.penalty_on, paid_on: s.paid_on||null,
+        status: (["draft","final","filed"].indexOf(String(s.status))>=0?String(s.status):"draft"),
+        notes: String(s.notes||"").trim()||null, updated_at: new Date().toISOString(),
+      };
+      let id = s.id ? Number(s.id) : null;
+      if(id){
+        const { data: prev } = await sb.from("portal_wht_summaries").select("tenant_id,status").eq("id",id).maybeSingle();
+        if(!prev) return j({ ok:false, error:"Not found." });
+        { const alw = await allowedTenants(b.token); if (alw.length && prev.tenant_id && alw.indexOf(prev.tenant_id)<0)
+            return denyTenant(me,"wht_save",prev.tenant_id); }
+        if(prev.status==="filed" && !b.force) return j({ ok:false, error:"This computation is marked as filed — reopen it before editing." });
+        const { error } = await sb.from("portal_wht_summaries").update(head).eq("id",id);
+        if(error) return j({ ok:false, error:error.message });
+      } else {
+        head.created_by = (me.user&&me.user.id)||null;
+        // Same atomic counter the claim numbers use — a max()+1 here would collide under concurrent saves,
+        // and doc_no is UNIQUE. Numbered by the Malaysian month, not UTC, for the same reason as claims.
+        try{
+          const myt = new Date(Date.now() + 8*3600*1000);
+          const scope = "WHT-"+myt.getUTCFullYear()+String(myt.getUTCMonth()+1).padStart(2,"0");
+          const { data:n } = await sb.rpc("hr_next_doc_no",{ p_scope: scope });
+          if(n!=null) head.doc_no = scope+"-"+String(n).padStart(4,"0");
+        }catch(_e){}
+        const { data, error } = await sb.from("portal_wht_summaries").insert(head).select("id,doc_no").single();
+        if(error) return j({ ok:false, error:error.message });
+        id = data.id;
+      }
+      // Replace the lines wholesale. Surface a failed insert rather than leaving the computation with a
+      // deleted line set and a total that still looked right on the last screen the operator saw.
+      const del = await sb.from("portal_wht_lines").delete().eq("summary_id", id);
+      if(del.error) return j({ ok:false, error:del.error.message });
+      const rows = lines.filter((l:any)=> Number(l.amount)>0 || String(l.receipt_no||"").trim() || l.payment_date)
+        .map((l:any,i:number)=>({ summary_id:id, line_no:i+1, payment_date:l.payment_date||null,
+          receipt_no:String(l.receipt_no||"").trim()||null, description:String(l.description||"").trim()||null,
+          amount: Math.round((Number(l.amount)||0)*100)/100 }));
+      if(rows.length){ const ins = await sb.from("portal_wht_lines").insert(rows); if(ins.error) return j({ ok:false, error:ins.error.message }); }
+      await logAudit(me,"wht_save",String(id),{ tenant, payee:head.payee_name, lines:rows.length, basis, rate });
+      return j({ ok:true, id, lines: rows.length });
+    }
+    if (api === "wht_delete") {
+      const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const { data } = await sb.from("portal_wht_summaries").select("tenant_id,status,doc_no").eq("id",Number(b.id)).maybeSingle();
+      if(!data) return j({ ok:false, error:"Not found." });
+      { const alw = await allowedTenants(b.token); if (alw.length && data.tenant_id && alw.indexOf(data.tenant_id)<0)
+          return denyTenant(me,"wht_delete",data.tenant_id); }
+      if(data.status==="filed") return j({ ok:false, error:"A filed computation can't be deleted — it is the record of what was submitted to LHDN." });
+      const { error } = await sb.from("portal_wht_summaries").delete().eq("id",Number(b.id));   // lines cascade
+      if(error) return j({ ok:false, error:error.message });
+      await logAudit(me,"wht_delete",String(b.id),{ doc_no:data.doc_no });
+      return j({ ok:true });
+    }
     if (api === "sbi_list") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       let q = sb.from("portal_self_billed_invoices").select("id,invoice_no,tenant_id,payee_name,invoice_date,payment_type,gross_amount,wht_amount,net_payable,status,xero_bill_id,created_at").order("created_at",{ascending:false}).limit(Math.min(Number(b.limit)||200,500));

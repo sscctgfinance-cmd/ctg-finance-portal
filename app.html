@@ -1130,6 +1130,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <div class="tab"        data-t="o2o"         data-cat="operations" onclick="tab('o2o')"         id="tab-o2o">💊 O2O Billing</div>
     <div class="tab"        data-t="qinv"        data-cat="operations" onclick="tab('qinv')"        id="tab-qinv">🧾 Quick Invoice</div>
     <div class="tab"        data-t="selfbill"    data-cat="operations" onclick="tab('selfbill')"    id="tab-selfbill">🧑 Personal Invoices</div>
+    <div class="tab"        data-t="wht"         data-cat="operations" onclick="tab('wht')"         id="tab-wht">🌏 Withholding Tax</div>
     <div class="tab"        data-t="recon"       data-cat="operations" onclick="tab('recon')"       id="tab-recon">🏦 Bank Rec</div>
     <div class="tab"        data-t="gateway"     data-cat="operations" onclick="tab('gateway')"     id="tab-gateway">🔁 Gateway → Xero</div>
     <div class="tab"        data-t="bankfeed"    data-cat="operations" onclick="tab('bankfeed')"    id="tab-bankfeed">🔗 Bank Feed</div>
@@ -1163,6 +1164,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
   <div id="ctgaccess"   class="hide"></div>
   <div id="info"        class="hide"></div>
   <div id="pharm"       class="hide"></div>
+  <div id="wht"         class="hide"></div>
   <div id="calendar"    class="hide"></div>
   <div id="ocr"         class="hide"></div>
   <div id="ap"          class="hide"></div>
@@ -1505,6 +1507,7 @@ async function showApp(){
     else if(t==='ocr') el.classList.toggle('hide', true); // OCR HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
     else if(t==='ap') el.classList.toggle('hide', true);  // AP Inbox HIDDEN — Anthropic (Claude vision) credits exhausted 2026-07-09; flip true→!canManage to re-enable after a top-up
     else if(t==='selfbill') el.classList.toggle('hide', !canManage); // Personal (self-billed) invoices: admin-only (creates payments)
+    else if(t==='wht') el.classList.toggle('hide', !canManage); // Withholding tax: admin-only (computes a statutory liability)
     else if(t==='gateway') el.classList.toggle('hide', !canManage); // Gateway→Xero converter: admin-only (finance tool)
     else if(t==='bankfeed') el.classList.toggle('hide', !canManage); // Bank Feed launcher (Fusioneta): admin-only
     else if(t==='salesrecon') el.classList.toggle('hide', !canManage); // Sales Reconciliation → Xero import: admin-only
@@ -1553,9 +1556,9 @@ function tab(t){
     document.querySelectorAll('.tabs .tab').forEach(el=>el.classList.toggle('cat-hide', el.dataset.cat!==targetCat));
   }
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.dataset.t===t));
-  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','gateway','bankfeed','salesrecon','pnl','close','recon','users','ctgaccess','info','pharm','calendar','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
+  ['cfo','overview','approvals','collections','upload','o2o','qinv','selfbill','wht','gateway','bankfeed','salesrecon','pnl','close','recon','users','ctgaccess','info','pharm','calendar','ocr','ap'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==t));
   if(!loaded[t]){
-    const asyncTabs = ['cfo','overview','approvals','collections','pnl','close','users','ctgaccess','info','pharm','calendar','ap','selfbill'];
+    const asyncTabs = ['cfo','overview','approvals','collections','pnl','close','users','ctgaccess','info','pharm','calendar','ap','selfbill','wht'];
     if(asyncTabs.indexOf(t)>=0) spin(t);
     render(t);
   }
@@ -1600,6 +1603,7 @@ async function render(t){
     if(t==='o2o')        return renderO2O();
     if(t==='qinv')       return renderQinv();
     if(t==='selfbill')   return renderSelfbill();
+    if(t==='wht')        return await renderWht();
     if(t==='gateway')    return renderGateway();
     if(t==='bankfeed')   return renderBankFeed();
     if(t==='salesrecon') return renderSalesRecon();
@@ -3421,6 +3425,353 @@ function renderQinv(){
   document.getElementById('qi_date').value=todayLocalISO();
   qiAddLine(); loaded.qinv=true;
 }
+/* ── 🌏 Withholding Tax — payments to non-residents (ITA 1967 s.109 / s.109B) ──────────────────────
+   Replaces Malaysia_WHT_Summary.xlsx.
+
+   The computation, and why it is what it is:
+     fee            each line, EXCLUDING Malaysian service tax
+     SST            fee × 8% — service tax on imported taxable services, self-accounted by the PAYER
+                    under s.26A Service Tax Act 2018. Shown for cash-planning; it is NOT part of the
+                    WHT base and never has been. Charging WHT on fee+SST over-withholds every month.
+     gross basis    the fee IS the gross. WHT = fee × rate, and the payee receives fee − WHT.
+     net basis      the contract says the payee gets the fee clean, so the payer bears the tax:
+                    gross = fee ÷ (1 − rate);  WHT = gross − fee.  The workbook's note described this
+                    but the sheet never implemented it, so a net-of-tax contract was under-withheld.
+     penalty        s.109(2)/s.109B(2): a 10% increase on tax not remitted within one month of paying
+                    or crediting the non-resident. Computed here, not typed — the spreadsheet left the
+                    cell blank under a label that says "10% of WHT".
+     due date       one month after the LAST payment date on the computation.
+*/
+var WHT={ cfg:null, list:null, loading:false, err:null, page:'list', doc:null, lines:[], payees:false, editPayee:null };
+
+function whtMoney(n){ n=Number(n)||0; return n.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function whtRound2(n){ return Math.round((Number(n)||0)*100)/100; }
+/* The whole calculation in one place, so the screen, the printable form and any test all agree. */
+function whtCompute(doc, lines){
+  var rate=Number(doc.wht_rate)||0, sst=Number(doc.sst_rate)||0, pen=Number(doc.penalty_pct)||0;
+  var fee=0; (lines||[]).forEach(function(l){ fee+=Number(l.amount)||0; });
+  fee=whtRound2(fee);
+  var sstAmt=whtRound2(fee*sst);
+  // Net basis: the fee is what the payee keeps, so it has to be grossed up before the rate is applied.
+  // Guarded against rate>=1 at both ends, but belt-and-braces here — a divide by zero would render NaN
+  // across the whole panel and look like a blank form rather than an error.
+  var gross = (doc.basis==='net' && rate<1) ? whtRound2(fee/(1-rate)) : fee;
+  var wht   = (doc.basis==='net' && rate<1) ? whtRound2(gross-fee)    : whtRound2(fee*rate);
+  var penalty = doc.penalty_on ? whtRound2(wht*pen) : 0;
+  return { fee:fee, sst:sstAmt, feeInclSst:whtRound2(fee+sstAmt), gross:gross, wht:wht,
+           penalty:penalty, total:whtRound2(wht+penalty),
+           netToPayee: whtRound2((doc.basis==='net'?fee:whtRound2(fee-wht))) };
+}
+/* One month after the last payment date — that is the statutory remittance deadline. */
+function whtDueDate(lines){
+  var last=null; (lines||[]).forEach(function(l){ if(l.payment_date && (!last || l.payment_date>last)) last=l.payment_date; });
+  if(!last) return null;
+  var d=new Date(last+'T00:00:00Z'); if(isNaN(d)) return null;
+  var m=d.getUTCMonth()+1, y=d.getUTCFullYear(); if(m>11){ m=0; y++; }
+  var t=new Date(Date.UTC(y, m, d.getUTCDate()));
+  if(t.getUTCMonth()!==((m)%12)) t=new Date(Date.UTC(y, m+1, 0));   // 31 Jan + 1 month → 28/29 Feb
+  return t.toISOString().slice(0,10);
+}
+var WHT_TYPES=[['royalty','Royalty — s.109 (CP37)'],['s4a_special','Special classes s.4A — s.109B (CP37D)'],
+               ['interest','Interest — s.109 (CP37)'],['contract','Contract payment — s.107A (CP37A/CP37F)'],['other','Other']];
+function whtTypeLabel(t){ var f=WHT_TYPES.find(function(x){return x[0]===t;}); return f?f[1]:t; }
+
+async function renderWht(){
+  var el=document.getElementById('wht'); if(!el) return;
+  if(!WHT.cfg && !WHT.loading && !WHT.err){ WHT.loading=true; el.innerHTML='<div class="panel"><div class="muted" style="padding:22px;text-align:center">Loading withholding tax…</div></div>';
+    try{ var r=await call({api:'wht_config'}); if(r&&r.ok){ WHT.cfg=r; } else WHT.err=(r&&r.error)||'Failed to load'; }
+    catch(e){ WHT.err=e.message||String(e); } finally{ WHT.loading=false; }
+  }
+  if(WHT.err){ el.innerHTML='<div class="panel"><div class="muted" style="padding:22px;text-align:center">⚠️ '+esc(WHT.err)+
+    ' <button class="btn sm" onclick="WHT.err=null;WHT.cfg=null;renderWht()">Try again</button></div></div>'; return; }
+  if(!WHT.cfg) return;
+  if(WHT.list===null){ var l=await call({api:'wht_list'}); WHT.list=(l&&l.ok)?l.summaries:[]; }
+  el.innerHTML = WHT.page==='doc' ? whtDocHtml() : whtListHtml();
+}
+
+function whtCoName(t){ var c=(typeof COMPANIES!=='undefined'?COMPANIES:[]).find(function(x){return x.tenant_id===t;}); return c?c.tenant_name:''; }
+function whtHead(sub){
+  return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px">'+
+    '<div><h2 style="margin:0;font-size:19px">🌏 Withholding Tax</h2>'+
+    '<div class="muted" style="font-size:12px">'+sub+'</div></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      (WHT.page==='doc'
+        ? '<button class="btn sm" onclick="WHT.page=\'list\';WHT.doc=null;renderWht()">← All computations</button>'
+        : '<button class="btn sm" onclick="WHT.payees=!WHT.payees;renderWht()">🏷 Payees &amp; rates</button>'+
+          '<button class="btn p sm" onclick="whtNew()">+ New computation</button>')+
+    '</div></div>';
+}
+
+function whtListHtml(){
+  var rows=(WHT.list||[]).map(function(s){
+    var c=whtCompute(s,[{amount:s.fee_total}]);
+    var pill=s.status==='filed'?'<span class="pill" style="background:rgba(45,180,120,.15);color:#2db478">Filed</span>'
+           :s.status==='final'?'<span class="pill" style="background:rgba(91,155,213,.15);color:#5b9bd5">Final</span>'
+           :'<span class="pill">Draft</span>';
+    return '<tr style="cursor:pointer" onclick="whtOpen('+s.id+')">'+
+      '<td><b>'+esc(s.doc_no||'—')+'</b></td>'+
+      '<td>'+esc(s.payee_name)+'<div class="muted" style="font-size:10.5px">'+esc(s.payee_country||'')+' · '+((Number(s.wht_rate)*100).toFixed(0))+'%'+(s.basis==='net'?' · net basis':'')+'</div></td>'+
+      '<td>'+esc(s.period_label||'')+'</td>'+
+      '<td class="amt" style="text-align:right">'+whtMoney(s.fee_total)+'</td>'+
+      '<td class="amt" style="text-align:right"><b>'+whtMoney(c.wht)+'</b></td>'+
+      '<td>'+pill+'</td></tr>';
+  }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No computations yet — click <b>+ New computation</b>.</td></tr>';
+
+  return whtHead('Compute and document WHT on payments to non-resident suppliers. Replaces the Excel summary.')+
+    (WHT.payees?whtPayeesHtml():'')+
+    '<div class="panel"><div class="panel-hd"><h3>Computations</h3></div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Doc no</th><th>Payee</th><th>Period</th>'+
+    '<th class="amt" style="text-align:right">Fee (excl. SST)</th><th class="amt" style="text-align:right">WHT</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+function whtPayeesHtml(){
+  var ps=(WHT.cfg&&WHT.cfg.payees)||[];
+  var rows=ps.map(function(p){
+    var flag = p.treaty_relief && !p.has_cor
+      ? '<div style="font-size:10.5px;color:var(--amber,#e0a800);margin-top:2px">⚠ Treaty rate applied with no Certificate of Residence on file</div>' : '';
+    return '<tr><td><b>'+esc(p.name)+'</b>'+flag+(p.notes?'<div class="muted" style="font-size:10.5px;margin-top:2px">'+esc(p.notes)+'</div>':'')+'</td>'+
+      '<td class="muted">'+esc(p.tin||'—')+'</td><td class="muted">'+esc(p.country||'—')+'</td>'+
+      '<td class="amt" style="text-align:right"><b>'+(Number(p.wht_rate)*100).toFixed(2).replace(/\.00$/,'')+'%</b>'+
+        (p.statutory_rate!=null && Number(p.statutory_rate)!==Number(p.wht_rate)
+          ? '<div class="muted" style="font-size:10.5px">statutory '+(Number(p.statutory_rate)*100).toFixed(0)+'%</div>':'')+'</td>'+
+      '<td class="muted" style="font-size:11px">'+esc(whtTypeLabel(p.wht_type))+'</td>'+
+      '<td><button class="btn xs" onclick="whtEditPayee('+p.id+')">Edit</button></td></tr>';
+  }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No payees yet.</td></tr>';
+  return '<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Payees &amp; rates</h3>'+
+    '<button class="btn sm" onclick="whtEditPayee(0)">+ Add payee</button></div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">The rate here is what gets applied. A treaty rate is only valid while a current <b>Certificate of Residence</b> is held — without one LHDN can assess at the full domestic rate plus the 10% increase.</div>'+
+    '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Payee</th><th>TIN</th><th>Country</th><th class="amt" style="text-align:right">Rate</th><th>Type</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    (WHT.editPayee!==null?whtPayeeForm():'')+'</div>';
+}
+
+function whtPayeeForm(){
+  var p=WHT.editPayee||{};
+  var S='padding:7px 9px;background:var(--panel-2,#141a22);border:1px solid var(--border,#243040);border-radius:7px;color:var(--text,#e8eef6);font-size:12.5px;width:100%';
+  var f=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+  return '<div style="margin-top:12px;padding:12px;background:var(--panel-2,#141a22);border:1px solid var(--border,#243040);border-radius:9px">'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">'+
+      f('Payee name *','<input id="wp_name" value="'+esc(p.name||'')+'" style="'+S+'">')+
+      f('TIN','<input id="wp_tin" value="'+esc(p.tin||'')+'" style="'+S+'">')+
+      f('Country','<input id="wp_country" value="'+esc(p.country||'')+'" style="'+S+'">')+
+      f('Rate applied (%)','<input id="wp_rate" type="number" step="0.01" min="0" max="99" value="'+(p.wht_rate!=null?(Number(p.wht_rate)*100):10)+'" style="'+S+'">')+
+      f('Statutory rate (%)','<input id="wp_stat" type="number" step="0.01" min="0" max="99" value="'+(p.statutory_rate!=null?(Number(p.statutory_rate)*100):10)+'" style="'+S+'">')+
+      f('Charging section','<select id="wp_type" style="'+S+'">'+WHT_TYPES.map(function(t){return '<option value="'+t[0]+'"'+((p.wht_type||'royalty')===t[0]?' selected':'')+'>'+t[1]+'</option>';}).join('')+'</select>')+
+    '</div>'+
+    '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0">'+
+      '<label style="display:inline-flex;gap:6px;align-items:center;font-size:12.5px"><input type="checkbox" id="wp_treaty"'+(p.treaty_relief?' checked':'')+'> Treaty rate (DTA relief)</label>'+
+      '<label style="display:inline-flex;gap:6px;align-items:center;font-size:12.5px"><input type="checkbox" id="wp_cor"'+(p.has_cor?' checked':'')+'> Certificate of Residence on file</label>'+
+    '</div>'+
+    f('Notes','<input id="wp_notes" value="'+esc(p.notes||'')+'" style="'+S+'">')+
+    '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn p sm" onclick="whtSavePayee()">Save payee</button>'+
+    '<button class="btn sm" onclick="WHT.editPayee=null;renderWht()">Cancel</button>'+
+    (p.id?'<button class="btn sm d" style="margin-left:auto" onclick="whtDelPayee('+p.id+')">Remove</button>':'')+'</div></div>';
+}
+function whtEditPayee(id){
+  WHT.editPayee = id ? ((WHT.cfg.payees||[]).find(function(x){return x.id===id;})||{}) : {};
+  WHT.payees=true; renderWht();
+}
+async function whtSavePayee(){
+  var v=function(i){ var e=document.getElementById(i); return e?e.value:''; };
+  var ck=function(i){ var e=document.getElementById(i); return !!(e&&e.checked); };
+  var pct=function(x){ var n=Number(x); return isFinite(n)?n/100:null; };
+  var payee={ id:(WHT.editPayee&&WHT.editPayee.id)||undefined, name:v('wp_name'), tin:v('wp_tin'), country:v('wp_country'),
+    wht_rate:pct(v('wp_rate')), statutory_rate:pct(v('wp_stat')), wht_type:v('wp_type'),
+    treaty_relief:ck('wp_treaty'), has_cor:ck('wp_cor'), notes:v('wp_notes') };
+  var r=await call({api:'wht_payee_save',payee:payee});
+  if(r&&r.ok){ toast('Payee saved'); WHT.editPayee=null; WHT.cfg=null; renderWht(); } else toast((r&&r.error)||'Failed',true);
+}
+async function whtDelPayee(id){
+  if(!confirm('Remove this payee from the list?\n\nPast computations keep their own copy of the name, TIN and rate, so nothing already filed changes.')) return;
+  var r=await call({api:'wht_payee_delete',id:id});
+  if(r&&r.ok){ toast('Payee removed'); WHT.editPayee=null; WHT.cfg=null; renderWht(); } else toast((r&&r.error)||'Failed',true);
+}
+
+function whtNew(){
+  WHT.doc={ tenant_id:(typeof curCo==='function'?curCo():'')||'', payee_name:'', wht_rate:0.10, wht_type:'royalty',
+            basis:'gross', sst_rate:0.08, penalty_pct:0.10, penalty_on:false, status:'draft', period_label:'' };
+  WHT.lines=[{},{},{},{},{}];
+  WHT.page='doc'; renderWht();
+}
+async function whtOpen(id){
+  var r=await call({api:'wht_get',id:id});
+  if(!r||!r.ok){ toast((r&&r.error)||'Could not open',true); return; }
+  WHT.doc=r.summary; WHT.lines=(r.lines||[]).map(function(l){ return { payment_date:l.payment_date, receipt_no:l.receipt_no, description:l.description, amount:l.amount }; });
+  while(WHT.lines.length<5) WHT.lines.push({});
+  WHT.page='doc'; renderWht();
+}
+/* Read the DOM back into state before any re-render, or typing is lost the moment anything repaints. */
+function whtSync(){
+  var d=WHT.doc; if(!d) return;
+  var v=function(i){ var e=document.getElementById(i); return e?e.value:''; };
+  d.tenant_id=v('w_entity'); d.period_label=v('w_period'); d.basis=v('w_basis');
+  d.wht_rate=(Number(v('w_rate'))||0)/100; d.sst_rate=(Number(v('w_sst'))||0)/100;
+  d.penalty_on=!!(document.getElementById('w_pen')||{}).checked;
+  d.notes=v('w_notes');
+  (WHT.lines||[]).forEach(function(l,i){
+    l.payment_date=v('wl_d'+i); l.receipt_no=v('wl_r'+i); l.description=v('wl_x'+i);
+    var a=v('wl_a'+i); l.amount=(a===''?0:Number(a));
+  });
+}
+function whtSetPayee(id){
+  whtSync();
+  var p=(WHT.cfg.payees||[]).find(function(x){return String(x.id)===String(id);});
+  if(p){ WHT.doc.payee_id=p.id; WHT.doc.payee_name=p.name; WHT.doc.payee_tin=p.tin; WHT.doc.payee_country=p.country;
+         WHT.doc.wht_rate=Number(p.wht_rate); WHT.doc.wht_type=p.wht_type; WHT.doc._payee=p; }
+  else { WHT.doc.payee_id=null; WHT.doc.payee_name=''; WHT.doc._payee=null; }
+  renderWht();
+}
+function whtAddLine(){ whtSync(); WHT.lines.push({}); renderWht(); }
+function whtDelLine(i){ whtSync(); WHT.lines.splice(i,1); if(!WHT.lines.length) WHT.lines.push({}); renderWht(); }
+function whtRecalc(){ whtSync(); var c=whtCompute(WHT.doc,WHT.lines);
+  var set=function(id,v){ var e=document.getElementById(id); if(e) e.textContent=v; };
+  (WHT.lines||[]).forEach(function(l,i){
+    var a=Number(l.amount)||0;
+    set('wl_s'+i, whtMoney(whtRound2(a*(Number(WHT.doc.sst_rate)||0))));
+    set('wl_t'+i, whtMoney(whtRound2(a*(1+(Number(WHT.doc.sst_rate)||0)))));
+  });
+  set('w_fee',whtMoney(c.fee)); set('w_sstt',whtMoney(c.sst)); set('w_incl',whtMoney(c.feeInclSst));
+  set('w_gross',whtMoney(c.gross)); set('w_wht',whtMoney(c.wht)); set('w_pena',whtMoney(c.penalty)); set('w_total',whtMoney(c.total));
+  set('w_netpay',whtMoney(c.netToPayee));
+}
+
+function whtDocHtml(){
+  var d=WHT.doc, c=whtCompute(d,WHT.lines), due=whtDueDate(WHT.lines);
+  var ents=(WHT.cfg.entities||[]);
+  var ent=ents.find(function(x){return x.tenant_id===d.tenant_id;})||{};
+  var payee=d._payee||((WHT.cfg.payees||[]).find(function(x){return x.id===d.payee_id;}))||{};
+  var S='padding:7px 9px;background:var(--panel-2,#141a22);border:1px solid var(--border,#243040);border-radius:7px;color:var(--text,#e8eef6);font-size:12.5px;width:100%';
+  var CS='padding:5px 7px;background:var(--panel-2,#141a22);border:1px solid var(--border,#243040);border-radius:6px;color:var(--text,#e8eef6);font-size:12px;width:100%';
+  var f=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+
+  var lineRows=(WHT.lines||[]).map(function(l,i){
+    var a=Number(l.amount)||0;
+    return '<tr><td class="muted" style="width:26px">'+(i+1)+'</td>'+
+      '<td><input type="date" id="wl_d'+i+'" value="'+esc(l.payment_date||'')+'" oninput="whtRecalc()" style="'+CS+'"></td>'+
+      '<td><input id="wl_r'+i+'" value="'+esc(l.receipt_no||'')+'" placeholder="Receipt / invoice no" style="'+CS+'"></td>'+
+      '<td><input id="wl_x'+i+'" value="'+esc(l.description||'')+'" placeholder="Description" style="'+CS+'"></td>'+
+      '<td><input id="wl_a'+i+'" type="number" step="0.01" min="0" value="'+(a||'')+'" oninput="whtRecalc()" style="'+CS+';text-align:right"></td>'+
+      '<td class="amt muted" style="text-align:right" id="wl_s'+i+'">'+whtMoney(whtRound2(a*(Number(d.sst_rate)||0)))+'</td>'+
+      '<td class="amt" style="text-align:right" id="wl_t'+i+'">'+whtMoney(whtRound2(a*(1+(Number(d.sst_rate)||0))))+'</td>'+
+      '<td><button class="btn xs d" onclick="whtDelLine('+i+')">✕</button></td></tr>';
+  }).join('');
+
+  var corWarn = (payee.treaty_relief && !payee.has_cor)
+    ? '<div style="background:rgba(224,168,0,.12);border:1px solid rgba(224,168,0,.35);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:var(--amber,#e0a800)">⚠ A treaty rate is being applied to <b>'+esc(payee.name||'')+'</b> but no Certificate of Residence is recorded. Without a current COR, LHDN can assess at the full domestic rate ('+((Number(payee.statutory_rate!=null?payee.statutory_rate:0.10))*100).toFixed(0)+'%) plus the 10% increase.</div>' : '';
+
+  var basisNote = d.basis==='net'
+    ? 'Net basis — the payee is paid the fee in full and the company bears the tax, so the fee is grossed up to '+whtMoney(c.gross)+' before the rate is applied.'
+    : 'Gross basis — the fee is the gross amount and the WHT is deducted from what the payee is paid.';
+
+  return whtHead((d.doc_no?('<b>'+esc(d.doc_no)+'</b> · '):'')+'Withholding tax computation')+
+    corWarn+
+    '<div class="panel" style="margin-bottom:14px">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+        f('Paying company *','<select id="w_entity" onchange="whtSync();renderWht()" style="'+S+'"><option value="">— pick —</option>'+
+          ents.map(function(e){ return '<option value="'+esc(e.tenant_id)+'"'+(d.tenant_id===e.tenant_id?' selected':'')+'>'+esc(whtCoName(e.tenant_id)||e.name||e.tenant_id)+'</option>'; }).join('')+'</select>'+
+          (ent.tax_no?'<div class="muted" style="font-size:10.5px;margin-top:3px">TIN '+esc(ent.tax_no)+'</div>':'<div class="muted" style="font-size:10.5px;margin-top:3px">No TIN in Company Info</div>'))+
+        f('Payee *','<select id="w_payee" onchange="whtSetPayee(this.value)" style="'+S+'"><option value="">— pick —</option>'+
+          (WHT.cfg.payees||[]).map(function(p){ return '<option value="'+p.id+'"'+(String(d.payee_id)===String(p.id)?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('')+'</select>'+
+          (d.payee_tin?'<div class="muted" style="font-size:10.5px;margin-top:3px">TIN '+esc(d.payee_tin)+' · '+esc(d.payee_country||'')+'</div>':''))+
+        f('Period','<input id="w_period" value="'+esc(d.period_label||'')+'" placeholder="e.g. July 2026" style="'+S+'">')+
+        f('WHT rate (%)','<input id="w_rate" type="number" step="0.01" min="0" max="99" value="'+(Number(d.wht_rate)*100)+'" oninput="whtRecalc()" style="'+S+'">')+
+        f('Basis','<select id="w_basis" onchange="whtSync();renderWht()" style="'+S+'"><option value="gross"'+(d.basis!=='net'?' selected':'')+'>Gross — tax deducted from the fee</option><option value="net"'+(d.basis==='net'?' selected':'')+'>Net — company bears the tax (gross up)</option></select>')+
+        f('Service tax on imported services (%)','<input id="w_sst" type="number" step="0.01" min="0" max="99" value="'+(Number(d.sst_rate)*100)+'" oninput="whtRecalc()" style="'+S+'">')+
+      '</div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:9px">'+esc(basisNote)+'</div>'+
+    '</div>'+
+
+    '<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Payments</h3>'+
+      '<button class="btn sm" onclick="whtAddLine()">+ Add row</button></div>'+
+      '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Enter the <b>fee only</b>, excluding Malaysian service tax. The service tax column is derived — it is the company&rsquo;s own self-accounted liability under s.26A Service Tax Act 2018 and is <b>not</b> part of the withholding base.</div>'+
+      '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th></th><th style="min-width:130px">Payment date</th><th>Receipt no</th><th>Description</th>'+
+      '<th class="amt" style="text-align:right" style="min-width:110px">Fee (RM)</th><th class="amt" style="text-align:right">SST</th><th class="amt" style="text-align:right">Fee + SST</th><th></th></tr></thead>'+
+      '<tbody>'+lineRows+'</tbody>'+
+      '<tfoot><tr style="font-weight:700;border-top:2px solid var(--border,#243040)"><td colspan="4">Subtotal</td>'+
+      '<td class="amt" style="text-align:right" id="w_fee">'+whtMoney(c.fee)+'</td><td class="amt" style="text-align:right" id="w_sstt">'+whtMoney(c.sst)+'</td><td class="amt" style="text-align:right" id="w_incl">'+whtMoney(c.feeInclSst)+'</td><td></td></tr></tfoot>'+
+      '</table></div></div>'+
+
+    '<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Computation</h3></div>'+
+      '<table class="bigtable" style="max-width:560px"><tbody>'+
+        '<tr><td>Fee subject to withholding'+(d.basis==='net'?' <span class="muted">(before gross-up)</span>':'')+'</td><td class="amt" style="text-align:right" id="w_grossbase">'+whtMoney(c.fee)+'</td></tr>'+
+        (d.basis==='net'?'<tr><td>Grossed-up amount <span class="muted">÷ (1 − '+(Number(d.wht_rate)*100).toFixed(2).replace(/\.00$/,'')+'%)</span></td><td class="amt" style="text-align:right" id="w_gross">'+whtMoney(c.gross)+'</td></tr>':'<tr style="display:none"><td></td><td id="w_gross">'+whtMoney(c.gross)+'</td></tr>')+
+        '<tr><td>WHT rate</td><td class="amt" style="text-align:right">'+(Number(d.wht_rate)*100).toFixed(2).replace(/\.00$/,'')+'%</td></tr>'+
+        '<tr style="font-weight:700"><td>Withholding tax</td><td class="amt" style="text-align:right" id="w_wht">'+whtMoney(c.wht)+'</td></tr>'+
+        '<tr><td><label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="w_pen"'+(d.penalty_on?' checked':'')+' onchange="whtSync();renderWht()"> Late — add the 10% increase <span class="muted">s.109(2)</span></label></td><td class="amt" style="text-align:right" id="w_pena">'+whtMoney(c.penalty)+'</td></tr>'+
+        '<tr style="font-weight:700;border-top:2px solid var(--border,#243040)"><td>Total payable to LHDN</td><td class="amt" style="text-align:right" id="w_total" style="color:var(--coral,#e2604b)">'+whtMoney(c.total)+'</td></tr>'+
+        '<tr><td class="muted">Net remitted to the payee</td><td class="amt muted" style="text-align:right" id="w_netpay">'+whtMoney(c.netToPayee)+'</td></tr>'+
+      '</tbody></table>'+
+      (due?'<div class="muted" style="font-size:11.5px;margin-top:10px">Remittance due <b>'+esc(due)+'</b> — one month after the last payment date. Form '+esc((d.wht_type==='s4a_special')?'CP37D':(d.wht_type==='contract'?'CP37A / CP37F':'CP37'))+', paid via ByrHASiL / e-TT.</div>':'')+
+    '</div>'+
+
+    '<div class="panel">'+
+      f('Notes','<input id="w_notes" value="'+esc(d.notes||'')+'" placeholder="Anything the tax agent should know" style="'+S+'">')+
+      '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'+
+        '<button class="btn p sm" onclick="whtSave(\'draft\')">💾 Save draft</button>'+
+        '<button class="btn sm" onclick="whtSave(\'final\')">✓ Mark final</button>'+
+        '<button class="btn sm" onclick="whtPrint()">🖨 Print / PDF</button>'+
+        (d.id?'<button class="btn sm d" style="margin-left:auto" onclick="whtDelete()">Delete</button>':'')+
+      '</div>'+
+    '</div>';
+}
+
+async function whtSave(status){
+  whtSync();
+  var d=WHT.doc;
+  if(!d.tenant_id){ toast('Pick the paying company',true); return; }
+  if(!d.payee_name){ toast('Pick the payee',true); return; }
+  var ent=((WHT.cfg.entities||[]).find(function(x){return x.tenant_id===d.tenant_id;}))||{};
+  d.entity_tin=ent.tax_no||null; d.status=status||d.status||'draft';
+  var lines=(WHT.lines||[]).filter(function(l){ return (Number(l.amount)||0)>0 || (l.receipt_no||'').trim() || l.payment_date; });
+  if(!lines.length){ toast('Add at least one payment line',true); return; }
+  var r=await call({api:'wht_save',summary:d,lines:lines});
+  if(r&&r.ok){ toast('Saved'+(status==='final'?' — marked final':'')); WHT.list=null; await whtOpen(r.id); }
+  else toast((r&&r.error)||'Save failed',true);
+}
+async function whtDelete(){
+  if(!WHT.doc||!WHT.doc.id) return;
+  if(!confirm('Delete this computation?')) return;
+  var r=await call({api:'wht_delete',id:WHT.doc.id});
+  if(r&&r.ok){ toast('Deleted'); WHT.page='list'; WHT.doc=null; WHT.list=null; renderWht(); }
+  else toast((r&&r.error)||'Failed',true);
+}
+function whtPrint(){
+  whtSync();
+  var d=WHT.doc, c=whtCompute(d,WHT.lines), due=whtDueDate(WHT.lines);
+  var ent=((WHT.cfg.entities||[]).find(function(x){return x.tenant_id===d.tenant_id;}))||{};
+  var rows=(WHT.lines||[]).filter(function(l){ return (Number(l.amount)||0)>0 || (l.receipt_no||'').trim() || l.payment_date; })
+    .map(function(l,i){ var a=Number(l.amount)||0, s=whtRound2(a*(Number(d.sst_rate)||0));
+      return '<tr><td>'+(i+1)+'</td><td>'+esc(l.payment_date||'')+'</td><td>'+esc(l.receipt_no||'')+'</td><td>'+esc(l.description||'')+
+        '</td><td class="amt" style="text-align:right">'+whtMoney(a)+'</td><td class="amt" style="text-align:right">'+whtMoney(s)+'</td><td class="amt" style="text-align:right">'+whtMoney(whtRound2(a+s))+'</td></tr>'; }).join('');
+  var h='<!doctype html><html><head><meta charset="utf-8"><title>'+esc(d.doc_no||'WHT')+'</title><style>'+
+    'body{font-family:Arial,Helvetica,sans-serif;color:#17231f;margin:32px;font-size:12px}'+
+    'h1{font-size:17px;margin:0 0 2px}.mut{color:#5e6e67;font-size:11px}'+
+    'table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #cfd8d4;padding:5px 7px;text-align:left}'+
+    'th{background:#eef3f1}.r{text-align:right}.tot td{font-weight:bold;background:#f6f9f8}'+
+    '.box{margin-top:14px;max-width:420px}.note{margin-top:16px;font-size:10.5px;color:#5e6e67;line-height:1.5}'+
+    '</style></head><body>'+
+    '<h1>WITHHOLDING TAX SUMMARY</h1><div class="mut">'+esc(d.doc_no||'')+'</div>'+
+    '<table style="margin-top:14px"><tr><td style="width:150px"><b>Payer</b></td><td>'+esc(whtCoName(d.tenant_id)||ent.name||'')+'</td>'+
+      '<td style="width:110px"><b>TIN</b></td><td>'+esc(ent.tax_no||'')+'</td></tr>'+
+      '<tr><td><b>Payee</b></td><td>'+esc(d.payee_name||'')+'</td><td><b>TIN</b></td><td>'+esc(d.payee_tin||'')+'</td></tr>'+
+      '<tr><td><b>Country</b></td><td>'+esc(d.payee_country||'')+'</td><td><b>Period</b></td><td>'+esc(d.period_label||'')+'</td></tr></table>'+
+    '<table><thead><tr><th>No</th><th>Payment date</th><th>Receipt no</th><th>Description</th><th class="amt" style="text-align:right">Fee (RM)</th><th class="amt" style="text-align:right">SST '+((Number(d.sst_rate)||0)*100).toFixed(0)+'%</th><th class="amt" style="text-align:right">Total</th></tr></thead>'+
+    '<tbody>'+rows+'</tbody><tfoot><tr class="tot"><td colspan="4">Subtotal</td><td class="amt" style="text-align:right">'+whtMoney(c.fee)+'</td><td class="amt" style="text-align:right">'+whtMoney(c.sst)+'</td><td class="amt" style="text-align:right">'+whtMoney(c.feeInclSst)+'</td></tr></tfoot></table>'+
+    '<table class="box"><tr><td>Fee subject to withholding</td><td class="amt" style="text-align:right">'+whtMoney(c.fee)+'</td></tr>'+
+      (d.basis==='net'?'<tr><td>Grossed-up amount</td><td class="amt" style="text-align:right">'+whtMoney(c.gross)+'</td></tr>':'')+
+      '<tr><td>WHT rate</td><td class="amt" style="text-align:right">'+(Number(d.wht_rate)*100).toFixed(2).replace(/\.00$/,'')+'%</td></tr>'+
+      '<tr class="tot"><td>Withholding tax</td><td class="amt" style="text-align:right">'+whtMoney(c.wht)+'</td></tr>'+
+      (d.penalty_on?'<tr><td>Increase 10% (s.109(2))</td><td class="amt" style="text-align:right">'+whtMoney(c.penalty)+'</td></tr>':'')+
+      '<tr class="tot"><td>Total payable to LHDN</td><td class="amt" style="text-align:right">'+whtMoney(c.total)+'</td></tr></table>'+
+    '<div class="note">Basis of computation: withholding tax is charged on the fee excluding Malaysian service tax. '+
+      (d.basis==='net'?'The fee is stated net of tax, so it has been grossed up because the tax is borne by the payer. ':'')+
+      'Treaty rates apply only where a valid Certificate of Residence is held. '+
+      (due?('Remittance due '+esc(due)+' — one month after the last payment date; form '+esc((d.wht_type==='s4a_special')?'CP37D':(d.wht_type==='contract'?'CP37A / CP37F':'CP37'))+'. '):'')+
+      (d.notes?('<br>'+esc(d.notes)):'')+'</div>'+
+    '</body></html>';
+  var w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print',true); return; }
+  w.document.write(h); w.document.close(); setTimeout(function(){ try{w.print();}catch(_e){} },350);
+}
+
 /* ── Personal (Self-Billed) Invoices — pay individuals who bill the 5 companies ── */
 var SBI={payees:[],list:[],lines:[],editId:null,showPayees:false,accounts:[]};
 var SBI_PTYPES=['commission','service','rental','royalty','other'];
