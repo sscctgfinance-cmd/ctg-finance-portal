@@ -21,10 +21,11 @@ import { fnSource, inlineScript } from "../tools/extract.ts";
 const src = inlineScript(await Deno.readTextFile(new URL("../app.html", import.meta.url)));
 
 const mod = await import("data:application/typescript," + encodeURIComponent(
-  [fnSource(src, "whtRound2"), fnSource(src, "whtCompute"), fnSource(src, "whtDueDate"),
-   "export { whtRound2, whtCompute, whtDueDate };"].join("\n")));
+  [fnSource(src, "whtRound2"), fnSource(src, "whtLineSst"), fnSource(src, "whtLineTotal"),
+   fnSource(src, "whtCompute"), fnSource(src, "whtDueDate"),
+   "export { whtRound2, whtLineSst, whtLineTotal, whtCompute, whtDueDate };"].join("\n")));
 // deno-lint-ignore no-explicit-any
-const { whtCompute, whtDueDate } = mod as any;
+const { whtCompute, whtDueDate, whtLineSst, whtLineTotal } = mod as any;
 
 const doc = (over: Record<string, unknown> = {}) => ({
   wht_rate: 0.10, sst_rate: 0.08, penalty_pct: 0.10, basis: "gross", penalty_on: false, ...over,
@@ -50,6 +51,30 @@ Deno.test("every line reaches the totals — the workbook lost the last two rows
   assertEquals(c.fee, expected, "the fee subtotal dropped a line");
   assertEquals(c.sst, Math.round(expected * 0.08 * 100) / 100, "the SST subtotal dropped a line");
   assertEquals(c.feeInclSst, Math.round((expected * 1.08) * 100) / 100, "the gross subtotal dropped a line");
+});
+
+Deno.test("the printed columns cast — subtotals equal the sum of the visible rows", () => {
+  // The real ManyChat computation the operator caught: 11 payment lines whose SST column added to
+  // 298.13 and whose total column added to 4,024.95, printed under subtotals of 298.15 and 4,024.97.
+  // The rate was being applied to the aggregate fee while every row showed its own rounded sen, so the
+  // document did not cast. Each payment is a separate acquisition of an imported taxable service, so
+  // per-line is also the right answer, not merely the one that foots.
+  const amts = [386.31, 386.31, 386.31, 386.73, 386.73, 386.64, 193.32, 193.02, 193.02, 388.06, 440.37];
+  const c = whtCompute(doc(), lines(...amts));
+  assertEquals(c.fee, 3726.82);
+
+  const rowSst = amts.map((a) => whtLineSst(a, 0.08));
+  const rowTot = amts.map((a) => whtLineTotal(a, 0.08));
+  const sum = (xs: number[]) => Math.round(xs.reduce((s, x) => s + x, 0) * 100) / 100;
+
+  assertEquals(c.sst, sum(rowSst), "the SST subtotal is not what the SST column adds up to");
+  assertEquals(c.feeInclSst, sum(rowTot), "the fee+SST subtotal is not what that column adds up to");
+  assertEquals(c.feeInclSst, 4024.95, "the operator's own casting of the printed column");
+  assertEquals(c.sst, 298.13);
+  // Every row must also cast across, not just the columns down.
+  amts.forEach((a, i) => assertEquals(rowTot[i], Math.round((a + rowSst[i]) * 100) / 100, `row ${i + 1}`));
+  // And none of this may touch the tax actually payable — that is 10% of the fee, unchanged.
+  assertEquals(c.wht, 372.68);
 });
 
 Deno.test("net basis grosses up — the sheet described this and never did it", () => {
@@ -119,7 +144,7 @@ Deno.test("the Withholding Tax screen renders", () => {
   // deno-lint-ignore no-explicit-any
   const g: any = {};
   g.document = { getElementById: () => null, createElement: () => ({ style: {} }) };
-  const parts = ["whtMoney", "whtRound2", "whtCompute", "whtDueDate", "whtTypeLabel", "whtCoName",
+  const parts = ["whtMoney", "whtRound2", "whtLineSst", "whtLineTotal", "whtCompute", "whtDueDate", "whtTypeLabel", "whtCoName",
     "whtHead", "whtListHtml", "whtPayeesHtml", "whtPayeeForm", "whtDocHtml"].map((f) => fnSource(src, f));
   // new Function() evaluates plain JavaScript, so the prelude carries no type annotations — app.html is
   // plain JS too, which is why the extracted functions drop straight in.
