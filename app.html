@@ -1444,7 +1444,10 @@ async function showApp(){
     COMPANIES.map(c=>'<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>').join('');
   for(const k in loaded)delete loaded[k];
   const first=feats.indexOf('overview')>=0?'overview':(feats[0]||(canManage?'users':'overview'));
-  tab(first);
+  // A `#tab=` deep link wins over the default landing tab, but only after the permission pass above has
+  // decided what this user may see.
+  const want=tabFromHash(), wantEl=want?document.querySelector('.tabs .tab[data-t="'+want+'"]'):null;
+  tab(wantEl && !wantEl.classList.contains('hide') ? want : first);
   resetIdle();
   loadNotifs();
 }
@@ -1466,7 +1469,27 @@ function tabCat(cat){
   // If the currently-active sub-tab isn't in this category, switch to the first visible one.
   if(!activeStillVisible && firstVisible){ tab(firstVisible.dataset.t); }
 }
+// ── URL-addressable tabs (v213) ──────────────────────────────────────────────────────────────────
+// One page, 22 tab divs, and until now exactly one URL: a link into Finance OS could only ever land the
+// reader on Overview. The fragment now carries the tab, so `app.html#tab=wht` opens Withholding Tax and
+// Back/Forward step between tabs instead of leaving the app.
+//
+// `tab=<id>` and not a bare `#wht`: hros.html's fragment already means other things (`#clock` and
+// `#claims` from push notifications, `#expenses`, and the `#sso_token=` handoff consumed above), and a
+// bare scheme could not tell a tab name from those. A key=value fragment coexists with all of them.
+function tabFromHash(){ const m=/[#&]tab=([A-Za-z0-9_]+)/.exec(location.hash||''); return m?m[1]:''; }
+window.addEventListener('hashchange', function(){
+  const t=tabFromHash(); if(!t) return;
+  // A tab the signed-in user may not see is not openable by typing its name into the address bar —
+  // showApp() has already hidden it, and the server gates it too.
+  const el=document.querySelector('.tabs .tab[data-t="'+t+'"]');
+  if(el && !el.classList.contains('hide')) tab(t);
+});
 function tab(t){
+  // Keep the address bar on the tab being shown. Assigning location.hash (rather than pushState) is what
+  // makes Back work: it pushes a history entry AND fires hashchange, and the listener above is a no-op
+  // when the hash already names the active tab, so the two cannot loop.
+  if(location.hash!=='#tab='+t) location.hash='tab='+t;
   // Find the target's category and switch to it if we're not already on it (without recursion).
   const targetEl = document.querySelector('.tabs .tab[data-t="'+t+'"]');
   if(targetEl){

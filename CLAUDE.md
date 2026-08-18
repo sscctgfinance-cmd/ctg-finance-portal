@@ -75,31 +75,47 @@ unauthenticated caller on purpose, regenerate it:
 deno run -A tools/route_probe.ts supabase/functions/portal/index.ts tests/route_parity.golden.jsonl
 ```
 
-## Shared frontend code lives in `common.js`
+## Shared frontend code lives in the root `.js` files
 
-`app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Anything genuinely
-shared by both now lives in `common.js`: the ~20 top-level helpers (PR #28) and `DocScanner`, the
-camera-capture → edge-detect → perspective-warp → PDF pipeline (v212), which had been copied into both
-files 412 lines at a time.
+`app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Code that is not UI
+now lives in classic scripts loaded before each file's inline `<script>`:
 
-`common.js` **must stay a classic script**, loaded before each file's inline `<script>` — its own header
-comment explains why in full. The short version: the apps wire ~450 inline `onclick="..."` handlers that
-resolve names as globals at click time, and a module's top-level declarations are not global.
+| file | what is in it | loaded by |
+|---|---|---|
+| `common.js` | the ~20 top-level helpers (PR #28) and `DocScanner`, the camera → edge-detect → PDF pipeline (v212) | both |
+| `payroll.js` | the Malaysian statutory engine — EPF, SOCSO, EIS, LINDUNG 24, PCB, and the gazetted tables (v213) | `hros.html` |
+| `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/CP8D/bank) and the payslip / EA / Form E jsPDF drawers (v213) | `hros.html` |
 
-Two consequences worth knowing before you touch it:
+They are prep for the Next.js migration: this is the code React must import rather than re-express (see
+`data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
+rules they all share:
 
+- **Classic scripts, never `type="module"`.** The apps wire ~450 inline `onclick="..."` handlers that
+  resolve names as globals at click time, and a module's top-level declarations are not global.
+- **Nothing runs at load time that reads per-app state.** `DocScanner`'s IIFE and the `typeof module`
+  export lines are the only load-time code; none of them touch app state.
 - **`DocScanner` is a top-level `const`, so it is NOT on `window`.** Classic scripts share one global
   lexical environment, which is how both apps still reach it by name. `window.DocScanner` is `undefined`,
   and assuming otherwise has already caused a silent fallback to the file picker once — see the comment at
   `hrRCScanTrigger()` in `hros.html`.
-- **Nothing in `common.js` may run at load time and read per-app state.** The `DocScanner` IIFE is the one
-  thing that evaluates at load; it is safe only because it declares closures and touches nothing until
-  `DocScanner.open()` is called.
+- **One documented exception to "reads no app state":** `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY`,
+  which stay in `hros.html`. `hr-docs.js`'s header says what a bundler has to do about it.
 
-**Adding a third shared `.js` file needs a CI change.** The lint job syntax-checks the inline `<script>`
-blocks it extracts from the HTML, plus `common.js`, which is copied in by an explicit hard-coded step —
-there is no glob. A new top-level `.js` file would ship with **no parse coverage at all**. Either put the
-code in `common.js` or add the file to that step in `.github/workflows/ci.yml`.
+**A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
+reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
+evaluates `inlineScript()` — the 40 goldens included — parses and runs your file too, and
+`tests/shared_scripts_test.ts` fails if one is missing, empty or unparseable. The `cp common.js` step in
+`.github/workflows/ci.yml` is still by name and still only covers `common.js`; that gap is now closed
+from the tests side, so you do not have to edit the workflow.
+
+## Tabs are addressable by URL fragment
+
+`app.html#tab=wht` and `hros.html#tab=payroll` open that screen, and Back/Forward move between screens
+(v213 — `tab()` in `app.html`, `hrNav()` in `hros.html`). The scheme is `tab=<id>` and not a bare `#wht`
+because the bare fragment already means other things: `#clock` / `#claims` are what `sw.js` navigates a
+push notification to, `#expenses` is read by `hrEmpBoot()`, and `#sso_token=` carries the SSO handoff.
+Do not add a second scheme. HR OS employee mode is deliberately not covered — `hrEmpBoot()` picks that
+landing view from the employee's pay type.
 
 ## Publishing to the live site is a separate step
 

@@ -1140,6 +1140,8 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
 
 <!-- Shared with app.html — must load before the inline script below (classic script: these are globals). -->
 <script src="common.js"></script>
+<script src="payroll.js"></script>
+<script src="hr-docs.js"></script>
 <script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 // ── v162: client error beacon ────────────────────────────────────────────────────────────────────────
@@ -1440,171 +1442,7 @@ function hrPickCompany(tid){
   if(typeof HRA!=='undefined'){ HRA.data=null; HRA.loading=false; HRA.err=null; }
   renderHR();
 }
-var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
-/* v155: Official PERKESO Second Schedule (Cat1 <60, Cat2 60+) + EIS tables, RM6,000 ceiling (eff. 1 Oct
-   2024). Row = [wageUpperBound, employeeAmt, employerAmt]. MUST stay byte-identical to the server engine
-   (portal_current.ts) — the finalise step recomputes and rejects on any >1-sen difference. */
-var MY_SOCSO_CAT1=[[30,0.10,0.40],[50,0.20,0.70],[70,0.30,1.10],[100,0.40,1.50],[140,0.60,2.10],[200,0.85,2.95],[300,1.25,4.35],[400,1.75,6.15],[500,2.25,7.85],[600,2.75,9.65],[700,3.25,11.35],[800,3.75,13.15],[900,4.25,14.85],[1000,4.75,16.65],[1100,5.25,18.35],[1200,5.75,20.15],[1300,6.25,21.85],[1400,6.75,23.65],[1500,7.25,25.35],[1600,7.75,27.15],[1700,8.25,28.85],[1800,8.75,30.65],[1900,9.25,32.35],[2000,9.75,34.15],[2100,10.25,35.85],[2200,10.75,37.65],[2300,11.25,39.35],[2400,11.75,41.15],[2500,12.25,42.85],[2600,12.75,44.65],[2700,13.25,46.35],[2800,13.75,48.15],[2900,14.25,49.85],[3000,14.75,51.65],[3100,15.25,53.35],[3200,15.75,55.15],[3300,16.25,56.85],[3400,16.75,58.65],[3500,17.25,60.35],[3600,17.75,62.15],[3700,18.25,63.85],[3800,18.75,65.65],[3900,19.25,67.35],[4000,19.75,69.15],[4100,20.25,70.85],[4200,20.75,72.65],[4300,21.25,74.35],[4400,21.75,76.15],[4500,22.25,77.85],[4600,22.75,79.65],[4700,23.25,81.35],[4800,23.75,83.15],[4900,24.25,84.85],[5000,24.75,86.65],[5100,25.25,88.35],[5200,25.75,90.15],[5300,26.25,91.85],[5400,26.75,93.65],[5500,27.25,95.35],[5600,27.75,97.15],[5700,28.25,98.85],[5800,28.75,100.65],[5900,29.25,102.35],[6000,29.75,104.15]];
-var MY_SOCSO_CAT2=[[30,0,0.30],[50,0,0.50],[70,0,0.80],[100,0,1.05],[140,0,1.50],[200,0,2.10],[300,0,3.10],[400,0,4.40],[500,0,5.60],[600,0,6.90],[700,0,8.10],[800,0,9.40],[900,0,10.60],[1000,0,11.90],[1100,0,13.10],[1200,0,14.40],[1300,0,15.60],[1400,0,16.90],[1500,0,18.10],[1600,0,19.40],[1700,0,20.60],[1800,0,21.90],[1900,0,23.10],[2000,0,24.40],[2100,0,25.60],[2200,0,26.90],[2300,0,28.10],[2400,0,29.40],[2500,0,30.60],[2600,0,31.90],[2700,0,33.10],[2800,0,34.40],[2900,0,35.60],[3000,0,36.90],[3100,0,38.10],[3200,0,39.40],[3300,0,40.60],[3400,0,41.90],[3500,0,43.10],[3600,0,44.40],[3700,0,45.60],[3800,0,46.90],[3900,0,48.10],[4000,0,49.40],[4100,0,50.60],[4200,0,51.90],[4300,0,53.10],[4400,0,54.40],[4500,0,55.60],[4600,0,56.90],[4700,0,58.10],[4800,0,59.40],[4900,0,60.60],[5000,0,61.90],[5100,0,63.10],[5200,0,64.40],[5300,0,65.60],[5400,0,66.90],[5500,0,68.10],[5600,0,69.40],[5700,0,70.60],[5800,0,71.90],[5900,0,73.10],[6000,0,74.40]];
-var MY_EIS=[[30,0.05,0.05],[50,0.10,0.10],[70,0.10,0.10],[100,0.15,0.15],[140,0.25,0.25],[200,0.35,0.35],[300,0.50,0.50],[400,0.70,0.70],[500,0.90,0.90],[600,1.10,1.10],[700,1.30,1.30],[800,1.50,1.50],[900,1.70,1.70],[1000,1.90,1.90],[1100,2.10,2.10],[1200,2.30,2.30],[1300,2.50,2.50],[1400,2.70,2.70],[1500,2.90,2.90],[1600,3.10,3.10],[1700,3.30,3.30],[1800,3.50,3.50],[1900,3.70,3.70],[2000,3.90,3.90],[2100,4.10,4.10],[2200,4.30,4.30],[2300,4.50,4.50],[2400,4.70,4.70],[2500,4.90,4.90],[2600,5.10,5.10],[2700,5.30,5.30],[2800,5.50,5.50],[2900,5.70,5.70],[3000,5.90,5.90],[3100,6.10,6.10],[3200,6.30,6.30],[3300,6.50,6.50],[3400,6.70,6.70],[3500,6.90,6.90],[3600,7.10,7.10],[3700,7.30,7.30],[3800,7.50,7.50],[3900,7.70,7.70],[4000,7.90,7.90],[4100,8.10,8.10],[4200,8.30,8.30],[4300,8.50,8.50],[4400,8.70,8.70],[4500,8.90,8.90],[4600,9.10,9.10],[4700,9.30,9.30],[4800,9.50,9.50],[4900,9.70,9.70],[5000,9.90,9.90],[5100,10.10,10.10],[5200,10.30,10.30],[5300,10.50,10.50],[5400,10.70,10.70],[5500,10.90,10.90],[5600,11.10,11.10],[5700,11.30,11.30],[5800,11.50,11.50],[5900,11.70,11.70],[6000,11.90,11.90]];
-function myStatLookup(tbl,wage){ if(!(wage>0)) return {ee:0,er:0}; for(var i=0;i<tbl.length;i++){ if(wage<=tbl[i][0]) return {ee:tbl[i][1],er:tbl[i][2]}; } var L=tbl[tbl.length-1]; return {ee:L[1],er:L[2]}; }
-// ── PERKESO LINDUNG 24 Jam (SKBBK) — Act A1788, in force 1 June 2026 ────────────────────────────────
-// Employee-only, banded like the rest of Act 4, RM6,000 ceiling. Phase 1 (1 Jun 2026 – 31 May 2028) is
-// 0.75%; it rises to 1.00% and then 1.25% later.
-//
-// DERIVED, not transcribed — PERKESO publishes this only as a scanned table, and v155 was exactly a
-// hand-entered contribution table that was wrong for weeks. Phase-1 TOTAL employee contribution is 1.25%
-// (0.5% invalidity + 0.75% SKBBK), and HR OS already holds the gazetted 1.25% column (Cat 2 employer) and
-// the 0.5% column (Cat 1 employee), so SKBBK = Cat2_employer − Cat1_employee. Hits both published anchors
-// (RM44.65 at the ceiling, RM22.85 in the RM3,000.01–3,100 band); a naive midpoint×0.75% would be wrong on
-// 32 of 64 bands. Must mirror computePayrollMY exactly.
-function myLindung24(wage){
-  var a=myStatLookup(MY_SOCSO_CAT2,wage).er, b=myStatLookup(MY_SOCSO_CAT1,wage).ee;
-  return Math.round((a-b)*100)/100;
-}
-function myLindungActive(period){
-  var now=new Date();
-  var y=Number(period&&period.year)||now.getUTCFullYear();
-  var m=Number(period&&period.month)||(now.getUTCMonth()+1);
-  return (y>2026) || (y===2026 && m>=6);
-}
-function myPcbRoundUp5(n){ n=Math.floor((Number(n)||0)*100)/100; return Math.round(Math.ceil(n/0.05-1e-9)*0.05*100)/100; }
-function myServiceMonths(emp,period){ if(!period||!period.year) return 12; var y=Number(period.year),start=1,end=12;
-  if(emp.join_date){ var d=new Date(emp.join_date); if(!isNaN(d.getTime())){ if(d.getUTCFullYear()>y) return 0; if(d.getUTCFullYear()===y) start=d.getUTCMonth()+1; } }
-  if(emp.resign_date){ var d2=new Date(emp.resign_date); if(!isNaN(d2.getTime())){ if(d2.getUTCFullYear()<y) return 0; if(d2.getUTCFullYear()===y) end=d2.getUTCMonth()+1; } }
-  return Math.max(1,end-start+1); }
 var HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
-function hrRoundUp(n){ return Math.ceil(n-1e-9); }
-function hrRound2(n){ return Math.round((Number(n)||0)*100)/100; }
-function hrRound5(n){ return Math.round((Number(n)||0)*20)/20; }          // nearest 5 sen (SOCSO/EIS table)
-function hrBandMid(w){ if(w<=0) return 0; var upper=Math.ceil((w-1e-9)/100)*100; return upper-50; } // RM100 contribution-band midpoint
-// v157: must mirror payAge() in portal_current.ts EXACTLY — age as at the end of the payroll period, and
-// UTC getters throughout (the old local getters also disagreed with the server on a birthday off-MYT,
-// which produced a 409 recompute_mismatch).
-function hrAge(dob,period){ if(!dob) return null; var d=new Date(dob); if(isNaN(d)) return null;
-  var t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
-  var a=t.getUTCFullYear()-d.getUTCFullYear(); var m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
-// EPF — KWSP Third Schedule behaviour: wages <=20k use RM20 wage bands; each side rounded UP to next ringgit.
-function hrEpfParts(wage,eeRate,erRate){ var w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?hrRoundUp(w*eeRate):0, er:erRate>0?hrRoundUp(w*erRate):0 }; }
-// SOCSO / EIS — contribution table: midpoint of the RM100 wage band × rate, rounded to nearest 5 sen; wage capped at ceiling.
-function hrTableParts(wage,ceiling,eeRate,erRate){ var w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; var mid=hrBandMid(w); return { ee:eeRate>0?hrRound5(mid*eeRate):0, er:erRate>0?hrRound5(mid*erRate):0 }; }
-function hrProgTax(chargeable){ var tax=0,prev=0; for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0],rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
-// cfg = hr_statutory_rates.rates. emp carries eligibility flags + date_of_birth + epf_ee_rate + socso_category + marital_status/spouse_working/num_children + resident.
-function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
-  var earn=adj.filter(function(a){return ['allowance','bonus','ot'].indexOf(a.kind)>=0;});
-  var addEarn=earn.reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var addEarnStat=earn.filter(function(a){return a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var unpaid=adj.filter(function(a){return a.kind==='unpaid_leave';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var otherDed=adj.filter(function(a){return a.kind==='deduction';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var base=Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0);
-  var gross=hrRound2(base+addEarn-unpaid);
-  var statWage=Math.max(0, base+addEarnStat-unpaid);   // unpaid leave lowers the statutory wage too
-  var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
-  // from the employee and over-contributed for the company. The Employees' Social Security Act 1969
-  // definition of wages excludes bonus, and EIS (Act 800) uses the same definition. EPF is the opposite:
-  // bonus IS EPF wages, so EPF keeps using statWage.
-  // Cross-checked against payroll.my on 3,500 + 369 bonus: it charges SOCSO/EIS on 3,500 (EIS 6.90) while
-  // charging EPF on 3,869 (EPF ee 427.00) — EPF already agreed to the sen; SOCSO/EIS did not.
-  // Must mirror computePayrollMY exactly or hr_payroll_finalise rejects with 409 recompute_mismatch.
-  var statWageExBonus=Math.max(0, statWage - bonusStat);
-  var age=hrAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
-  // ---- EPF (KWSP) ----
-  // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
-  // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
-  // Must mirror computePayrollMY exactly.
-  var nonCitizen=String(emp.citizen_status||'citizen')==='non_citizen';
-  var over75=(age!=null && age>=75);          // EPF liability ceases at 75 for everyone
-  var epfOn=emp.epf_eligible!==false && !over75;
-  var ncEe=cfg.epf.nonCitizenEe!=null?cfg.epf.nonCitizenEe:0.02;
-  var ncEr=cfg.epf.nonCitizenEr!=null?cfg.epf.nonCitizenEr:0.02;
-  var eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
-           : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  // v183: employer rate override (above-statutory contribution). Must mirror computePayrollMY exactly.
-  var erRate=(emp.epf_er_rate!=null&&emp.epf_er_rate!=='') ? Number(emp.epf_er_rate)
-           : nonCitizen ? ncEr
-           : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
-  var ep=epfOn?hrEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; var epfEe=ep.ee, epfEr=ep.er;
-  // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
-  var socsoOn=emp.socso_eligible!==false;
-  var scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWageExBonus):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table / v180: ex-bonus
-  // ---- EIS (SIP) — 18 to 60 only ----
-  // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
-  // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
-  var eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
-  var ip=eisOn?myStatLookup(MY_EIS, statWageExBonus):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table / v180: ex-bonus
-  // ---- LINDUNG 24 Jam (SKBBK) — employee-only, no employer share. Must mirror computePayrollMY. ----
-  var lindungOn = myLindungActive(period) && (nonCitizen ? true : emp.lindung24!==false) && socsoOn;
-  var lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
-  // ---- PCB / MTD (annualised chargeable-income estimate) ----
-  // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
-  // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).
-  // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
-  var statWageNormal=statWageExBonus;   // same quantity — one definition only
-  // v155/v156: LHDN MTD — annualise over ACTUAL service months, reconcile against income & PCB already
-  // paid earlier this year (ytd), LHDN rounding (truncate 2dp → up to 5 sen), MTD < RM10 = nil.
-  var N=myServiceMonths(emp, period);
-  var yg=Number(ytd&&ytd.gross)||0, ye=Number(ytd&&ytd.epf)||0, yp=Number(ytd&&ytd.pcb)||0, ym=Number(ytd&&ytd.months)||0;
-  var remain=Math.max(1, N - ym);
-  var pcb, pcbCat=1;
-  if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); pcbCat=0; }
-  else {
-    var ms=String(emp.marital_status||'single').toLowerCase();
-    var cat2=(ms==='married' && emp.spouse_working===false);   // married, spouse not working -> spouse relief + rebate
-    pcbCat=cat2?2:( ms==='married'?3:1 );
-    var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
-    var kids=Number(emp.num_children||0);
-    var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
-    // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year.
-    // Must mirror computePayrollMY exactly. Leaving it out over-deducted PCB from every employee.
-    // v184: SKBBK is an Act 4 contribution, so it shares the RM350 SOCSO/EIS MTD relief.
-    var projSocsoEis=Number((ytd&&ytd.socsoEis)||0) + (socsoEe+eisEe+lindung)*remain;
-    var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
-    // v167: TP1 declared reliefs. Must mirror computePayrollMY exactly.
-    var tp1=Math.max(0, Number((ytd&&ytd.tp1))||0);
-    // v185: PCB method (cfg.pcbMethod). Must mirror computePayrollMY exactly.
-    //   "payroll_my" (default, operator's choice) — no SOCSO/EIS relief, and the bonus is charged the
-    //   residual annual tax minus the normal MTD that will ACTUALLY be deducted (nil under RM10).
-    //   "lhdn" — the prescribed method HR OS used through v184.
-    var pcbMy = String(cfg.pcbMethod||'payroll_my')==='payroll_my';
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf)
-              + (pcbMy ? 0 : Math.min(projSocsoEis, rSocsoEis)) + tp1;
-    var chargeable=Math.max(0, projGross - reliefs);
-    var tax=hrProgTax(chargeable);
-    var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
-    var monthlyBase=Math.max(0, ((tax-rebate) - yp) / remain);
-    var bonusAnnual=function(){
-      var chargeableB=Math.max(0, projGross + bonusStat - reliefs);
-      var taxB=hrProgTax(chargeableB);
-      var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
-      return (taxB-rebateB);
-    };
-    if(pcbMy){
-      var norm=myPcbRoundUp5(monthlyBase); if(norm<10) norm=0;
-      var addl = bonusStat>0 ? Math.max(0, (bonusAnnual() - yp) - norm*remain) : 0;
-      pcb = hrRound2(norm + (addl>0 ? myPcbRoundUp5(addl) : 0));
-    } else {
-      var addlTax = bonusStat>0 ? Math.max(0, bonusAnnual()-(tax-rebate)) : 0;
-      var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
-      pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
-    }
-  }
-  // v165: zakat reduces tax RINGGIT-FOR-RINGGIT (net MTD = MTD − zakat for the month), it is not an
-  // ordinary deduction. Must mirror computePayrollMY exactly. HR OS offered "Zakat" as a payroll
-  // deduction but charged the employee zakat AND the full PCB on top.
-  var zakatMonth=adj.filter(function(a){ return a.kind==='deduction' && /^zakat/i.test(String(a.label||'')); })
-                    .reduce(function(s,a){ return s+Number(a.amount||0); },0);
-  if(zakatMonth>0) pcb = Math.max(0, hrRound2(pcb - zakatMonth));
-  // v195: explicit PCB for this period wins over everything above. Must mirror computePayrollMY exactly,
-  // including being applied AFTER zakat — otherwise finalise 409s the whole run.
-  var pcbSetRows=adj.filter(function(a){return a.kind==='pcb_set';});
-  if(pcbSetRows.length){ pcb=Math.max(0, hrRound2(Number(pcbSetRows[pcbSetRows.length-1].amount)||0)); }
-  // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
-  var net=hrRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
-  var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
-}
 async function renderHR(){
   var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
@@ -1616,7 +1454,7 @@ async function renderHR(){
     HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); HR_EMPLOYER=(HR.data&&HR.data.employer)||null; hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
-function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
+function hrNav(v){ if(location.hash!=='#tab='+v) location.hash='tab='+v; HR.view=v; HR.editEmp=null; hrRender(); }
 var HR_NAV=[
   ['dashboard','dashboard','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
   ['employees','employees','Employees','People','Your workforce master — profiles, pay & statutory setup'],
@@ -1643,6 +1481,25 @@ var HR_EMP_NAV=[
 ];
 // hrNeedsClock = payroll auto-fills basic from clocked hours (hourly/daily/part-time) AND drives the default
 // landing view. Every employee can still open Time Clock to punch attendance — the nav shows it for all.
+// ── URL-addressable views (v213) ─────────────────────────────────────────────────────────────────
+// Same scheme as app.html: the fragment carries the view as `hros.html#tab=payroll`, so a link can open
+// one screen and Back/Forward step between screens instead of leaving the app.
+//
+// It has to COEXIST with the fragments that were already load-bearing here, which is why it is
+// `tab=<id>` and not a bare `#payroll`: `#clock` and `#claims` are what sw.js navigates a push
+// notification to, `#expenses` is read below by the employee-mode boot, and `#sso_token=` carries the
+// session handoff. A bare scheme could not tell those apart from a view name; a key=value one ignores
+// them, and they still mean exactly what they meant.
+//
+// Employee mode is deliberately NOT covered: hrEmpBoot() decides that landing view from the employee's
+// own pay type (and from `#expenses`), and overriding it from the address bar would put a part-timer
+// somewhere they were never meant to start.
+function hrTabFromHash(){ var m=/[#&]tab=([A-Za-z0-9_]+)/.exec(location.hash||''); return m?m[1]:''; }
+(function(){ var v=hrTabFromHash(); if(v && HR_NAV.some(function(t){ return t[0]===v; })) HR.view=v; })();
+window.addEventListener('hashchange', function(){
+  var v=hrTabFromHash();
+  if(v && v!==HR.view && HR_NAV.some(function(t){ return t[0]===v; })) hrNav(v);
+});
 function hrNeedsClock(e){ e=e||{}; return e.employment_type==='Part-time' || e.pay_type==='hourly' || e.pay_type==='daily'; }
 function hrEmpNav(){ return HR_EMP_NAV; }
 function hrSidebar(){
@@ -4581,75 +4438,13 @@ function hrLoadJsPDF(cb){
   s.onerror=function(){ var q=HR._pdfLoading; HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); (q||[]).forEach(function(f){try{f();}catch(_e){}}); };   // fire callbacks so awaiting code fails, not hangs
   document.head.appendChild(s);
 }
-function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankCode:e.bank_code, bankHolder:e.bank_holder, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
 function hrCurRows(){ var lb=(HR.pay.data&&HR.pay.data.leaveBalances)||{}; return (HR.pay._rows||[]).map(function(r){ var ev=hrEmpView(r.e); ev.leaveBal=lb[r.e.id]||[]; return { e:ev, p:r.p, d:r.d }; }); }
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
-var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
 var HR_EMPLOYER=null;   // { name, reg_no, employer_no, address, phone, email, logo(dataURI) } — printed on payslips/forms
 function hrCompanyName(){ var e=HR.data&&HR.data.employer; if(e&&e.name) return e.name; var c=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); return c?c.tenant_name:'I PROCARE MALAYSIA SDN BHD'; }
-var HR_INK=[18,33,27],HR_GREEN=[11,107,79],HR_MUTED=[94,110,103],HR_LINE=[227,232,228],HR_RED=[176,69,59],HR_NETBG=[231,241,236],HR_GREEN2=[77,191,148];
-function hrDrawPayslip(doc,e,p,period,d){
-  d=d||{}; var W=210,m=18;
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,32,'F');
-  var _emp=HR_EMPLOYER||{}; var tx=m;
-  if(_emp.logo){ try{ var ip=doc.getImageProperties(_emp.logo); var lh=15, lw=lh*(ip.width/ip.height); if(lw>34){ lw=34; lh=lw*(ip.height/ip.width); } var ly=(32-lh)/2; doc.setFillColor(255,255,255); doc.roundedRect(m-2,ly-2,lw+4,lh+4,1.8,1.8,'F'); doc.addImage(_emp.logo, /jpe?g/i.test(ip.fileType||'')?'JPEG':'PNG', m, ly, lw, lh); tx=m+lw+7; }catch(_e){} }
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(_emp.logo?13:15); doc.text(HR_COMPANY,tx,13);
-  doc.setFont('helvetica','normal'); doc.setTextColor(184,204,194); doc.setFontSize(7.4);
-  var _meta=[]; if(_emp.reg_no)_meta.push('Reg '+_emp.reg_no); if(_emp.employer_no)_meta.push('E '+_emp.employer_no);
-  var _yy=17.5; if(_meta.length){ doc.text(_meta.join('    '),tx,_yy); _yy+=3.6; }
-  if(_emp.address){ doc.text((doc.splitTextToSize(String(_emp.address).replace(/\s*\n\s*/g,', '),115)[0]||''),tx,_yy); _yy+=3.6; }
-  doc.setFontSize(8); doc.text('Payslip · Confidential',tx,Math.min(_yy+0.5,28));
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(period.label,W-m,15,{align:'right'});
-  var lastDay=new Date(period.year, period.month, 0).getDate(); // real month end — "31 February" was printed on short months
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: '+lastDay+' '+period.label,W-m,21,{align:'right'});
-  var y=44;
-  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(e.name,m,y);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  y+=5.5; doc.text((e.empNo||'')+'  ·  '+(e.position||'—')+'  ·  '+(e.dept||'—'),m,y);
-  y+=5; doc.text('IC: '+(e.ic||'—')+'    Bank: '+(e.bank||'—'),m,y); y+=9;
-  var section=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.setLineWidth(0.3); doc.line(m,y+2,W-m,y+2); y+=7; };
-  var row=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(o.bold?9.5:9); var c1=o.color||(o.bold?HR_INK:HR_MUTED); doc.setTextColor(c1[0],c1[1],c1[2]); doc.text(label,m,y); var c2=o.color||HR_INK; doc.setTextColor(c2[0],c2[1],c2[2]); doc.text((o.neg?'-':'')+'RM '+HR_money2(val),W-m,y,{align:'right'}); y+=6; };
-  var mt=p._meta||{};
-  var pctLbl=function(base,r){ return base+((r!=null)?(' '+(Math.round(r*1000)/10)+'%'):''); };
-  section('Earnings');
-  row('Basic salary',e.basic);
-  if(e.allowance) row('Fixed allowance',e.allowance);
-  if(d.bonus) row('Bonus',d.bonus);
-  if(d.ot) row('Overtime',d.ot);
-  if(d.allowance) row('Additional allowance',d.allowance);
-  if(d.unpaid) row('Unpaid leave',d.unpaid,{neg:true,color:HR_RED});
-  row('Gross pay',p.gross,{bold:true}); y+=3;
-  section('Deductions (employee)');
-  row(pctLbl('EPF (KWSP)',mt.epfEeRate),p.epfEe,{neg:true,color:HR_RED});
-  row('SOCSO (PERKESO)'+(mt.socsoCat?(' · Cat '+mt.socsoCat):''),p.socsoEe,{neg:true,color:HR_RED});
-  // v196: LINDUNG 24 Jam was deducted from net but never printed, so the listed deductions did not add up
-  // to the net pay shown right below them — an unexplained gap on every payslip since 1 Jun 2026.
-  if(Number(p.lindung)) row('LINDUNG 24 Jam (SKBBK)',p.lindung,{neg:true,color:HR_RED});
-  row('EIS (SIP)',p.eisEe,{neg:true,color:HR_RED});
-  row('PCB / MTD (estimate)'+(mt.pcbCat===0?' · non-resident':''),p.pcb,{neg:true,color:HR_RED});
-  if(d.deductions&&d.deductions.length){ d.deductions.forEach(function(x){ if(Number(x.amount)) row(x.label||'Other deduction',x.amount,{neg:true,color:HR_RED}); }); }
-  else if(d.deduction) row('Other deductions',d.deduction,{neg:true,color:HR_RED});
-  y+=2;
-  doc.setFillColor(HR_NETBG[0],HR_NETBG[1],HR_NETBG[2]); doc.roundedRect(m,y-5,W-2*m,11,2,2,'F');
-  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('NET PAY',m+4,y+1.5); doc.setFontSize(14); doc.text('RM '+HR_money2(p.net),W-m-4,y+2,{align:'right'}); y+=16;
-  section('Employer contributions'); row(pctLbl('EPF (KWSP)',mt.epfErRate),p.epfEr); row('SOCSO (PERKESO)',p.socsoEr); row('EIS (SIP)',p.eisEr); row('Total employer cost',p.employerCost,{bold:true});
-  // Leave balances (remaining) — shown in days, not RM.
-  if(e.leaveBal && e.leaveBal.length && y<250){ y+=3; section('Leave balances '+period.year);
-    var textRow=function(label,val){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(label,m,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(val,W-m,y,{align:'right'}); y+=5.6; };
-    e.leaveBal.forEach(function(b){ textRow(b.type, (Math.round(b.remaining*10)/10)+' of '+(Math.round(b.entitled*10)/10)+' days left  ·  taken '+(Math.round(b.taken*10)/10)); });
-  }
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,275,W-m,275);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
-  doc.text('This is a computer-generated payslip and does not require a signature.',m,280);
-  doc.text('PCB shown is an estimate - verify against the LHDN MTD schedule before filing.',m,284);
-}
 function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var per=hrPeriod(); rows.forEach(function(r,i){ if(i>0)doc.addPage(); hrDrawPayslip(doc,r.e,r.p,per,r.d); }); doc.save('Payslips_'+per.label.replace(' ','')+'.pdf'); toast('Payslips PDF generated'); }); }
 function hrDownload(name,text,mime){ var blob=new Blob([text],{type:mime||'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},1500); }
-// v159: CRLF + a terminating newline. KWSP/CP39 already use CRLF deliberately, but every CSV (PERKESO
-// ASSIST and both bank files) went out with bare LF and no EOF newline — several Malaysian bank and
-// government uploaders drop or reject the final record without one. Also quote a bare CR.
-function hrCsv(arr){ return arr.map(function(r){ return r.map(function(c){ return /[",\r\n]/.test(String(c))?('"'+String(c).replace(/"/g,'""')+'"'):c; }).join(','); }).join('\r\n')+'\r\n'; }
 function hrExpStatutory(kind){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var head,body=[],totals,name;
@@ -4664,35 +4459,6 @@ function hrExpStatutory(kind){
   hrDownload(name,hrCsv([head].concat(body,[totals]))); toast(kind.toUpperCase()+' CSV downloaded');
 }
 // ── Statutory PORTAL upload files (documented layouts — do ONE test upload per portal to confirm; specs change) ──
-// v157: these files are FIXED-WIDTH and written as UTF-8, but padding counted UTF-16 code units. One
-// accented/curly/CJK character made the emitted record longer in BYTES than the layout, so the portal's
-// positional parser read every following field off by that many bytes. Fold to ASCII before padding.
-function hrAscii(s){ return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[‘’]/g,"'").replace(/[“”]/g,'"').replace(/[‐-―]/g,'-').replace(/[^\x20-\x7E]/g,''); }
-// v157: a required statutory identifier that is blank must BLOCK the file, not be padded into a
-// plausible-looking zero. hrPadL('',12) emitted 000000000000 as an EPF/SOCSO member number and blanks as a
-// TIN — a syntactically valid record that can never be allocated to the member, discovered as a rejected
-// filing or a penalty weeks later. Returns a human list of who is missing what, or ''.
-function hrMissingIds(rows, need){
-  var bad=[];
-  rows.forEach(function(x){ var e=x.e, miss=[];
-    need.forEach(function(f){ if(!String((e[f.k]==null?'':e[f.k])).trim()) miss.push(f.label); });
-    if(miss.length) bad.push((e.name||e.empNo||'?')+' — '+miss.join(', '));
-  });
-  if(!bad.length) return '';
-  return bad.slice(0,6).join(' · ')+(bad.length>6?(' · +'+(bad.length-6)+' more'):'');
-}
-// A name legitimately gets clipped to the layout width — that is normal and harmless. An identifier is not:
-// pass `what` for those and the file is blocked instead. See hrPadL (v199).
-function hrPadR(s,n,what){ s=String(s==null?'':s); if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(0,n); } return s+new Array(n-s.length+1).join(' '); }
-// v199: a fixed-width statutory record must never be silently trimmed to fit. hrPadR truncated with
-// slice(0,n) and hrPadL with slice(-n), so an over-long value produced a syntactically perfect record
-// carrying a number that belongs to nobody — the CP39 file was shipping every employee's TIN two
-// characters short. Overflows are now recorded and the builders refuse to emit the file.
-var HR_FIT_ERR=[];
-function hrFitReset(){ HR_FIT_ERR=[]; }
-function hrFitNote(what,val,n){ HR_FIT_ERR.push(what+' "'+val+'" is '+String(val).length+' chars, the layout allows '+n); }
-function hrPadL(s,n,c,what){ s=String(s==null?'':s); c=c||'0'; if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(-n); } return new Array(n-s.length+1).join(c)+s; }
-function hrCents(n){ return String(Math.round((Number(n)||0)*100)); }
 // EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
 function hrExpKwsp(ret){
   var rows=hrCurRows().filter(function(x){ return x.p.epfEe||x.p.epfEr; });
@@ -4774,7 +4540,6 @@ function hrExpCp39(ret){
   hrDownload(out.name, out.text, out.mime);
   toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
-var HR_BANK_CODE={'maybank islamic':'MBISMYKL','ambank islamic':'AISLMYKL','cimb islamic':'CTBBMYKL','rhb islamic':'RHBAMYKL','hong leong islamic':'HLIBMYKL','public islamic':'PIBEMYKL',maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
 // ── Employee bank picker: searchable dropdown backed by the hr_banks master list (HR.banks). Stores the bank CODE, shows the name. ──
 function hrBanksSorted(){ return (HR.banks||[]).filter(function(b){return b.active;}).slice().sort(function(a,b){return String(a.name).localeCompare(String(b.name));}); }
 function hrBankPicker(x){
@@ -4807,15 +4572,6 @@ function hrBankPick(code){ var b=hrBanksSorted().find(function(x){return x.code=
   var box=document.getElementById('hr_bankList'); if(box) box.style.display='none';
 }
 function hrBankBlur(){ setTimeout(function(){ var b=document.getElementById('hr_bankList'); if(b) b.style.display='none'; },160); }
-function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
-// v199: the salary files wrote `e.bankCode || hrBankCode(e.bankName)` into a column labelled SWIFT/BIC.
-// Since the bank master list landed, bank_code is ALWAYS set — to HR OS's own code ("MAYBANK",
-// "HONG_LEONG_BANK") — so the fallback never ran and every file carried an identifier no bank recognises.
-// Resolve the real BIC from the bank name, then from the code read as words, and leave it BLANK rather
-// than emit something wrong: a blank field gets rejected at upload, a plausible wrong one gets routed.
-function hrSwift(e){
-  return hrBankCode(e&&e.bankName) || hrBankCode(String((e&&e.bankCode)||'').replace(/_/g,' ')) || '';
-}
 function hrExpGiro(){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
   var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
@@ -5193,53 +4949,6 @@ async function hrYeLoad(){
   catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
 }
 var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,months:0 };
-function hrDrawEA(doc,e,t,year,emp){
-  var W=210,H=297,m=16; var amt=function(n){return 'RM '+HR_money2(n);};
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG EA',m,12);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8A - Pin. 2023  ·  Income Tax Act 1967',m,17.5);
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Statement of Remuneration from Employment',W-m,17.5,{align:'right'});
-  var y=33;
-  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('FOR THE YEAR ENDED 31 DECEMBER '+year,m,y); y+=6;
-  var head=function(t2){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t2.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=6; };
-  var kv=function(k,v,x,w){ x=x||m; doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,x,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v||'—'),x+34,y); };
-  var money2=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(8.5); var c=o.bold?HR_INK:HR_MUTED; doc.setTextColor(c[0],c[1],c[2]); doc.text(label,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(amt(val),W-m,y,{align:'right'}); y+=5.5; };
-  head("Employer's particulars");
-  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(emp.name||'',m,y); y+=5;
-  kv("Employer's No.",emp.employer_no||'(to be filled — LHDN E number)'); y+=5;
-  if(emp.address){ doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(String(emp.address),m,y); y+=5; }
-  y+=1;
-  head('A.  Particulars of employee'); var col2=m+95;
-  kv('Name',e.name); kv('Staff No.',e.empNo,col2); y+=5;
-  kv('Designation',e.position); kv('IC / Passport',e.ic,col2); y+=5;
-  kv('Income Tax No.',e.taxNo||''); kv('EPF No.',e.epfNo||'',col2); y+=5;
-  kv('SOCSO No.',e.socsoNo||''); kv('Months paid',t.months||0,col2); y+=6;
-  head('B.  Gross income from employment');
-  money2('1(a)  Gross salary, wages, leave pay, overtime, allowances',t.gross);
-  money2("1(b)  Fees, commissions, bonus, director's fees, ESOS",0);
-  money2('2.     Benefits-in-kind (BIK)',0);
-  money2('3.     Value of living accommodation (VOLA)',0);
-  money2('Total gross remuneration (B)',t.gross,{bold:true}); y+=2;
-  head('C.  Total tax-exempt allowances / perquisites / gifts / benefits');
-  money2('Total exempt (see note)',0); y+=2;
-  head('D.  Deductions');
-  money2('1.  Monthly Tax Deduction (MTD / PCB)',t.pcb);
-  money2('2.  Deduction under CP38',0);
-  money2('3.  Zakat paid via salary deduction',0); y+=2;
-  head('E.  Contributions to approved fund & SOCSO');
-  money2("EPF (KWSP) — employee's contribution",t.epfEe);
-  money2("SOCSO (PERKESO) — employee's contribution",(Number(t.socsoEe)||0)+(Number(t.lindung)||0));   // v196: includes LINDUNG 24 Jam — same employee, same PERKESO account, and it counts toward the RM350 relief
-  money2('EIS (SIP) — employee\'s contribution',t.eisEe); y+=3;
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-28,W-m,H-28);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.text('This statement must be rendered to the employee on or before 28 February '+(year+1)+' (Income Tax Act 1967, s.83(1A)).',m,H-23);
-  doc.text('PCB shown is an estimate. BIK / VOLA / gratuity / bonus must be added manually where applicable.',m,H-19.5);
-  doc.text('Verify against the current C.P.8A on hasil.gov.my before issuing.',m,H-16);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text('Authorised signature: ______________________________',m,H-8);
-  doc.text('Date: ____________',W-m-42,H-8);
-}
 function hrExpEA(empId){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:'',address:''}, year=HR_YE.year;
@@ -5252,42 +4961,6 @@ function hrExpEA(empId){
     toast('EA form(s) generated');
   });
 }
-function hrDrawFormE(doc,employer,stats,year){
-  var W=210,H=297,m=16;
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG E',m,12);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8 - Return Form of Employer  ·  Income Tax Act 1967',m,17.5);
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Submit via e-E on MyTax by 31 March',W-m,17.5,{align:'right'});
-  var y=34;
-  var head=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=7; };
-  var kv=function(k,v){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v),W-m,y,{align:'right'}); y+=6.5; };
-  var mn=function(n){ return 'RM '+HR_money2(n); };
-  head("Employer's particulars");
-  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(employer.name||'',m,y); y+=6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text("Employer's No. (E)",m+2,y); doc.setFont('helvetica','bold'); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text(employer.employer_no||'(to be filled)',W-m,y,{align:'right'}); y+=10;
-  head('Number of employees for the year '+year);
-  kv('1.  Total employees as at 31 December',stats.total);
-  kv('2.  New employees during the year',stats.newHires);
-  kv('3.  Employees who ceased employment',stats.ceased);
-  kv('4.  Employees subject to MTD/PCB',stats.subjectPcb); y+=4;
-  head('Remuneration & tax deducted');
-  kv('Total gross remuneration paid',mn(stats.totalGross));
-  kv('Total Monthly Tax Deduction (MTD/PCB)',mn(stats.totalPcb));
-  kv('Total CP38 deductions',mn(0)); y+=8;
-  doc.setFillColor(231,241,236); doc.roundedRect(m,y-4,W-2*m,20,3,3,'F');
-  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('C.P.8D ATTACHED',m+4,y+2);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Per-employee detail for all '+stats.total+' employees is provided in the C.P.8D file (P{E-no}_'+year+'.txt).',m+4,y+8);
-  doc.text('EA and CP8D figures must reconcile. Employers who filed via e-Data Praisi/e-CP8D need not re-furnish CP8D.',m+4,y+13); y+=26;
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-34,W-m,H-34);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.text('Failure to furnish Form e-E by 31 March is an offence under s.120(1)(b), Income Tax Act 1967.',m,H-29);
-  doc.text('This is a working summary — file the official Form e-E on https://mytax.hasil.gov.my.',m,H-25.5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text('Declaration by employer — Name: __________________________  Signature: __________________  Date: __________',m,H-12);
-}
 function hrExpFormE(){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:''}, year=HR_YE.year, emps=(HR.data.employees||[]);
@@ -5299,10 +4972,6 @@ function hrExpFormE(){
     doc.save('FormE_YA'+year+'.pdf'); toast('Form E generated');
   });
 }
-function hrCp8dCategory(e){ var ms=String(e.maritalStatus||'single').toLowerCase(); if(ms==='married') return e.spouseWorking?3:2; if(ms==='divorced'||ms==='widowed') return 3; return (e.numChildren||0)>0?3:1; }
-function hrIntNoSen(n){ return String(Math.trunc(Number(n)||0)); }
-function hrDec2(n){ return (Number(n)||0).toFixed(2); }
-function hrFmtDMY(d){ if(!d)return ''; var x=new Date(d); if(isNaN(x))return ''; var p=function(v){return ('0'+v).slice(-2);}; return p(x.getDate())+'-'+p(x.getMonth()+1)+'-'+x.getFullYear(); }
 function hrExpCp8d(fmt){
   var ann=HR_YE.annual||{}, emp=HR_YE.employer||{employer_no:''}, year=HR_YE.year;
   var list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });

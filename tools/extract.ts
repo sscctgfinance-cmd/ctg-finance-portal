@@ -104,18 +104,38 @@ export function arrSource(src: string, name: string): string {
 }
 
 /**
- * The script a page actually runs: common.js (shared by both apps, loaded first) plus the inline
+ * Every file that is a vendored library rather than this repo's own code. These are excluded from
+ * `inlineScript` on purpose: they are hundreds of KB of minified third-party source, nothing in the
+ * tests looks a symbol up inside them, and concatenating a megabyte of SheetJS in front of every render
+ * would cost more than the whole suite.
+ */
+const VENDORED = /\.min\.js$/;
+
+/** The repo's own `<script src="...">` files, in the order the page loads them. */
+export function sharedScripts(html: string): string[] {
+  return [...html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1])
+    .filter((src) => !/^[a-z]+:|^\/\//.test(src) && !VENDORED.test(src));
+}
+
+/**
+ * The script a page actually runs: the shared classic scripts it loads first, then the inline
  * <script> bodies.
  *
- * common.js has to be included or render_smoke_test would stop seeing the class of bug it exists for:
- * toast/call/storage* now live there, so evaluating the inline script alone would make them undeclared
- * and a ReferenceError in a renderer would read as "the browser will be fine".
+ * The shared files have to be included or render_smoke_test would stop seeing the class of bug it
+ * exists for: toast/call/storage* live in common.js, the statutory payroll engine in payroll.js and the
+ * statutory-file builders in hr-docs.js, so evaluating the inline script alone would leave them all
+ * undeclared and a ReferenceError in a renderer would read as "the browser will be fine".
+ *
+ * Read from the page's own <script src=> tags rather than a hard-coded list, in load order: that is what
+ * the browser does, so a new shared file is covered by every test here the moment the app loads it — and
+ * a file the app does NOT load cannot quietly satisfy a test that the browser would fail.
  */
 export function inlineScript(html: string): string {
   const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
   if (!blocks.length) throw new Error("no inline <script> found");
-  const common = Deno.readTextFileSync(new URL("../common.js", import.meta.url));
-  return common + "\n;\n" + blocks.join("\n;\n");
+  const shared = sharedScripts(html)
+    .map((src) => Deno.readTextFileSync(new URL("../" + src, import.meta.url)));
+  return [...shared, ...blocks].join("\n;\n");
 }
 
 export const FRONTEND_ENGINE = [
