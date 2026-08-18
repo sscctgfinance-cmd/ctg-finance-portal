@@ -10,8 +10,8 @@
      logout destination in four places (logout, idle timeout, session expiry, the sign-in prompt) —
      deleting it would send every one of those to a 404.
 
-     The old marketing page is kept as landing.html; nothing links to it, and it can be restored as the
-     front door by reverting this file.
+     The old marketing page (landing.html) was deleted — it was orphaned, nothing linked to it, and it
+     was marketing copy for an invite-only portal. It is in git history if it is ever wanted back.
 
      replace() rather than assign(): otherwise Back from the login screen lands here and bounces
      forward again, trapping the user. The query string is carried through so ?idle=1 survives. -->

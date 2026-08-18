@@ -75,6 +75,32 @@ unauthenticated caller on purpose, regenerate it:
 deno run -A tools/route_probe.ts supabase/functions/portal/index.ts tests/route_parity.golden.jsonl
 ```
 
+## Shared frontend code lives in `common.js`
+
+`app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Anything genuinely
+shared by both now lives in `common.js`: the ~20 top-level helpers (PR #28) and `DocScanner`, the
+camera-capture → edge-detect → perspective-warp → PDF pipeline (v212), which had been copied into both
+files 412 lines at a time.
+
+`common.js` **must stay a classic script**, loaded before each file's inline `<script>` — its own header
+comment explains why in full. The short version: the apps wire ~450 inline `onclick="..."` handlers that
+resolve names as globals at click time, and a module's top-level declarations are not global.
+
+Two consequences worth knowing before you touch it:
+
+- **`DocScanner` is a top-level `const`, so it is NOT on `window`.** Classic scripts share one global
+  lexical environment, which is how both apps still reach it by name. `window.DocScanner` is `undefined`,
+  and assuming otherwise has already caused a silent fallback to the file picker once — see the comment at
+  `hrRCScanTrigger()` in `hros.html`.
+- **Nothing in `common.js` may run at load time and read per-app state.** The `DocScanner` IIFE is the one
+  thing that evaluates at load; it is safe only because it declares closures and touches nothing until
+  `DocScanner.open()` is called.
+
+**Adding a third shared `.js` file needs a CI change.** The lint job syntax-checks the inline `<script>`
+blocks it extracts from the HTML, plus `common.js`, which is copied in by an explicit hard-coded step —
+there is no glob. A new top-level `.js` file would ship with **no parse coverage at all**. Either put the
+code in `common.js` or add the file to that step in `.github/workflows/ci.yml`.
+
 ## Publishing to the live site is a separate step
 
 Merging a PR into `origin/main` does **not** make anything live. After merging:
@@ -103,3 +129,10 @@ those single-file apps is a white screen for every user), lints every module in
 - `supabase/functions/ctg-sso/` — the deploy workflow only deploys `portal`. `ctg-sso` must be deployed
   explicitly.
 - Database migrations are applied directly, not by CI.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
