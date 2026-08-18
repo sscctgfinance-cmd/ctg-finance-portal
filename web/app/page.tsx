@@ -23,6 +23,7 @@ export default function Home() {
         <div className="panel-hd"><h3>Migrated</h3></div>
         <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 2 }}>
           <li><a href="hr/access/">HR OS · Access &amp; Roles</a></li>
+          <li><a href="hr/clock/">HR OS · Time Clock</a></li>
         </ul>
       </div>
       <div className="panel">

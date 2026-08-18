@@ -117,7 +117,7 @@ push notification to, `#expenses` is read by `hrEmpBoot()`, and `#sso_token=` ca
 Do not add a second scheme. HR OS employee mode is deliberately not covered — `hrEmpBoot()` picks that
 landing view from the employee's pay type.
 
-## The React app lives in `web/` — one screen so far
+## The React app lives in `web/` — the migrated screens are the list in `web/app/page.tsx`
 
 `web/` is a Next.js 16 App Router app, added by the HR Access pilot (v214). It is **additive**: not one
 byte of `app.html`, `hros.html`, `index.html`, `sw.js`, `manifest.json` or the five vendored libraries
@@ -169,6 +169,13 @@ can be driven end-to-end without production credentials.
 3. Make it pass. **Do not add a relaxation to `web/tests/parity.ts` to make a diff go away** without
    proving it cannot hide a real change, and adding a case to the "still bites" block.
 4. Leave the legacy screen in place. Deleting it is a later, separate decision.
+
+**A screen whose markup shows a time or a date needs the zone pinned in its own test.** The goldens
+were captured with `tests/render_harness.ts`'s UTC override on `Date.prototype.toLocale*`; vitest runs
+in the machine's zone, so `toLocaleTimeString` output would differ by wall-clock luck. See the
+`beforeAll` in `web/tests/hr-clock.parity.test.tsx` — it re-applies the same override for one file and
+restores it. That changes what both sides are READ under, not what counts as a match, so it is not a
+relaxation and does not belong in `web/tests/parity.ts`.
 
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
