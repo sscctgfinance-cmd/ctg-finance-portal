@@ -998,6 +998,8 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <style>html{font-family:'Inter var',Inter,system-ui,-apple-system,sans-serif}</style>
 <!-- SheetJS 0.20.3 (vendored). ⚠ Do NOT use xlsx@0.18.x — its serial-date parsing lands 25s before
      midnight under Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
+<!-- Shared with hros.html — must load before the inline script below (classic script: these are globals). -->
+<script src="common.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
@@ -1228,7 +1230,6 @@ const CTG_SSO = "https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/ctg-sso";
     history.replaceState(null, "", location.pathname + location.search);
   } catch(_e){}
 })();
-function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIComponent(app); }
 // Reveal the SSO button only once CTG has issued an app_id. Any failure here leaves it hidden — the
 // password form is always the working path, so a probe that cannot answer must never block sign-in.
 (function(){
@@ -1239,10 +1240,8 @@ function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIC
   } catch(_e){}
 })();
 let TOKEN = STORAGE_OK ? (localStorage.getItem("ctg_portal_token")||"") : "";
-// Safe wrappers so the rest of the code can blindly call storage.
-function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
-function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }
-function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
+// Safe wrappers so the rest of the code can blindly call storage: storageGet / storageSet /
+// storageRemove are in common.js and read STORAGE_OK from here.
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
@@ -1254,66 +1253,18 @@ const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,
 // H6: pin "today" to MYT (UTC+8) regardless of the viewer's browser timezone. A browser set to a
 // western TZ was computing period presets, close-month and invoice-date defaults one day early.
 function todayLocalISO(){ const d=new Date(Date.now()+8*3600000); const p=n=>String(n).padStart(2,'0'); return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate()); }
-function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
-function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }
 
 // Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
 // + "5 contacts"), play them sequentially instead of overwriting each other.
+// The queue lives here; toast() / _playNextToast() are in common.js.
 const _toastQueue=[]; let _toastPlaying=false;
-function toast(msg,isErr){ _toastQueue.push({msg,isErr}); if(!_toastPlaying) _playNextToast(); }
-function _playNextToast(){
-  const next=_toastQueue.shift();
-  if(!next){ _toastPlaying=false; return; }
-  _toastPlaying=true;
-  const e=document.getElementById('toast');
-  e.textContent=next.msg;
-  e.style.borderColor=next.isErr?'rgba(239,68,68,.45)':'';
-  e.style.color=next.isErr?'var(--red-soft)':'';
-  e.classList.add('show');
-  setTimeout(()=>{ e.classList.remove('show'); setTimeout(_playNextToast, 240); }, 2400);
-}
 
-// ── Network resilience (v28.1) ──
+// ── Network resilience (v28.1) — call() itself is in common.js ──
 // • 30s timeout with AbortController
 // • Auto-retry once on transient 5xx (502/503/504) — Supabase edge cold-starts
 // • Detect session-expired (401 / "unauthorized" on a token-bearing call) → graceful sign-out modal
 // • Convert raw network errors into human-readable messages
 let SESSION_EXPIRED_SHOWN=false;
-async function call(body){
-  const reqToken = body && body.token !== undefined ? body.token : TOKEN;
-  // Don't make calls after we already know the session is dead — except for login/me probes.
-  const isAuthExempt = body && (body.api==='login' || body.api==='login_2fa');
-  for(let attempt=0; attempt<2; attempt++){
-    const ctrl=new AbortController();
-    const tm=setTimeout(()=>ctrl.abort(),30000);
-    try{
-      const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
-      // Retry once on transient 5xx
-      if((r.status===502||r.status===503||r.status===504) && attempt===0){
-        clearTimeout(tm);
-        await new Promise(rs=>setTimeout(rs, 1000));
-        continue;
-      }
-      let data; try{ data=await r.json(); }catch(_e){
-        if(r.status>=500) throw new Error('Server returned an unexpected response — please retry');
-        throw new Error('Server returned an unexpected response');
-      }
-      // Session-expired detection: if we had a token and the server says unauthorized → token died.
-      const isUnauth = (r.status===401) || (data && data.ok===false && data.error==='unauthorized');
-      if(isUnauth && reqToken && !isAuthExempt){
-        handleSessionExpired();
-        // Throw so callers don't try to render data; the modal will guide the user.
-        throw new Error('Session expired — please sign in again');
-      }
-      if(!r.ok && data && data.error) throw new Error(data.error);
-      return data;
-    }catch(e){
-      if(e && e.name==='AbortError') throw new Error('Request timed out — server or Xero is slow, please retry');
-      if(e instanceof TypeError) throw new Error('Network error — check your connection and retry');
-      throw e;
-    }finally{clearTimeout(tm);}
-  }
-}
 // ── Unsaved-changes guard ──
 // Each module sets its own dirty flag via setDirty(name, v). The global
 // UNSAVED_CHANGES is the OR across all modules — fixes a data-loss bug where
@@ -1422,22 +1373,6 @@ function handleSessionExpired(){
 }
 
 /* ── Auth ── */
-async function doLogin(e){
-  e.preventDefault();
-  const email=document.getElementById('email').value.trim();
-  const pass=document.getElementById('pass').value;
-  const b=document.getElementById('lbtn'),er=document.getElementById('lerr');
-  er.classList.add('hide');b.disabled=true;b.textContent='Signing in…';
-  try{
-    const r=await call({api:'login',email,pass,token:''});
-    if(r&&r.ok){TOKEN=r.token;storageSet('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];enterApp();return;}
-    if(r&&r.need_2fa){ show2faPrompt(r.login_token); b.disabled=false; b.textContent='Sign In'; return; }
-    if(r&&r.locked){er.textContent='🔒 Account locked after too many failed attempts. Try again in '+(r.retry_minutes||15)+' min.';}
-    else er.textContent='Incorrect email or password';
-    er.classList.remove('hide');
-  }catch(x){er.textContent='Connection failed, please retry';er.classList.remove('hide');}
-  b.disabled=false;b.textContent='Sign In';
-}
 var TFA_TOKEN=null;
 function show2faPrompt(loginToken){
   TFA_TOKEN = loginToken;
@@ -1451,24 +1386,6 @@ function show2faPrompt(loginToken){
     '<div class="modal-ft"><button class="btn" onclick="cancel2fa()">Cancel</button><button class="btn p" id="tfa_btn" onclick="submit2fa()">Verify</button></div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
   setTimeout(function(){ var i=document.getElementById('tfa_code'); if(i){ i.focus(); i.addEventListener('keydown', function(e){ if(e.key==='Enter') submit2fa(); }); } },30);
-}
-function cancel2fa(){ TFA_TOKEN=null; var o=document.getElementById('tfa_overlay'); if(o) o.remove(); document.getElementById('login').classList.remove('hide'); }
-async function submit2fa(){
-  var er=document.getElementById('tfa_err'); var btn=document.getElementById('tfa_btn');
-  var code=(document.getElementById('tfa_code').value||'').replace(/\s|-/g,'');
-  er.classList.add('hide');
-  if(!/^\d{6}$/.test(code)){ er.textContent='Enter the 6-digit code from your authenticator app'; er.classList.remove('hide'); return; }
-  btn.disabled=true; btn.textContent='Verifying…';
-  try{
-    var r=await call({api:'login_2fa', login_token:TFA_TOKEN, code:code, token:''});
-    if(r&&r.ok){
-      TOKEN=r.token; storageSet('ctg_portal_token',TOKEN); ME=r.user; COMPANIES=r.companies||[];
-      var o=document.getElementById('tfa_overlay'); if(o) o.remove();
-      enterApp(); return;
-    }
-    er.textContent=(r&&r.error)||'Incorrect code'; er.classList.remove('hide');
-  }catch(x){ er.textContent='Network error, please retry'; er.classList.remove('hide'); }
-  btn.disabled=false; btn.textContent='Verify';
 }
 
 function logout(){storageRemove('ctg_portal_token');location.href='index.html';}

@@ -100,11 +100,19 @@ export function arrSource(src: string, name: string): string {
   return "const " + name + " = " + src.slice(open, closeIdx(src, open) + 1) + ";";
 }
 
-/** The single inline <script> body of an HTML file. */
+/**
+ * The script a page actually runs: common.js (shared by both apps, loaded first) plus the inline
+ * <script> bodies.
+ *
+ * common.js has to be included or render_smoke_test would stop seeing the class of bug it exists for:
+ * toast/call/storage* now live there, so evaluating the inline script alone would make them undeclared
+ * and a ReferenceError in a renderer would read as "the browser will be fine".
+ */
 export function inlineScript(html: string): string {
   const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
   if (!blocks.length) throw new Error("no inline <script> found");
-  return blocks.join("\n;\n");
+  const common = Deno.readTextFileSync(new URL("../common.js", import.meta.url));
+  return common + "\n;\n" + blocks.join("\n;\n");
 }
 
 export const FRONTEND_ENGINE = [
