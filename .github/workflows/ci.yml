@@ -49,6 +49,16 @@ jobs:
             "
             test -s ".ci/$f.js"
           done
+          # common.js (PR #28) is a real <script src=> file, so the matcher above cannot see it — but both
+          # apps load it, so a syntax error in it white-screens Finance OS and HR OS at once. Copy it in
+          # so the lint loop below picks it up. FAIL-CLOSED: missing or empty is an error, not a skip.
+          if [ ! -s common.js ]; then
+            echo "::error::common.js is missing or empty — both app.html and hros.html load it, so it must be syntax-checked, not skipped."
+            exit 1
+          fi
+          cp common.js .ci/common.js
+          echo "common.js -> .ci/common.js ($(wc -c < .ci/common.js | tr -d ' ') bytes)"
+
           # hros.html is the big one; anything tiny means the extraction silently broke.
           bytes=$(wc -c < .ci/hros.html.js)
           echo "extracted hros script: $bytes bytes"
