@@ -170,6 +170,16 @@ can be driven end-to-end without production credentials.
    proving it cannot hide a real change, and adding a case to the "still bites" block.
 4. Leave the legacy screen in place. Deleting it is a later, separate decision.
 
+**A screen whose rows are identified by a bare integer needs its handler check widened, in its own test
+file.** `goldenHandlers()` in `web/tests/handlers.ts` collects QUOTED literals, because on the first two
+screens a row is a quoted id (`'u9'`, `'out'`). `hr.approvals` identifies a row by its index —
+`hrApvLeaveSet(0,this.value)` — so quoted-only extraction returns `[]` for every row handler and the
+parity check would pass with every row wired to level 0. `web/tests/hr-approvals.parity.test.tsx` reads
+the golden side with a local `identArgs()` that takes quoted literals AND bare integers; that is a
+superset of `goldenHandlers().args`, so it can only tighten the check, and it lives in the screen's own
+test rather than in the shared file. Widen the same way, not `handlers.ts`, until a screen proves the
+shared default is wrong.
+
 **A screen whose markup shows a time or a date needs the zone pinned in its own test.** The goldens
 were captured with `tests/render_harness.ts`'s UTC override on `Date.prototype.toLocale*`; vitest runs
 in the machine's zone, so `toLocaleTimeString` output would differ by wall-clock luck. See the
