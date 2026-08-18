@@ -53,6 +53,19 @@ Deno.serve(async (req)=>{
   // workflow's post-deploy health check has failed on EVERY release since v154, emailing a red build each
   // time even though the function itself deployed fine. An empty api falls through to the friendly banner.
   const api = (typeof b.api === "string") ? b.api : "";
+  // v210: normalise the company id BEFORE the guard reads it. The guard below tests
+  // `typeof b.tenant === "string"`, so the SAME company id sent as ["<uuid>"] skipped the guard
+  // entirely while the handlers still resolved it — they coerce with String(b.tenant||""), and
+  // String(["<uuid>"]) === "<uuid>". 14 tenant-scoped handlers do no company check of their own
+  // (hr_dashboard passes no token to its RPC at all), so for them this guard was the only one.
+  // Unwrap a one-element array to exactly the string the handlers would have coerced — same value
+  // checked, same value used — and REFUSE any other shape rather than invent a lookup key from it
+  // (String({}) === "[object Object]", String(["a","b"]) === "a,b"). Absent/empty tenant is left
+  // alone: most actions are not tenant-scoped.
+  if (b && b.tenant != null && b.tenant !== "") {
+    if (Array.isArray(b.tenant) && b.tenant.length === 1 && typeof b.tenant[0] === "string") b.tenant = b.tenant[0];
+    if (typeof b.tenant !== "string") return j({ ok:false, error:"bad tenant" }, 400);
+  }
   // ── Central tenant-isolation guard (v95): ANY tenant-scoped call must target a company on the
   // caller's allowed list. Admins with a partial company assignment are restricted to it (see
   // portal_allowed_tenants). Invalid tokens yield an empty list here and fall through to each
