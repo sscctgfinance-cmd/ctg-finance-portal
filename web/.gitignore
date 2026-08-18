@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Generated from hros.html by scripts/sync-legacy-css.mjs on every dev/build/test. Never commit it —
+# a committed copy is a second source of truth that starts drifting from the legacy stylesheet.
+app/legacy.css

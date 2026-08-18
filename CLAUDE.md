@@ -117,6 +117,64 @@ push notification to, `#expenses` is read by `hrEmpBoot()`, and `#sso_token=` ca
 Do not add a second scheme. HR OS employee mode is deliberately not covered — `hrEmpBoot()` picks that
 landing view from the employee's pay type.
 
+## The React app lives in `web/` — one screen so far
+
+`web/` is a Next.js 16 App Router app, added by the HR Access pilot (v214). It is **additive**: not one
+byte of `app.html`, `hros.html`, `index.html`, `sw.js`, `manifest.json` or the five vendored libraries
+moved or changed, and the legacy screen the pilot mirrors is still the one staff use.
+
+| file | what it is |
+|---|---|
+| `web/src/<screen>.tsx` | the screen: a **pure function of its props**. No fetch, no `localStorage`, no `window`. |
+| `web/app/<area>/<screen>/page.tsx` | the route: `'use client'`, holds state, loads data, wires handlers. |
+| `web/tests/parity.ts` | the relaxation layer — why the two renderers may differ, and why each difference is safe. |
+| `web/tests/<screen>.parity.test.tsx` | renders the pure component and diffs it against `tests/golden/<id>.html`. |
+
+That split is the whole mechanism. Keep it: only the pure half can be diffed against a golden, so a
+screen that puts a `useEffect` in `src/` has stepped outside the thing that proves it was migrated
+correctly.
+
+**Client-only, and no `app/api/`.** Not a hosting constraint any more — Vercel runs a server — but the
+backend is not moving: Xero webhooks, Supabase cron, inbound email and Web Push all hold the edge
+function's URL. A second server in front of it buys nothing and adds a failure mode.
+
+**The session is not bridged and must not be.** `web/src/portal.ts` reads the same
+`localStorage['ctg_portal_token']` (and `hr_tenant`) that both legacy apps read. Same origin ⇒ already
+signed in. If you are writing an auth bridge, the origin is wrong — fix that instead.
+
+**Base path is one value**, `NEXT_PUBLIC_BASE_PATH`, read in `next.config.mjs` and `web/src/portal.ts`.
+There is still not one root-absolute path written by hand anywhere in this repo. Keep it that way.
+
+**`web/app/legacy.css` is generated** from `hros.html`'s own `<style>` blocks by
+`web/scripts/sync-legacy-css.mjs` on every dev/build/test, and is gitignored. Never commit it and never
+hand-copy CSS instead — CI fails if it appears.
+
+Run both worlds on ONE origin (which is what makes the shared session real):
+
+```bash
+cd web && npm install && npm run build && cd ..
+deno run -A tools/serve_both.ts        # /hros.html and /hr/access/ on 127.0.0.1:8765
+```
+
+`tools/serve_both.ts` serves repo-root files first and falls through to `web/out`, which is how Vercel
+will behave once the legacy files move into `public/` — so `public/index.html` will shadow the React
+root route there too. It also answers `/__fixtures/portal` from `tests/render_fixtures.ts`, so the app
+can be driven end-to-end without production credentials.
+
+### Migrating the next screen
+
+1. Write `web/src/<screen>.tsx` as a pure component, mirroring the legacy renderer element for element —
+   the golden is the contract, so a tidy-up is a diff. Restyling is a separate, visible change.
+2. Copy `web/tests/hr-access.parity.test.tsx`, point it at the new golden id and fixture.
+3. Make it pass. **Do not add a relaxation to `web/tests/parity.ts` to make a diff go away** without
+   proving it cannot hide a real change, and adding a case to the "still bites" block.
+4. Leave the legacy screen in place. Deleting it is a later, separate decision.
+
+**Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
+picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
+the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
+what the shell needs.
+
 ## Publishing to the live site is a separate step
 
 Merging a PR into `origin/main` does **not** make anything live. After merging:
@@ -133,8 +191,13 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/
+deno test --allow-read tests/          # 138 cases, incl. all 40 render goldens
+cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
+
+The two suites are deliberately separate and share no step: the Deno one is the gate on the code that is
+live for every user today, and it must not start needing npm to be reachable in order to report on
+`hros.html`. Its command and its `--allow-read`-only permissions are unchanged by the React app.
 
 CI additionally parses `hros.html`, `app.html` and `index.html` fail-closed (a syntax error in one of
 those single-file apps is a white screen for every user), lints every module in

@@ -1,4 +1,4 @@
-name: CI — lint & payroll tests
+name: CI — lint, payroll tests & React parity
 
 # Runs on EVERY push and PR, including changes to hros.html.
 #
@@ -163,3 +163,52 @@ jobs:
         #    all 203 actions, comparing to a golden captured before the module split. Catches a dropped
         #    handler and a lost auth gate — the ~200 actions have no other coverage.
         run: deno test --allow-read tests/
+
+  # The React half (web/). A separate job on purpose: the Deno job above is the gate on the code that is
+  # LIVE for every user, and it must not start depending on npm being reachable to report on hros.html.
+  # These two never share a step.
+  react:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: HR Access still matches the legacy golden
+        # THE pilot check. tests/golden/hr.access.html was captured from hrAccessRender() in hros.html;
+        # this renders the React component from the same fixture and diffs it under the golden harness's
+        # own normaliser plus the documented relaxations in web/tests/parity.ts. It fails if either side
+        # moves — including if someone edits hros.html, regenerates the goldens, and forgets the React one.
+        #
+        # The same run also proves the relaxation layer still bites (four deliberate defects) and that the
+        # handler wiring matches, which is what makes "drop the on*= attributes" safe rather than blind.
+        working-directory: web
+        run: npm test
+
+      - name: The app builds
+        # A parity test that passes against a component the app cannot build is not worth anything.
+        working-directory: web
+        run: npm run build
+
+      - name: Nothing generated got committed
+        # app/legacy.css is extracted from hros.html on every build. Committing it creates a second
+        # stylesheet that drifts from the one users actually see; .gitignore says so and this enforces it.
+        run: |
+          set -e
+          if git ls-files --error-unmatch web/app/legacy.css >/dev/null 2>&1; then
+            echo "::error::web/app/legacy.css is committed. It is generated from hros.html by web/scripts/sync-legacy-css.mjs — a committed copy is a second source of truth that drifts."
+            exit 1
+          fi
+          if git ls-files web/node_modules | grep -q .; then
+            echo "::error::web/node_modules is committed. This repository is mirrored to a PUBLIC repo."
+            exit 1
+          fi
+          echo "clean."
