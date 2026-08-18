@@ -1,0 +1,146 @@
+<!-- #ap -->
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">
+<div style="font-size:22px;font-weight:700;color:var(--green-soft);line-height:1">✅ 1</div>
+<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">Auto-posted to Xero</div>
+</div>
+<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">
+<div style="font-size:22px;font-weight:700;color:var(--sky-soft);line-height:1">✉ 1</div>
+<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">Auto-replied</div>
+</div>
+<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">
+<div style="font-size:22px;font-weight:700;color:var(--red-soft);line-height:1">🚫 1</div>
+<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">Auto-rejected</div>
+</div>
+<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">
+<div style="font-size:22px;font-weight:700;color:var(--amber);line-height:1">⚠ 1</div>
+<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">Needs your review</div>
+</div>
+<div style="flex:1;min-width:130px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:12px;padding:14px 16px">
+<div style="font-size:22px;font-weight:700;color:var(--muted);line-height:1">⏱ 18m</div>
+<div class="muted" style="font-size:11px;margin-top:5px;text-transform:uppercase;letter-spacing:.04em">Manual work saved</div>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd" style="flex-wrap:wrap">
+<h3>📧 AP Inbox <span class="muted" style="font-size:11px;font-weight:400">— fully automated, you only touch ⚠ items</span>
+</h3>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+<select id="ap_filter_tenant" onchange="AP_FILTER_TENANT=this.value;renderAp()" style="padding:5px 9px;font-size:12px">
+<option value="">All companies</option>
+<option value="11111111-1111-4111-8111-111111111111">SKINDAE SDN BHD</option>
+<option value="22222222-2222-4222-8222-222222222222">I PROCARE MALAYSIA SDN BHD</option>
+</select>
+<select id="ap_filter_status" onchange="AP_FILTER_STATUS=this.value;renderAp()" style="padding:5px 9px;font-size:12px">
+<option value="">All statuses</option>
+<option value="received">Received</option>
+<option value="processing">Processing…</option>
+<option value="needs_review">⚠ Needs review</option>
+<option value="reply_drafted">Reply ready</option>
+<option value="reply_sent">✉ Auto-replied</option>
+<option value="duplicate_rejected">🚫 Duplicate</option>
+<option value="duplicate_rejected_replied">🚫 Dup — replied</option>
+<option value="compliance_rejected">❌ Missing docs</option>
+<option value="company_conflict">Company conflict</option>
+<option value="company_unknown">Company unknown</option>
+<option value="google_drive_access_issue">Drive access</option>
+<option value="auto_posting">Posting…</option>
+<option value="auto_posted">✅ Auto-posted</option>
+<option value="posted">✅ Posted</option>
+<option value="rejected">Rejected</option>
+</select>
+<button class="btn sm" onclick="renderAp()">↻ Refresh</button>
+</div>
+</div>
+<div class="tbl-wrap" style="margin-bottom:14px">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Status</th>
+<th>Received</th>
+<th>From</th>
+<th>Subject</th>
+<th>Company</th>
+<th class="amt">AI total</th>
+</tr>
+</thead>
+<tbody>
+<tr onclick="apOpen(101)" style="cursor:pointer">
+<td>
+<span class="pill" style="font-size:10px;background:rgba(126,224,160,.16);color:var(--green-soft)">✅ Auto-posted</span>
+</td>
+<td class="muted" style="font-size:11.5px;white-space:nowrap">17 Aug, 10:14</td>
+<td>
+<b style="font-size:12.5px">TENAGA NASIONAL BERHAD</b>
+<div class="muted" style="font-size:10.5px">ebill@tnb.com.my</div>
+</td>
+<td>Electricity bill for August 2026<span class="muted" style="font-size:10.5px;margin-left:6px">📎 1</span> <span class="muted" style="font-size:10px">📄 invoice</span>
+</td>
+<td class="muted" style="font-size:11.5px">SKINDAE SDN BHD</td>
+<td class="amt">RM 2,044.00</td>
+</tr>
+<tr onclick="apOpen(102)" style="cursor:pointer">
+<td>
+<span class="pill" style="font-size:10px;background:rgba(245,158,11,.16);color:var(--amber)">⚠ Needs review</span>
+</td>
+<td class="muted" style="font-size:11.5px;white-space:nowrap">17 Aug, 14:41</td>
+<td>
+<b style="font-size:12.5px">SITI NURHALIZA</b>
+<div class="muted" style="font-size:10.5px">siti@ctg.test</div>
+</td>
+<td>Reimbursement — client entertainment<span class="muted" style="font-size:10.5px;margin-left:6px">📎 2</span> <span class="muted" style="font-size:10px">🧾 claim</span>
+</td>
+<td class="muted" style="font-size:11.5px">SKINDAE SDN BHD</td>
+<td class="amt">RM 388.50</td>
+</tr>
+<tr onclick="apOpen(103)" style="cursor:pointer">
+<td>
+<span class="pill" style="font-size:10px;background:rgba(239,68,68,.16);color:var(--red-soft)">🚫 Dup — replied</span>
+</td>
+<td class="muted" style="font-size:11.5px;white-space:nowrap">17 Aug, 07:02</td>
+<td>
+<b style="font-size:12.5px">GRAB HOLDINGS</b>
+<div class="muted" style="font-size:10.5px">billing@grab.com</div>
+</td>
+<td>Your July statement <span class="muted" style="font-size:10px">📄 invoice</span>
+</td>
+<td class="muted" style="font-size:11.5px">I PROCARE MALAYSIA SDN BHD</td>
+<td class="amt">RM 640.30</td>
+</tr>
+<tr onclick="apOpen(104)" style="cursor:pointer">
+<td>
+<span class="pill" style="font-size:10px;background:rgba(239,68,68,.16);color:var(--red-soft)">❌ Missing docs</span>
+</td>
+<td class="muted" style="font-size:11.5px;white-space:nowrap">16 Aug, 18:00</td>
+<td>
+<b style="font-size:12.5px">noreply@unknown.test</b>
+<div class="muted" style="font-size:10.5px">noreply@unknown.test</div>
+</td>
+<td>(no subject) </td>
+<td class="muted" style="font-size:11.5px">I PROCARE MALAYSIA SDN BHD</td>
+<td class="amt">
+<span class="muted">—</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="empty" style="padding:36px">
+<div class="empty-ico">📨</div>
+<div style="font-size:13px;margin-top:8px">Click an email above to review the AI decision, compliance checklist, and (if it needs your review) post or reply.</div>
+</div>
+</div>
+<div class="panel" style="margin-top:14px">
+<div class="panel-hd" style="cursor:pointer" onclick="AP_SHOW_RULES=!AP_SHOW_RULES;renderAp()">
+<h3>🗺 GL coding rules <span class="muted" style="font-size:11px;font-weight:400">— teach the AI which Chart-of-Account to use</span>
+</h3>
+<button class="btn sm">Show ▼</button>
+</div>
+</div>
+<div class="panel" style="margin-top:14px">
+<div class="panel-hd" style="cursor:pointer" onclick="AP_SHOW_SETTINGS=!AP_SHOW_SETTINGS;renderAp()">
+<h3>⚙ Automation settings <span class="muted" style="font-size:11px;font-weight:400">— routing, auto-post, auto-reply, caps</span>
+</h3>
+<button class="btn sm">Show ▼</button>
+</div>
+</div>

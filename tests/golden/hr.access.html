@@ -1,0 +1,210 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Admin</div>
+<h2 class="page-title">Access &amp; Roles</h2>
+<div class="page-sub">Manage who can sign in to HR OS and their access level</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Users &amp; access (3)</h3>
+</div>
+<div class="muted" style="font-size:11.5px;margin-bottom:10px;line-height:1.55">
+<b>
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg> Master Admin</b> = full control incl. managing users. &nbsp;<b>
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg> HR Admin</b> = full HR management (no user management, no Finance Portal). &nbsp;<b>
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
+<circle cx="12" cy="12" r="3"/>
+</svg> Viewer</b> = sees everything but changes nothing. HR Admin, Viewer &amp; Employee logins have <b>no access to the Finance Portal</b>. You can’t change the last Master Admin, or your own role here.</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>Access role</th>
+<th>HR employee</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<b>BOSS</b> <span class="pill pill-neu" style="font-size:9px">you</span> <span class="pill pill-neu" style="font-size:9px">2 companies</span>
+</td>
+<td class="muted">boss@ctg.test</td>
+<td>
+<span class="pill pill-ok">Master Admin</span>
+</td>
+<td class="muted">—</td>
+</tr>
+<tr>
+<td>
+<b>AHMAD BIN ISMAIL</b>
+</td>
+<td class="muted">ahmad@ctg.test</td>
+<td>
+<select onchange="hrUserRoleSet('u9',this.value)" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px">
+<option value="admin">Master Admin</option>
+<option value="hr_admin" selected>HR Admin</option>
+<option value="viewer">Viewer</option>
+<option value="approver">Approver</option>
+<option value="employee">Employee</option>
+</select>
+</td>
+<td class="muted">AHMAD BIN ISMAIL</td>
+</tr>
+<tr>
+<td>
+<b>AUDIT VIEWER</b>
+</td>
+<td class="muted">readonly@ctg.test</td>
+<td>
+<select onchange="hrUserRoleSet('u8',this.value)" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px">
+<option value="admin">Master Admin</option>
+<option value="hr_admin">HR Admin</option>
+<option value="viewer" selected>Viewer</option>
+<option value="approver">Approver</option>
+<option value="employee">Employee</option>
+</select>
+</td>
+<td class="muted">—</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="panel" style="max-width:580px">
+<div class="panel-hd">
+<h3>Invite a user</h3>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+<div>
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Email <span style="font-size:10px">(from their record — override if needed)</span>
+</label>
+<input id="hra_email" value="" placeholder="name@company.com" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px;width:100%">
+</div>
+<div>
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Name</label>
+<input id="hra_name" value="" disabled placeholder="Full name" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px;width:100%;opacity:.6">
+</div>
+</div>
+<div style="display:flex;gap:10px;align-items:flex-end">
+<div style="flex:1">
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Access role</label>
+<select id="hra_role" onchange="HRA.role=this.value;hrRender()" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px;width:100%">
+<option value="employee" selected>Employee (own payslips, leave &amp; claims)</option>
+<option value="hr_admin">HR Admin (full HR, no Finance)</option>
+<option value="viewer">Viewer (read-only)</option>
+<option value="admin">Master Admin (full control)</option>
+</select>
+</div>
+<button class="btn p sm" onclick="hrUserInvite()">Create login</button>
+</div>
+<div style="margin-top:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px">
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Which employee?</label>
+<select id="hra_emp" onchange="hrInvEmpPick(this.value)" style="padding:6px 9px;background:var(--panel-2);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:12px;width:100%">
+<option value="">— pick an employee —</option>
+<option value="e2" data-email="siti@ctg.test">E002 — SITI NURHALIZA BINTI OMAR</option>
+<option value="e3" data-email="">E003 — RAJESH A/L KUMAR (no email on file)</option>
+</select>
+<div class="muted" style="font-size:10.5px;margin-top:5px">Only active staff in this company who don’t have a login yet. Their login is tied to their record, so payslips, leave and claims all resolve to them.</div>
+</div>
+<div class="muted" style="font-size:11px;margin-top:8px">Creates an HR OS login and shows a one-time password to share. Only <b>Master Admin</b> can also open the Finance Portal.</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link on" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

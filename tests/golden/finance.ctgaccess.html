@@ -1,0 +1,144 @@
+<!-- #ctga_body -->
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+<button class="btn sm p" onclick="ctgaFilter('all')">All 4</button>
+<button class="btn sm" onclick="ctgaFilter('linked')">Has access 2</button>
+<button class="btn sm" onclick="ctgaFilter('unlinked')">No access 2</button>
+<button class="btn sm" onclick="ctgaFilter('inactive')">Inactive at CTG</button>
+<input id="ctga_q" placeholder="Search name, email or staff code" value="" oninput="ctgaSearch(this.value)" style="flex:1;min-width:220px;padding:7px 10px">
+</div>
+<div style="overflow-x:auto">
+<table class="tbl">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>Staff code</th>
+<th>Portal access</th>
+<th>Role</th>
+<th style="text-align:right">Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<b>BOSS</b>
+</td>
+<td>boss@ctg.test</td>
+<td>CTG-001</td>
+<td>
+<span class="pill ok">has access</span>
+</td>
+<td>
+<select onchange="ctgaGrant('ctg-1',this.value)" >
+<option value="viewer">viewer</option>
+<option value="employee">employee</option>
+<option value="hr_admin">hr_admin</option>
+<option value="admin" selected>admin</option>
+</select>
+</td>
+<td style="text-align:right">
+<button class="btn sm danger" onclick="ctgaRevoke('ctg-1','boss@ctg.test')" >Revoke</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>AZLINA BINTI OTHMAN</b>
+</td>
+<td>acct@ctg.test</td>
+<td>CTG-014</td>
+<td>
+<span class="pill">suspended</span>
+</td>
+<td>
+<select onchange="ctgaGrant('ctg-2',this.value)" >
+<option value="viewer">viewer</option>
+<option value="employee">employee</option>
+<option value="hr_admin">hr_admin</option>
+<option value="admin">admin</option>
+</select>
+</td>
+<td style="text-align:right">
+<button class="btn sm danger" onclick="ctgaRevoke('ctg-2','acct@ctg.test')" >Revoke</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>INTERN</b>
+</td>
+<td>intern@ctg.test</td>
+<td>CTG-099</td>
+<td>
+<span class="muted">&mdash;</span>
+</td>
+<td>
+<select id="ctga_role_ctg-3">
+<option value="viewer" selected>viewer</option>
+<option value="employee">employee</option>
+<option value="hr_admin">hr_admin</option>
+<option value="admin">admin</option>
+</select>
+</td>
+<td style="text-align:right">
+<button class="btn sm p" onclick="ctgaGrant('ctg-3')" >Grant access</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>RESIGNED STAFF</b>
+</td>
+<td>gone@ctg.test</td>
+<td>CTG-052</td>
+<td>
+<span class="pill" title="Deactivated in CTG Portal">CTG inactive</span>
+</td>
+<td>
+<select id="ctga_role_ctg-4">
+<option value="viewer" selected>viewer</option>
+<option value="employee">employee</option>
+<option value="hr_admin">hr_admin</option>
+<option value="admin">admin</option>
+</select>
+</td>
+<td style="text-align:right">
+<span class="muted" title="Reactivate them in CTG Portal first">n/a</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="panel" style="margin-top:16px">
+<div class="panel-hd">
+<h3>Portal accounts not in the CTG directory (1)</h3>
+</div>
+<p class="muted" style="font-size:12.5px;margin:0 0 10px">These sign in with a password only. If CTG SSO ever becomes the sole login, they lose access &mdash; give them a CTG account, or keep password sign-in enabled.</p>
+<div style="overflow-x:auto">
+<table class="tbl">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEFT THE COMPANY</td>
+<td>leaver@ctg.test</td>
+<td>viewer</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- #ctgaccess -->
+<div class="panel">
+<div class="panel-hd">
+<h3>CTG Access &middot; who from CTG Portal may sign in here</h3>
+<button class="btn sm" onclick="ctgaLoad()">&#8635; Refresh</button>
+</div>
+<div id="ctga_body">
+<div class="load">
+<span class="spin">
+</span>Loading the CTG directory&hellip;</div>
+</div>
+</div>

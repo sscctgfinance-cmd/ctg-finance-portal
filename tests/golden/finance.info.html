@@ -1,0 +1,847 @@
+<!-- #info -->
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+<div style="position:relative;flex:1;min-width:240px;max-width:520px">
+<input id="info-search" value="" oninput="infoSearchInput()" placeholder="🔍 Search across all companies (e.g. EPF, SST, bank, director name)" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/>
+</div>
+<button class="btn" onclick="infoSetMode('edit')">✎ Edit mode</button>
+<button class="btn" onclick="infoPrint()">🖨 Print</button>
+</div>
+<div id="info-search-results" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;margin-bottom:14px;max-height:340px;overflow-y:auto;display:none">
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+<button class="btn p" style="margin-right:6px;margin-bottom:6px;display:inline-flex;align-items:center;gap:8px" onclick="infoSwitch('11111111-1111-4111-8111-111111111111')">
+<span>SKINDAE SDN BHD</span>
+<span style="font-size:10px;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;color:var(--green-soft)">19/19</span>
+</button>
+<button class="btn" style="margin-right:6px;margin-bottom:6px;display:inline-flex;align-items:center;gap:8px" onclick="infoSwitch('22222222-2222-4222-8222-222222222222')">
+<span>I PROCARE MALAYSIA SDN BHD</span>
+<span style="font-size:10px;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;color:var(--amber)">12/19</span>
+</button>
+</div>
+<div id="info-form" style="display:grid;grid-template-columns:240px 1fr;gap:18px;align-items:start">
+<div id="info-nav" style="position:sticky;top:8px;align-self:start;background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:10px;max-height:calc(100vh - 100px);overflow-y:auto">
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:6px 8px">Jump to section</div>
+<a href="#info-sec-identity" onclick="event.preventDefault();document.getElementById('info-sec-identity').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🪪</span>
+<span style="flex:1">Identity (SSM)</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-reg" onclick="event.preventDefault();document.getElementById('info-sec-reg').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🏠</span>
+<span style="flex:1">Registered office address</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-biz" onclick="event.preventDefault();document.getElementById('info-sec-biz').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🏪</span>
+<span style="flex:1">Principal place of business</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-contact" onclick="event.preventDefault();document.getElementById('info-sec-contact').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📞</span>
+<span style="flex:1">Contact</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-tax" onclick="event.preventDefault();document.getElementById('info-sec-tax').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">💰</span>
+<span style="flex:1">Tax &amp; MyInvois</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-stat" onclick="event.preventDefault();document.getElementById('info-sec-stat').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📋</span>
+<span style="flex:1">Statutory employer numbers</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-capital" onclick="event.preventDefault();document.getElementById('info-sec-capital').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">💼</span>
+<span style="flex:1">Capital &amp; financial year</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-directors" onclick="event.preventDefault();document.getElementById('info-sec-directors').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">👔</span>
+<span style="flex:1">Directors</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-sharehold" onclick="event.preventDefault();document.getElementById('info-sec-sharehold').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📊</span>
+<span style="flex:1">Shareholders</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-secaud" onclick="event.preventDefault();document.getElementById('info-sec-secaud').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🖋</span>
+<span style="flex:1">Secretary / Auditor</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-bank" onclick="event.preventDefault();document.getElementById('info-sec-bank').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🏦</span>
+<span style="flex:1">Bank accounts</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-licences" onclick="event.preventDefault();document.getElementById('info-sec-licences').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📜</span>
+<span style="flex:1">Licences &amp; permits</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-contacts" onclick="event.preventDefault();document.getElementById('info-sec-contacts').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">👥</span>
+<span style="flex:1">Key employees / contacts</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-group" onclick="event.preventDefault();document.getElementById('info-sec-group').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🏗</span>
+<span style="flex:1">Group structure</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-ins" onclick="event.preventDefault();document.getElementById('info-sec-ins').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🛡</span>
+<span style="flex:1">Insurance policies</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-lease" onclick="event.preventDefault();document.getElementById('info-sec-lease').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">🔑</span>
+<span style="flex:1">Lease / Property</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-compl" onclick="event.preventDefault();document.getElementById('info-sec-compl').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📅</span>
+<span style="flex:1">Compliance dates</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-notes" onclick="event.preventDefault();document.getElementById('info-sec-notes').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📝</span>
+<span style="flex:1">Notes</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+<a href="#info-sec-docs" onclick="event.preventDefault();document.getElementById('info-sec-docs').scrollIntoView({behavior:'smooth',block:'start'})" style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--text-soft);font-size:12.5px">
+<span style="font-size:13px;width:14px">📎</span>
+<span style="flex:1">Documents</span>
+<span style="color:var(--green-soft)">●</span>
+</a>
+</div>
+<div>
+<h2 style="margin:0 0 4px;font-size:20px;letter-spacing:-.02em">SKINDAE SDN BHD</h2>
+<div style="margin-top:14px">
+<div style="background:linear-gradient(135deg,rgba(255,165,89,.06),rgba(255,165,89,.02));border:1px solid rgba(255,165,89,.12);border-radius:12px;padding:14px 16px;margin-bottom:14px">
+<div style="font-size:10px;color:var(--coral-soft);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-weight:660">Quick view</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SSM No.</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">201801012345</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;201801012345&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Income Tax</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">C 58427907080</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;C 58427907080&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SST No.</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">B16-1808-31000123</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;B16-1808-31000123&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">MyInvois TIN</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">C58427907080</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;C58427907080&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">EPF</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">13579246</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;13579246&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">FY end</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">12-31</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Phone</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">+603-2201 5566</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;+603-2201 5566&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Email</div>
+<div style="font-size:13px;;margin-top:2px;display:flex;align-items:center;gap:6px">
+<span style="flex:1;word-break:break-all">admin@skindae.test</span>
+<button class="btn" style="padding:2px 6px;font-size:11px" title="Copy" onclick="infoCopy(&quot;admin@skindae.test&quot;,this)">📋</button>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-identity" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🪪</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Identity (SSM)</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Legal name (as per SSM)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">SKINDAE SDN BHD</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Trade / brand name</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Skindae</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SSM new no. (12-digit)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">201801012345</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;201801012345&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SSM old no.</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">1234567-X</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;1234567-X&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Date of incorporation</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">2018-04-12</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Business type</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Wholesale of cosmetics and toiletries</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">MSIC code</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">46494</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-reg" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🏠</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Registered office address</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Address (street)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Unit 12-3, Menara UOA Bangsar, 5 Jalan Bangsar Utama 1</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Postcode</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">59000</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">City</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Kuala Lumpur</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">State</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Kuala Lumpur</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-biz" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🏪</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Principal place of business</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Address (street)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Lot 88, Jalan Perindustrian Bukit Serdang 5</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Postcode</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">43300</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">City</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Seri Kembangan</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">State</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Selangor</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-contact" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📞</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Contact</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Phone</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">+603-2201 5566</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;+603-2201 5566&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Email</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">admin@skindae.test</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;admin@skindae.test&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Website</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">
+<a href="https://skindae.test" target="_blank" style="color:var(--coral-soft);text-decoration:none">https://skindae.test ↗</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-tax" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">💰</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Tax &amp; MyInvois</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Income Tax No. (LHDN)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">C 58427907080</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;C 58427907080&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SST registration no.</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">B16-1808-31000123</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;B16-1808-31000123&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">MyInvois TIN</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">C58427907080</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;C58427907080&quot;,this)">📋</button>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-stat" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📋</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Statutory employer numbers</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">EPF / KWSP</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">13579246</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;13579246&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SOCSO / PERKESO</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">C58427907</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;C58427907&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">EIS</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">C58427907</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;C58427907&quot;,this)">📋</button>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">HRD Corp levy</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">HRD-2019-00881</span>
+<button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" title="Copy" onclick="infoCopy(&quot;HRD-2019-00881&quot;,this)">📋</button>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-capital" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">💼</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Capital &amp; financial year</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Authorised capital (RM)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">RM 400,000.00</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Paid-up capital (RM)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">RM 100,000.00</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Financial year end (MM-DD)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">12-31</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-directors" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">👔</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Directors</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Name</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">IC / Passport</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Role</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Appointed (YYYY-MM-DD)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">CALLUM YEW</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">880202-10-5533</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Managing Director</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2018-04-12</td>
+</tr>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">TAN MEI LING</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">910714-14-6070</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Director</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2020-01-06</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-sharehold" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📊</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Shareholders</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Name</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">IC / Reg no.</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Shares</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">%</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">CALLUM YEW</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">880202-10-5533</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">70000</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">70</td>
+</tr>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">CTG HOLDINGS SDN BHD</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">201501099887</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">30000</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">30</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-secaud" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🖋</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Secretary / Auditor</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Company secretary (name)</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">TAN MEI LING</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Secretarial firm</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">MLT Corporate Services Sdn Bhd</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Auditor</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Wong &amp; Partners PLT</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-bank" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🏦</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Bank accounts</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Bank</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Account no.</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Account name</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Branch</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Malayan Banking Berhad</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">512011223344<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;512011223344&quot;,this)">📋</button>
+</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">SKINDAE SDN BHD</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Bangsar</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Operating</td>
+</tr>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">CIMB Bank Berhad</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">8009876543<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;8009876543&quot;,this)">📋</button>
+</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">SKINDAE SDN BHD</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Seri Kembangan</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Payroll</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-licences" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📜</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Licences &amp; permits</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Licence / permit</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Issuing authority</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">No.</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Valid from</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Valid to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Wholesale &amp; Retail Trade licence</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">KPDN</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">WRT-2018-004412<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;WRT-2018-004412&quot;,this)">📋</button>
+</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2018-05-01</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2026-08-27</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-contacts" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">👥</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Key employees / contacts</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Name</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Position</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Phone</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Email</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">AZLINA BINTI OTHMAN</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Finance Executive</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">+6012-333 4455<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;+6012-333 4455&quot;,this)">📋</button>
+</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">acct@ctg.test<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;acct@ctg.test&quot;,this)">📋</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-group" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🏗</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Group structure</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Relationship</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Company name</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Shareholding %</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Holding company</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">CTG HOLDINGS SDN BHD</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">30</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">
+<span style="color:var(--muted);opacity:.5">—</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-ins" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🛡</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Insurance policies</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Insurer</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Policy no.</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Type</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Sum insured (RM)</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Expiry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Allianz General Insurance</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">PL-2025-778812<button class="btn" style="padding:1px 5px;font-size:10px;margin-left:4px" title="Copy" onclick="infoCopy(&quot;PL-2025-778812&quot;,this)">📋</button>
+</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Public liability</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">1000000</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2027-03-31</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-lease" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">🔑</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Lease / Property</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead>
+<tr>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Address</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Landlord</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Rent (RM)</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Start</th>
+<th style="text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--panel-border)">Expiry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">Unit 12-3, Menara UOA Bangsar</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">UOA Development Bhd</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">6000</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2024-11-01</td>
+<td style="padding:8px 10px;border-bottom:1px solid var(--panel-border);vertical-align:top">2027-10-31</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="info-sec-compl" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📅</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Compliance dates</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Annual Return due</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">2027-05-12</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">AGM date</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">2026-06-28</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Audit submission due</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">2026-09-30</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Tax Return (Form C) due</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">2027-07-31</span>
+</div>
+</div>
+<div>
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">SST return period</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;word-break:break-word">Bi-monthly</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-notes" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📝</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Notes</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">
+<div style="grid-column:1/-1">
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Free text</div>
+<div style="font-size:13.5px;margin-top:3px;display:flex;align-items:flex-start;gap:4px">
+<span style="flex:1;white-space:pre-wrap;line-height:1.55">SST registered since Sep 2018. MyInvois phase 2 go-live 1 Jan 2026.</span>
+</div>
+</div>
+</div>
+</div>
+<div id="info-sec-docs" style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:16px;margin-bottom:14px;scroll-margin-top:12px;transition:box-shadow .25s">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+<div style="font-size:18px">📎</div>
+<h3 style="margin:0;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-soft);font-weight:660;flex:1">Documents</h3>
+<span class="pill pill-green" style="font-size:10px">filled</span>
+</div>
+<div style="display:grid;grid-template-columns:240px 1fr;gap:12px;align-items:start">
+<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:10px;padding:10px;min-height:120px">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:660;flex:1">Folders</div>
+</div>
+<div onclick="infoFolderOpen(null)" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:rgba(232,93,60,.10);margin-bottom:4px">
+<span style="font-size:14px">📂</span>
+<span style="font-size:13px;color:var(--text);flex:1">All documents</span>
+<span class="muted" style="font-size:10px">3 total · 1 in root</span>
+</div>
+<ul style="list-style:none;padding-left:16px;margin:0">
+<li>
+<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:transparent" onclick="infoFolderOpen(f1)" onmouseover="this.style.background='rgba(255,255,255,.04)'" onmouseout="this.style.background='transparent'">
+<span style="font-size:14px">📁</span>
+<span style="font-size:13px;color:var(--text);flex:1">Statutory</span>
+<span class="muted" style="font-size:10px">1📄</span>
+</div>
+</li>
+<li>
+<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:transparent" onclick="infoFolderOpen(f2)" onmouseover="this.style.background='rgba(255,255,255,.04)'" onmouseout="this.style.background='transparent'">
+<span style="font-size:14px">📁</span>
+<span style="font-size:13px;color:var(--text);flex:1">Contracts</span>
+<span class="muted" style="font-size:10px">1📄 · 1📁</span>
+</div>
+<ul style="list-style:none;padding-left:16px;margin:0">
+<li>
+<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:transparent" onclick="infoFolderOpen(f3)" onmouseover="this.style.background='rgba(255,255,255,.04)'" onmouseout="this.style.background='transparent'">
+<span style="font-size:14px">📁</span>
+<span style="font-size:13px;color:var(--text);flex:1">Leases</span>
+<span class="muted" style="font-size:10px;opacity:.4">empty</span>
+</div>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+<div style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:10px;padding:12px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+<div style="font-size:13px;flex:1">
+<span style="color:var(--text)">📂 / </span>
+<span class="muted">all documents</span>
+</div>
+<span class="muted" style="font-size:11px">1 file</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+<div onclick="infoFolderOpen(f1)" style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px;padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:140px">
+<span style="font-size:18px">📁</span>
+<div>
+<div style="font-size:12.5px;color:var(--text)">Statutory</div>
+<div class="muted" style="font-size:10px">1 file</div>
+</div>
+</div>
+<div onclick="infoFolderOpen(f2)" style="background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px;padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:140px">
+<span style="font-size:18px">📁</span>
+<div>
+<div style="font-size:12.5px;color:var(--text)">Contracts</div>
+<div class="muted" style="font-size:10px">1 file</div>
+</div>
+</div>
+</div>
+<div style="border:1px solid var(--panel-border);border-radius:8px;overflow:hidden;background:var(--panel-2)">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--panel-border)">
+<div style="font-size:20px">📄</div>
+<div style="flex:1;min-width:0">
+<div style="font-size:13px;color:var(--text);word-break:break-word">
+<span class="pill" style="background:rgba(255,255,255,.06);color:var(--text-soft);font-size:10px;margin-right:6px">SSM / Registration</span>
+</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px"> · 0 B · uploaded 2025-02-03 04:00</div>
+</div>
+<button class="btn" style="padding:4px 10px;font-size:11.5px" onclick="infoDocDownload(d1)">⬇</button>
+</div>
+</div>
+</div>
+</div>
+<style>@media(max-width:680px){#info-sec-docs > div:last-child{grid-template-columns:1fr!important}}</style>
+</div>
+<div class="muted" style="font-size:12px;margin-top:10px">View mode — click <b>✎ Edit mode</b> to make changes.</div>
+</div>
+</div>
+</div>
+<style>@media(max-width:880px){#info-form{grid-template-columns:1fr!important}#info-nav{position:static!important;max-height:none!important}}</style>
+<!-- #info-search-results -->
+

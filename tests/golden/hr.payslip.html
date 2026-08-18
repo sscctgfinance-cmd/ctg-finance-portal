@@ -1,0 +1,197 @@
+<!-- #emp-mobnav -->
+<button class="mob-tab" onclick="hrNav('clock')" aria-label="Time Clock">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+</span>Clock</button>
+<button class="mob-tab" onclick="hrNav('leave')" aria-label="Leave">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+</span>Leave</button>
+<button class="mob-tab" onclick="hrNav('expenses')" aria-label="Reimbursement">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+</span>Claims</button>
+<button class="mob-tab on" onclick="hrNav('payslip')" aria-label="Payslip">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+<path d="M14 2v6h6M9 13h6M9 17h4"/>
+</svg>
+</span>Payslip</button>
+<button class="mob-tab" onclick="hrNav('profile')" aria-label="My Profile">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+<circle cx="12" cy="7" r="4"/>
+</svg>
+</span>Profile</button>
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Me</div>
+<h2 class="page-title">Payslip</h2>
+<div class="page-sub">View and download your monthly payslips</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:14px">
+<div class="card">
+<div class="n" style="color:var(--green-soft)">RM 14,460.30</div>
+<div class="l">Take-home 2026 <span class="muted">· 3 mth</span>
+</div>
+</div>
+<div class="card">
+<div class="n">RM 16,800.00</div>
+<div class="l">Gross pay 2026</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--green-soft)">RM 14,460.30</div>
+<div class="l">Total take-home <span class="muted">· all time</span>
+</div>
+</div>
+<div class="card">
+<div class="n">3</div>
+<div class="l">Payslips available</div>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>My payslips</h3>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable pay-tbl">
+<thead>
+<tr>
+<th>Period</th>
+<th class="amt">Gross</th>
+<th class="amt">Deductions</th>
+<th class="amt">Net pay</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<b>July 2026</b>
+</td>
+<td class="amt">RM 5,600.00</td>
+<td class="amt" style="color:var(--red-soft)">RM 929.90</td>
+<td class="amt">
+<b style="color:var(--green-soft)">RM 4,820.10</b>
+</td>
+<td style="text-align:right;white-space:nowrap">
+<button class="btn sm" onclick="hrEmpPayslipDownload(0)">
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+<path d="M7 10l5 5 5-5M12 15V3"/>
+</svg> PDF</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>June 2026</b>
+</td>
+<td class="amt">RM 5,600.00</td>
+<td class="amt" style="color:var(--red-soft)">RM 779.90</td>
+<td class="amt">
+<b style="color:var(--green-soft)">RM 4,820.10</b>
+</td>
+<td style="text-align:right;white-space:nowrap">
+<button class="btn sm" onclick="hrEmpPayslipDownload(1)">
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+<path d="M7 10l5 5 5-5M12 15V3"/>
+</svg> PDF</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>May 2026</b>
+</td>
+<td class="amt">RM 5,600.00</td>
+<td class="amt" style="color:var(--red-soft)">RM 779.90</td>
+<td class="amt">
+<b style="color:var(--green-soft)">RM 4,820.10</b>
+</td>
+<td style="text-align:right;white-space:nowrap">
+<button class="btn sm" onclick="hrEmpPayslipDownload(2)">
+<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+<path d="M7 10l5 5 5-5M12 15V3"/>
+</svg> PDF</button>
+</td>
+</tr>
+</tbody>
+<tfoot>
+<tr style="border-top:2px solid var(--border-strong)">
+<td>
+<b>Total (3 months)</b>
+</td>
+<td class="amt">
+<b>RM 16,800.00</b>
+</td>
+<td class="amt" style="color:var(--red-soft)">
+<b>RM 2,489.70</b>
+</td>
+<td class="amt">
+<b style="color:var(--green-soft)">RM 14,460.30</b>
+</td>
+<td>
+</td>
+</tr>
+</tfoot>
+</table>
+</div>
+<div class="muted" style="font-size:11px;padding:10px 2px 0">Totals are your finalised monthly payroll (take-home = net pay after EPF/SOCSO/EIS/PCB & deductions). Tap <b>PDF</b> to download or print any month’s full payslip.</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Me</div>
+<button class="side-link" onclick="hrNav('clock')" title="Time Clock">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Time Clock</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<button class="side-link on" onclick="hrNav('payslip')" title="Payslip">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+<path d="M14 2v6h6M9 13h6M9 17h4"/>
+</svg>
+<span class="lbl">Payslip</span>
+</button>
+<button class="side-link" onclick="hrNav('profile')" title="My Profile">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+<circle cx="12" cy="7" r="4"/>
+</svg>
+<span class="lbl">My Profile</span>
+</button>

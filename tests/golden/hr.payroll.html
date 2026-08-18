@@ -1,0 +1,464 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Payroll</div>
+<h2 class="page-title">Payroll</h2>
+<div class="page-sub">Run monthly payroll, statutory files &amp; payslips</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+<select id="hr_pm" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">
+<option value="1">January</option>
+<option value="2">February</option>
+<option value="3">March</option>
+<option value="4">April</option>
+<option value="5">May</option>
+<option value="6">June</option>
+<option value="7">July</option>
+<option value="8" selected>August</option>
+<option value="9">September</option>
+<option value="10">October</option>
+<option value="11">November</option>
+<option value="12">December</option>
+</select>
+<select id="hr_py" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">
+<option value="2025">2025</option>
+<option value="2026" selected>2026</option>
+<option value="2027">2027</option>
+</select>
+<button class="btn sm" onclick="hrPickPeriod()">Load</button>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Payroll grid — August 2026<span id="hr_paystate" class="pill " style="font-size:10px;font-weight:600" title="Nothing has been saved for this month yet.">Draft — not saved yet</span>
+</h3>
+<span style="display:flex;gap:6px;flex-wrap:wrap">
+<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>
+<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>
+<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button>
+<button class="btn p sm" onclick="hrFinalise()">Finalise payroll</button>
+</span>
+</div>
+<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee's EPF rate / SOCSO category / age rules come from their profile.</div>
+<div class="tbl-wrap">
+<table class="bigtable" style="font-size:12px">
+<thead>
+<tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em">
+<th>
+</th>
+<th colspan="5" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>
+<th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>
+<th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th>
+</tr>
+<tr>
+<th>Employee</th>
+<th class="amt">Basic</th>
+<th class="amt">Allow</th>
+<th class="amt">Bonus</th>
+<th class="amt">OT</th>
+<th class="amt">Extra allow</th>
+<th class="amt">Deduct</th>
+<th class="amt">Unpaid</th>
+<th class="amt">Gross</th>
+<th class="amt">EPF</th>
+<th class="amt">SOCSO</th>
+<th class="amt">EIS</th>
+<th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th>
+<th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span>
+</th>
+<th class="amt">Net</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="white-space:nowrap">
+<span style="display:inline-flex;align-items:baseline;gap:6px">
+<button onclick="hrGRowMenu('e1')" title="Skip this month, mark resigned, or delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px">⋯</button>
+<span>
+<b>E001</b> AHMAD BIN ISMAIL<div class="muted" style="font-size:9.5px;margin-top:1px">EPF 11% · SOC C1</div>
+</span>
+</span>
+</td>
+<td>
+<input type="number" step="0.01" value="5200" oninput="hrGridCell('e1','basic',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="400" oninput="hrGridCell('e1','allow',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e1','bonus',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e1','ot',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e1','allowance',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<button class="btn xs" id="ded_e1" onclick="hrDedOpen('e1')" title="Itemise deductions" style="min-width:74px">RM 150.00 · 1 ▾</button>
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e1','unpaid',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td class="amt" id="g_e1">RM 5,600.00</td>
+<td class="amt" id="epf_e1">RM 616.00</td>
+<td class="amt" id="soc_e1">RM 27.75</td>
+<td class="amt" id="eis_e1">RM 11.10</td>
+<td class="amt" id="lin_e1">RM 0.00</td>
+<td class="amt">
+<span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">
+<input type="number" step="0.01" min="0" id="pcb_e1" value="126.85" oninput="hrGridPcbCell('e1',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
+<button id="pcbu_e1" onclick="hrGridPcbAuto('e1')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:none">↺</button>
+</span>
+</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e1">RM 4,668.30</td>
+</tr>
+<tr>
+<td style="white-space:nowrap">
+<span style="display:inline-flex;align-items:baseline;gap:6px">
+<button onclick="hrGRowMenu('e2')" title="Skip this month, mark resigned, or delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px">⋯</button>
+<span>
+<b>E002</b> SITI NURHALIZA BINTI OMAR<div class="muted" style="font-size:9.5px;margin-top:1px">EPF 11% · SOC C1</div>
+</span>
+</span>
+</td>
+<td>
+<input type="number" step="0.01" value="3400" oninput="hrGridCell('e2','basic',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="250" oninput="hrGridCell('e2','allow',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="500" oninput="hrGridCell('e2','bonus',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e2','ot',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e2','allowance',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<button class="btn xs" id="ded_e2" onclick="hrDedOpen('e2')" title="Itemise deductions" style="min-width:74px">RM 0.00 ▾</button>
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e2','unpaid',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td class="amt" id="g_e2">RM 4,150.00</td>
+<td class="amt" id="epf_e2">RM 458.00</td>
+<td class="amt" id="soc_e2">RM 18.25</td>
+<td class="amt" id="eis_e2">RM 7.30</td>
+<td class="amt" id="lin_e2">RM 27.35</td>
+<td class="amt">
+<span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">
+<input type="number" step="0.01" min="0" id="pcb_e2" value="89.00" oninput="hrGridPcbCell('e2',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
+<button id="pcbu_e2" onclick="hrGridPcbAuto('e2')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:none">↺</button>
+</span>
+</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e2">RM 3,550.10</td>
+</tr>
+<tr>
+<td style="white-space:nowrap">
+<span style="display:inline-flex;align-items:baseline;gap:6px">
+<button onclick="hrGRowMenu('e3')" title="Skip this month, mark resigned, or delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px">⋯</button>
+<span>
+<b>E003</b> RAJESH A/L KUMAR<div class="muted" style="font-size:9.5px;margin-top:1px">EPF 11% · SOC C1</div>
+</span>
+</span>
+</td>
+<td>
+<input type="number" step="0.01" value="1206.25" oninput="hrGridCell('e3','basic',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','allow',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','bonus',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','ot',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','allowance',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<button class="btn xs" id="ded_e3" onclick="hrDedOpen('e3')" title="Itemise deductions" style="min-width:74px">RM 0.00 ▾</button>
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','unpaid',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td class="amt" id="g_e3">RM 1,206.25</td>
+<td class="amt" id="epf_e3">RM 135.00</td>
+<td class="amt" id="soc_e3">RM 6.25</td>
+<td class="amt" id="eis_e3">RM 2.50</td>
+<td class="amt" id="lin_e3">RM 0.00</td>
+<td class="amt">
+<span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">
+<input type="number" step="0.01" min="0" id="pcb_e3" value="0.00" oninput="hrGridPcbCell('e3',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
+<button id="pcbu_e3" onclick="hrGridPcbAuto('e3')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:none">↺</button>
+</span>
+</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e3">RM 1,062.50</td>
+</tr>
+<tr style="font-weight:700;border-top:2px solid var(--border)">
+<td>Total (3)</td>
+<td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>
+<td class="amt" id="t_g">RM 10,956.25</td>
+<td class="amt" id="t_epf">RM 1,209.00</td>
+<td class="amt" id="t_soc">RM 52.25</td>
+<td class="amt" id="t_eis">RM 20.90</td>
+<td class="amt" id="t_lin">RM 27.35</td>
+<td class="amt" id="t_pcb">RM 215.85</td>
+<td class="amt" style="color:var(--green-soft)" id="t_net">RM 9,280.90</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">
+<div class="panel" style="padding:12px;margin:0">
+<div class="muted" style="font-size:11px">EPF (KWSP) payable</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 2,581.00</div>
+</div>
+<div class="panel" style="padding:12px;margin:0">
+<div class="muted" style="font-size:11px">SOCSO (PERKESO) payable</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 262.45</div>
+</div>
+<div class="panel" style="padding:12px;margin:0">
+<div class="muted" style="font-size:11px">EIS payable</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 41.80</div>
+</div>
+<div class="panel" style="padding:12px;margin:0">
+<div class="muted" style="font-size:11px">PCB (LHDN) payable</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 215.85</div>
+</div>
+<div class="panel" style="padding:12px;margin:0">
+<div class="muted" style="font-size:11px">Employer total cost</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 12,532.00</div>
+</div>
+</div>
+<div class="panel" style="margin-top:14px">
+<div class="panel-hd">
+<h3>💸 Payment &amp; Statutory Hub — August 2026</h3>
+<span class="pill pill-draft" style="font-size:10.5px">0/5 done</span>
+</div>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05));border:1px solid rgba(226,96,75,.4);border-radius:11px;padding:12px 14px;margin-bottom:12px">
+<button class="btn p" onclick="hrSubmitAll()" style="font-size:14px">📤 Submit all — generate every file</button>
+<button class="btn" onclick="hrStatIdsOpen()" style="font-size:13px">🆔 Statutory numbers</button>
+<button class="btn" onclick="hrTp1Open()" style="font-size:13px">🧾 TP1 reliefs</button>
+<span class="muted" style="font-size:11.5px;flex:1;min-width:160px">One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. <b style="color:var(--amber)">Finalise payroll first for authoritative figures.</b>
+</span>
+</div>
+<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
+<div>
+<div style="font-weight:700;font-size:13px">🏦 Salaries — UOB Infinity</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 9,280.90 <span class="muted" style="font-size:10px">net pay</span>
+</div>
+<div style="margin-top:2px">
+<span class="muted" style="font-size:10.5px">pay on your payday</span>
+</div>
+</div>
+<div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;width:100%;margin-bottom:6px">
+<div>
+<label class="muted" style="font-size:10px">UOB debit account</label>
+<br>
+<input id="hr_uob_acct" value="" placeholder="company UOB account no" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:180px">
+</div>
+<div>
+<label class="muted" style="font-size:10px">Crediting date</label>
+<br>
+<input id="hr_uob_cd" type="date" value="" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px">
+</div>
+<button class="btn xs" onclick="hrUobCfgSave()">Save</button>
+</div>
+<button class="btn xs p" onclick="hrExpBank('uob')">⬇ UOB Infinity salary file</button>
+<button class="btn xs" onclick="hrExpBank('maybank')">Maybank M2E</button>
+<button class="btn xs" onclick="hrExpGiro()">Generic IBG CSV</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">UOB Infinity → <b>Pay &amp; Transfer → Bulk Transactions → Upload Bulk Files</b> → file type <b>&ldquo;IBG Payroll with Payment Advice (Employee)&rdquo;</b>. First upload needs UOB&rsquo;s one-time test-file certification. If your Infinity requires their fixed-width UFF template, get the spec sheet from your UOB RM — it can be encoded exactly.</div>
+</div>
+<div style="padding-top:4px">
+<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+<input type="checkbox" onchange="hrHubTick('salary',this.checked)" style="accent-color:var(--green-soft)"> Done</label>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
+<div>
+<div style="font-weight:700;font-size:13px">🏛️ EPF — KWSP</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 2,581.00 <span class="muted" style="font-size:10px">EE RM 1,209.00 + ER RM 1,372.00</span>
+</div>
+<div style="margin-top:2px">
+<span style="font-size:10.5px;color:var(--muted)">due 15 September 2026 · 28 days left</span>
+</div>
+</div>
+<div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+<button class="btn xs p" onclick="hrExpKwsp()">⬇ KWSP i-Akaun file</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">Upload + pay at <b>i-Akaun (Majikan)</b>, or in UOB Infinity → Upload Bulk Files → file type <b>&ldquo;EPF Payment (Employee)&rdquo;</b>.</div>
+</div>
+<div style="padding-top:4px">
+<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+<input type="checkbox" onchange="hrHubTick('epf',this.checked)" style="accent-color:var(--green-soft)"> Done</label>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
+<div>
+<div style="font-weight:700;font-size:13px">🏛️ SOCSO + EIS — PERKESO</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 304.25 <span class="muted" style="font-size:10px">SOCSO RM 235.10 · LINDUNG 24 RM 27.35 · EIS RM 41.80</span>
+</div>
+<div style="margin-top:2px">
+<span style="font-size:10.5px;color:var(--muted)">due 15 September 2026 · 28 days left</span>
+</div>
+</div>
+<div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+<button class="btn xs p" onclick="hrExpAssist()">⬇ PERKESO ASSIST file</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">Upload + pay at the <b>ASSIST portal</b>, or in UOB Infinity → <b>Services → Send to UOB</b> → &ldquo;SOCSO Monthly Contribution&rdquo; / &ldquo;EIS Contribution&rdquo;.</div>
+</div>
+<div style="padding-top:4px">
+<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+<input type="checkbox" onchange="hrHubTick('perkeso',this.checked)" style="accent-color:var(--green-soft)"> Done</label>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
+<div>
+<div style="font-weight:700;font-size:13px">🏛️ PCB — LHDN</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 215.85</div>
+<div style="margin-top:2px">
+<span style="font-size:10.5px;color:var(--muted)">due 15 September 2026 · 28 days left</span>
+</div>
+</div>
+<div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+<button class="btn xs p" onclick="hrExpCp39()">⬇ CP39 / e-PCB file</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">Upload at <b>e-PCB / e-Data PCB</b> and pay by FPX there. ⚠ UOB Infinity does <b>not</b> accept PCB files — LHDN portal only.</div>
+</div>
+<div style="padding-top:4px">
+<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+<input type="checkbox" onchange="hrHubTick('pcb',this.checked)" style="accent-color:var(--green-soft)"> Done</label>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
+<div>
+<div style="font-weight:700;font-size:13px">📒 Xero — payroll journal</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">
+<span class="muted" style="font-size:12px">wages + statutory liabilities</span>
+</div>
+</div>
+<div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+<button class="btn xs" disabled style="opacity:.5;cursor:not-allowed" title="Finalise payroll first">Finalise payroll first</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:5px;line-height:1.55">Posts a <b>DRAFT</b> manual journal to Xero — you review &amp; approve it inside Xero.</div>
+</div>
+<div style="padding-top:4px">
+<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+<input type="checkbox" onchange="hrHubTick('xero',this.checked)" style="accent-color:var(--green-soft)"> Done</label>
+</div>
+</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px">
+<span class="muted" style="font-size:11px;font-weight:600">📄 Documents</span>
+<button class="btn xs" onclick="hrExpSummary()">Payroll Summary (Excel)</button>
+<button class="btn xs" onclick="hrExpPayslips()">Payslips PDF</button>
+<button class="btn xs" onclick="hrEmailAll()">✉️ Email payslips</button>
+<span class="muted" style="font-size:10.5px">· raw csv:</span>
+<button class="btn xs" onclick="hrExpStatutory('epf')">EPF</button>
+<button class="btn xs" onclick="hrExpStatutory('socso')">SOCSO</button>
+<button class="btn xs" onclick="hrExpStatutory('eis')">EIS</button>
+<button class="btn xs" onclick="hrExpStatutory('pcb')">PCB</button>
+</div>
+<div class="muted" style="font-size:10.5px;margin-top:8px;line-height:1.5">Checklist ticks save per company + month (this browser). Statutory amounts are system-computed estimates — verify against the official portal figure before paying, and do a one-time test upload for each file type.</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link on" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

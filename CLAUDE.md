@@ -124,6 +124,19 @@ CI additionally parses `hros.html`, `app.html` and `index.html` fail-closed (a s
 those single-file apps is a white screen for every user), lints every module in
 `supabase/functions/portal/`, and holds the `no-redeclare` baseline at 6.
 
+### If a `tests/golden/` test fails
+
+All 40 screens of the two apps are rendered offline and diffed against a committed baseline
+(`tests/render_golden_test.ts`; `tests/COVERAGE.md` says what that does and does not hold). A failure
+means you changed what an operator sees. If that was the point:
+
+```bash
+deno run -A tools/render_probe.ts tests/golden && git diff tests/golden/
+```
+
+Read that diff — it is the change to the UI, and anything in it you did not intend is the bug the
+goldens exist to catch. Never regenerate to make a red build green without reading it.
+
 ## Things that are not covered by a push
 
 - `supabase/functions/ctg-sso/` — the deploy workflow only deploys `portal`. `ctg-sso` must be deployed
