@@ -12,7 +12,7 @@ import { assertEquals } from "jsr:@std/assert@1";
 import { arrSource, fnSource, inlineScript } from "../tools/extract.ts";
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
-const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 const fe = inlineScript(html);
 
 type Row = [number, number, number];
@@ -27,7 +27,7 @@ const feEis = parse(fe, "MY_EIS"), beEis = parse(ts, "MY_EIS");
 const lookup = eval("(" + fnSource(fe, "myStatLookup") + ")");
 const at = (tbl: Row[], wage: number) => lookup(tbl, wage) as { ee: number; er: number };
 
-Deno.test("tables are byte-identical between hros.html and portal_current.ts", () => {
+Deno.test("tables are byte-identical between hros.html and the backend payroll engine", () => {
   // The server recomputes payroll and rejects any >1-sen difference (409 recompute_mismatch). If these
   // two copies ever drift, payroll cannot be finalised at all — for the whole company.
   assertEquals(JSON.stringify(feCat1), JSON.stringify(beCat1), "MY_SOCSO_CAT1 drifted");

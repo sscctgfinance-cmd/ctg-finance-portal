@@ -1,8 +1,8 @@
-// Pull named top-level declarations out of hros.html / portal_current.ts so the payroll engines can be
+// Pull named top-level declarations out of hros.html / the portal edge function so the payroll engines can be
 // exercised in a test without a browser, a DOM, or a build step.
 //
 // Why by name and not "just import the file": both are single-file apps. hros.html is one 5,000-line
-// inline <script> full of DOM code, and portal_current.ts opens a Supabase client at module scope. The
+// inline <script> full of DOM code, and the backend engine ships in a module that opens a Supabase client at import. The
 // statutory engine inside each is pure, so we lift exactly those symbols and nothing else.
 
 const BS = "\\";
@@ -80,10 +80,13 @@ function closeIdx(s: string, open: number): number {
  * found" reads like a rename, not like a gap in the extractor, so it was easy to shrug at.
  */
 export function fnSource(src: string, name: string): string {
-  const re = new RegExp("^(?:async\\s+)?function\\s+" + name + "\\s*\\(", "m");
+  // `export ` is optional: the backend engine lives in a module that exports its symbols, the
+  // frontend one in an inline <script> that does not. The slice starts AFTER the keyword either
+  // way, so what comes back is always a bare declaration the caller can re-export itself.
+  const re = new RegExp("^(export\\s+)?(?:async\\s+)?function\\s+" + name + "\\s*\\(", "m");
   const m = re.exec(src);
   if (!m) throw new Error("function not found: " + name);
-  const start = m.index;
+  const start = m.index + (m[1] ? m[1].length : 0);
   const paren = src.indexOf("(", start);
   const bodyOpen = src.indexOf("{", closeIdx(src, paren));
   return src.slice(start, closeIdx(src, bodyOpen) + 1);
@@ -91,7 +94,7 @@ export function fnSource(src: string, name: string): string {
 
 /** Source text of a `var NAME=[...]` / `const NAME:T=[...]` array literal at column 0. */
 export function arrSource(src: string, name: string): string {
-  const re = new RegExp("^(?:var|const)\\s+" + name + "\\s*(?::[^=]+)?=\\s*\\[", "m");
+  const re = new RegExp("^(?:export\\s+)?(?:var|const)\\s+" + name + "\\s*(?::[^=]+)?=\\s*\\[", "m");
   const m = re.exec(src);
   if (!m) throw new Error("array not found: " + name);
   // The regex ends at the literal's own "[", so use the match end — indexOf("[") would find the "[" inside

@@ -15,7 +15,7 @@ import {
 } from "../tools/extract.ts";
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
-const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 const feSrc = inlineScript(html);
 
 // hrCalcCompute reads the HR_CALC and HR globals instead of taking them as arguments, so stand them up

@@ -16,7 +16,7 @@ import { BACKEND_ENGINE, BACKEND_TABLES, FRONTEND_ENGINE, FRONTEND_TABLES, fnSou
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
 const feSrc = inlineScript(html);
-const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 
 // deno-lint-ignore no-explicit-any
 const fe: any = await loadEngine(feSrc, FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);

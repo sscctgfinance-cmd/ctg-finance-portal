@@ -98,26 +98,58 @@ jobs:
           fi
 
       - name: Backend parses
+        # v209: the edge function is a directory of modules, not one file. Lint ALL of them — a syntax
+        # error in hr.ts is exactly as fatal at boot as one in the router, and linting only index.ts
+        # would have checked 9 KB of a 600 KB function. Fail-closed on both counts: refuse if the
+        # expected modules are not there, and refuse if lint produced no output for a file (which means
+        # it did not actually inspect it, so "no SyntaxError found" is not good news).
         run: |
           set -e
-          if deno lint portal_current.ts 2>&1 | grep -qiE "SyntaxError|Expression expected"; then
-            echo "::error file=portal_current.ts::portal_current.ts does not parse."
+          d="supabase/functions/portal"
+          n=$(ls "$d"/*.ts | wc -l | tr -d " ")
+          echo "linting $n module(s) in $d"
+          if [ "$n" -lt 4 ]; then
+            echo "::error::Only $n .ts file(s) in $d — expected the router plus lib.ts / hr.ts / finance.ts."
             exit 1
           fi
-          echo "portal_current.ts parses OK"
+          fail=0
+          for f in "$d"/*.ts; do
+            out=$(deno lint "$f" 2>&1 || true)
+            if [ -z "$out" ]; then
+              echo "::error::deno lint produced no output for $f — treating as a failed check."
+              exit 1
+            fi
+            if echo "$out" | grep -qiE "SyntaxError|Unexpected token|Expression expected"; then
+              echo "::error file=$f::$f does not parse — the whole portal would fail to boot."
+              echo "$out" | grep -iE -A4 "SyntaxError|Unexpected token|Expression expected" | head -20
+              fail=1
+            else
+              echo "$f parses OK"
+            fi
+          done
+          exit $fail
 
-      - name: Edge function source matches portal_current.ts
-        # The deploy workflow copies portal_current.ts over supabase/functions/portal/index.ts. If they are
-        # already out of sync in the repo, a reviewer is reading different code from what ships.
+      - name: Edge function is the single source of truth
+        # Replaces the old "matches portal_current.ts" diff check. portal_current.ts was a byte-identical
+        # duplicate at the repo root that the deploy workflow copied over index.ts; it could not survive
+        # the split into modules, so it is gone and supabase/functions/portal/ is the only copy. This
+        # step exists so the duplicate cannot quietly come back — two copies is how a reviewer ends up
+        # reading different code from what ships.
         run: |
-          if ! diff -q portal_current.ts supabase/functions/portal/index.ts >/dev/null; then
-            echo "::error::portal_current.ts and supabase/functions/portal/index.ts differ. Run: cp portal_current.ts supabase/functions/portal/index.ts"
+          set -e
+          if [ -e portal_current.ts ]; then
+            echo "::error::portal_current.ts is back. The edge function lives ONLY in supabase/functions/portal/ — a second copy will drift from it silently."
             exit 1
           fi
-          echo "Edge function source is in sync."
+          test -s supabase/functions/portal/index.ts
+          grep -q "Deno.serve" supabase/functions/portal/index.ts
+          echo "supabase/functions/portal/ is the single source of truth."
 
-      - name: Payroll tests — statutory tables & engine parity
-        # The two that matter most:
+      - name: Payroll tests, and the router still routes
+        # The three that matter most:
         #  - the gazetted SOCSO/EIS anchors (a wrong table over-deducts from every employee, silently)
         #  - frontend/backend parity (any drift 409s payroll for the whole company, unrecoverably)
+        #  - route parity (v209): boots the edge function offline and replays an anonymous POST against
+        #    all 203 actions, comparing to a golden captured before the module split. Catches a dropped
+        #    handler and a lost auth gate — the ~200 actions have no other coverage.
         run: deno test --allow-read tests/
