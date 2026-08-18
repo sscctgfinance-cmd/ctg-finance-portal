@@ -170,6 +170,11 @@ can be driven end-to-end without production credentials.
    proving it cannot hide a real change, and adding a case to the "still bites" block.
 4. Leave the legacy screen in place. Deleting it is a later, separate decision.
 
+**`assertHandlerParity()` is copied into each screen's test, not shared.** `web/tests/handlers.ts` is
+shared by every screen, so migrations running in parallel are told not to touch it; each test therefore
+carries its own small wrapper around the two halves that file exports. Once the in-flight migrations have
+landed, folding those identical wrappers back into `handlers.ts` is a safe single change.
+
 **A screen whose rows are identified by a bare integer needs its handler check widened, in its own test
 file.** `goldenHandlers()` in `web/tests/handlers.ts` collects QUOTED literals, because on the first two
 screens a row is a quoted id (`'u9'`, `'out'`). `hr.approvals` identifies a row by its index —
@@ -179,6 +184,12 @@ the golden side with a local `identArgs()` that takes quoted literals AND bare i
 superset of `goldenHandlers().args`, so it can only tighten the check, and it lives in the screen's own
 test rather than in the shared file. Widen the same way, not `handlers.ts`, until a screen proves the
 shared default is wrong.
+
+**A branch the golden does not hold is not covered — say so where you write it.** A golden is one state
+of one screen, so empty tables, loading panels and modals never appear in it (`hr.attendance.html` was
+captured with data loaded and `ATT.editRow === null`). Mirror them from the legacy source anyway when
+leaving them out would wire a button to nothing, and note in the file that the parity test does not reach
+them.
 
 **A screen whose markup shows a time or a date needs the zone pinned in its own test.** The goldens
 were captured with `tests/render_harness.ts`'s UTC override on `Date.prototype.toLocale*`; vitest runs

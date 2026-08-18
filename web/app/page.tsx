@@ -25,6 +25,7 @@ export default function Home() {
           <li><a href="hr/access/">HR OS · Access &amp; Roles</a></li>
           <li><a href="hr/clock/">HR OS · Time Clock</a></li>
           <li><a href="hr/approvals/">HR OS · Approvals</a></li>
+          <li><a href="hr/attendance/">HR OS · Attendance</a></li>
         </ul>
       </div>
       <div className="panel">
