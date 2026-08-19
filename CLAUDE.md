@@ -193,6 +193,21 @@ captured with data loaded and `ATT.editRow === null`). Mirror them from the lega
 leaving them out would wire a button to nothing, and note in the file that the parity test does not reach
 them.
 
+**Shared root `.js` is IMPORTED by `web/`, not copied.** `web/src/hr-calculator.tsx` imports the
+statutory engine from `../../payroll.js` — the same file `hros.html` loads as a classic script — so the
+migration cannot fork the maths. Two things make that resolve: `payroll.d.ts` next to it (web's tsconfig
+sets `allowJs: false`, and an ambient wildcard module does not apply to a relative specifier), and
+`turbopack.root` pointing at the repo root in `next.config.mjs` (Turbopack will not resolve above its
+project root). Declarations only in the `.d.ts` — a rate or table row copied there is a second copy of
+the maths that nothing checks.
+
+**A legacy screen can emit markup React cannot, and that is a finding, not a relaxation.** `ln()`
+(hros.html:4837) writes TWO `style=` attributes on one span, so the colour it means to apply has never
+reached the DOM — a parser drops a duplicate attribute. React cannot emit one at all.
+`web/tests/hr-calculator.parity.test.tsx` applies the parser's own rule to both sides in its OWN file
+(`dedupeAttrs`), with the same justification the six in `parity.ts` carry and its own "cannot hide"
+cases. Do the same before widening `parity.ts`: one screen is not evidence about the shared layer.
+
 **A screen whose markup shows a time or a date needs the zone pinned in its own test.** The goldens
 were captured with `tests/render_harness.ts`'s UTC override on `Date.prototype.toLocale*`; vitest runs
 in the machine's zone, so `toLocaleTimeString` output would differ by wall-clock luck. See the

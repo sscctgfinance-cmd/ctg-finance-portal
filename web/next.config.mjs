@@ -21,8 +21,19 @@
 // `basePath()` in src/portal.ts, and there is not one root-absolute path written by hand.
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
+/**
+ * The repo root, not `web/`, is the module-resolution root.
+ *
+ * `src/hr-calculator.tsx` imports the Malaysian statutory engine from `../../payroll.js` — the same file
+ * `hros.html` loads as a classic script — because the migration must not fork the maths (payroll.js's
+ * own header, and CLAUDE.md). Turbopack refuses to resolve above its project root, so the root is moved
+ * up one. Nothing else changes: `web/` is still where the app, its config and its node_modules live.
+ */
+const turbopack = { root: new URL('..', import.meta.url).pathname };
+
 /** @type {import('next').NextConfig} */
 export default {
+  turbopack,
   output: 'export',
   trailingSlash: true,   // → out/hr/access/index.html, which any plain static server resolves
   basePath,
