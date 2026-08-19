@@ -183,7 +183,9 @@ parity check would pass with every row wired to level 0. `web/tests/hr-approvals
 the golden side with a local `identArgs()` that takes quoted literals AND bare integers; that is a
 superset of `goldenHandlers().args`, so it can only tighten the check, and it lives in the screen's own
 test rather than in the shared file. Widen the same way, not `handlers.ts`, until a screen proves the
-shared default is wrong.
+shared default is wrong. `hr.leave` needs BOTH kinds in one comparison — quoted ids for the row buttons
+(`hrDecideLeave('lv1','approve')`) and bare integers for the flow levels — and the same `identArgs()`
+covers it, so copy it rather than inventing a third extractor.
 
 **A branch the golden does not hold is not covered — say so where you write it.** A golden is one state
 of one screen, so empty tables, loading panels and modals never appear in it (`hr.attendance.html` was
