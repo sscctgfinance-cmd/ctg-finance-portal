@@ -31,6 +31,7 @@ export default function Home() {
           <li><a href="hr/calculator/">HR OS · Payroll Calculator</a></li>
           <li><a href="hr/dashboard/">HR OS · Dashboard</a></li>
           <li><a href="hr/expenses/">HR OS · Reimbursement</a></li>
+          <li><a href="hr/employees/">HR OS · Employees</a></li>
         </ul>
       </div>
       <div className="panel">

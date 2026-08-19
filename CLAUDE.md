@@ -259,6 +259,30 @@ spellings will quietly break it: a NUMERIC style value (React renders `opacity: 
 `px` to a bare `width`), and adjacent `{a} {b}` text expressions — build the string in JS and interpolate
 once. `web/src/hr-dashboard.tsx` uses strings for every style value for exactly that reason.
 
+**A screen with two modes behind one route needs both ported, and the mode the golden misses tested
+another way.** `hr.employees` is the first: `HR.editEmp` is `null` after every `hrNav()`
+(hros.html:1457), so the golden holds the DIRECTORY and the profile FORM appears in no golden at all.
+`web/tests/hr-employees.parity.test.tsx` covers it against the contract that actually governs it — the
+`hr_*` element ids `hrSaveEmp()` (hros.html:2886) reads the form back out of the DOM by, extracted from
+`hros.html` at run time so the check cannot drift from the function it protects. A field that loses its
+id there saves as blank, which on that form is a wiped bank account or IC and no error anywhere. Do the
+same rather than inventing a golden.
+
+**A legacy attribute value written without `esc()` is the same finding as the duplicate `style=`.**
+`hrEmpCard()` (hros.html:2712) writes `title="… submit claims & clock in"` with a bare `&`; a parser
+reads that and `&amp;` as the same character, but React's attribute escaper can only emit the second.
+`web/tests/hr-employees.parity.test.tsx`'s `decodeAttrAmp` applies the parser's rule to both sides in its
+OWN file, narrowed to `&amp;` inside a double-quoted attribute value, with its own "cannot hide" cases —
+same treatment as `hr-calculator`'s `dedupeAttrs`. Two screens have now needed a screen-local rule and
+neither moved into `web/tests/parity.ts`; a third of the same KIND is what would justify that.
+
+**The bare-integer handler widening is now in FIVE screens' test files** — `hr.approvals`, `hr.leave`,
+`hr.yearend`, `hr.dashboard` and `hr.employees` (`hrEditEmp(0)`, where `0` is `hrEditEmp()`'s sentinel
+for "a blank record"). The paragraphs above still read "two screens is not yet a case"; that count is
+spent. `identArgs()` is now five identical copies, and folding it into `web/tests/handlers.ts` alongside
+the identical `assertHandlerParity()` wrappers is one safe change to make once the in-flight migrations
+have landed. Until then, keep copying it — do not edit the shared file mid-flight.
+
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
 the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
