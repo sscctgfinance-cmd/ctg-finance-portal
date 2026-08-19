@@ -31,3 +31,34 @@ export function hrRound2(n: number): number;
 export function hrEpfParts(wage: number, eeRate: number, erRate: number): StatParts;
 export function hrProgTax(chargeable: number): number;
 export function hrAge(dob: string | null | undefined, period?: { year?: number; month?: number } | null): number | null;
+
+/** What `hrCompute` reports about how it read the employee — hros.html renders the badge from it. */
+export interface ComputeMeta {
+  age: number | null;
+  epfEeRate: number;
+  epfErRate: number;
+  socsoCat: number;
+  pcbCat: number;
+  senior: boolean;
+  lindungOn: boolean;
+}
+
+/** One employee's month, in ringgit. */
+export interface ComputeResult {
+  gross: number; epfEe: number; epfEr: number; socsoEe: number; socsoEr: number;
+  eisEe: number; eisEr: number; lindung: number; pcb: number; net: number; employerCost: number;
+  _meta: ComputeMeta;
+}
+
+/**
+ * The payroll engine. `emp` is the employee row (the caller's field whitelist decides what reaches it —
+ * see web/src/hr-payroll.tsx), `cfg` the `hr_statutory_rates` record, `adj` this month's adjustments,
+ * `period` the month being run and `ytd` the year-to-date basis the MTD annualisation reconciles against.
+ */
+export function hrCompute(
+  emp: Record<string, unknown>,
+  cfg: unknown,
+  adj?: Record<string, unknown>[],
+  period?: { month?: number; year?: number } | null,
+  ytd?: Record<string, unknown> | null,
+): ComputeResult;

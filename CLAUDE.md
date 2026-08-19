@@ -283,6 +283,28 @@ spent. `identArgs()` is now five identical copies, and folding it into `web/test
 the identical `assertHandlerParity()` wrappers is one safe change to make once the in-flight migrations
 have landed. Until then, keep copying it — do not edit the shared file mid-flight.
 
+**A legacy screen that writes a NAMED character reference cannot be matched byte for byte.** `hrPayHub()`
+quotes UOB's and LHDN's own wording with `&ldquo;` / `&rdquo;` / `&rsquo;` written into the HTML string
+(hros.html:4035, :4038, :4041), so the golden holds the eight characters `&ldquo;`. React's text escaper
+emits only `& < > " '` as references — a `“` in JSX comes out as the character, and the literal string
+`"&ldquo;"` comes out as `&amp;ldquo;`. `web/tests/hr-payroll.parity.test.tsx` decodes exactly those three
+to their characters on BOTH sides (`decodeNamedRefs`), with the same justification and "cannot hide" cases
+`parity.ts`'s six carry. Same rule as `dedupeAttrs` and `decodeAttrAmp`: it lives in the screen's own
+file, not `parity.ts`. That makes THREE screen-local rules, but three of three different KINDS — a
+duplicate attribute, an unescaped `&` in an attribute, a named reference in text — so none of them is yet
+evidence about the shared layer. A second screen needing THIS one is what would move it.
+
+**A screen with argument-free buttons needs handler IDENTITY compared, not just arguments.**
+`assertHandlerParity()` compares the quoted arguments, so `onclick="hrEmployerToggle()"` and
+`onclick="hrRatesToggle()"` are both `[]` and the Company button opening the rates editor passes.
+`hr-payroll`'s test adds a golden-DERIVED map from the legacy function name to the prop it became
+(`LEGACY_TO_PROP`) and compares that sequence too — a strict widening, in the screen's own file. Do the
+same rather than trusting the label text, which `relax()` compares but a mis-wire does not change.
+
+**`payroll.d.ts` now declares `hrCompute`** — the whole payroll engine, imported by `web/src/hr-payroll.tsx`
+so the grid cannot fork the maths. Its field-whitelist warning (hros.html:3732) travels with the call: a
+field dropped there makes the browser and the server disagree and 409s the entire company's finalise.
+
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
 the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
