@@ -199,7 +199,25 @@ migration cannot fork the maths. Two things make that resolve: `payroll.d.ts` ne
 sets `allowJs: false`, and an ambient wildcard module does not apply to a relative specifier), and
 `turbopack.root` pointing at the repo root in `next.config.mjs` (Turbopack will not resolve above its
 project root). Declarations only in the `.d.ts` — a rate or table row copied there is a second copy of
-the maths that nothing checks.
+the maths that nothing checks. `hr-docs.d.ts` is the same arrangement for `hr-docs.js`, which
+`web/src/hr-expenses.tsx` imports for `hrCsv`/`hrBankCode` — the bank BIC table and the CSV quoting rule
+are bytes that leave the building, so they are imported, never re-typed.
+
+**A file a screen EXPORTS is not markup and no golden sees it — pin it in the screen's own test.**
+`hrRCExportBank()` (hros.html:1849) writes a real bank payment file, and v157 was a TOTAL trailer in it:
+a payment row, payee "TOTAL", for the whole batch. `web/src/hr-expenses.tsx` splits it as
+`bankFile(claims, ids, today)` — a pure function returning the rows, with the download and the toast left
+in the route — precisely so `web/tests/hr-expenses.parity.test.tsx` can assert no row carries TOTAL. Every
+other statutory export in this repo ends with one (`hrExpStatutory`, hros.html:4448); a bank file must
+not. Split the same way for any export you migrate.
+
+**A handler that calls no screen function needs a positional escape, in the screen's own test.**
+`goldenHandlers()` reads `onclick="event.stopPropagation()"` (the selection cell, hros.html:1834) as a
+handler with no arguments, but `reactHandlers()` invoking the React equivalent records nothing, so the
+two lists fall out of step. `web/tests/hr-expenses.parity.test.tsx` allows a handler to record nothing
+only where the golden's own text at that position is `event.stopPropagation()` — so a handler that
+quietly stopped calling anything still fails. Note also that `reactHandlers()` invokes with a bare
+`{target:{value}}` stub, so such a handler must be written `e.stopPropagation?.()`.
 
 **A legacy screen can emit markup React cannot, and that is a finding, not a relaxation.** `ln()`
 (hros.html:4837) writes TWO `style=` attributes on one span, so the colour it means to apply has never
