@@ -224,8 +224,22 @@ them the real one, the test hands them `tests/render_harness.ts`'s `FIXED_MS` in
 derivation under test (a shifted dropdown diffs) instead of moving it somewhere the golden cannot see it.
 
 `hr.yearend` is also the second screen to need the bare-integer widening described above (`hrExpEA(0)`,
-where `0` is the sentinel for "every paid employee"). Two screens is not yet a case for changing
-`handlers.ts`, but the next one makes it three.
+where `0` is the sentinel for "every paid employee"), and **`hr.dashboard` is the third** — its period
+arrows are `hrDashStep(-1)` and `hrDashStep(1)`, so quoted-only extraction returns `[]` for BOTH and the
+check would pass with ‹ and › swapped. Its `identArgs()` also keeps the SIGN, which the other two did not
+need. Three screens carrying the same local widening is now the majority, so folding it into
+`goldenHandlers()` is the next single change to make in `handlers.ts` — do it once the in-flight
+migrations have landed, in the same pass as the `assertHandlerParity()` wrappers.
+
+**A screen that DRAWS is compared by its coordinates, and that is the point.** `hr.dashboard`'s two
+hand-rolled SVG builders (`hrDashLine` at hros.html:1678, `hrDashBars` at :1674) put computed numbers
+straight into attribute values — `d="M42.0 15.5 L142.8 15.5 …"`, `width:97.31958762886599%`. Nothing in
+`relax()` touches an attribute VALUE, so those diff to the last digit, which is what makes a rounding
+change or an off-by-one in the padding catchable rather than a silent visual lie. Port such maths
+character for character; a coordinate you believe is wrong is a `needs-decision:`, not a fix. Two React
+spellings will quietly break it: a NUMERIC style value (React renders `opacity: .10` as `0.1` and appends
+`px` to a bare `width`), and adjacent `{a} {b}` text expressions — build the string in JS and interpolate
+once. `web/src/hr-dashboard.tsx` uses strings for every style value for exactly that reason.
 
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
