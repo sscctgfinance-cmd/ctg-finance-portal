@@ -198,6 +198,18 @@ in the machine's zone, so `toLocaleTimeString` output would differ by wall-clock
 restores it. That changes what both sides are READ under, not what counts as a match, so it is not a
 relaxation and does not belong in `web/tests/parity.ts`.
 
+**A screen whose markup is DERIVED from the current date needs that derivation lifted out of the
+component.** Different problem from the zone pin above: `hr.yearend` builds its Y/A dropdown and its
+default year from `new Date().getFullYear()` (hros.html:4921-4922), so a component that read the clock
+itself would render 2026…2022 today and start failing on 1 Jan. `web/src/hr-yearend.tsx` exports
+`taxYears(now)` and `defaultTaxYear(now)` as pure functions of a Date they are HANDED — the route hands
+them the real one, the test hands them `tests/render_harness.ts`'s `FIXED_MS` instant. That keeps the
+derivation under test (a shifted dropdown diffs) instead of moving it somewhere the golden cannot see it.
+
+`hr.yearend` is also the second screen to need the bare-integer widening described above (`hrExpEA(0)`,
+where `0` is the sentinel for "every paid employee"). Two screens is not yet a case for changing
+`handlers.ts`, but the next one makes it three.
+
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
 the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
