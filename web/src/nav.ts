@@ -85,7 +85,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'selfbill', label: '🧑 Personal Invoices', group: 'operations', migrated: true },
   { app: 'finance', id: 'wht', label: '🌏 Withholding Tax', group: 'operations', migrated: true },
   { app: 'finance', id: 'recon', label: '🏦 Bank Rec', group: 'operations', migrated: true },
-  { app: 'finance', id: 'gateway', label: '🔁 Gateway → Xero', group: 'operations', migrated: false },
+  { app: 'finance', id: 'gateway', label: '🔁 Gateway → Xero', group: 'operations', migrated: true },
   { app: 'finance', id: 'bankfeed', label: '🔗 Bank Feed', group: 'operations', migrated: true },
   { app: 'finance', id: 'salesrecon', label: '📊 Sales Reconciliation', group: 'operations', migrated: true },
   { app: 'finance', id: 'close', label: '📋 Close', group: 'operations', migrated: true },

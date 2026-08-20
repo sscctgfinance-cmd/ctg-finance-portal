@@ -1005,6 +1005,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="wht.js"></script>
 <script src="o2o.js"></script>
 <script src="salesrecon.js"></script>
+<script src="gateway.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
@@ -3755,24 +3756,7 @@ function renderBankFeed(){
 
 // ===== Gateway → Xero bank-statement converter (Payex / Atome) =====
 var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, hitpay:{txn:null,payout:null}, nttdata:{txn:null}, out:[], xlsxLoading:null, rendered:false };
-var GW_REFOPTS={
-  payex:[['TransactionId','TransactionId (unique per sale)'],['ReferenceNumber','ReferenceNumber'],['CollectionReferenceNumber','CollectionReferenceNumber'],['CollectionId','CollectionId']],
-  atome:[['Atome Order ID','Atome Order ID'],['Transaction ID','Transaction ID'],['E-commerce Platform Order ID','E-commerce Platform Order ID']],
-  hitpay:[['ID','Payment ID (unique per sale)'],['Order ID','Order ID'],['Additional Reference','Additional Reference']],
-  nttdata:[['gateway_tx_id','Gateway Txn ID (unique per sale)'],['mah_ref','Merchant Ref (mah_ref)']]
-};
-function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
-function gwPick(row,name){ if(row[name]!=null&&row[name]!=='')return row[name]; var t=name.toLowerCase(); for(var k in row){ if(k.toLowerCase()===t) return row[k]; } return ''; }
-function gwParseDate(v){
-  if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
-  var s=String(v==null?'':v).trim(); if(!s) return null; s=s.split(/[ T]/)[0];
-  var m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
-  if(m){ var d=+m[1],mo=+m[2],y=+m[3]; if(y<100)y+=2000; return new Date(y,mo-1,d); }
-  var m2=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/); if(m2) return new Date(+m2[1],+m2[2]-1,+m2[3]);
-  var d2=new Date(s); return isNaN(d2)?null:d2;
-}
-function gwFmtDate(d,fmt){ if(!d)return ''; var dd=('0'+d.getDate()).slice(-2),mm=('0'+(d.getMonth()+1)).slice(-2),yy=d.getFullYear(); return fmt==='ymd'?(yy+'-'+mm+'-'+dd):(dd+'/'+mm+'/'+yy); }
+// The pure Gateway computation now lives in gateway.js (loaded above) — see its header for why.
 function gwLoadXlsx(cb){
   if(window.XLSX) return cb();
   if(GW.xlsxLoading){ GW.xlsxLoading.push(cb); return; }
@@ -3836,7 +3820,6 @@ function renderGateway(){
   document.getElementById('gw_fi').addEventListener('change',function(ev){gwHandleFiles(ev.target.files);ev.target.value='';});
   gwSetProv('payex');
 }
-function gwProvLabel(p){ return p==='payex'?'Payex':p==='atome'?'Atome':p==='hitpay'?'HitPay':'NTT Data'; }
 function gwOutFile(p){ return GW[p].payout!==undefined?GW[p].payout:GW[p].set; }  // payout/settlement file for a provider
 function gwSetProv(p){
   GW.provider=p;
@@ -3857,18 +3840,6 @@ function gwSetChip(slot,data){
   var box=document.getElementById('gw-chip-'+slot), s=document.getElementById('gw-chip-'+slot+'-s'); if(!box) return;
   if(!data){ box.style.borderColor='var(--border)'; s.textContent='not loaded'; return; }
   box.style.borderColor='var(--green-soft)'; s.textContent=data.name+' · '+data.rows.length+' rows';
-}
-function gwDetect(keys){
-  // NTT Data: single transaction-level statement — very distinctive columns (no separate payout file).
-  if(keys.indexOf('merchant_mdr_amount')>=0 && keys.indexOf('net_amount')>=0 && (keys.indexOf('gateway_tx_id')>=0||keys.indexOf('tx_amount')>=0)) return ['nttdata','txn'];
-  // HitPay: payout file has "Payout ID" + "Net Payout Amount"; txn file has "Net/Converted Amount in MYR"
-  if(keys.indexOf('payout id')>=0 && keys.indexOf('net payout amount')>=0) return ['hitpay','payout'];
-  if(keys.indexOf('net amount in myr')>=0 || keys.indexOf('converted amount in myr')>=0 || keys.indexOf('all inclusive fee amount in myr')>=0) return ['hitpay','txn'];
-  if(keys.indexOf('payout id')>=0 && keys.indexOf('payout amount')>=0) return ['atome','payout'];
-  if(keys.indexOf('atome order id')>=0 || (keys.indexOf('amount receivable')>=0 && keys.indexOf('transaction amount')>=0)) return ['atome','txn'];
-  if(keys.indexOf('settlementdate')>=0 && keys.indexOf('mdr')>=0) return ['payex','set'];
-  if(keys.indexOf('customername')>=0 || (keys.indexOf('transactionid')>=0 && keys.indexOf('merchant')>=0)) return ['payex','txn'];
-  return null;
 }
 function gwHandleFiles(list){
   gwLoadXlsx(function(){
@@ -3895,174 +3866,18 @@ function gwHandleFiles(list){
 function gwConvert(){
   var fmt=document.getElementById('gw-datefmt').value, refField=document.getElementById('gw-ref').value;
   var wantPayout=document.getElementById('gw-payout').checked, wantFee=document.getElementById('gw-fee').checked;
-  GW.audit={txnRead:0,txnConv:0,txnNoDate:0,txnZero:0,poRead:0,poConv:0,poNoDate:0,reconOk:0,reconTot:0,reconMax:0,pxSettled:0,pxUnsettled:0,pxUnsettledAmt:0};
-  var rows=GW.provider==='payex'?gwConvertPayex(fmt,refField,wantPayout,wantFee):GW.provider==='atome'?gwConvertAtome(fmt,refField,wantPayout,wantFee):GW.provider==='nttdata'?gwConvertNttData(fmt,refField,wantPayout,wantFee):gwConvertHitpay(fmt,refField,wantPayout,wantFee);
-  rows.sort(function(a,b){return a.d-b.d;}); GW.out=rows; gwRenderResult();
-}
-// HitPay: charges in SGD, settled in MYR. Money-in = Converted Amount in MYR (gross);
-// fees are per-transaction (All Inclusive Fee, incl. Stripe) — aggregated to one line per day;
-// payouts = Net Payout Amount from the payout file.
-function gwConvertHitpay(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.hitpay, A=GW.audit;
-  // Money-in: one line per transaction (gross MYR). Also accumulate the effective HitPay fee rate
-  // (fee ÷ gross) from the transaction report — the settlement report has no fee column, so the MDR
-  // fee must be derived by grossing-up each net payout, then dated on the settlement (Payout) date.
-  var grossSum=0, feeSum=0;
-  if(f.txn) f.txn.rows.forEach(function(r){
-    A.txnRead++;
-    var d=gwParseDate(gwPick(r,'Completed Date')); if(!d){A.txnNoDate++; return;}
-    var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
-    if(gross===0){A.txnZero++; return;}
-    grossSum+=gross; feeSum+=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
-    A.txnConv++;
-    var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
-    var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
-    var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'});
-  });
-  var feeRate = grossSum>0 ? (feeSum/grossSum) : 0.015;   // effective HitPay rate; fallback 1.5% if no txn file
-  A.hpFeeRate=feeRate;
-  // Payout + MDR fee, BOTH consolidated per Payout Date and dated on the settlement date. Payout net
-  // comes straight from the settlement report; the fee = grossed-up net − net (what HitPay deducted).
-  if(f.payout){
-    var poByDate={};
-    f.payout.rows.forEach(function(r){ A.poRead++;
-      var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
-      var k=gwFmtDate(d,'ymd');
-      if(!poByDate[k]) poByDate[k]={d:d,net:0,n:0};
-      poByDate[k].net+=gwNum(gwPick(r,'Net Payout Amount')); poByDate[k].n++;
-    });
-    Object.keys(poByDate).forEach(function(k){ var b=poByDate[k], net=Math.round(b.net*100)/100;
-      if(wantPayout && net){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-net,payee:'HitPay',desc:'HitPay settlement payout to bank'+(b.n>1?(' ('+b.n+' payouts)'):''),ref:'HITPAY-PAYOUT-'+k,kind:'out'}); }
-      if(wantFee){ var gross=(feeRate<1)? net/(1-feeRate) : net; var fee=Math.round((gross-net)*100)/100;
-        if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay MDR fee ('+(feeRate*100).toFixed(2)+'% of settled gross)',ref:'HITPAY-MDR-'+k,kind:'fee'}); }
-    });
-  }
-  return rows;
-}
-function gwConvertPayex(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.payex, A=GW.audit;
-  // Money-in: one line per transaction (gross the customer paid into the clearing account).
-  if(f.txn) f.txn.rows.forEach(function(r){
-    A.txnRead++;
-    var d=gwParseDate(gwPick(r,'Date')); if(!d){A.txnNoDate++; return;}
-    var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
-    if(net===0){A.txnZero++; return;}
-    A.txnConv++;
-    if(String(gwPick(r,'SettlementDate')||'').trim()) A.pxSettled++; else { A.pxUnsettled++; A.pxUnsettledAmt+=net; }
-    var ref=String(gwPick(r,refField)||gwPick(r,'TransactionId')||gwPick(r,'ReferenceNumber')||'').trim();
-    var cust=String(gwPick(r,'CustomerName')||'').trim()||'Payex customer';
-    var method=String(gwPick(r,'TransactionType')||'payment').trim();
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:net,payee:cust,desc:'Payex '+method,ref:ref,kind:net<0?'out':'in'});
-  });
-  // Settlement: consolidate per SettlementDate, but keep NetPayex and NetOthers as SEPARATE lines — for
-  // both the payout and the MDR fee. A row's stream is Payex when NetPayex is non-zero, else Others
-  // (SettledBy=Payex ⟺ NetPayex>0, verified); MDR is attributed to whichever stream the row settled under.
-  if(f.set){
-    var byDate={}, rnd=function(x){return Math.round(x*100)/100;};
-    f.set.rows.forEach(function(r){ A.poRead++; var d=gwParseDate(gwPick(r,'SettlementDate')); if(!d){A.poNoDate++; return;} var k=gwFmtDate(d,'ymd');
-      if(!byDate[k]) byDate[k]={d:d,npx:0,noth:0,mdrPx:0,mdrOth:0};
-      var npx=gwNum(gwPick(r,'NetPayex')), noth=gwNum(gwPick(r,'NetOthers')), mdr=gwNum(gwPick(r,'MDR'));
-      var isPayex = npx!==0 ? true : (noth!==0 ? false : String(gwPick(r,'SettledBy')||'').trim()==='Payex');
-      byDate[k].npx+=npx; byDate[k].noth+=noth;
-      if(isPayex) byDate[k].mdrPx+=mdr; else byDate[k].mdrOth+=mdr;
-    });
-    Object.keys(byDate).forEach(function(k){ var b=byDate[k];
-      if(wantPayout && rnd(b.npx)){  A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.npx), payee:'Payex',desc:'Payex settlement payout - NetPayex',  ref:'PAYOUT-PAYEX-'+k,  kind:'out'}); }
-      if(wantPayout && rnd(b.noth)){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.noth),payee:'Payex',desc:'Payex settlement payout - NetOthers', ref:'PAYOUT-OTHERS-'+k, kind:'out'}); }
-      if(wantFee && rnd(b.mdrPx))    rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.mdrPx), payee:'Payex',desc:'Payex MDR fee - NetPayex',  ref:'MDR-PAYEX-'+k,  kind:'fee'});
-      if(wantFee && rnd(b.mdrOth))   rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.mdrOth),payee:'Payex',desc:'Payex MDR fee - NetOthers', ref:'MDR-OTHERS-'+k, kind:'fee'});
-    });
-  }
-  return rows;
-}
-function gwConvertAtome(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.atome, A=GW.audit;
-  // Money-in: one line per transaction (gross the customer purchased via Atome BNPL).
-  if(f.txn) f.txn.rows.forEach(function(r){
-    A.txnRead++;
-    var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d){A.txnNoDate++; return;}
-    var amt=gwNum(gwPick(r,'Transaction Amount'));
-    if(amt===0){A.txnZero++; return;}
-    A.txnConv++;
-    var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
-    var plan=String(gwPick(r,"Customer's Payment Plan")||gwPick(r,'Transaction Type')||'').trim();
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:amt,payee:'Atome',desc:('Atome'+(plan?(' '+plan):'')),ref:ref,kind:amt<0?'out':'in'});
-  });
-  // Settlement: consolidate per Payout Date — ONE payout line (−total net) + ONE fee line (all Atome
-  // fees summed) per date. Multiple payout batches on the same day merge into a single line each.
-  if(f.payout){
-    var byDate={}, rnd=function(x){return Math.round(x*100)/100;};
-    f.payout.rows.forEach(function(r){ A.poRead++;
-      var d=gwParseDate(gwPick(r,'Payout Date')); if(!d){A.poNoDate++; return;}
-      var payoutAmt=gwNum(gwPick(r,'Payout Amount')), totalSales=gwNum(gwPick(r,'Total Sales'));
-      // per-row self-check: Total Sales + all fees/SST/rebates should equal Payout Amount
-      var expect=totalSales+gwNum(gwPick(r,'All Atome Fees'))+gwNum(gwPick(r,'All Atome Fees SST'))+gwNum(gwPick(r,'All Rebates'))+gwNum(gwPick(r,'All Rebates SST'));
-      A.reconTot++; var diff=Math.abs(expect-payoutAmt); if(diff>A.reconMax)A.reconMax=diff; if(diff<=0.02)A.reconOk++;
-      var k=gwFmtDate(d,'ymd');
-      if(!byDate[k]) byDate[k]={d:d,payout:0,fee:0};
-      byDate[k].payout+=payoutAmt;
-      byDate[k].fee+=(payoutAmt-totalSales);   // negative = the Atome fee (MDR + SST + rebates) for that payout
-    });
-    Object.keys(byDate).forEach(function(k){ var b=byDate[k];
-      if(wantPayout && rnd(b.payout)){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.payout),payee:'Atome',desc:'Atome settlement payout to bank',ref:'ATOME-PAYOUT-'+k,kind:'out'}); }
-      if(wantFee && rnd(b.fee)) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:rnd(b.fee),payee:'Atome',desc:'Atome MDR & fees (MDR + SST + rebates)',ref:'ATOME-MDR-'+k,kind:'fee'});
-    });
-  }
-  return rows;
-}
-// NTT Data Payment Gateway — a SINGLE transaction-level statement (EDC: DuitNow QR / MyDebit / Visa /
-// Master). There is no separate settlement/payout file, so payout + MDR are DERIVED from the same file and
-// consolidated per transaction date: money-in = tx_amount (gross the customer paid), fee = merchant_mdr_amount
-// (already negative), payout = net_amount. Mirrors the Atome model (no NetPayex/NetOthers split). With no
-// settlement report, the payout line is dated on the transaction date (a proxy) — match it to the actual NTT
-// Data bank deposit when reconciling in Xero.
-function gwConvertNttData(fmt,refField,wantPayout,wantFee){
-  var rows=[], f=GW.nttdata, A=GW.audit;
-  var byDate={}, rnd=function(x){return Math.round(x*100)/100;};
-  if(f.txn) f.txn.rows.forEach(function(r){
-    A.txnRead++;
-    var d=gwParseDate(gwPick(r,'tx_create_date')); if(!d){A.txnNoDate++; return;}
-    var gross=gwNum(gwPick(r,'tx_amount'));
-    if(gross===0){A.txnZero++; return;}
-    var mdr=gwNum(gwPick(r,'merchant_mdr_amount'));   // already negative in the export
-    var net=gwNum(gwPick(r,'net_amount'));
-    // per-row self-check: gross + MDR + commission + VAT should equal net_amount
-    var expect=gross+mdr+gwNum(gwPick(r,'product_commission_amount'))+gwNum(gwPick(r,'vat_amount'));
-    A.reconTot++; var diff=Math.abs(expect-net); if(diff>A.reconMax)A.reconMax=diff; if(diff<=0.02)A.reconOk++;
-    A.txnConv++;
-    var ref=String(gwPick(r,refField)||gwPick(r,'gateway_tx_id')||gwPick(r,'mah_ref')||'').replace(/^'/,'').trim();
-    var method=String(gwPick(r,'product_itemname')||'').split('/')[0].trim()||'payment';
-    rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'NTT Data',desc:('NTT Data '+method),ref:ref,kind:gross<0?'out':'in'});
-    var k=gwFmtDate(d,'ymd');
-    if(!byDate[k]) byDate[k]={d:d,net:0,fee:0,n:0};
-    byDate[k].net+=net; byDate[k].fee+=mdr; byDate[k].n++;
-  });
-  // Payout (−net) + MDR fee, both consolidated per transaction date.
-  Object.keys(byDate).forEach(function(k){ var b=byDate[k];
-    if(wantPayout && rnd(b.net)){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-rnd(b.net),payee:'NTT Data',desc:'NTT Data settlement payout to bank'+(b.n>1?(' ('+b.n+' txns)'):''),ref:'NTT-PAYOUT-'+k,kind:'out'}); }
-    if(wantFee && rnd(b.fee)) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:rnd(b.fee),payee:'NTT Data',desc:'NTT Data MDR fee',ref:'NTT-MDR-'+k,kind:'fee'});
-  });
-  return rows;
+  GW.audit=gwNewAudit();
+  GW.out=gwConvertRows(GW.provider,GW[GW.provider],GW.audit,fmt,refField,wantPayout,wantFee);   // gateway.js
+  gwRenderResult();
 }
 function gwRenderResult(){
-  var rows=GW.out, sIn=0,sOut=0,sFee=0,cIn=0,cOut=0;
-  rows.forEach(function(r){ if(r.kind==='in'){sIn+=r.amount;cIn++;} else if(r.kind==='fee'){sFee+=r.amount;} else {sOut+=r.amount;cOut++;} });
-  var net=sIn+sOut+sFee;
-  document.getElementById('gw-result-prov').textContent='· '+GW.provider.toUpperCase();
-  var cards=[['Money-in (sales)',cIn+' lines',gwMoney(sIn),'var(--green-soft)'],['Payout to bank',cOut+' lines',gwMoney(sOut),'var(--coral-soft)'],['Merchant fees','',gwMoney(sFee),'var(--amber)'],['Net movement',rows.length+' rows',gwMoney(net),net>=0?'var(--green-soft)':'var(--coral-soft)']];
-  document.getElementById('gw-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+(c[1]?(' · '+c[1]):'')+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;color:'+c[3]+'">'+c[2]+'</div></div>';}).join('');
-  var f=GW[GW.provider], hasTxn=f.txn, hasOut=(GW.provider==='payex')?f.set:(GW.provider==='nttdata')?f.txn:f.payout, warn='';
-  if(!hasTxn) warn='Only the settlement/payout file is loaded — money-in'+(GW.provider==='hitpay'?' + fee':'')+' lines need the Transaction file.';
-  else if(!hasOut) warn='Only the Transaction file is loaded — '+(GW.provider==='hitpay'?'payout lines':'payout + fee lines')+' need the '+(GW.provider==='payex'?'settlement':'payout')+' file.';
-  var A=GW.audit||{}, chk=[], txnSkip=(A.txnNoDate||0)+(A.txnZero||0);
-  chk.push('Transactions: read '+(A.txnRead||0)+' → converted '+(A.txnConv||0)+(txnSkip?(' · skipped '+txnSkip+' ('+(A.txnNoDate||0)+' no date, '+(A.txnZero||0)+' zero amount)'):' · none skipped'));
-  if(A.poRead) chk.push((GW.provider==='payex'?'Settlement rows':'Payout rows')+': read '+A.poRead+' → '+(A.poConv||0)+' payout line(s)'+(A.poNoDate?(' · '+A.poNoDate+' skipped (no date)'):''));
-  if(A.reconTot) chk.push((GW.provider==='nttdata'?'NTT Data row self-check (gross + MDR = net): ':'Atome payout self-check (Total Sales + fees = Payout): ')+(A.reconOk||0)+'/'+A.reconTot+(A.reconOk===A.reconTot?' reconcile ✓':(' — worst gap RM'+(A.reconMax||0).toFixed(2))));
-  if(GW.provider==='payex' && (A.pxSettled||A.pxUnsettled)) chk.push('Settlement status: '+(A.pxSettled||0)+' settled + '+(A.pxUnsettled||0)+' not yet settled (RM'+(A.pxUnsettledAmt||0).toFixed(2)+' unsettled float — normal for Payex; clears in a later export)');
-  var allOk = txnSkip===0 && !A.poNoDate && (A.reconTot? A.reconOk===A.reconTot : true);
-  var chkHtml='<div style="background:'+(allOk?'rgba(61,220,151,.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(61,220,151,.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'✓ Data check passed — every input row accounted for':'⚠ Data check — please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
-  var warnHtml=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ '+esc(warn)+'</div>'):'';
+  var rows=GW.out, T=gwTotals(rows);                                  // gateway.js
+  document.getElementById('gw-result-prov').textContent='\u00b7 '+GW.provider.toUpperCase();
+  var cards=[['Money-in (sales)',T.cIn+' lines',gwMoney(T.sIn),'var(--green-soft)'],['Payout to bank',T.cOut+' lines',gwMoney(T.sOut),'var(--coral-soft)'],['Merchant fees','',gwMoney(T.sFee),'var(--amber)'],['Net movement',rows.length+' rows',gwMoney(T.net),T.net>=0?'var(--green-soft)':'var(--coral-soft)']];
+  document.getElementById('gw-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+(c[1]?(' \u00b7 '+c[1]):'')+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;color:'+c[3]+'">'+c[2]+'</div></div>';}).join('');
+  var warn=gwWarning(GW.provider,GW[GW.provider]), CHK=gwAuditLines(GW.provider,GW.audit), chk=CHK.lines, allOk=CHK.allOk;   // gateway.js
+  var chkHtml='<div style="background:'+(allOk?'rgba(61,220,151,.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(61,220,151,.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'\u2713 Data check passed \u2014 every input row accounted for':'\u26a0 Data check \u2014 please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
+  var warnHtml=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">\u26a0 '+esc(warn)+'</div>'):'';
   document.getElementById('gw-balbox').innerHTML=chkHtml+warnHtml;
   var show=rows.slice(0,200);
   document.getElementById('gw-tbody').innerHTML=show.map(function(r){ var col=r.kind==='in'?'var(--green-soft)':(r.kind==='fee'?'var(--amber)':'var(--coral-soft)');
@@ -4070,26 +3885,16 @@ function gwRenderResult(){
   document.getElementById('gw-prevnote').textContent='Preview shows first '+show.length+' of '+rows.length+' rows; download includes all.';
   document.getElementById('gw-result').classList.remove('hide');
 }
-function gwCSV(rows){
-  var q=function(x){ x=String(x==null?'':x); return /[",\n\r]/.test(x)?('"'+x.replace(/"/g,'""')+'"'):x; };
-  var out=['Date,Amount,Payee,Description,Reference'];
-  rows.forEach(function(r){ out.push([r.date,r.amount.toFixed(2),q(r.payee),q(r.desc),q(r.ref)].join(',')); });
-  return out.join('\r\n');
-}
 function gwDownload(which){
   var rows=GW.out;
   if(which==='in') rows=rows.filter(function(r){return r.kind==='in';});
   if(which==='out') rows=rows.filter(function(r){return r.kind!=='in';});
   if(!rows.length){ toast('Nothing to download.',true); return; }
-  var ds=rows.map(function(r){return r.d;}).sort(function(a,b){return a-b;});
-  var tag=gwFmtDate(ds[0],'ymd')+'_'+gwFmtDate(ds[ds.length-1],'ymd');
-  var prov=GW.provider.charAt(0).toUpperCase()+GW.provider.slice(1);
-  var name='Xero_'+prov+'_'+(which==='in'?'MoneyIn':which==='out'?'Settlements':'Clearing')+'_'+tag+'.csv';
-  var blob=new Blob(['﻿'+gwCSV(rows)],{type:'text/csv;charset=utf-8'});
+  var name=gwOutName(GW.provider,which,rows);                          // gateway.js
+  var blob=new Blob(['\ufeff'+gwCSV(rows)],{type:'text/csv;charset=utf-8'});
   var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
 }
-
 async function renderSelfbill(){
   var el=document.getElementById('selfbill'); if(!el) return;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading…</div></div>';

@@ -88,6 +88,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `wht.js` | the withholding-tax computation — s.109/s.109B, gross vs net basis, the s.26A service tax and the s.109(2) increase, plus the charging-section table (v215) | `app.html` |
 | `o2o.js` | the O2O pharmacy-billing computation — the SKU/Package grouping, the date guard, the 19.2% commission and its master-record override, and the invoice numbering (v217) | `app.html` |
 | `salesrecon.js` | the Sales Reconciliation computation — the content-based column/SO/date recognition, the four passes (order lookup → lines → YRDZ numbering → SO suffixing → tally), the Xero CSV and the post body (v219) | `app.html` |
+| `gateway.js` | the Gateway → Xero conversion — the four per-gateway parsers (Payex / Atome / HitPay / NTT Data), the column detection, the totals, the data-check block, the CSV and its filename (v219) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -844,6 +845,36 @@ nothing to lift (Quick Invoice's case, not `wht.js`'s). app.html:1426 is `el.cla
 inside the `if/else if` chain that restarts at `ctgaccess` — so it never reaches the final `else` and the
 feature flag never applies. Its own gap, mirrored not fixed: the overdue pill is `Math.abs(days)`, so a
 `days_until` whose sign flipped under an unchanged `urgency` prints identically.
+
+**`finance.gateway` is the strongest LIFT case in the repo, and `gateway.js` is the sixth shared file.**
+Ask the standard question — does the server re-derive this figure? — and here the answer is that there
+IS no server: the Gateway → Xero converter posts nothing. The CSV is written in the browser and imported
+straight into a real ledger, so unlike O2O (which at least posts through `o2o_issue`) and unlike Quick
+Invoice (whose authority is Xero's own `iv.Total`) there is no second computation anywhere that could
+disagree and be noticed. The four per-gateway parsers, `gwDetect`, `gwTotals`, `gwWarning`,
+`gwAuditLines`, `gwCSV` and `gwOutName` therefore moved into `gateway.js` (loaded by `app.html`, typed by
+`gateway.d.ts`, imported by `web/src/finance-gateway.tsx`); the converters' ONLY change is taking the
+loaded files and the audit accumulator as arguments instead of reading `GW`. The XLSX decode, the DOM
+reads and the blob stay in `app.html`/the route, the same split `bankLines()` uses.
+
+**A renderer's follow-up call can produce a SECOND golden section AND three invisible mutations at once
+— `finance.gateway` is the worst case of the intermediate-state trap so far.** `renderGateway()`
+(app.html:3769) writes `#gateway` and then calls `gwSetProv('payex')`, which does four things the
+harness cannot record (`classList.toggle('p')` on the provider tabs, `.textContent` on `#gw-drop-title`
+and `#gw-chip-b-t`, `.disabled` on `#gw-convert`) and one it can: `#gw-ref`.innerHTML. That last one is
+an element WITH an id nested INSIDE `#gateway`, so `tests/golden/finance.gateway.html` carries an empty
+`<select id="gw-ref">` in its `#gateway` section and the four Payex options in a separate `#gw-ref`
+section. Two of the invisible mutations genuinely diverge: the golden shows NO highlighted provider and
+says "Settlements (payout + fees)" where the live Payex screen says "MDR". So `provider` is
+`GwProvider | null`, `null` being the t=0 frame — `finance.users`' `active` prop, in a screen that needed
+it for three separate mutations. Ask which ids a renderer writes AND what it assigns after the write.
+
+**A screen whose tabs are MODES has as many modes as tabs, and one golden covers one of them.**
+`finance.gateway`'s four provider buttons each select a different set of column names, a different fee
+model and a different file layout; the golden covers Payex at t=0 with nothing loaded and `#gw-result`
+hidden. Atome, HitPay (the only DERIVED fee rate) and NTT Data (single-file, payout dated on the
+transaction date) are outside the diff entirely, as is every figure the screen exists to produce, and
+they are pinned by assertion in the screen's own test against `gateway.js`'s real output.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
