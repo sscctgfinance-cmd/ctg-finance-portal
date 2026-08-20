@@ -507,6 +507,40 @@ another company's ledger and every ✓ is a lie.
 `xlsx.full.min.js` is injected on first use in `web/app/finance/recon/page.tsx`, exactly as
 `app/hr/payslip/page.tsx` injects `jspdf.umd.min.js`.
 
+**A golden can hold an INTERMEDIATE state, and `finance.qinv` is the first that does.** `renderQinv()`
+(app.html:3356) writes the form and then calls `qiAddLine()`, which appends a line row with
+`appendChild`. `tests/render_harness.ts` records innerHTML writes to elements with ids, so the row never
+reached `tests/golden/finance.qinv.html` and `#qi_lines` is captured EMPTY — while every operator sees
+one row. The React screen therefore takes a `lines` count whose GOLDEN value is `0` and whose route
+value is `1`. Before assuming a golden is the screen an operator sees, check whether the legacy renderer
+does anything after the innerHTML write; `.value=`, `appendChild` and `classList` are all invisible to
+the harness (`qi_date`'s date is the same story, which is why the component renders no `value`
+attribute).
+
+**A Finance screen whose form is read back out of the DOM stays UNCONTROLLED, and its ids AND classes
+are the contract.** `qiCollect()` (app.html:4693) reads `#qi_lines > div` and each row's `.qi-desc` /
+`.qi-qty` / `.qi-amt` / `.qi-acct`. `web/src/finance-qinv.tsx` keeps every one, and
+`web/tests/finance-qinv.parity.test.tsx` extracts both name sets from `app.html` at run time — the
+`whtSavePayee()` treatment, widened to classes because a row has no id. A controlled port would also
+diff: React emits `value=""` on a controlled input and no golden has one.
+
+**`finance.qinv`'s gate is the FEATURE flag, not `manage_users`.** Quick Invoice is named nowhere in
+`showApp()`'s chain (app.html:1420-1434), so it falls through to the final
+`else el.classList.toggle('hide', feats.indexOf(t)<0)`. Copying its admin-gated neighbours' line
+(`wht`, `selfbill`, `gateway`, `bankfeed`, `salesrecon` are all `!canManage`) would both over- and
+under-grant. `qinvReachable()` mirrors the real line and the screen's test pins that it is NOT the admin
+gate.
+
+**Not every screen with numbers on it has maths to lift.** The brief's rule — check for shared code
+before writing arithmetic — was applied to `finance.qinv` and came back empty: the only computation is
+the preview's `Σ qty × unit_amount`, and the AUTHORITATIVE total is the server's
+(`finance.ts:780`, and Xero's own `iv.Total` on a live post). That is a display echo, not a second copy
+of a formula the way a second `whtCompute` would be, and inventing a `qinv.js` for one `reduce` would be
+a larger change than the migration. `qiCollect()` is not liftable as-is either — it reads the DOM. What
+IS lifted into `src/` is the part with one right answer: `collect()` (which typed lines become invoice
+lines), `invoiceBody()` (the POST, including the contact_id-XOR-contact_name rule) and
+`todayLocalISO()` (the +8h MYT date, as a pure function of an instant — hr.yearend's rule).
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
