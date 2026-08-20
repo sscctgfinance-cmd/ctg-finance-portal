@@ -76,7 +76,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'cfo', label: '🎯 CFO Cockpit', group: 'dashboard', migrated: false },
   { app: 'finance', id: 'overview', label: '📊 Overview', group: 'dashboard', migrated: false },
   { app: 'finance', id: 'pnl', label: '📑 P&L Analysis', group: 'dashboard', migrated: false },
-  { app: 'finance', id: 'approvals', label: '✅ Approvals', group: 'operations', migrated: false },
+  { app: 'finance', id: 'approvals', label: '✅ Approvals', group: 'operations', migrated: true },
   { app: 'finance', id: 'collections', label: '📨 Collections', group: 'operations', migrated: true },
   { app: 'finance', id: 'upload', label: '⬆ Upload', group: 'operations', migrated: false },
   { app: 'finance', id: 'ocr', label: '🤖 Smart OCR', group: 'operations', migrated: false },

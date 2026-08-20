@@ -455,6 +455,39 @@ the shared div by `innerHTML`. `render(t)` already sets `loaded[t]=true` before 
 a component is re-rendered freely and is a pure function of props, so a render-once flag in one is state
 that can only go stale.
 
+**An ASYNC renderer writes its div TWICE, and the SECOND write is the golden — check, do not assume.**
+`renderApprovals()` (app.html:2358) calls `spin('approvals')` (app.html:1536) before it awaits
+`{api:'pending'}`, then overwrites `#approvals` with the result. The harness records innerHTML writes by
+element id and the last one wins, so `tests/golden/finance.approvals.html` holds the LOADED table and no
+skeleton — the OPPOSITE of `finance.qinv`, where the renderer kept going after its write. Both cases come
+from the same question, which is the one to ask of every async tab on `render(t)`'s `asyncTabs` list
+(app.html:1504): what does the renderer do AFTER its final `innerHTML=`? `renderApprovals()` does
+nothing, so the golden is the screen an operator sees and the skeleton is a branch outside it —
+`web/src/finance-approvals.tsx` mirrors `spin()` character for character and pins it by assertion.
+**`bills === null` (still loading) and a response that carried no `bills` array (app.html:2362, "No
+data") are DIFFERENT documents**; collapsing them into one prop paints "No data" during every load.
+
+**A screen of visually identical rows is where a wrong index is invisible — `finance.approvals` is the
+first.** Three rows of company / vendor / figure, and each carries
+`approve(tenant, invoice, 'approve'|'reject', i)`. R1 strips all of it from the diff, so a Reject button
+posting `approve`, an off-by-one `i`, or a row bound to another company's `invoice_id` all pass the
+string comparison — and the act is applied or VOIDED in a real Xero ledger. `identArgs()` (the eighth
+screen to copy it) is what puts the bare-integer index back; the screen's test drives each mis-binding as
+its own case. The busy row is mirrored, not invented: `approve()` sets `opacity:.5;pointer-events:none`
+(app.html:2411), which does **not** stop a keyboard activation, so the route also refuses a repeat
+decision on a row already in flight — belt and braces over a real legacy gap, not a change to the screen.
+
+**Approvals' gate is the FEATURE flag.** `approvals` is named nowhere in `showApp()`'s branches, so it
+falls through to app.html:1434's final `else`. That is now four Finance screens (`collections`, `recon`,
+`qinv`, `approvals`) whose gate was NOT their admin-gated neighbours' `!canManage` — read the block, do
+not copy a line.
+
+**Reject voids a bill and the legacy asks first.** `showConfirm()` (app.html:2395) is one of the four
+modals that were not migrated. `web/app/finance/approvals/page.tsx` uses the browser's own `confirm()`
+with the same two sentences rather than dropping the question — a handoff is not available for a control
+that lives inside the screen, and silently removing the only thing between a mis-click and a voided
+supplier bill is not a migration detail.
+
 **A Finance golden can hold almost NOTHING of the screen — `finance.collections` is the case.**
 `renderCollections()` (app.html:2425) writes a panel, a paragraph, one button and an EMPTY `#collres`;
 every figure the screen ever shows is written into that div by `trigColl()` after the action runs, and
