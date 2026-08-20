@@ -764,6 +764,27 @@ supplier's and the auditor's copy of a payment — so it gets `bankFile()`'s tre
 block and the LHDN declaration pinned by assertion. Distinguish it from `whtDocHtml()`, which is a
 sibling PAGE the legacy renderer dispatches to and therefore hands off.
 
+**A derivation whose defect is ZONE-DEPENDENT must be pinned in the SOURCE, not by its output.**
+`finance.calendar`'s `dueLabel()` mirrors app.html:6929, which splits the `YYYY-MM-DD` string by hand and
+says why: `new Date('2026-07-30')` is midnight UTC and prints 29 Jul west of Greenwich. A React port
+rewritten with the Date constructor passed EVERY output assertion in the screen's test — because this
+machine, and CI, sit in MYT — and would print the day before for an operator in London. On a compliance
+calendar that is a missed statutory filing. No output check can see it: it is a property of the
+environment, not of the value. `web/tests/finance-calendar.parity.test.tsx` therefore reads
+`web/src/finance-calendar.tsx` at run time and asserts `dueLabel()`'s body contains no `new Date` /
+`getMonth` / `toLocale`, comments stripped. Distinguish this from `hr.clock`'s zone PIN (which changes
+what both sides are READ under) and `hr.yearend`'s lifted `taxYears(now)` (which makes the clock a prop):
+here there is no clock at all, and the guard's job is to keep it that way.
+
+**`finance.calendar` is NOT a calendar grid, and its gate is `finance.pharm`'s kind.** The migration
+brief flagged `calRender()` (app.html:6907) as the screen likeliest to be left on legacy code, expecting
+a hand-built month grid. It is four filter buttons, four count cards and one table bucketed by
+`x.urgency` — a string the SERVER sends, alongside `days_until`. The client derives neither, so there was
+nothing to lift (Quick Invoice's case, not `wht.js`'s). app.html:1426 is `el.classList.remove('hide')`,
+inside the `if/else if` chain that restarts at `ctgaccess` — so it never reaches the final `else` and the
+feature flag never applies. Its own gap, mirrored not fixed: the overdue pill is `Math.abs(days)`, so a
+`days_until` whose sign flipped under an unchanged `urgency` prints identically.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and

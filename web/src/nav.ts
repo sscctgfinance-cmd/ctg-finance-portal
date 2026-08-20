@@ -89,7 +89,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'bankfeed', label: '🔗 Bank Feed', group: 'operations', migrated: true },
   { app: 'finance', id: 'salesrecon', label: '📊 Sales Reconciliation', group: 'operations', migrated: false },
   { app: 'finance', id: 'close', label: '📋 Close', group: 'operations', migrated: false },
-  { app: 'finance', id: 'calendar', label: '📅 Calendar', group: 'operations', migrated: false },
+  { app: 'finance', id: 'calendar', label: '📅 Calendar', group: 'operations', migrated: true },
   { app: 'finance', id: 'ap', label: '📧 AP Inbox', group: 'operations', migrated: false },
   { app: 'finance', id: 'info', label: '🏢 Company Info', group: 'data', migrated: false },
   { app: 'finance', id: 'pharm', label: '🏪 Pharmacies', group: 'data', migrated: true },
