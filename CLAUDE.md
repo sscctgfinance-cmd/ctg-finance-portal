@@ -574,6 +574,30 @@ IS lifted into `src/` is the part with one right answer: `collect()` (which type
 lines), `invoiceBody()` (the POST, including the contact_id-XOR-contact_name rule) and
 `todayLocalISO()` (the +8h MYT date, as a pure function of an instant — hr.yearend's rule).
 
+**A golden whose renderer does nothing after its innerHTML write IS the screen — check, then say so.**
+`finance.upload` is the counter-case to `finance.qinv` above: `renderUpload()` (app.html:2450) ends with
+`UP_SCAN=null` and nothing else — no `appendChild`, no `.value=`, no timeout, no fetch — and `upload` is
+not on `asyncTabs`, so `tests/golden/finance.upload.html` really is the initial screen. That is asserted
+against app.html's own text in `web/tests/finance-upload.parity.test.tsx` rather than left as a claim, so
+a later `qiAddLine`-style line added to the renderer fails a test instead of silently invalidating a diff.
+Do the same check before trusting any remaining golden.
+
+**A Finance screen that takes files IN pins the SOURCE rule, not just the body.** `doUpload()`
+(app.html:2487) decides between a scanned PDF and the file picker, refuses nothing-selected and refuses
+over 15MB — all before the FileReader. `chooseUpload()` in `web/src/finance-upload.tsx` is that rule as a
+pure function, and `uploadBody()` throws on a blank tenant for the same reason `reconcileBody('')` does:
+a document filed against the wrong company sits in another company's payables inbox and nothing on screen
+says so.
+
+**A route that needs a common.js TOP-LEVEL CONST reaches it by indirect `eval`, not `window`.**
+`web/app/finance/upload/page.tsx` is the first: `DocScanner` is a top-level `const` in `common.js`, so it
+is in the global LEXICAL environment and `window.DocScanner` is `undefined` (CLAUDE.md says so above, and
+it has already caused a silent fallback once). A module cannot import it either — `common.js` is a
+classic script with no exports. `(0, eval)('typeof DocScanner !== "undefined" ? DocScanner : null')` runs
+at global scope and resolves against exactly that environment; the script is injected from the same
+origin, as `app/hr/payslip/page.tsx` injects jspdf. Four lines, and the 600-line camera pipeline stays
+unforked — which is the whole point of the shared-`.js` rule.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
