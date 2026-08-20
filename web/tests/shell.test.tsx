@@ -177,8 +177,14 @@ describe('every screen in both apps is in the nav', () => {
   });
 
   it('sends an unmigrated screen to its legacy tab, and a migrated one to its route', () => {
-    expect(href(FINANCE_NAV.find((e) => e.id === 'overview')!)).toBe('/app.html#tab=overview');
+    // The unmigrated example is TAKEN FROM THE LIST rather than named. It used to be `overview`, which
+    // the eighteenth Finance migration turned into a route — and a hardcoded name here means every
+    // remaining migration must edit this shared file to land. Deriving it is strictly stronger: it
+    // asserts the rule for whichever screen is unmigrated, and keeps asserting it down to the last one.
+    const unmigrated = FINANCE_NAV.filter((e) => !e.migrated);
+    for (const e of unmigrated) expect(href(e)).toBe(`/app.html#tab=${e.id}`);
     expect(href(FINANCE_NAV.find((e) => e.id === 'wht')!)).toBe('/finance/wht/');
+    expect(href(FINANCE_NAV.find((e) => e.id === 'overview')!)).toBe('/finance/overview/');
     expect(href(HR_NAV.find((e) => e.id === 'payroll')!)).toBe('/hr/payroll/');
     // The `#tab=` scheme is what makes a handoff land on the right SCREEN rather than the app's default
     // view (v213). Every legacy destination must carry it, or the nav is 21 links to Overview.

@@ -955,6 +955,38 @@ panels whose bodies (`apRenderRules()`, `apRenderSettings()`) render only on a f
 `false` — plus `apRenderDetail()`, the screen's largest renderer, behind `AP_DETAIL === null`, and
 `apShowPreviewModal()`, which appends to `document.body` and is not in `#ap` at all. Count regions, not
 sections, and say in the PR how many the golden covers.
+**`finance.overview` is the first screen whose renderer writes into the SHELL, and the first whose
+`insertAdjacentHTML` reaches a golden.** Its golden has FOUR sections. Three are `renderOverview()`'s own
+ids; the fourth is `#last-refresh` — app.html:1117's chrome div, which `web/src/finance-shell.tsx:127`
+already renders EMPTY and which app.html:2140 reaches out and fills. The React port keeps it a pure
+component (`LastRefresh`) so the golden section can diff it, and the route `createPortal`s it into the
+shell's div; the shell itself is untouched. The other surprise is that `tests/render_harness.ts:104`
+implements `insertAdjacentHTML` as an APPEND to the same recorded string, so the two placeholder divs
+`renderOverview()` appends (app.html:2139) ARE in the `#overview` section, empty, while `#ov-trend` and
+`#ov-charts` carry their loaded contents as their own sections. `.className=` / `.value=` / `appendChild`
+are the invisible ones; `insertAdjacentHTML` is not. This screen passes the after-the-write check
+(app.html:2138-2141 does none of the four), and its test asserts that out of app.html rather than claiming it.
+
+**Overview is where "does the server re-derive this figure?" gets its third answer: neither.** It posts
+nothing, exports nothing and creates nothing — every figure is a sum of server-supplied per-company
+values or an SVG coordinate — so it is `finance.qinv`'s case, not `gateway.js`'s. It is also not
+mechanically liftable: `ovPnlBars` / `ovMarginLine` / `ovVendorBars` / `ovCumNet` / `ovDonut` / `ovBars`
+build the coordinate and the `<rect>` in one expression, so a shared module would have to return markup.
+`hr.dashboard`'s rule applies instead — port coordinate for coordinate and let the golden diff it to the
+last digit. Its gate is the FEATURE kind (app.html:1434's final `else`; `overview` is named in no branch).
+
+**Two defects that a plausible test suite does NOT catch — found by introducing them, which is the only
+way to know.** (1) `okRows.reduce` → `cs.reduce` in the period mode, i.e. counting a company whose live
+Xero fetch failed: it passes against an all-NULL fixture, because `+null` is 0 and the total does not
+move. The row that moves it is one the server FLAGGED while still returning figures, which is what
+app.html:2113's `c.error || c.income === null` is really about — drive that, not the null row. (2)
+Re-rounding a chart coordinate: `Number(x.toFixed(2)).toFixed(1)` is the same string, so a defect written
+that way is a no-op. Drive the component's OWN output as well as a mutated golden.
+
+**`web/tests/shell.test.tsx`'s unmigrated example is now derived from `FINANCE_NAV`, not named.** It
+hardcoded `overview` as "an unmigrated screen", so migrating Overview necessarily broke it — and with
+`cfo` and `info` still to go, both remaining migrations would have had to edit that shared file. It now
+asserts the `#tab=` rule for EVERY unmigrated entry, which is strictly stronger and holds to the last one.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
