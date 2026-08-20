@@ -301,7 +301,11 @@ evidence about the shared layer. A second screen needing THIS one is what would 
 `onclick="hrRatesToggle()"` are both `[]` and the Company button opening the rates editor passes.
 `hr-payroll`'s test adds a golden-DERIVED map from the legacy function name to the prop it became
 (`LEGACY_TO_PROP`) and compares that sequence too — a strict widening, in the screen's own file. Do the
-same rather than trusting the label text, which `relax()` compares but a mis-wire does not change.
+same rather than trusting the label text, which `relax()` compares but a mis-wire does not change. `hr.profile`
+is the second, and there EVERY handler is argument-free, which also breaks the shared guard-the-guard:
+hr-clock's `expect(want.some(h => h.args.length > 0))` is unsatisfiable on such a screen. Replace it —
+do not drop it — with "every golden handler name resolved to a known prop", so a new legacy button is
+still a failure rather than a silent fall-through of `LEGACY_TO_PROP`'s `?? h.raw`.
 
 **`payroll.d.ts` now declares `hrCompute`** — the whole payroll engine, imported by `web/src/hr-payroll.tsx`
 so the grid cannot fork the maths. Its field-whitelist warning (hros.html:3732) travels with the call: a
@@ -337,12 +341,28 @@ returns `employer` (the company's statutory registration numbers) and `leaveBal`
 `hrEmpPayslipDownload()` can draw them into the PDF; the legacy screen renders neither.
 `web/tests/hr-payslip.parity.test.tsx` asserts they are absent from the markup, that there is no
 `<select>` or employee id anywhere on the screen, and that the only buttons are the per-row PDF
-downloads — so a future change that exposes one fails there rather than on someone's screen.
+downloads — so a future change that exposes one fails there rather than on someone's screen. `hr.profile`
+is the second: it is handed the whole `hr_employees` row — `basic_salary`, `fixed_allowance`, `pay_type`,
+`status` — and renders eight fields as read-only text and the pay fields not at all, so its test asserts
+no pay figure in the markup, no editable control inside the HR-managed card and no colleague's name.
+Guard the guard there too: assert the fixture really carries what must not leak.
 
 **`hr-docs.d.ts` now declares `hrEmpView` and `hrDrawPayslip`**, imported by
 `web/app/hr/payslip/page.tsx` so the PDF an employee downloads from React is drawn by the same shared
 file `hros.html` loads. `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY` as globals (hr-docs.js's own
 header says so): the route sets them on `window` before the call, exactly as the legacy caller does.
+
+**A screen that WRITES needs its POST body split out as a pure function and pinned against the legacy
+source.** Same rule as the exported bank file above, for the other direction: no golden sees a request
+body, so `hrEmpProfileSave()` (hros.html:3383) becomes `profileBody()` in `web/src/hr-profile.tsx` — the
+body only, with the fetch, the button state and the toast left in the route. Two things get proven there
+and nowhere else. (1) The FIELD SET, read out of `hros.html` at run time rather than retyped in the test
+— a retyped list agrees with a widened port by construction, and a field the legacy held read-only is a
+privilege escalation however innocent it looks. (2) The TARGET: `hr_my_profile_save` resolves the
+employee from the token (`hr.ts:1362`) and the request carries no id, so the proof is the negative —
+assert no key is or contains one. `web/tests/hr-profile.parity.test.tsx` also pins the v159 rule that
+lives half in each half: an ABSENT `bankCode` means "unchanged", an empty one means "clear it", and the
+form paints before `hr_banks_list` resolves.
 
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in

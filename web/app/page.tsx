@@ -35,6 +35,7 @@ export default function Home() {
           <li><a href="hr/payroll/">HR OS · Payroll</a></li>
           <li><a href="hr/claims/">HR OS · Claims</a></li>
           <li><a href="hr/payslip/">HR OS · My Payslips</a></li>
+          <li><a href="hr/profile/">HR OS · My Profile</a></li>
         </ul>
       </div>
       <div className="panel">
