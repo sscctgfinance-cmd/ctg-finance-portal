@@ -1007,6 +1007,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="salesrecon.js"></script>
 <script src="gateway.js"></script>
 <script src="pnl.js"></script>
+<script src="ap.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
@@ -7055,18 +7056,8 @@ async function apPostBill(){
     } catch(e){ toast(e.message,true); }
   });
 }
-// Derive a reusable keyword from a line-item description (longest significant word).
-// Skips digit-containing tokens, dates, months and filler — returns '' if nothing clean,
-// so the teach feature never saves a junk rule (operator can add one manually instead).
-function apDeriveKeyword(desc){
-  if(!desc) return '';
-  const STOP = new Set(['the','and','for','with','fee','cost','from','this','that','bill','month','year','jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec','january','february','march','april','june','july','august','september','october','november','december','statement','service','payment','charge','invoice','total','subtotal','amount']);
-  const words = String(desc).toLowerCase()
-    .replace(/[^a-z0-9 ]/g,' ').split(/\s+/)
-    .filter(w => w.length>=4 && !/\d/.test(w) && !/^\d*(st|nd|rd|th)$/.test(w) && !STOP.has(w));
-  words.sort((a,b)=>b.length-a.length);
-  return words[0]||'';
-}
+// `apDeriveKeyword()` now lives in ap.js — the React port imports it rather than re-expressing it
+// (ap.js's header says why: nothing on the server re-derives the keyword it teaches).
 async function apReject(){
   if(!AP_ACTIVE_ID) return;
   const reason = prompt('Reason for rejecting? (optional)','manually rejected');

@@ -90,6 +90,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `salesrecon.js` | the Sales Reconciliation computation — the content-based column/SO/date recognition, the four passes (order lookup → lines → YRDZ numbering → SO suffixing → tally), the Xero CSV and the post body (v219) | `app.html` |
 | `gateway.js` | the Gateway → Xero conversion — the four per-gateway parsers (Payex / Atome / HitPay / NTT Data), the column detection, the totals, the data-check block, the CSV and its filename (v219) | `app.html` |
 | `pnl.js` | the P&L Analysis model — the cell accessors, `pnlBuild`'s grid (sections, subtotals, Gross Profit, the cost blocks, the % basis), the CSV and its filename (v220) | `app.html` |
+| `ap.js` | the AP Inbox's one client-owned rule — `apDeriveKeyword()`, the GL-coding keyword a reviewed bill teaches the engine (v221) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -911,6 +912,49 @@ blocks are drawn — and moves only the total label printed above the bar, so `h
 tooltips can never catch it. The first cut of `finance-pnl`'s chart test asserted exactly those and went
 green on the defect. Read what each clamp, filter or `Math.max` actually changes before writing the
 assertion that protects it.
+
+**A "carries every `data-*` name" check is NOT a check that each field reads the RIGHT value —
+`finance.ap` is where that gap was found.** The `qi_*` / `data-k` treatment every uncontrolled Finance
+form uses extracts the attribute NAMES from the legacy at run time and asserts each appears. Swapping
+`fld('Total','total',ai.total,'number')`'s source to `ai.invoice_no` in the shipped component passed
+EVERY such check plus the golden diff — and posts `Number('INV-9')||0`, a real Xero bill for RM 0.00
+with the invoice number nowhere on it. `web/tests/finance-ap.parity.test.tsx` closes it by reading the
+label→key→SOURCE triples out of app.html's own `fld(...)` calls, rendering with one distinct sentinel
+per verdict field, and asserting each `data-bk` input carries ITS source's sentinel and its declared
+`type`. Do the same wherever a form's fields are populated from one object — the name check alone is
+half a guard.
+
+**A `toLocale*` whose zone the legacy pins EXPLICITLY still needs the Calendar's source pin.**
+`finance.ap`'s three date calls all pass `timeZone:'Asia/Kuala_Lumpur'` (app.html:6821, :6913, :6960),
+so unlike `hr.clock` the screen needs no zone override in its test — the harness spreads the caller's
+options last, so the explicit zone wins on both sides. But DELETING that one option is invisible here
+and on CI (both UTC+8) and prints the PREVIOUS DAY west of Greenwich: the fixture's 2026-08-17T02:14Z
+reads "17 Aug, 10:14" zoned and "16 Aug, 22:14" unzoned. Verified by breaking the shipped component —
+every output assertion still passed and only the source pin went red. So the rule generalises: where a
+screen formats an instant, assert the SOURCE carries the zone, not just that the output looks right.
+
+**`ap.js` is the eighth shared file, and it is ten lines — lift by the SERVER test, not by size.**
+`finance.ap` is otherwise a NOT-lifted screen (the stat banner is a display echo, and `ap_post`
+finance.ts:1838 rebuilds the entire Xero payload itself, taking the TENANT from the inbox row so the
+client cannot bind a bill to the wrong company). The one exception is `apDeriveKeyword()`: the client
+derives the GL-coding keyword and `ap_rule_save` (finance.ts:1899) stores it verbatim, so a second copy
+could drift by one stop word and silently teach a different Chart-of-Account for every future bill
+matching it. Ask "does the server re-derive this?" per FUNCTION, not per screen.
+
+**`finance.ap` is the second tab hidden from everyone, and the pair is now a pattern.** app.html:1428
+is `el.classList.toggle('hide', true)` with the same 2026-07-09 Claude-vision-credit comment `ocr` (:1427)
+carries. Both export `<x>Reachable()` returning `false` AND `<x>ReachableAfterTopUp()` — the intended
+admin-only rule — with the route pinned to the first and both tested. Re-enabling either is one line in
+app.html and one in `src/`, with its behaviour already proven.
+
+**A Finance screen can have four REGIONS inside one golden section, three of whose bodies the golden
+never reaches.** `finance.ap`'s `#ap` is a single write (the `finance.approvals` case — `spin('ap')`
+then `apRender()` overwrite the SAME id, so last-write-wins keeps the loaded screen, and `apRender()`
+does nothing after its write). But inside it sit the stat banner, the inbox panel, and two COLLAPSED
+panels whose bodies (`apRenderRules()`, `apRenderSettings()`) render only on a flag the golden captured
+`false` — plus `apRenderDetail()`, the screen's largest renderer, behind `AP_DETAIL === null`, and
+`apShowPreviewModal()`, which appends to `document.body` and is not in `#ap` at all. Count regions, not
+sections, and say in the PR how many the golden covers.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
