@@ -455,6 +455,31 @@ the shared div by `innerHTML`. `render(t)` already sets `loaded[t]=true` before 
 a component is re-rendered freely and is a pure function of props, so a render-once flag in one is state
 that can only go stale.
 
+**A Finance golden can hold almost NOTHING of the screen — `finance.collections` is the case.**
+`renderCollections()` (app.html:2425) writes a panel, a paragraph, one button and an EMPTY `#collres`;
+every figure the screen ever shows is written into that div by `trigColl()` after the action runs, and
+the busy button is mutated imperatively. So the diff proves the copy and the wiring and nothing else,
+and `web/tests/finance-collections.parity.test.tsx` carries its own assertions for both `#collres`
+states and the busy button. Where a screen's whole useful output is dynamic, a golden-only check is
+false confidence — say so in the file and assert the rest.
+
+**Not every Finance gate is `!canManage`.** `finance.wht` is in `showApp()`'s named branches; `collections`
+falls through to the chain's final `else` (app.html:1434), so its rule is `feats.indexOf(id)<0` — a
+FEATURE flag, not a role. `collectionsReachable()` mirrors that one line from `web/src/finance-collections.tsx`.
+Read app.html:1420-1434 as a whole before assuming which kind a tab is.
+
+**Inline styles do not always need the pilot's `st()` splitter.** `web/src/finance-collections.tsx` has
+four short styles and writes them as plain objects with STRING values in the legacy declaration order,
+which React serialises byte-identically. That only holds while every value is a string and the order
+matches; a numeric value or a re-ordered object is the silent break `st()` exists to prevent, so a screen
+with more than a handful of declarations should still copy it.
+
+**The Collections button SENDS MAIL, and the copy above it is a promise about who receives it.** The
+single action is `{api:'collections'}` → `portal_trigger_collections` (finance.ts:610). `previewBody()`
+is split out of the route and pinned against `trigColl()`'s own text in app.html, and handler parity
+(`LEGACY_TO_PROP`, since the handler is argument-free) proves the button reaches that action and no
+other. Any migrated screen whose button has an outward-facing effect deserves the same two pins.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
