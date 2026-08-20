@@ -480,6 +480,33 @@ is split out of the route and pinned against `trigColl()`'s own text in app.html
 (`LEGACY_TO_PROP`, since the handler is argument-free) proves the button reaches that action and no
 other. Any migrated screen whose button has an outward-facing effect deserves the same two pins.
 
+**`finance.recon` (Bank Rec) adds three more.** Its gate is the FEATURE kind `collections` describes
+above, not `!canManage` — `reconReachable()` mirrors app.html:1434 — and its golden is the same
+almost-nothing shape: `renderRecon()` writes `#rc_out` empty and `reconRun()` fills it later, so the
+cards, the match table and `bankParse()` are all outside the diff and are pinned in the screen's own
+test.
+
+**Where the legacy reads a control back out of the DOM, keep the control UNCONTROLLED and keep its id.**
+`reconRun()` reads the company from `document.getElementById('rc_co').value`. Making that `<select>`
+controlled would add an `onChange` the golden does not carry (handler parity fails) and a `selected`
+attribute that only relaxation R5 would absorb. Uncontrolled with the legacy id matches byte for byte,
+and the route reads the same id — the same contract the WHT payee form's `wp_*` ids carry.
+
+**Bank Rec matches by AMOUNT, and the client resolves none of it.** `bank_reconcile` (finance.ts:849)
+builds one `docs` list — ACCREC first, then ACCPAY — and per bank line takes the FIRST doc within 1 sen
+that is not already `used`. Two invoices for the same figure are separated only by that order. The React
+screen renders `results[i].match` positionally and must never sort, group or de-duplicate: a port that
+tidied a duplicate or re-derived a match would reconcile a payment against a different invoice with
+nothing on screen looking wrong. `web/src/finance-recon.tsx` splits `bankLines()` (app.html:5934's
+`bankParse` minus the XLSX decode) and `reconcileBody()` out as pure functions for the same reason
+`bankFile()`/`profileBody()` were split on the HR side — `reconcileBody('')` throws rather than
+defaulting to the first company, because a statement posted with the wrong tenant matches against
+another company's ledger and every ✓ is a lie.
+
+**A vendored library a Finance route needs is loaded from the same origin, not imported.**
+`xlsx.full.min.js` is injected on first use in `web/app/finance/recon/page.tsx`, exactly as
+`app/hr/payslip/page.tsx` injects `jspdf.umd.min.js`.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
