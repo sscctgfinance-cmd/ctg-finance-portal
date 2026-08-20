@@ -653,10 +653,31 @@ Its gate is the FEATURE kind — app.html:1434's final `else` — not `!canManag
 cannot quietly stop mirroring the app.
 
 **Two sub-flows hand off rather than lie.** The "add this pharmacy to the master" link goes to
-`app.html#tab=pharm` (the Pharmacies tab is not migrated) — the honest strangler edge `whtDocHtml()`
+`app.html#tab=pharm` (the Pharmacies LIST is migrated, its detail form is not) — the honest strangler edge `whtDocHtml()`
 uses. Everything else, including the Xero-contact search/link and the JSZip PDF batch, is ported: an
 operator who posts live from React would otherwise lose the invoice PDFs, and the batch only exists in
 that page's memory.
+
+**A gate can be "always visible, gated SERVER-SIDE" — `finance.pharm` is the first, and the interesting
+direction is the REFUSAL.** app.html:1425 is `el.classList.remove('hide')`: no role, no feature flag, and
+`portal_pharmacy_list` decides. So `pharmReachable()` is `true` and the branch carrying the security
+meaning is what `renderPharm()` (app.html:6603) writes when the server says `ok:false` — a 🔒 panel
+naming SKINDAE. A port that rendered an empty table there turns a refusal into "this company has no
+pharmacies", which reads as success; no golden holds it, so
+`web/tests/finance-pharm.parity.test.tsx` pins the panel AND the negatives (no table, no counts, no
+stale list leaking past it). Note the one place `web/src/portal.ts` cannot mirror app.html: common.js
+RETURNS an HTTP-200 `{ok:false}` (→ 🔒) and THROWS otherwise (→ ⚠️), while `portal.ts` throws on both,
+so the route splits on `e instanceof TypeError` — the safe direction, since it can only over-state a
+refusal. `pharmRenderDetail()` (the seven-section profile form, its save/delete and the Xero-link modal)
+is a sibling PAGE, not a branch, and hands off to `app.html#tab=pharm` exactly as `whtDocHtml()` does.
+
+**A legacy `onmouseover="this.style.background='…'"` is hr-expenses' `event.stopPropagation()` case, not
+a new one.** `finance.pharm`'s rows are the first with hover handlers: they repaint the row and call no
+screen function, so `reactHandlers()` records nothing for them and the two handler lists fall out of
+step. Its test escapes them POSITIONALLY against the golden's own text (so a row handler that quietly
+stopped calling anything still fails) and pins the COLOUR each one paints separately, out of the golden.
+React needs the guard `if (e && e.currentTarget && e.currentTarget.style)` because the shared walker
+invokes every handler with a bare `{target:{value}}` stub.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
