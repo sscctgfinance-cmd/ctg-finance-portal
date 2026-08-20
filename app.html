@@ -1002,6 +1002,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
      midnight under Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
 <!-- Shared with hros.html — must load before the inline script below (classic script: these are globals). -->
 <script src="common.js"></script>
+<script src="wht.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
@@ -3370,62 +3371,18 @@ function renderQinv(){
 /* ── 🌏 Withholding Tax — payments to non-residents (ITA 1967 s.109 / s.109B) ──────────────────────
    Replaces Malaysia_WHT_Summary.xlsx.
 
-   The computation, and why it is what it is:
-     fee            each line, EXCLUDING Malaysian service tax
-     SST            fee × 8% — service tax on imported taxable services, self-accounted by the PAYER
-                    under s.26A Service Tax Act 2018. Shown for cash-planning; it is NOT part of the
-                    WHT base and never has been. Charging WHT on fee+SST over-withholds every month.
-     gross basis    the fee IS the gross. WHT = fee × rate, and the payee receives fee − WHT.
-     net basis      the contract says the payee gets the fee clean, so the payer bears the tax:
-                    gross = fee ÷ (1 − rate);  WHT = gross − fee.  The workbook's note described this
-                    but the sheet never implemented it, so a net-of-tax contract was under-withheld.
-     penalty        s.109(2)/s.109B(2): a 10% increase on tax not remitted within one month of paying
-                    or crediting the non-resident. Computed here, not typed — the spreadsheet left the
-                    cell blank under a label that says "10% of WHT".
-     due date       one month after the LAST payment date on the computation.
+   THE COMPUTATION IS NOT HERE. `whtMoney`, `whtRound2`, `whtLineSst`, `whtLineTotal`, `whtCompute`
+   and `whtDueDate` moved to wht.js — loaded above as a classic script, so they are still globals and
+   every onclick= below still resolves them. They left because the React port in web/ IMPORTS them: a
+   tax computation with two copies is a wrong filing waiting for the day the copies disagree. Read
+   wht.js's own header for the rules — gross vs net basis, why the s.26A service tax is outside the
+   withholding base, and the s.109(2) increase. tests/wht_test.ts is the gate on all of it, and it
+   looks the functions up by name out of whatever files this page loads, so it did not have to change.
+   `WHT_TYPES` / `whtTypeLabel` went with them: the charging sections carry LHDN's own form
+   numbers (CP37 / CP37D / CP37A-F) and both halves print them.
 */
 var WHT={ cfg:null, list:null, loading:false, err:null, page:'list', doc:null, lines:[], payees:false, editPayee:null };
 
-function whtMoney(n){ n=Number(n)||0; return n.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function whtRound2(n){ return Math.round((Number(n)||0)*100)/100; }
-/* The two derived cells on a payment line. Defined once so the row casts across, the column casts
-   down, and the on-screen table, the printable form and the subtotal can never disagree. */
-function whtLineSst(a, rate){ return whtRound2((Number(a)||0)*(Number(rate)||0)); }
-function whtLineTotal(a, rate){ return whtRound2((Number(a)||0)+whtLineSst(a, rate)); }
-/* The whole calculation in one place, so the screen, the printable form and any test all agree. */
-function whtCompute(doc, lines){
-  var rate=Number(doc.wht_rate)||0, sst=Number(doc.sst_rate)||0, pen=Number(doc.penalty_pct)||0;
-  // Total each column the way the column is PRINTED — line by line, each already rounded to the sen.
-  // Applying the rate to the aggregate instead leaves a subtotal the visible rows do not add up to:
-  // 11 ManyChat lines footed to 4,024.95 on screen under a printed total of 4,024.97. A tax document
-  // whose column does not cast is indefensible, and each payment is a separate acquisition of an
-  // imported taxable service anyway — the service tax is accounted per acquisition, not on the batch.
-  var fee=0, sstAmt=0;
-  (lines||[]).forEach(function(l){ var a=whtRound2(l.amount); fee+=a; sstAmt+=whtLineSst(a,sst); });
-  fee=whtRound2(fee); sstAmt=whtRound2(sstAmt);
-  // Net basis: the fee is what the payee keeps, so it has to be grossed up before the rate is applied.
-  // Guarded against rate>=1 at both ends, but belt-and-braces here — a divide by zero would render NaN
-  // across the whole panel and look like a blank form rather than an error.
-  var gross = (doc.basis==='net' && rate<1) ? whtRound2(fee/(1-rate)) : fee;
-  var wht   = (doc.basis==='net' && rate<1) ? whtRound2(gross-fee)    : whtRound2(fee*rate);
-  var penalty = doc.penalty_on ? whtRound2(wht*pen) : 0;
-  return { fee:fee, sst:sstAmt, feeInclSst:whtRound2(fee+sstAmt), gross:gross, wht:wht,
-           penalty:penalty, total:whtRound2(wht+penalty),
-           netToPayee: whtRound2((doc.basis==='net'?fee:whtRound2(fee-wht))) };
-}
-/* One month after the last payment date — that is the statutory remittance deadline. */
-function whtDueDate(lines){
-  var last=null; (lines||[]).forEach(function(l){ if(l.payment_date && (!last || l.payment_date>last)) last=l.payment_date; });
-  if(!last) return null;
-  var d=new Date(last+'T00:00:00Z'); if(isNaN(d)) return null;
-  var m=d.getUTCMonth()+1, y=d.getUTCFullYear(); if(m>11){ m=0; y++; }
-  var t=new Date(Date.UTC(y, m, d.getUTCDate()));
-  if(t.getUTCMonth()!==((m)%12)) t=new Date(Date.UTC(y, m+1, 0));   // 31 Jan + 1 month → 28/29 Feb
-  return t.toISOString().slice(0,10);
-}
-var WHT_TYPES=[['royalty','Royalty — s.109 (CP37)'],['s4a_special','Special classes s.4A — s.109B (CP37D)'],
-               ['interest','Interest — s.109 (CP37)'],['contract','Contract payment — s.107A (CP37A/CP37F)'],['other','Other']];
-function whtTypeLabel(t){ var f=WHT_TYPES.find(function(x){return x[0]===t;}); return f?f[1]:t; }
 
 async function renderWht(){
   var el=document.getElementById('wht'); if(!el) return;

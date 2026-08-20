@@ -85,6 +85,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `common.js` | the ~20 top-level helpers (PR #28) and `DocScanner`, the camera → edge-detect → PDF pipeline (v212) | both |
 | `payroll.js` | the Malaysian statutory engine — EPF, SOCSO, EIS, LINDUNG 24, PCB, and the gazetted tables (v213) | `hros.html` |
 | `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/CP8D/bank) and the payslip / EA / Form E jsPDF drawers (v213) | `hros.html` |
+| `wht.js` | the withholding-tax computation — s.109/s.109B, gross vs net basis, the s.26A service tax and the s.109(2) increase, plus the charging-section table (v215) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -145,9 +146,17 @@ signed in. If you are writing an auth bridge, the origin is wrong — fix that i
 **Base path is one value**, `NEXT_PUBLIC_BASE_PATH`, read in `next.config.mjs` and `web/src/portal.ts`.
 There is still not one root-absolute path written by hand anywhere in this repo. Keep it that way.
 
-**`web/app/legacy.css` is generated** from `hros.html`'s own `<style>` blocks by
-`web/scripts/sync-legacy-css.mjs` on every dev/build/test, and is gitignored. Never commit it and never
-hand-copy CSS instead — CI fails if it appears.
+**The legacy stylesheets are generated, and there are TWO — one per route tree.**
+`web/scripts/sync-legacy-css.mjs` writes `web/app/hr/legacy.css` from `hros.html` and
+`web/app/finance/legacy.css` from `app.html` on every dev/build/test; both are gitignored and CI fails if
+either is committed. Never hand-copy CSS instead. The root layout imports NEITHER — `app/hr/layout.tsx`
+and `app/finance/layout.tsx` each import their own, so exactly one reaches any page. That is not tidiness:
+the two apps share ~85% of their rules but **38 selectors carry different declarations**, including the
+whole `:root` token set (`--panel` is `#141E30` in one and `var(--surface)` in the other), `body`, `.btn`
+(min-height 36px vs 44px), `.panel`, `.pill` and `.bigtable td`. Concatenating them means whichever loads
+second silently restyles the other app's screens, and nothing would catch it — the parity tests compare
+markup, not CSS. A third legacy app is one line in `SOURCES`, one layout, one `.gitignore` line and one
+name in CI's "Nothing generated got committed" step (there is no glob).
 
 Run both worlds on ONE origin (which is what makes the shared session real):
 
@@ -363,6 +372,60 @@ employee from the token (`hr.ts:1362`) and the request carries no id, so the pro
 assert no key is or contains one. `web/tests/hr-profile.parity.test.tsx` also pins the v159 rule that
 lives half in each half: an ABSENT `bankCode` means "unchanged", an empty one means "clear it", and the
 form paints before `hr_banks_list` resolves.
+
+### Finance OS screens are NOT HR screens — `finance.wht` is the pilot for the other 21
+
+`web/src/finance-wht.tsx` + `web/app/finance/wht/page.tsx` + `web/tests/finance-wht.parity.test.tsx` are
+the first screen out of `app.html`. The split, the pure-component rule and `relax()` are all unchanged —
+Finance needed no seventh relaxation — but four things differ and every Finance screen inherits them.
+
+**The route is `web/app/finance/<tab-id>/`, where `<tab-id>` is the tab's own `data-t`.** The same string
+`render(t)` dispatches on (app.html:1538), `#tab=<id>` addresses (v213), and the golden is named for
+(`finance.<id>`). One id, four places, no mapping table.
+
+**A Finance golden holds NO chrome, so a Finance screen is SMALLER than the HR equivalent.** `hrRender()`
+writes a page head into `#hr` before calling the screen's renderer, which is why every HR component
+reproduces one. `render(t)` does not — it dispatches straight to `renderWht()`, which owns every byte of
+the `#wht` tab div. Finance's chrome (tab rail, company picker, bell) is static markup outside every tab
+div and outside every golden, so there is nothing to pass in and no `companyName` prop. A Finance golden
+also has ONE section, not two.
+
+**`render(t)`'s `asyncTabs` list (app.html:1504) does not need porting — it is an INVENTORY.** The
+`spin(t)` skeleton exists because the legacy app overwrites one shared div by `innerHTML`, so without a
+placeholder the operator stares at the previous tab. React renders a loading state as an ordinary branch.
+But the list is worth reading: a tab on it fetches before it can paint and its route needs a load step;
+a tab not on it (`o2o`, `qinv`, `gateway`, `recon`, `upload`, `collections`…) renders from what it has.
+
+**Check for a permission gate BEFORE assuming a Finance renderer is the whole screen — the mechanism is
+different from HR's.** HR gates inside `hrRender()` (hros.html:1531). Finance gates in `showApp()` at
+**app.html:1420-1434**, by hiding the tab: seven of the 22 name `!canManage` (`PERMS.manage_users`), two
+are force-hidden today (`ocr`, `ap` — Claude vision credits), and the rest key off `PERMS.features`.
+Read that block as a whole before trusting one line of it — `users` and `ctgaccess` are gated by two
+STANDALONE `if`s above the `if/else if` chain, so `users` also falls through to the chain's final `else`
+and its `!canManage` toggle is overwritten by `feats.indexOf('users')<0`. Whoever ports the Users tab
+owns that; `wht` is inside the chain and has no such problem.
+`renderWht()` itself has no role check at all, so a port that mirrored only the renderer would serve
+non-resident payees' names, TINs, treaty positions and withheld tax to anyone who typed the URL. Mirror
+that line as a pure predicate exported FROM `src/` (`whtReachable()`), gate in the route, and pin both
+directions plus the withheld direction in the screen's test. The server is stricter still — every `wht_*`
+handler requires `superAdmin` (finance.ts:1194) — so the client gate is tab visibility, not the boundary.
+
+**`finance.wht` needed BOTH established handler widenings in one file**, and no new one: `identArgs()`
+for bare-integer row ids (`whtOpen(1)` — the seventh screen to need it) and a golden-derived
+`LEGACY_TO_PROP` for the argument-free buttons. Its `LEGACY_TO_PROP` is keyed on the WHOLE raw text
+first, because one of app.html's handlers is an inline statement rather than a call
+(`onclick="WHT.payees=!WHT.payees;renderWht()"`) — Finance writes several of those and HR writes almost
+none. Keep copying both into each screen's own test; do not edit `web/tests/handlers.ts` mid-flight.
+
+**Two legacy findings raised by this port and deliberately NOT fixed:** `whtPayeeForm`'s rate box saves a
+BLANK as `0` (withhold nothing) rather than leaving the rate alone — `pct()` at app.html:3484 is
+`isFinite(Number(''))` → `isFinite(0)` → true. And `renderWht()` wraps nothing in a viewer check. Both
+are mirrored as-is and pinned in the screen's test; changing either is a behaviour change, not a
+migration detail.
+
+**`whtDocHtml()` (`WHT.page==='doc'`) is NOT migrated.** It is a sibling PAGE `renderWht()` dispatches
+to, not a branch of the list renderer. `onOpen`/`onNew` hand off to `app.html#tab=wht` — same origin,
+same session. That handoff is the honest strangler edge for any Finance tab with a second page behind it.
 
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in

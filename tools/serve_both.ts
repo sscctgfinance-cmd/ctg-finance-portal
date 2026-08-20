@@ -69,3 +69,4 @@ Deno.serve({ port, hostname: "127.0.0.1" }, async (req) => {
 
 console.log(`  legacy  http://127.0.0.1:${port}/hros.html      (and app.html, index.html, the vendored libs)`);
 console.log(`  react   http://127.0.0.1:${port}/hr/access/     — same origin, so the same session`);
+console.log(`  react   http://127.0.0.1:${port}/finance/wht/   — the Finance half, same session again`);

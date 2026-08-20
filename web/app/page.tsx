@@ -7,6 +7,9 @@
 // both halves are on one origin (report.md §3.5). Legacy tabs are addressable as `#tab=<id>` (v213), so a
 // link can hand off to a specific screen instead of dumping the operator on the default view.
 
+// The index borrows HR OS's stylesheet: it uses `page-head`, which only hros.html defines, and it is a
+// link list either way. The root layout imports no stylesheet — see app/hr/layout.tsx for why.
+import './hr/legacy.css';
 import { legacyUrl } from '../src/portal';
 
 export default function Home() {
@@ -36,13 +39,14 @@ export default function Home() {
           <li><a href="hr/claims/">HR OS · Claims</a></li>
           <li><a href="hr/payslip/">HR OS · My Payslips</a></li>
           <li><a href="hr/profile/">HR OS · My Profile</a></li>
+          <li><a href="finance/wht/">Finance OS · Withholding Tax</a></li>
         </ul>
       </div>
       <div className="panel">
         <div className="panel-hd"><h3>Not migrated</h3></div>
         <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 2 }}>
           <li><a href={legacyUrl('hros.html')}>HR OS</a> — the other 17 views</li>
-          <li><a href={legacyUrl('app.html')}>Finance OS</a> — all 22 tabs</li>
+          <li><a href={legacyUrl('app.html')}>Finance OS</a> — the other 21 tabs</li>
         </ul>
       </div>
     </main>

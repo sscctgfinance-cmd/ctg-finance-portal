@@ -1,32 +1,73 @@
-// Generate app/legacy.css from hros.html's own <style> blocks.
+// Generate each legacy app's stylesheet from its OWN <style> blocks, one per route tree.
 //
-// The legacy stylesheet is ~1,060 lines inlined in hros.html. A migrated screen has to look like the
-// screen it replaces, and hand-copying CSS across is how two stylesheets drift until "the React one looks
-// slightly wrong" becomes a bug nobody can pin down. So it is generated, never edited, never committed —
-// `npm run dev/build/test` regenerates it, and it tracks every legacy CSS change for free.
+// The legacy stylesheets are ~1,000 lines inlined in hros.html and app.html. A migrated screen has to
+// look like the screen it replaces, and hand-copying CSS across is how two stylesheets drift until "the
+// React one looks slightly wrong" becomes a bug nobody can pin down. So they are generated, never
+// edited, never committed — `npm run dev/build/test` regenerates them, and they track every legacy CSS
+// change for free.
+//
+// ── WHY TWO FILES AND NOT ONE ──────────────────────────────────────────────────────────────────────
+// This generated ONE file, from hros.html only, for as long as every migrated screen was an HR screen.
+// finance.wht is the first Finance screen and it needs app.html's CSS, so the choice had to be made.
+//
+// The two stylesheets share an ancestor and ~85% of their rules, but 38 selectors carry DIFFERENT
+// declarations in each file, and they are the load-bearing ones:
+//
+//   :root          hros defines --surface-1/-2/-3, --hairline, --accent, --ok*, --warn*, --sp-*;
+//                  app.html defines --shadow, --panel-border, --r-sm/md/lg. Both define --panel and
+//                  --panel-2, to different values (hros #141E30, app var(--surface) = #161A21).
+//   .btn           min-height 36px in hros, 44px + padding 11px 15px + font-size 13px in app.html
+//   .panel         padding var(--sp-6) vs 22px 24px / 15px 13px
+//   plus body, .card, .cards, .tab, .pill, .bigtable th/td, .modal, the scrollbars and the
+//   :root[data-theme="light"] overrides.
+//
+// Concatenating them means whichever lands second silently wins all 38 — restyling either the fourteen
+// shipped HR screens or the Finance one, with nothing to catch it (the parity tests compare markup, not
+// CSS). There is no mechanical merge: these are not accidental duplicates, they are two apps' type
+// scales and token sets.
+//
+// So they are SCOPED instead, per route tree, which resolves it completely rather than by cascade luck:
+//   web/app/hr/legacy.css       <- hros.html   imported by web/app/hr/layout.tsx
+//   web/app/finance/legacy.css  <- app.html    imported by web/app/finance/layout.tsx
+//
+// The root layout imports NEITHER, so exactly one legacy stylesheet reaches any given page and the 38
+// never meet. Adding the third legacy app is one line in SOURCES below plus a layout that imports it.
 //
 // Scripts are stripped first: hros.html also builds a print-voucher document with its own <style> inside
 // a JS string literal (hros.html:1866), and that must not leak into the app's stylesheet.
 //
-// When the hosting move relocates the legacy files into web/public/, change LEGACY below and nothing else.
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+// When the hosting move relocates the legacy files into web/public/, change `from` below and nothing else.
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const LEGACY = join(here, '..', '..', 'hros.html');
-const OUT = join(here, '..', 'app', 'legacy.css');
+const root = join(here, '..', '..');
 
-const html = readFileSync(LEGACY, 'utf8');
-const noScripts = html.replace(/<script[\s\S]*?<\/script>/g, '');
-const blocks = [...noScripts.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+/** One legacy app → the route tree whose layout imports its stylesheet. */
+const SOURCES = [
+  { from: 'hros.html', to: join('app', 'hr', 'legacy.css') },
+  { from: 'app.html', to: join('app', 'finance', 'legacy.css') },
+];
 
-// Fail closed. An empty stylesheet renders an unstyled screen that still passes the structural parity
-// test, which is exactly the kind of "green but wrong" this repo's CI comments keep warning about.
-if (!blocks.length) throw new Error(`no <style> block found in ${LEGACY}`);
-const css = blocks.join('\n');
-if (css.length < 10000) throw new Error(`extracted only ${css.length} bytes of CSS from ${LEGACY} — extraction is broken`);
+// The single-file output this script used to write. Removed rather than left behind: it is gitignored,
+// so a stale copy from an older checkout would sit there un-regenerated, and the day someone re-adds an
+// import of it they would be styling a screen from a file nothing updates.
+rmSync(join(here, '..', 'app', 'legacy.css'), { force: true });
 
-mkdirSync(dirname(OUT), { recursive: true });
-writeFileSync(OUT, `/* GENERATED by scripts/sync-legacy-css.mjs from hros.html — do not edit, do not commit. */\n${css}`);
-console.log(`legacy.css <- hros.html (${blocks.length} block(s), ${css.length} bytes)`);
+for (const { from, to } of SOURCES) {
+  const html = readFileSync(join(root, from), 'utf8');
+  const noScripts = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  const blocks = [...noScripts.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+
+  // Fail closed. An empty stylesheet renders an unstyled screen that still passes the structural parity
+  // test, which is exactly the kind of "green but wrong" this repo's CI comments keep warning about.
+  if (!blocks.length) throw new Error(`no <style> block found in ${from}`);
+  const css = blocks.join('\n');
+  if (css.length < 10000) throw new Error(`extracted only ${css.length} bytes of CSS from ${from} — extraction is broken`);
+
+  const out = join(here, '..', to);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `/* GENERATED by scripts/sync-legacy-css.mjs from ${from} — do not edit, do not commit. */\n${css}`);
+  console.log(`${to} <- ${from} (${blocks.length} block(s), ${css.length} bytes)`);
+}
