@@ -1003,6 +1003,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <!-- Shared with hros.html — must load before the inline script below (classic script: these are globals). -->
 <script src="common.js"></script>
 <script src="wht.js"></script>
+<script src="o2o.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
@@ -2769,24 +2770,14 @@ function o2oResetDates(){
   var inv=document.getElementById('o2o-invdate'); if(inv) inv.value=o2oToday();
   var due=document.getElementById('o2o-duedate'); if(due) due.value=o2oPlusDays(30);
 }
-// v66: generate invoice numbers for the current preview.
-// Returns [] if the operator left the numbering fields empty (fall back to Xero auto-gen)
-// or if the start value is not a plain digit run. Zero-padding follows the literal width
-// of the entered start value, so typing "001" gives 001/002/003 and typing "1183" gives 1183/1184/1185.
+// v66: operator-controlled invoice numbering. THE GENERATION IS NOT HERE — `o2oInvoiceNumbers`
+// moved to o2o.js (loaded above as a classic script, so it is still a global) because the React port
+// in web/ imports it. Read o2o.js's header for the three states this returns and why they must stay
+// distinct. This wrapper is only the DOM read.
 function o2oBuildInvoiceNumbers(count){
   var prefix = ((document.getElementById('o2o-invprefix')||{}).value||'').trim();
   var startRaw = ((document.getElementById('o2o-invstart')||{}).value||'').trim();
-  if(!prefix && !startRaw) return [];
-  if(!startRaw || !/^\d+$/.test(startRaw)) return null; // invalid
-  var pad = startRaw.length;
-  var start = parseInt(startRaw, 10);
-  var nums = [];
-  for(var i=0;i<count;i++){
-    var s = String(start + i);
-    while(s.length < pad) s = '0'+s;
-    nums.push(prefix + s);
-  }
-  return nums;
+  return o2oInvoiceNumbers(count, prefix, startRaw);
 }
 function o2oPreviewNums(){
   var el = document.getElementById('o2o-invnum-preview'); if(!el) return;
@@ -2879,167 +2870,23 @@ function renderO2O(){
     '<div id="o2o-out" style="margin-top:14px"><p class="muted">Pick the Excel to preview.</p></div></div>';
   loaded.o2o=true;
 }
-// v28: per-SKU O2O parser — INV-1183 style. Group rows by package suffix → one line per SKU
-// (Quantity = row count, UnitAmount = Price, DiscountRate = 19.2% applied per line).
-// Reference is converted from "Skindae Overall Billing 21 Apr-20 May 2026" → "O2O Sales 21/04/2026 - 20/05/2026".
-var O2O_SKU_MAP=[
-  {match:/basic[\s\-]*a[\s\-]*3/i, code:'SKO2OB3', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - BASIC A-3', label:'Basic A-3'},
-  {match:/basic[\s\-]*b[\s\-]*1/i, code:'SKO2OB1', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - BASIC B-1', label:'Basic B-1'},
-  {match:/promo[\s\-]*b\b/i,        code:'SKO2OPB', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO B',   label:'Promo B'},
-  {match:/promo[\s\-]*c\b/i,        code:'SKO2OPC', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO C',   label:'Promo C'},
-  {match:/promo[\s\-]*d\b/i,        code:'SKO2OPD', desc:'SKINDAE CELL LIFT, NMN AMPOULE 30ML - PROMO D',   label:'Promo D'}
-];
-var O2O_DISCOUNT_RATE=19.2;
-function o2oMatchSku(pkgName){
-  var s=String(pkgName||'');
-  for(var i=0;i<O2O_SKU_MAP.length;i++){ if(O2O_SKU_MAP[i].match.test(s)) return O2O_SKU_MAP[i]; }
-  return null;
-}
-// "21 Apr-20 May 2026" → "21/04/2026 - 20/05/2026"
-function o2oFormatReference(periodRaw){
-  var per=String(periodRaw||'').replace(/^Skindae\s+Overall\s+Billing\s*/i,'').trim();
-  var mo={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-  // accept "21 Apr-20 May 2026" or "21 Apr 2026-20 May 2026" or "21/04/2026-20/05/2026"
-  var m=per.match(/(\d{1,2})\s*([A-Za-z]{3,})\.?\s*(\d{4})?\s*[-–]\s*(\d{1,2})\s*([A-Za-z]{3,})\.?\s*(\d{4})/);
-  if(m){
-    var y2=m[6], y1=m[3]||y2;
-    var m1=mo[m[2].slice(0,3).toLowerCase()]||'01';
-    var m2=mo[m[5].slice(0,3).toLowerCase()]||'01';
-    var d1=('0'+m[1]).slice(-2), d2=('0'+m[4]).slice(-2);
-    return 'O2O Sales '+d1+'/'+m1+'/'+y1+' - '+d2+'/'+m2+'/'+y2;
-  }
-  return 'O2O Sales '+per; // fallback — keep raw if unparsable
-}
+/* ── O2O billing arithmetic ────────────────────────────────────────────────────────────────────────
+   THE COMPUTATION IS NOT HERE. `O2O_SKU_MAP`, `O2O_DISCOUNT_RATE`, `o2oMatchSku`, `o2oFormatReference`,
+   `o2oParseRows`, `o2oApplyMasterRate`, `o2oGrandTotal` and `o2oInvoiceNumbers` moved to o2o.js —
+   loaded above as a classic script, so they are still globals and every onclick= below still resolves
+   them. They left because the React port in web/ IMPORTS them: `o2o_issue` (finance.ts:626) forwards
+   Quantity / UnitAmount / DiscountRate straight into the Xero payload without recomputing anything, so
+   these numbers ARE the invoice and a second copy is a wrong bill waiting for the day the copies
+   disagree. Read o2o.js's own header for the SKU-vs-Package modes, the date guard and the rounding.
+
+   Only the two DOM-facing halves stay here: the XLSX decode, and reading the form. */
 function o2oParse(buf){
   var wb=XLSX.read(new Uint8Array(buf),{type:'array'});
-  var period=null, pharmacies=[], grand=0;
-  function findVal(rows,label){
-    for(var r=0;r<rows.length;r++){ var row=rows[r]||[];
-      for(var c=0;c<5;c++){ var v=row[c];
-        if(v&&typeof v==='string'&&v.trim().toLowerCase().indexOf(label)>=0){
-          for(var i=1;i<=3;i++){ var rv=row[c+i]; if(typeof rv==='number') return rv; }
-        }
-      }
-    }
-    return null;
-  }
-  function findHeaderRow(rows){
-    for(var r=0;r<Math.min(rows.length,20);r++){
-      var row=rows[r]||[];
-      var hasDate=false,hasPkg=false,hasPrice=false;
-      for(var c=0;c<row.length;c++){
-        var v=String(row[c]||'').toLowerCase();
-        if(v==='date') hasDate=true;
-        if(v==='package') hasPkg=true;
-        if(v==='price') hasPrice=true;
-      }
-      if(hasDate&&hasPkg&&hasPrice) return r;
-    }
-    return -1;
-  }
-  function colIdx(row,name){ for(var c=0;c<row.length;c++) if(String(row[c]||'').toLowerCase()===name) return c; return -1; }
-  wb.SheetNames.forEach(function(sn){
-    if(sn.trim().toLowerCase()==='sample')return;
-    var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:null});
-    var name=(rows[0]&&rows[0][0])?String(rows[0][0]).trim():sn;
-    if(!period&&rows[1])period=rows[1][0];
-    // Find the data-section header row (Date | Package | Price | ...)
-    var hdrRow=findHeaderRow(rows);
-    var grouped={}, unmatched=[];
-    if(hdrRow>=0){
-      var hdr=rows[hdrRow];
-      var cDate=colIdx(hdr,'date'), cPkg=colIdx(hdr,'package'), cPrice=colIdx(hdr,'price');
-      // v62: Skindae uses fixed SKU regex map (existing behaviour). Other tenants (DRSMILE etc.)
-      // don't share Skindae's SKUs — instead we group by the Package column verbatim and use
-      // that as the invoice line Description. Same 19.2% commission handling either way.
-      var useSkuMode = o2oIsSkindae();
-      for(var r=hdrRow+1;r<rows.length;r++){
-        var row=rows[r]||[];
-        var pkg=row[cPkg], price=row[cPrice];
-        if(!pkg||typeof price!=='number'||price<=0) continue;
-        if(useSkuMode){
-          var hit=o2oMatchSku(pkg);
-          if(!hit){
-            // A row we cannot map to a Skindae SKU used to be DROPPED here — its price never reached
-            // `grouped`, so the pharmacy was invoiced less than it actually sold. Bill it instead, at
-            // its raw price, with the Excel Package text as the description.
-            //
-            // The date guard below is essential and is the same one the non-Skindae branch uses: the
-            // summary rows under the data (Total Sales / Commission / Insurans / Billing) also carry a
-            // package-ish label and a number. While unmatched rows were dropped they were harmlessly
-            // dropped too — now that unmatched rows are billed, without this guard they would become
-            // invoice lines and OVER-bill. Real data rows always carry a Date: a JS Date, or an Excel
-            // serial well above 10000 (~1927).
-            if(cDate<0) continue;
-            var dvU = row[cDate];
-            if(!((dvU instanceof Date) || (typeof dvU === 'number' && dvU > 10000))) continue;
-            var descU = String(pkg).trim();
-            var keyU = 'RAW|' + descU + '|' + price;
-            if(!grouped[keyU]) grouped[keyU]={code:null,description:descU,label:descU,unit_price:price,quantity:0,gross:0,unmapped:true};
-            grouped[keyU].quantity++;
-            grouped[keyU].gross+=price;
-            unmatched.push({pkg:String(pkg),price:price});   // still surfaced — billed, but unmapped
-            continue;
-          }
-          var key=hit.code;
-          if(!grouped[key]) grouped[key]={code:hit.code,description:hit.desc,label:hit.label,unit_price:price,quantity:0,gross:0};
-          grouped[key].quantity++;
-          grouped[key].gross+=price;
-          // last-write-wins for unit_price (in case of slight rounding diffs in source)
-          grouped[key].unit_price=price;
-        } else {
-          // Non-Skindae: description IS the Package column value. Group rows with the same
-          // Package + unit price into one line item so the invoice stays tidy.
-          // Guard against summary rows below the data section (Total Sales / Commission /
-          // Insurans / Billing / etc.) — those either have no Date, or hold a rate (0.192)
-          // in the Date column. Data rows carry a real Date value: either a JS Date object
-          // or an Excel-serial number well above the 10000 threshold (~1927).
-          if(cDate<0) continue;
-          var dv = row[cDate];
-          var isRealDate = (dv instanceof Date) || (typeof dv === 'number' && dv > 10000);
-          if(!isRealDate) continue;
-          var desc = String(pkg).trim();
-          var keyNs = desc + '|' + price;
-          if(!grouped[keyNs]) grouped[keyNs]={code:null,description:desc,label:desc,unit_price:price,quantity:0,gross:0};
-          grouped[keyNs].quantity++;
-          grouped[keyNs].gross+=price;
-        }
-      }
-    }
-    var lines=[];
-    Object.keys(grouped).forEach(function(k){
-      var g=grouped[k];
-      lines.push({
-        item_code:g.code,
-        package:g.description,        // shown in invoice description column
-        quantity:g.quantity,
-        unit_price:g.unit_price,
-        discount_rate:O2O_DISCOUNT_RATE,
-        amount:Math.round(g.gross*(1-O2O_DISCOUNT_RATE/100)*100)/100
-      });
-    });
-    // Fallback to old behaviour if no data-row breakdown found (single-line invoice).
-    var ts=findVal(rows,'total sales');
-    var billed=findVal(rows,'billed amount'); if(billed===null)billed=findVal(rows,'billing');
-    if(!lines.length){
-      if(!ts||ts<=0)return;
-      ts=Math.round(ts*100)/100; billed=(billed!==null&&billed>0)?Math.round(billed*100)/100:ts;
-      var per=o2oFormatReference(period).replace(/^O2O Sales\s*/,'');
-      lines=[{package:'Skindae products ('+per+')',unit_price:ts,quantity:1,amount:ts}];
-      var commission=Math.round((ts-billed)*100)/100;
-      if(commission>0) lines.push({package:'Commission -19.2%',unit_price:-commission,quantity:1,amount:-commission});
-      pharmacies.push({pharmacy:name,line_count:lines.length,total:billed,total_sales:ts,commission:commission,lines:lines,unmatched:unmatched,fallback:true});
-      grand+=billed; return;
-    }
-    // Per-SKU mode: total_sales = sum of gross before discount; billed = sum after 19.2% discount.
-    var totalSales=lines.reduce(function(s,x){ return s+(x.unit_price*x.quantity); }, 0);
-    var totalBilled=lines.reduce(function(s,x){ return s+(x.amount||0); }, 0);
-    totalSales=Math.round(totalSales*100)/100; totalBilled=Math.round(totalBilled*100)/100;
-    var commission2=Math.round((totalSales-totalBilled)*100)/100;
-    pharmacies.push({pharmacy:name,line_count:lines.length,total:totalBilled,total_sales:totalSales,commission:commission2,lines:lines,unmatched:unmatched,fallback:false});
-    grand+=totalBilled;
+  var sheets=wb.SheetNames.map(function(sn){
+    return { name:sn, rows:XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:true,defval:null}) };
   });
-  return {period:String(period||''),reference:o2oFormatReference(period),pharmacy_count:pharmacies.length,grand_total:Math.round(grand*100)/100,pharmacies:pharmacies};
+  // v62: Skindae uses fixed SKU regex matching; other tenants group by the Package column verbatim.
+  return o2oParseRows(sheets, o2oIsSkindae());
 }
 function o2oPick(input){
   var f=input.files[0]; if(!f)return;
@@ -3108,28 +2955,13 @@ async function o2oEnrichWithPharmacyMaster(){
   O2O_DATA.pharmacies.forEach(function(p){
     var match = pharmFindByName(p.pharmacy);
     p.__master = match || null;
-    // Override per-line commission rate if the master sets a VALID different one.
-    // A blank/null master rate must fall back to the default 19.2% — Number('')===0 would
-    // otherwise zero the discount and invoice the pharmacy at full gross price.
-    var mRate = (match && match.commission_rate!=null && match.commission_rate!=='') ? Number(match.commission_rate) : NaN;
-    if(match && isFinite(mRate) && mRate>0 && mRate!=O2O_DISCOUNT_RATE){
-      p.commission = Math.round((p.total_sales*mRate/100)*100)/100;
-      p.total = Math.round((p.total_sales-p.commission)*100)/100;
-      // Re-price EACH line at the custom rate too — not just the header. Previously only discount_rate was
-      // relabelled while l.amount stayed at the 19.2% figure, so the invoice billed the wrong rate.
-      p.lines.forEach(function(l){
-        if(l.discount_rate!=null && l.amount!=null){
-          var gross=l.amount/(1-(l.discount_rate||0)/100); // recover gross from the current (default-rate) amount
-          l.discount_rate=mRate;
-          l.amount=Math.round(gross*(1-mRate/100)*100)/100;
-        } else if(/commission/i.test(l.package||'')){
-          l.unit_price=-p.commission; l.amount=-p.commission; l.package='Commission -'+(Math.round(mRate*10)/10)+'%'; // fallback single-line model
-        }
-      });
-    }
+    // Override per-line commission rate if the master sets a VALID different one. The validation of
+    // "valid" lives in o2o.js with the arithmetic it guards — a blank master rate must fall back to the
+    // default 19.2%, and Number('')===0 would otherwise invoice the pharmacy at full gross price.
+    if(match) o2oApplyMasterRate(p, match.commission_rate);
   });
   // Recompute grand total in case rates changed
-  O2O_DATA.grand_total = Math.round(O2O_DATA.pharmacies.reduce(function(s,p){return s+p.total;},0)*100)/100;
+  O2O_DATA.grand_total = o2oGrandTotal(O2O_DATA.pharmacies);
 }
 function o2oRenderPreview(){
   var d=O2O_DATA;

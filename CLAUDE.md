@@ -86,6 +86,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `payroll.js` | the Malaysian statutory engine — EPF, SOCSO, EIS, LINDUNG 24, PCB, and the gazetted tables (v213) | `hros.html` |
 | `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/CP8D/bank) and the payslip / EA / Form E jsPDF drawers (v213) | `hros.html` |
 | `wht.js` | the withholding-tax computation — s.109/s.109B, gross vs net basis, the s.26A service tax and the s.109(2) increase, plus the charging-section table (v215) | `app.html` |
+| `o2o.js` | the O2O pharmacy-billing computation — the SKU/Package grouping, the date guard, the 19.2% commission and its master-record override, and the invoice numbering (v217) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -618,6 +619,44 @@ the `qi_*` treatment, extracted from `app.html` at run time. A field that loses 
 on a real draft bill in Xero. `collectLines()` carries app.html:7226's filter (`description ||
 unit_amount || Number(quantity) > 0`): a row with an amount and no description is KEPT, and tidying that
 to "needs a description" drops money off a bill with nothing on screen changing.
+**`finance.o2o` is the opposite call, and the test is who owns the total.** Quick Invoice's authority is
+the server's; O2O's is the CLIENT's — `o2o_issue` (finance.ts:626) recomputes NOTHING, it forwards
+`Quantity` / `UnitAmount` / `DiscountRate` straight into the Xero payload. So the arithmetic was lifted
+into `o2o.js` (wht.js's arrangement: classic script in `app.html`, `o2o.d.ts` beside it,
+`web/src/finance-o2o.tsx` imports it) rather than mirrored, and app.html keeps only the two DOM-facing
+halves — the XLSX decode in `o2oParse()` and the form read in `o2oBuildInvoiceNumbers()`. Ask "does the
+server re-derive this figure?" before deciding; the answer, not the shape of the code, is what decides.
+
+**The header total is the sum of the ROUNDED lines, never the rounded discount of the gross.** Each line
+is `Math.round(gross × (1 − rate/100) × 100)/100` and `total` sums those. The two agree on most data and
+diverge by a sen or two on some (50.01 + 50.02 → 80.83 per line, 80.82 from the gross), and only the
+per-line answer is the invoice, because Xero re-totals from the line figures. Pinned in
+`web/tests/finance-o2o.parity.test.tsx` with a fixture chosen to diverge — a fixture that happens to
+agree proves nothing here.
+
+**Three states, not two, for the invoice numbering.** `o2oInvoiceNumbers()` returns `[]` ("let Xero
+number them"), `null` ("the operator typed something invalid — do not post") or the numbers. Collapsing
+`null` into `[]` posts an unnumbered batch the operator meant to control, and nothing on screen says so.
+
+**`finance.o2o` passes the same post-`innerHTML` check `finance.upload` describes above** — `renderO2O()`
+does only `loaded.o2o=true` after its write — with one detail worth carrying: both of its dates are
+written INSIDE the html string, so unlike `qi_date` they DO reach the golden. The negative is asserted
+out of `app.html` in the screen's own test, the same way Upload's is.
+
+**An O2O screen is one where the same control means different money depending on the company.**
+`o2oOnTenantChange()` re-parses the SAME workbook when the target changes, because Skindae groups by
+fixed SKU and every other tenant groups by the Package column. `initTenant()` / `isSkindae()` are pure
+mirrors in `src/`; the route holds the raw bytes in a ref (`O2O_BUF`) and re-parses, as the legacy does.
+Its gate is the FEATURE kind — app.html:1434's final `else` — not `!canManage`, which its neighbours
+`wht`, `selfbill`, `gateway`, `bankfeed` and `salesrecon` all use. The screen's test reads
+`showApp()`'s block out of `app.html` and asserts `o2o` is named in no branch of it, so the predicate
+cannot quietly stop mirroring the app.
+
+**Two sub-flows hand off rather than lie.** The "add this pharmacy to the master" link goes to
+`app.html#tab=pharm` (the Pharmacies tab is not migrated) — the honest strangler edge `whtDocHtml()`
+uses. Everything else, including the Xero-contact search/link and the JSZip PDF batch, is ported: an
+operator who posts live from React would otherwise lose the invoice PDFs, and the batch only exists in
+that page's memory.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
