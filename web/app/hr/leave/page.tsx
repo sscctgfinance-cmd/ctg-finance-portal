@@ -201,55 +201,53 @@ export default function HrLeavePage() {
   }, [apply, data, myEmpId, run, today]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !data || !flow || !company ? <Panel><span className="spin"></span> Loading leave…</Panel>
-          : (
-            <>
-              {notice ? <Panel>{notice}</Panel> : null}
-              <HrLeave
-                requests={data.requests || []}
-                employees={data.employees || []}
-                leaveTypes={data.leave_types || []}
-                flow={flow}
-                companyName={company.tenant_name}
-                applyOpen={applyOpen}
-                onApplyToggle={() => setApplyOpen((v) => !v)}
-                onApplyClose={() => setApplyOpen(false)}
-                myEmpId={myEmpId}
-                today={today}
-                apply={apply}
-                onApplyChange={(k, v) => setApply((a) => ({ ...a, [k]: v }))}
-                onApplySubmit={onApplySubmit}
-                balOpen={balOpen}
-                onBalToggle={() => setBalOpen((v) => !v)}
-                onBalClose={() => setBalOpen(false)}
-                balEmp={balEmp}
-                balLoading={balLoading}
-                balData={balData}
-                balEdit={balEdit}
-                onBalPick={(id) => void onBalPick(id)}
-                onBalEdit={(id, field, value) => setBalEdit((m) => ({ ...m, [id]: { ...m[id], [field]: value } }))}
-                onBalSave={onBalSave}
-                onFlowSet={onFlowSet}
-                onFlowDel={onFlowDel}
-                onFlowAdd={onFlowAdd}
-                onFlowSave={onFlowSave}
-                onRefresh={() => void load()}
-                onDecide={onDecide}
-              />
-            </>
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !data || !flow || !company ? <Panel><span className="spin"></span> Loading leave…</Panel>
+        : (
+          <>
+            {notice ? <Panel>{notice}</Panel> : null}
+            <HrLeave
+              requests={data.requests || []}
+              employees={data.employees || []}
+              leaveTypes={data.leave_types || []}
+              flow={flow}
+              companyName={company.tenant_name}
+              applyOpen={applyOpen}
+              onApplyToggle={() => setApplyOpen((v) => !v)}
+              onApplyClose={() => setApplyOpen(false)}
+              myEmpId={myEmpId}
+              today={today}
+              apply={apply}
+              onApplyChange={(k, v) => setApply((a) => ({ ...a, [k]: v }))}
+              onApplySubmit={onApplySubmit}
+              balOpen={balOpen}
+              onBalToggle={() => setBalOpen((v) => !v)}
+              onBalClose={() => setBalOpen(false)}
+              balEmp={balEmp}
+              balLoading={balLoading}
+              balData={balData}
+              balEdit={balEdit}
+              onBalPick={(id) => void onBalPick(id)}
+              onBalEdit={(id, field, value) => setBalEdit((m) => ({ ...m, [id]: { ...m[id], [field]: value } }))}
+              onBalSave={onBalSave}
+              onFlowSet={onFlowSet}
+              onFlowDel={onFlowDel}
+              onFlowAdd={onFlowAdd}
+              onFlowSave={onFlowSave}
+              onRefresh={() => void load()}
+              onDecide={onDecide}
+            />
+          </>
+        )}
+    </>
   );
 }
 

@@ -110,7 +110,7 @@ export default function FinanceWhtPage() {
   }, [payeeList]);
 
   return (
-    <main style={{ padding: '28px 34px 64px' }}>
+    <>
       <Banner />
       {signedIn === false
         ? <Panel>
@@ -146,7 +146,7 @@ export default function FinanceWhtPage() {
             />
           </>
         )}
-    </main>
+    </>
   );
 }
 

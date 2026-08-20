@@ -144,38 +144,36 @@ export default function HrAttendancePage() {
   }, [data, month]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !company && !data ? <Panel><span className="spin"></span> Loading attendance…</Panel>
-          : (
-            <>
-              {notice ? <Panel>{notice}</Panel> : null}
-              <HrAttendance
-                data={data}
-                companyName={company ? company.tenant_name : ''}
-                month={month}
-                editRow={editRow}
-                employees={employees}
-                onMonthChange={setMonth}
-                onAdd={() => setEditRow({})}
-                onExport={onExport}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onCloseModal={() => setEditRow(null)}
-                onSave={onSave}
-              />
-            </>
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !company && !data ? <Panel><span className="spin"></span> Loading attendance…</Panel>
+        : (
+          <>
+            {notice ? <Panel>{notice}</Panel> : null}
+            <HrAttendance
+              data={data}
+              companyName={company ? company.tenant_name : ''}
+              month={month}
+              editRow={editRow}
+              employees={employees}
+              onMonthChange={setMonth}
+              onAdd={() => setEditRow({})}
+              onExport={onExport}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onCloseModal={() => setEditRow(null)}
+              onSave={onSave}
+            />
+          </>
+        )}
+    </>
   );
 }
 

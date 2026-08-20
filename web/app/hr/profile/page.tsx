@@ -34,7 +34,7 @@ export default function HrProfilePage() {
   const [note, setNote] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const formRef = useRef<HTMLElement>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -111,32 +111,30 @@ export default function HrProfilePage() {
   const toLegacy = useCallback(() => { window.location.href = LEGACY(); }, []);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main ref={formRef} style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : emp === undefined || company === null ? <Panel><span className="spin"></span> Loading your profile…</Panel>
-          : (
-            <>
-              {note ? <Panel>{note}</Panel> : null}
-              <HrProfile
-                employee={emp}
-                companyName={company}
-                banks={banks}
-                onSave={onSave}
-                onSigStart={toLegacy}
-                onSigClearSaved={onSigClearSaved}
-                onPwModal={toLegacy}
-              />
-            </>
-          )}
-      </main>
+    <div ref={formRef}>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : emp === undefined || company === null ? <Panel><span className="spin"></span> Loading your profile…</Panel>
+        : (
+          <>
+            {note ? <Panel>{note}</Panel> : null}
+            <HrProfile
+              employee={emp}
+              companyName={company}
+              banks={banks}
+              onSave={onSave}
+              onSigStart={toLegacy}
+              onSigClearSaved={onSigClearSaved}
+              onPwModal={toLegacy}
+            />
+          </>
+        )}
     </div>
   );
 }

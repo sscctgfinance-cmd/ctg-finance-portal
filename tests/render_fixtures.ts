@@ -18,6 +18,14 @@ export const COMPANIES = [
 /** Answers shared by both apps' screens. */
 export const FIXTURES: Record<string, any> = {
   me: { ok: true, user: { id: "u1", email: "boss@ctg.test", name: "BOSS", role: "admin" }, companies: COMPANIES },
+  // `showApp()` (app.html:1416) resolves this before it decides which of the 22 tabs exist. No GOLDEN
+  // surface asks for it — render_surfaces.ts seeds `PERMS` directly — but the React Finance shell reads
+  // it like the real app does, so without this entry tools/serve_both.ts cannot drive that half at all.
+  // Deliberately the SAME permission set render_surfaces.ts seeds, so the two agree: note that
+  // ALL_FEATURES does not contain "users", which is why the Users tab is hidden even for this admin
+  // (app.html:1422 — see CLAUDE.md on that control flow).
+  my_perms: { ok: true, role: "admin", label: "Administrator", manage_users: true,
+    features: ["cfo", "overview", "approvals", "collections", "upload", "o2o", "qinv", "pnl", "close", "recon"] },
 
   // ── Overview ──────────────────────────────────────────────────────────────────────────────────
   overview: {

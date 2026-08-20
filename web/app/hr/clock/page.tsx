@@ -50,7 +50,7 @@ export default function HrClockPage() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [acting, setActing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const schedRef = useRef<HTMLElement>(null);
+  const schedRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -111,29 +111,27 @@ export default function HrClockPage() {
   }, [load]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main ref={schedRef} style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !data || company === null ? <Panel><span className="spin"></span> Loading your clock…</Panel>
-          : (
-            <HrClock
-              data={data}
-              companyName={company}
-              elapsed={data.open ? elapsedSince(data.open.clock_in, now) : '00:00:00'}
-              now={clkNow(now)}
-              acting={acting}
-              onClockAction={onClockAction}
-              onSchedSave={onSchedSave}
-            />
-          )}
-      </main>
+    <div ref={schedRef}>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !data || company === null ? <Panel><span className="spin"></span> Loading your clock…</Panel>
+        : (
+          <HrClock
+            data={data}
+            companyName={company}
+            elapsed={data.open ? elapsedSince(data.open.clock_in, now) : '00:00:00'}
+            now={clkNow(now)}
+            acting={acting}
+            onClockAction={onClockAction}
+            onSchedSave={onSchedSave}
+          />
+        )}
     </div>
   );
 }

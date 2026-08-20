@@ -72,30 +72,28 @@ export default function HrClaimsPage() {
   }, [load]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : role !== null && !claimsReachable(role)
           ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
+              Claims is an HR admin screen — it lists every employee&apos;s claims. Your own are under{' '}
+              <a href={`${legacyUrl('hros.html')}#tab=expenses`}>Reimbursement</a>.
             </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : role !== null && !claimsReachable(role)
-            ? <Panel>
-                Claims is an HR admin screen — it lists every employee&apos;s claims. Your own are under{' '}
-                <a href={`${legacyUrl('hros.html')}#tab=expenses`}>Reimbursement</a>.
-              </Panel>
-          : !claims || !company ? <Panel><span className="spin"></span> Loading claims…</Panel>
-          : (
-            <>
-              {notice ? <Panel>{notice}</Panel> : null}
-              <HrClaims claims={claims} companyName={company.tenant_name} onDecide={onDecide} />
-            </>
-          )}
-      </main>
-    </div>
+        : !claims || !company ? <Panel><span className="spin"></span> Loading claims…</Panel>
+        : (
+          <>
+            {notice ? <Panel>{notice}</Panel> : null}
+            <HrClaims claims={claims} companyName={company.tenant_name} onDecide={onDecide} />
+          </>
+        )}
+    </>
   );
 }
 

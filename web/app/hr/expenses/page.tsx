@@ -122,57 +122,55 @@ export default function HrExpensesPage() {
   }, [claims, scope]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !claims || !me || company === null ? <Panel><span className="spin"></span> Loading claims…</Panel>
-          : (
-            <>
-              {note ? <Panel>{note}</Panel> : null}
-              <HrExpenses
-                claims={claims}
-                me={me}
-                companyName={company}
-                page="list"
-                scope={scope}
-                sel={sel}
-                onNav={(pg) => { if (pg !== 'list') goLegacy(pg); }}
-                onScope={onScope}
-                onOpen={(id) => { window.location.href = `${legacyUrl('hros.html')}#tab=expenses&rc=${id}`; }}
-                onSelAll={onSelAll}
-                onSelToggle={onSelToggle}
-                onSelClear={() => setSel({})}
-                onExportAcct={() => goLegacy('list')}
-                onExportCsv={onExportCsv}
-                onExportBank={onExportBank}
-                onBulkApprove={() => void bulk({ api: 'hr_rc_decide_bulk', decision: 'approve' }, 'Approved')}
-                onBulkReject={() => {
-                  const reason = window.prompt(`Reason for rejecting ${selectedIds(sel).length} claim(s):`);
-                  if (reason && reason.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'reject', comment: reason }, 'Rejected');
-                }}
-                onBulkInfo={() => {
-                  const msg = window.prompt(`Message to employee(s) for ${selectedIds(sel).length} claim(s):`);
-                  if (msg && msg.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'request_info', comment: msg }, 'Sent back');
-                }}
-                onBulkPay={() => {
-                  const method = window.prompt('Payment method (applies to all):', 'Bank Transfer');
-                  if (method === null) return;
-                  const ref = window.prompt('Payment reference (optional, same for all):', '') ?? '';
-                  if (!window.confirm(`Mark ${selectedIds(sel).length} claim(s) as PAID?`)) return;
-                  void bulk({ api: 'hr_rc_mark_paid_bulk', payment_method: method || 'Bank Transfer', payment_reference: ref }, 'Marked paid');
-                }}
-              />
-            </>
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !claims || !me || company === null ? <Panel><span className="spin"></span> Loading claims…</Panel>
+        : (
+          <>
+            {note ? <Panel>{note}</Panel> : null}
+            <HrExpenses
+              claims={claims}
+              me={me}
+              companyName={company}
+              page="list"
+              scope={scope}
+              sel={sel}
+              onNav={(pg) => { if (pg !== 'list') goLegacy(pg); }}
+              onScope={onScope}
+              onOpen={(id) => { window.location.href = `${legacyUrl('hros.html')}#tab=expenses&rc=${id}`; }}
+              onSelAll={onSelAll}
+              onSelToggle={onSelToggle}
+              onSelClear={() => setSel({})}
+              onExportAcct={() => goLegacy('list')}
+              onExportCsv={onExportCsv}
+              onExportBank={onExportBank}
+              onBulkApprove={() => void bulk({ api: 'hr_rc_decide_bulk', decision: 'approve' }, 'Approved')}
+              onBulkReject={() => {
+                const reason = window.prompt(`Reason for rejecting ${selectedIds(sel).length} claim(s):`);
+                if (reason && reason.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'reject', comment: reason }, 'Rejected');
+              }}
+              onBulkInfo={() => {
+                const msg = window.prompt(`Message to employee(s) for ${selectedIds(sel).length} claim(s):`);
+                if (msg && msg.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'request_info', comment: msg }, 'Sent back');
+              }}
+              onBulkPay={() => {
+                const method = window.prompt('Payment method (applies to all):', 'Bank Transfer');
+                if (method === null) return;
+                const ref = window.prompt('Payment reference (optional, same for all):', '') ?? '';
+                if (!window.confirm(`Mark ${selectedIds(sel).length} claim(s) as PAID?`)) return;
+                void bulk({ api: 'hr_rc_mark_paid_bulk', payment_method: method || 'Bank Transfer', payment_reference: ref }, 'Marked paid');
+              }}
+            />
+          </>
+        )}
+    </>
   );
 }
 

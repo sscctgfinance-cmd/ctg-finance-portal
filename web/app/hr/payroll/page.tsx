@@ -205,73 +205,71 @@ export default function HrPayrollPage() {
   const locked = finalised && !editFinal;
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {notice ? <Panel>{notice}</Panel> : null}
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !data || !A ? <Panel><span className="spin"></span> Loading payroll…</Panel>
-          : !data.rates ? <Panel>⚠️ No statutory rates configured (hr_statutory_rates)</Panel>
-          : !(data.employees || []).length ? <Panel>👤 No active employees. Add employees first.</Panel>
-          : (
-            <HrPayroll
-              companyName={company ? company.tenant_name : ''}
-              month={month}
-              year={year}
-              grid={grid}
-              rows={A.rows}
-              tot={A.tot}
-              skipped={skipped}
-              locked={locked}
-              finalised={finalised}
-              runId={run?.id || null}
-              state={gridState(run, dirty)}
-              ticks={ticks}
-              uob={uob}
-              due={dueInfo(month, year, new Date())}
-              dedEmp={dedEmp}
-              rowMenu={rowMenu}
-              today={todayLocalISO()}
-              onPickPeriod={onPickPeriod}
-              onLegacyPanel={legacyPanel}
-              onGridSave={onGridSave}
-              onFinalise={onFinalise}
-              onEditFinalised={() => setEditFinal(true)}
-              onRowMenu={(id) => setRowMenu((c) => (c === id ? null : id))}
-              onCell={onCell}
-              onPcbCell={onPcbCell}
-              onPcbAuto={onPcbAuto}
-              onDedOpen={(id) => setDedEmp((c) => (c === id ? null : id))}
-              onDedAdd={onDedAdd}
-              onDedDel={onDedDel}
-              onDedLabel={onDedLabel}
-              onDedAmt={onDedAmt}
-              onSkip={onSkip}
-              onResign={onResign}
-              onEmpDelete={onEmpDelete}
-              onSubmitAll={() => toLegacy('The submission pack (ZIP of every statutory file)')}
-              onUobSave={onUobSave}
-              onExpBank={(b) => toLegacy(`The ${b} salary file`)}
-              onExpGiro={() => toLegacy('The generic IBG CSV')}
-              onExpKwsp={() => toLegacy('The KWSP i-Akaun file')}
-              onExpAssist={() => toLegacy('The PERKESO ASSIST file')}
-              onExpCp39={() => toLegacy('The CP39 / e-PCB file')}
-              onPostXero={() => toLegacy('Posting the Xero journal')}
-              onExpSummary={() => toLegacy('The payroll summary (Excel)')}
-              onExpPayslips={() => toLegacy('The payslips PDF')}
-              onEmailAll={() => toLegacy('Emailing payslips')}
-              onExpStatutory={(f: StatFile) => toLegacy(`The raw ${f.toUpperCase()} csv`)}
-              onHubTick={onHubTick}
-            />
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {notice ? <Panel>{notice}</Panel> : null}
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !data || !A ? <Panel><span className="spin"></span> Loading payroll…</Panel>
+        : !data.rates ? <Panel>⚠️ No statutory rates configured (hr_statutory_rates)</Panel>
+        : !(data.employees || []).length ? <Panel>👤 No active employees. Add employees first.</Panel>
+        : (
+          <HrPayroll
+            companyName={company ? company.tenant_name : ''}
+            month={month}
+            year={year}
+            grid={grid}
+            rows={A.rows}
+            tot={A.tot}
+            skipped={skipped}
+            locked={locked}
+            finalised={finalised}
+            runId={run?.id || null}
+            state={gridState(run, dirty)}
+            ticks={ticks}
+            uob={uob}
+            due={dueInfo(month, year, new Date())}
+            dedEmp={dedEmp}
+            rowMenu={rowMenu}
+            today={todayLocalISO()}
+            onPickPeriod={onPickPeriod}
+            onLegacyPanel={legacyPanel}
+            onGridSave={onGridSave}
+            onFinalise={onFinalise}
+            onEditFinalised={() => setEditFinal(true)}
+            onRowMenu={(id) => setRowMenu((c) => (c === id ? null : id))}
+            onCell={onCell}
+            onPcbCell={onPcbCell}
+            onPcbAuto={onPcbAuto}
+            onDedOpen={(id) => setDedEmp((c) => (c === id ? null : id))}
+            onDedAdd={onDedAdd}
+            onDedDel={onDedDel}
+            onDedLabel={onDedLabel}
+            onDedAmt={onDedAmt}
+            onSkip={onSkip}
+            onResign={onResign}
+            onEmpDelete={onEmpDelete}
+            onSubmitAll={() => toLegacy('The submission pack (ZIP of every statutory file)')}
+            onUobSave={onUobSave}
+            onExpBank={(b) => toLegacy(`The ${b} salary file`)}
+            onExpGiro={() => toLegacy('The generic IBG CSV')}
+            onExpKwsp={() => toLegacy('The KWSP i-Akaun file')}
+            onExpAssist={() => toLegacy('The PERKESO ASSIST file')}
+            onExpCp39={() => toLegacy('The CP39 / e-PCB file')}
+            onPostXero={() => toLegacy('Posting the Xero journal')}
+            onExpSummary={() => toLegacy('The payroll summary (Excel)')}
+            onExpPayslips={() => toLegacy('The payslips PDF')}
+            onEmailAll={() => toLegacy('Emailing payslips')}
+            onExpStatutory={(f: StatFile) => toLegacy(`The raw ${f.toUpperCase()} csv`)}
+            onHubTick={onHubTick}
+          />
+        )}
+    </>
   );
 }
 

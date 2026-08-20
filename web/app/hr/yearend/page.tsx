@@ -22,7 +22,7 @@ export default function HrYearendPage() {
   const [data, setData] = useState<Annual | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const rootRef = useRef<HTMLElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const t = !!token();
@@ -72,32 +72,30 @@ export default function HrYearendPage() {
   }, []);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main ref={rootRef} style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !employees || company === null ? <Panel><span className="spin"></span> Loading…</Panel>
-          : (
-            <HrYearend
-              year={year}
-              years={years}
-              employees={employees}
-              annual={data?.annual ?? null}
-              employerNo={data?.employer?.employer_no || ''}
-              companyName={company}
-              onPick={onPick}
-              onExpEA={toLegacy}
-              onExpFormE={toLegacy}
-              onExpCp8d={toLegacy}
-            />
-          )}
-      </main>
+    <div ref={rootRef}>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !employees || company === null ? <Panel><span className="spin"></span> Loading…</Panel>
+        : (
+          <HrYearend
+            year={year}
+            years={years}
+            employees={employees}
+            annual={data?.annual ?? null}
+            employerNo={data?.employer?.employer_no || ''}
+            companyName={company}
+            onPick={onPick}
+            onExpEA={toLegacy}
+            onExpFormE={toLegacy}
+            onExpCp8d={toLegacy}
+          />
+        )}
     </div>
   );
 }

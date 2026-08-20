@@ -27,7 +27,7 @@ export default function HrEmployeesPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [creds, setCreds] = useState<Cred[] | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const root = useRef<HTMLElement>(null);
+  const root = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async (tenant?: string | null) => {
     setErr(null);
@@ -217,41 +217,39 @@ export default function HrEmployeesPage() {
   }, []);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main ref={root} style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !employees || !company ? <Panel><span className="spin"></span> Loading employees…</Panel>
-          : (
-            <>
-              {notice ? <Panel>{notice}</Panel> : null}
-              {creds ? <Creds rows={creds} onClose={() => setCreds(null)} /> : null}
-              <HrEmployees
-                employees={employees}
-                banks={banks}
-                companyName={company.tenant_name}
-                ui={ui}
-                editEmp={editEmp}
-                onFilter={(k, value) => setUi((u) => ({ ...u, [k]: value }))}
-                onReset={() => setUi(EMP_UI_DEFAULT)}
-                onEditEmp={onEditEmp}
-                onDeleteEmp={onDeleteEmp}
-                onEnableLogin={onEnableLogin}
-                onEnableLoginBulk={onEnableLoginBulk}
-                onClose={() => setEditEmp(null)}
-                onSave={onSave}
-                onBankInput={onBankInput}
-                onBankBlur={onBankBlur}
-              />
-            </>
-          )}
-      </main>
+    <div ref={root}>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !employees || !company ? <Panel><span className="spin"></span> Loading employees…</Panel>
+        : (
+          <>
+            {notice ? <Panel>{notice}</Panel> : null}
+            {creds ? <Creds rows={creds} onClose={() => setCreds(null)} /> : null}
+            <HrEmployees
+              employees={employees}
+              banks={banks}
+              companyName={company.tenant_name}
+              ui={ui}
+              editEmp={editEmp}
+              onFilter={(k, value) => setUi((u) => ({ ...u, [k]: value }))}
+              onReset={() => setUi(EMP_UI_DEFAULT)}
+              onEditEmp={onEditEmp}
+              onDeleteEmp={onDeleteEmp}
+              onEnableLogin={onEnableLogin}
+              onEnableLoginBulk={onEnableLoginBulk}
+              onClose={() => setEditEmp(null)}
+              onSave={onSave}
+              onBankInput={onBankInput}
+              onBankBlur={onBankBlur}
+            />
+          </>
+        )}
     </div>
   );
 }

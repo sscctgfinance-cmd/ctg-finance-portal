@@ -118,7 +118,7 @@ push notification to, `#expenses` is read by `hrEmpBoot()`, and `#sso_token=` ca
 Do not add a second scheme. HR OS employee mode is deliberately not covered — `hrEmpBoot()` picks that
 landing view from the employee's pay type.
 
-## The React app lives in `web/` — the migrated screens are the list in `web/app/page.tsx`
+## The React app lives in `web/` — every screen of both apps is the list in `web/src/nav.ts`
 
 `web/` is a Next.js 16 App Router app, added by the HR Access pilot (v214). It is **additive**: not one
 byte of `app.html`, `hros.html`, `index.html`, `sw.js`, `manifest.json` or the five vendored libraries
@@ -130,6 +130,8 @@ moved or changed, and the legacy screen the pilot mirrors is still the one staff
 | `web/app/<area>/<screen>/page.tsx` | the route: `'use client'`, holds state, loads data, wires handlers. |
 | `web/tests/parity.ts` | the relaxation layer — why the two renderers may differ, and why each difference is safe. |
 | `web/tests/<screen>.parity.test.tsx` | renders the pure component and diffs it against `tests/golden/<id>.html`. |
+| `web/src/nav.ts` | the 36 screens of both apps, the `migrated` flag, and every permission predicate. |
+| `web/src/hr-shell.tsx`, `web/src/finance-shell.tsx` | the chrome, one per app, pure. See "The shell is…" below. |
 
 That split is the whole mechanism. Keep it: only the pure half can be diffed against a golden, so a
 screen that puts a `useEffect` in `src/` has stepped outside the thing that proves it was migrated
@@ -427,10 +429,50 @@ migration detail.
 to, not a branch of the list renderer. `onOpen`/`onNew` hand off to `app.html#tab=wht` — same origin,
 same session. That handoff is the honest strangler edge for any Finance tab with a second page behind it.
 
-**Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
-picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
-the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
-what the shell needs.
+### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
+
+The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
+`web/app/finance/layout.tsx` are now `'use client'` and hold the session, the role, the companies and the
+theme; `web/src/hr-shell.tsx` and `web/src/finance-shell.tsx` are pure components, same split as a screen.
+**A route page therefore renders no `#app` and no `<main>`** — the shell owns both, once. A page that
+needs to read its own DOM back keeps a plain `<div ref>`.
+
+**`web/src/nav.ts` is the one list, and it names screens that are NOT migrated.** 36 entries — 14 HR views
+and 22 Finance tabs — each with a `migrated` flag. `href()` turns that flag into either `/<app>/<id>/` or
+the legacy file at `#tab=<id>`, which is what that fragment scheme (v213) is for. A nav listing only the
+migrated screens would tell an operator two thirds of their app had vanished. Adding a screen is ONE line
+here; `web/tests/shell.test.tsx` fails if this list, the legacy apps' own nav declarations, and the route
+directories on disk disagree, so it cannot be forgotten.
+
+**Every permission rule is in `nav.ts` as a pure predicate, and the shell test asserts the WITHHELD
+direction.** `hrRole()` mirrors hros.html:1361-1368, `hrNavFor()` mirrors `hrSidebar()`'s filter
+(hros.html:1508), `financeTabHidden()` transcribes `showApp()`'s pass (app.html:1420-1434) branch for
+branch — including the `users` quirk CLAUDE.md already flags, so the nav follows the FEATURE flag rather
+than `manage_users`, as app.html actually does. A nav that renders an admin entry an unauthorised person
+can click is a real defect even when the destination refuses: it advertises what exists and where.
+
+**The 18 HR goldens already carry the sidebar, and the shell test diffs against it.** Each has a
+`#hr_nav` section (`hr.clock` and `hr.payslip` also carry `#emp-mobnav`) — `hrSidebar()`'s own output in
+three permission states: Master Admin without an employee record (`hr.access`, 11 entries), with one
+(`hr.profile`, 12), and employee mode (`hr.clock` / `hr.payslip`, 5). Those are not the shell's CONTRACT
+(report.md §3.5 puts chrome outside the screen-by-screen strangler) but they are free byte-level evidence,
+so they are used as one. The single allowance is `unifyNavTag()`: the legacy item is a `<button onclick>`
+and the React one is an `<a href>`, so both sides are normalised to `button` and `href` is dropped —
+which is why the href is asserted separately, for all 36 screens.
+
+**`web/src/shell.css` is the only hand-written CSS in `web/`, and must stay tiny.** Five selectors,
+`text-decoration: none`, because the nav became anchors and neither legacy stylesheet ever had an anchor
+to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
+
+**Four things could not be ported and hand off rather than lie:** Change password (HR and Finance),
+Security/2FA, Alerts and Export are legacy modals and a legacy XLSX writer. Each keeps its label and its
+position and links into the legacy app, the same treatment the 21 unmigrated tabs get. `web/public/ctg-logo.png`
+is app.html's inlined base64 brand mark, decoded once.
+
+**Still not done:** no toast, no confirm/credentials modal, and the saved theme is applied on mount rather
+than before paint (the legacy apps use a blocking inline script in `<head>`, and the root layout cannot —
+it does not know which of the two apps' keys, `hros_theme` or `ctg-theme`, to read), so a dark-mode
+operator sees one light frame. Navigation is plain anchors, so every nav click is a full page load.
 
 ## Publishing to the live site is a separate step
 

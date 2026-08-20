@@ -91,44 +91,42 @@ export default function HrApprovalsPage() {
   }, [company, flow]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !flow || !company ? <Panel><span className="spin"></span> Loading approval settings…</Panel>
-          : (
-            <>
-              {notice ? <Panel>{notice}</Panel> : null}
-              <HrApprovals
-                flow={flow}
-                employees={employees}
-                companyName={company.tenant_name}
-                tab={tab}
-                onTab={(t) => setTab(t as 'leave' | 'rc')}
-                onLevelSet={onLevelSet}
-                onLevelDel={onLevelDel}
-                onLevelAdd={onLevelAdd}
-                onSave={onSave}
-              />
-              {/* The Reimbursement tab is not migrated — hrApvRc() and the workflow form are their own
-                  screen's worth of markup and have no golden of their own here. The tab still switches,
-                  and switching to it hands the operator back to the screen that does have it. */}
-              {tab === 'rc' ? (
-                <Panel>
-                  Reimbursement approval workflows are not migrated yet.{' '}
-                  <a href={`${legacyUrl('hros.html')}#tab=approvals`}>Open them in HR OS</a>.
-                </Panel>
-              ) : null}
-            </>
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !flow || !company ? <Panel><span className="spin"></span> Loading approval settings…</Panel>
+        : (
+          <>
+            {notice ? <Panel>{notice}</Panel> : null}
+            <HrApprovals
+              flow={flow}
+              employees={employees}
+              companyName={company.tenant_name}
+              tab={tab}
+              onTab={(t) => setTab(t as 'leave' | 'rc')}
+              onLevelSet={onLevelSet}
+              onLevelDel={onLevelDel}
+              onLevelAdd={onLevelAdd}
+              onSave={onSave}
+            />
+            {/* The Reimbursement tab is not migrated — hrApvRc() and the workflow form are their own
+                screen's worth of markup and have no golden of their own here. The tab still switches,
+                and switching to it hands the operator back to the screen that does have it. */}
+            {tab === 'rc' ? (
+              <Panel>
+                Reimbursement approval workflows are not migrated yet.{' '}
+                <a href={`${legacyUrl('hros.html')}#tab=approvals`}>Open them in HR OS</a>.
+              </Panel>
+            ) : null}
+          </>
+        )}
+    </>
   );
 }
 

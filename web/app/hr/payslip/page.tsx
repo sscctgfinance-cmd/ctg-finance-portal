@@ -100,28 +100,26 @@ export default function HrPayslipPage() {
   const onRetry = useCallback(() => { setLoaded(false); void load(); }, [load]);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : !loaded || company === null
-            ? <Panel><span className="spin"></span> Loading your payslips…</Panel>
-            : (
-              <HrPayslip
-                data={data}
-                err={err}
-                companyName={company}
-                onDownload={onDownload}
-                onRetry={onRetry}
-              />
-            )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : !loaded || company === null
+          ? <Panel><span className="spin"></span> Loading your payslips…</Panel>
+          : (
+            <HrPayslip
+              data={data}
+              err={err}
+              companyName={company}
+              onDownload={onDownload}
+              onRetry={onRetry}
+            />
+          )}
+    </>
   );
 }
 

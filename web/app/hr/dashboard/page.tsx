@@ -193,35 +193,33 @@ export default function HrDashboardPage() {
   const onPrint = useCallback(() => window.print(), []);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {notice ? <Panel>{notice}</Panel> : null}
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : (
-            <HrDashboard
-              data={data}
-              loading={loading}
-              page={page}
-              employees={employees}
-              companyName={company ? company.tenant_name : ''}
-              month={period ? period.month : 0}
-              year={period ? period.year : 0}
-              onSetPage={setPage}
-              onStep={onStep}
-              onRefresh={onRefresh}
-              onExportCsv={onExportCsv}
-              onPrint={onPrint}
-            />
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {notice ? <Panel>{notice}</Panel> : null}
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : (
+          <HrDashboard
+            data={data}
+            loading={loading}
+            page={page}
+            employees={employees}
+            companyName={company ? company.tenant_name : ''}
+            month={period ? period.month : 0}
+            year={period ? period.year : 0}
+            onSetPage={setPage}
+            onStep={onStep}
+            onRefresh={onRefresh}
+            onExportCsv={onExportCsv}
+            onPrint={onPrint}
+          />
+        )}
+    </>
   );
 }
 

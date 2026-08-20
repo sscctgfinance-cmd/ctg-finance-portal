@@ -170,38 +170,36 @@ export default function HrCalculatorPage() {
   const result = calcCompute(state, rates);
 
   return (
-    <div id="app" style={{ display: 'flex', minHeight: '100vh', alignItems: 'stretch' }}>
-      <main style={{ flex: 1, minWidth: 0, padding: '28px 34px 64px' }}>
-        <Banner />
-        {notice ? <Panel>{notice}</Panel> : null}
-        {signedIn === false
-          ? <Panel>
-              Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-              the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-              already be signed in.
-            </Panel>
-          : err ? <Panel>⚠️ {err}</Panel>
-          : !rates || company === null ? <Panel><span className="spin"></span> Loading the statutory rates…</Panel>
-          : (
-            <HrCalculator
-              state={state}
-              employees={employees}
-              result={result}
-              companyName={company ? company.tenant_name : ''}
-              history={history}
-              onPickEmp={onPickEmp}
-              onInput={onInput}
-              onFlag={onFlag}
-              onSetting={onSetting}
-              onOverride={onOverride}
-              onOvToggle={onOvToggle}
-              onPayslip={onPayslip}
-              onSave={onSave}
-              onHistory={onHistory}
-            />
-          )}
-      </main>
-    </div>
+    <>
+      <Banner />
+      {notice ? <Panel>{notice}</Panel> : null}
+      {signedIn === false
+        ? <Panel>
+            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+            already be signed in.
+          </Panel>
+        : err ? <Panel>⚠️ {err}</Panel>
+        : !rates || company === null ? <Panel><span className="spin"></span> Loading the statutory rates…</Panel>
+        : (
+          <HrCalculator
+            state={state}
+            employees={employees}
+            result={result}
+            companyName={company ? company.tenant_name : ''}
+            history={history}
+            onPickEmp={onPickEmp}
+            onInput={onInput}
+            onFlag={onFlag}
+            onSetting={onSetting}
+            onOverride={onOverride}
+            onOvToggle={onOvToggle}
+            onPayslip={onPayslip}
+            onSave={onSave}
+            onHistory={onHistory}
+          />
+        )}
+    </>
   );
 }
 
