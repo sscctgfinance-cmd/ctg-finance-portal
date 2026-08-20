@@ -276,10 +276,12 @@ OWN file, narrowed to `&amp;` inside a double-quoted attribute value, with its o
 same treatment as `hr-calculator`'s `dedupeAttrs`. Two screens have now needed a screen-local rule and
 neither moved into `web/tests/parity.ts`; a third of the same KIND is what would justify that.
 
-**The bare-integer handler widening is now in FIVE screens' test files** — `hr.approvals`, `hr.leave`,
-`hr.yearend`, `hr.dashboard` and `hr.employees` (`hrEditEmp(0)`, where `0` is `hrEditEmp()`'s sentinel
-for "a blank record"). The paragraphs above still read "two screens is not yet a case"; that count is
-spent. `identArgs()` is now five identical copies, and folding it into `web/tests/handlers.ts` alongside
+**The bare-integer handler widening is now in SIX screens' test files** — `hr.approvals`, `hr.leave`,
+`hr.yearend`, `hr.dashboard`, `hr.employees` (`hrEditEmp(0)`, where `0` is `hrEditEmp()`'s sentinel
+for "a blank record") and `hr.payslip`, where EVERY handler is one (`hrEmpPayslipDownload(0..2)`, the
+index into the employee's own payslips — quoted-only extraction would pass with all three rows
+downloading the same month). The paragraphs above still read "two screens is not yet a case"; that count is
+spent. `identArgs()` is now six identical copies, and folding it into `web/tests/handlers.ts` alongside
 the identical `assertHandlerParity()` wrappers is one safe change to make once the in-flight migrations
 have landed. Until then, keep copying it — do not edit the shared file mid-flight.
 
@@ -320,6 +322,27 @@ no test can reach it. Check for such a gate before assuming a renderer is the wh
 every other admin screen in `hros.html`, so a `viewer` role sees live write controls there. Its golden
 was captured with `HR_VIEWER=false` and holds no evidence either way, so the React port mirrors it
 as-is — adding the gate is a deliberate behaviour change, not a migration detail.
+
+**A bare `&` in TEXT is the same finding as the one in an attribute, and it is a SEPARATE rule.**
+`hrEmpPayslipsRender()`'s footnote (hros.html:3216) writes `EPF/SOCSO/EIS/PCB & deductions` without
+`esc()`, and React's text escaper always emits `&amp;`.
+`web/tests/hr-payslip.parity.test.tsx`'s `decodeTextAmp` decodes `&amp;` OUTSIDE tags only, and never
+where it prefixes another reference — so hr-payroll's doubly-escaped `&amp;ldquo;` is untouched. That
+makes FOUR screen-local rules of four kinds; hr-employees' `decodeAttrAmp` is the attribute-only
+sibling, and the two together are the first pair close enough that folding a single `&` rule into
+`web/tests/parity.ts` is worth deciding once the in-flight migrations have landed.
+
+**Employee-mode screens are a permission boundary: assert the WITHHELD direction.** `hr_my_payslips`
+returns `employer` (the company's statutory registration numbers) and `leaveBal` purely so
+`hrEmpPayslipDownload()` can draw them into the PDF; the legacy screen renders neither.
+`web/tests/hr-payslip.parity.test.tsx` asserts they are absent from the markup, that there is no
+`<select>` or employee id anywhere on the screen, and that the only buttons are the per-row PDF
+downloads — so a future change that exposes one fails there rather than on someone's screen.
+
+**`hr-docs.d.ts` now declares `hrEmpView` and `hrDrawPayslip`**, imported by
+`web/app/hr/payslip/page.tsx` so the PDF an employee downloads from React is drawn by the same shared
+file `hros.html` loads. `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY` as globals (hr-docs.js's own
+header says so): the route sets them on `window` before the call, exactly as the legacy caller does.
 
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
