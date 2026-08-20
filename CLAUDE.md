@@ -706,6 +706,29 @@ leaves `"`/`'` to R6 — decoding a quote before R4 parses attributes breaks the
 reference rule into `web/tests/parity.ts` is now overdue; do it in the same pass as `identArgs()` and the
 `assertHandlerParity()` wrappers.
 
+**A golden can hold THREE sections, and `finance.users` is the case.** `renderUsers()` (app.html:5102)
+writes `#users` — the sub-nav plus the empty `#uv_body`/`#user_modal`/`#role_modal` divs — and
+`usersLoad()` then writes `#uv_body` (the panel, spinner inside) and `#users_out` (the loaded table).
+Three ids, so last-write-wins keeps all three, one per legacy statement. The screen is therefore three
+components, each diffed against its own section, with handler parity run PER SECTION: concatenating them
+would compare a sub-nav handler against a row handler the first time either list shifted. Same question
+`finance.ctgaccess` above asks — which IDS does the renderer write?
+
+**And it is the `finance.qinv` trap in a form neither `qinv` nor `ctgaccess` shows: a `.className=`.**
+`renderUsers()`'s last statement is `usersView(USERS_VIEW||'users')`, which reassigns every sub-nav
+button's className (app.html:5116). The harness records innerHTML writes, so the golden carries
+`class="btn sm"` on all five buttons while every operator sees `uv_users` highlighted as `btn sm p`.
+`UsersSubnav` takes an `active` prop whose GOLDEN value is `null` and whose route value is the live
+sub-view, and the screen's test pins both statements out of app.html so the claim cannot rot.
+
+**The `users` gate quirk `finance.ctgaccess` names above is now OWNED.** `usersReachable()` in
+`web/src/finance-users.tsx` mirrors the effective rule — the FEATURE flag, because app.html:1422's
+`!canManage` is overwritten by the chain's final `else` — pinned in both directions and against the
+shipped `my_perms` fixture, whose feature list deliberately omits `users`. Only the `users` sub-view is
+migrated: Roles, Sessions, Audit, Xero sync and `userForm()`'s modal hand off to `app.html#tab=users`,
+while `🔑 Reset` is ported because it is `prompt()` plus one POST, with `resetBody()` split out and
+pinned against `userReset()`'s own text — no golden sees a request that sets someone's password.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
