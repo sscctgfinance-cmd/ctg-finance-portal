@@ -679,6 +679,33 @@ stopped calling anything still fails) and pins the COLOUR each one paints separa
 React needs the guard `if (e && e.currentTarget && e.currentTarget.style)` because the shared walker
 invokes every handler with a bare `{target:{value}}` stub.
 
+**A golden can hold TWO sections of one Finance screen, and one of them an INTERMEDIATE state.**
+`finance.ctgaccess` is the case, and it sharpens the `finance.qinv` rule above. `renderCtgAccess()`
+(app.html:4981) writes `#ctgaccess` — the panel, with a LOADING spinner inside `#ctga_body` — and then
+calls `ctgaLoad()`, which awaits the fetch and overwrites `#ctga_body`. Those are two DIFFERENT element
+ids, so the harness's last-write-wins is per id and both survive: the golden carries `<!-- #ctgaccess -->`
+holding the spinner and `<!-- #ctga_body -->` holding the loaded directory. The `#ctgaccess` section is
+therefore the frame at t=0 and not the screen an operator sees. `web/src/finance-ctgaccess.tsx` splits
+`Screen` (the panel) from `Body` (whatever is inside `#ctga_body`) so each section is diffed against the
+state it was captured in; the screen's test proves the claim by reading `renderCtgAccess()` out of
+app.html rather than asserting it. Ask which IDS a renderer writes, not just how many times.
+
+**`ctgaccess` is where `showApp()`'s `if/else if` chain RESTARTS, and that is its whole gate.**
+app.html:1423 is a second STANDALONE `if` — `if(t==='ctgaccess') … else if(t==='info') …` — so CTG Access
+takes its own branch and never reaches the final `else`. It is `manage_users` and only that. The `users`
+line one above it is the opposite quirk (set by `!canManage`, then overwritten by the final `else`), so
+copying either neighbour is wrong in both directions. `ctgAccessReachable()` mirrors the real line and the
+screen's test pins the two-line source text verbatim.
+
+**A screen-local character-reference rule now exists on THREE screens, of both spellings.**
+`finance.ctgaccess` writes `&middot;`, `&hellip;`, `&mdash;` AND `&#8635;`, so its `decodeRefs` covers the
+named and numeric forms in one function — after `hr.payroll`'s named-only and `finance.bankfeed`'s
+numeric-only. It stays in the screen's own file (parity.ts is shared with in-flight migrations), it
+decodes only the three names app.html actually writes here, it never touches `&amp;`-prefixed text, and it
+leaves `"`/`'` to R6 — decoding a quote before R4 parses attributes breaks the parse. Folding ONE
+reference rule into `web/tests/parity.ts` is now overdue; do it in the same pass as `identArgs()` and the
+`assertHandlerParity()` wrappers.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and

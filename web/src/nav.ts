@@ -94,7 +94,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'info', label: '🏢 Company Info', group: 'data', migrated: false },
   { app: 'finance', id: 'pharm', label: '🏪 Pharmacies', group: 'data', migrated: true },
   { app: 'finance', id: 'users', label: '👥 Users', group: 'admin', migrated: false },
-  { app: 'finance', id: 'ctgaccess', label: '🔐 CTG Access', group: 'admin', migrated: false },
+  { app: 'finance', id: 'ctgaccess', label: '🔐 CTG Access', group: 'admin', migrated: true },
 ];
 
 /** Every screen in both apps, migrated or not. */
