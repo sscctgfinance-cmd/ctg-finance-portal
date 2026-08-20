@@ -598,6 +598,27 @@ at global scope and resolves against exactly that environment; the script is inj
 origin, as `app/hr/payslip/page.tsx` injects jspdf. Four lines, and the 600-line camera pipeline stays
 unforked — which is the whole point of the shared-`.js` rule.
 
+**A tab that is switched OFF is migrated as OFF, and the re-enable instruction is ported as code.**
+`finance.ocr` is the first: app.html:1427 is `el.classList.toggle('hide', true)` — hidden from EVERYONE,
+not `!canManage` and not a feature flag — because the Claude vision credits ran out on 2026-07-09, and
+the line's own comment says to flip `true`→`!canManage` after a top-up. `ocrReachable()` therefore
+returns `false` for every login, and `ocrReachableAfterTopUp()` sits beside it as the intended rule with
+its own test, so the instruction survives as something that runs rather than as a comment to rediscover.
+`web/tests/finance-ocr.parity.test.tsx` also pins app.html's line verbatim, so re-enabling the legacy tab
+fails the React screen's test rather than silently leaving the two out of step. Do not "helpfully" restore
+a tab someone turned off.
+
+**A screen whose whole life is in one empty div needs its states listed and asserted.** `renderOcr()`
+passes the after-the-innerHTML-write check above (it resets four globals, sets `loaded.ocr`, and stops),
+so `finance.ocr`'s golden IS the initial screen — and the initial screen is almost nothing. `#ocr_out` holds
+SEVEN things (picked file, camera scan, reading spinner, PDF refusal, failure, the editable bill form, the
+posted confirmation) and the golden holds none of them. The bill form is uncontrolled and its `data-k` /
+`data-li-i` / `data-li-k` attributes are the contract `ocrPostBill()` (app.html:7215) reads it back by —
+the `qi_*` treatment, extracted from `app.html` at run time. A field that loses `data-k` posts as ABSENT
+on a real draft bill in Xero. `collectLines()` carries app.html:7226's filter (`description ||
+unit_amount || Number(quantity) > 0`): a row with an amount and no description is KEPT, and tidying that
+to "needs a description" drops money off a bill with nothing on screen changing.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
