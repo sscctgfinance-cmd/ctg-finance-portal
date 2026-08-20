@@ -305,6 +305,22 @@ same rather than trusting the label text, which `relax()` compares but a mis-wir
 so the grid cannot fork the maths. Its field-whitelist warning (hros.html:3732) travels with the call: a
 field dropped there makes the browser and the server disagree and 409s the entire company's finalise.
 
+**A screen's PERMISSION gate can live upstream of its renderer — port it into the route and pin it from
+`src/`.** `hrClaims()` (hros.html:3699) has no role check in it at all; `hrRender()` does, at
+hros.html:1531, forcing `HR.view` away from `claims` whenever `HR_EMP_MODE` is set. So `hr.claims` is an
+ADMIN screen (it is in `HR_NAV` under "People", not `HR_EMP_NAV`) whose golden was captured with
+`HR_EMP_MODE=false` and no extra setup, and a React port that only mirrors the renderer would serve every
+employee's name, category and amount — plus buttons deciding their money — to anyone who typed the URL.
+`web/src/hr-claims.tsx` exports `isEmpMode(role)` / `claimsReachable(role)` as pure mirrors of
+hros.html:1368 and :1531, `web/app/hr/claims/page.tsx` refuses to load or render on a false, and the
+screen's own test pins both directions. Putting the predicate in the route instead would place it where
+no test can reach it. Check for such a gate before assuming a renderer is the whole screen.
+
+**`hrClaims()` does NOT wrap its Approve/Reject buttons in `hrRW()`** (hros.html:1374, :3702), unlike
+every other admin screen in `hros.html`, so a `viewer` role sees live write controls there. Its golden
+was captured with `HR_VIEWER=false` and holds no evidence either way, so the React port mirrors it
+as-is — adding the gate is a deliberate behaviour change, not a migration detail.
+
 **Not yet done, and known:** there is no shared chrome in `web/` — no sidebar (`hrSidebar`), no company
 picker, no toast, no confirm/credentials modal. `report.md` §3.5 says to re-implement the chrome once in
 the Next shell rather than share it; the pilot deliberately did not, because one screen does not tell you
