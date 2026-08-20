@@ -87,6 +87,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/CP8D/bank) and the payslip / EA / Form E jsPDF drawers (v213) | `hros.html` |
 | `wht.js` | the withholding-tax computation — s.109/s.109B, gross vs net basis, the s.26A service tax and the s.109(2) increase, plus the charging-section table (v215) | `app.html` |
 | `o2o.js` | the O2O pharmacy-billing computation — the SKU/Package grouping, the date guard, the 19.2% commission and its master-record override, and the invoice numbering (v217) | `app.html` |
+| `salesrecon.js` | the Sales Reconciliation computation — the content-based column/SO/date recognition, the four passes (order lookup → lines → YRDZ numbering → SO suffixing → tally), the Xero CSV and the post body (v219) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -651,6 +652,35 @@ Its gate is the FEATURE kind — app.html:1434's final `else` — not `!canManag
 `wht`, `selfbill`, `gateway`, `bankfeed` and `salesrecon` all use. The screen's test reads
 `showApp()`'s block out of `app.html` and asserts `o2o` is named in no branch of it, so the predicate
 cannot quietly stop mirroring the app.
+
+**`finance.salesrecon` is the THIRD lift, and it was decided the same way O2O's was — by reading the
+server.** `sr_post_invoices` (finance.ts:853) recomputes nothing: it forwards `it.number`, `it.date`,
+`it.due`, `it.desc`, `it.qty`, `it.amount` and `it.account` straight into the Xero `Invoices` payload
+(finance.ts:870-875), reformatting only DD-MM-YYYY → ISO. So the client owns the figures AND the invoice
+numbers, and the arithmetic moved into `salesrecon.js` (with `salesrecon.d.ts` beside it) rather than
+being mirrored. app.html keeps only the DOM-facing halves: `srSheetRows()`'s XLSX decode, the render
+functions, and `srBuild()`'s I/O — the two Xero lookups, the `confirm()` and the toasts. **Passes 2 and 3
+MUTATE `l.inv` in place**, exactly as the legacy loops do; a port that copied the array would have two
+arrays that can disagree about an invoice number.
+
+**`srApplySoSuffix` is the one to read before touching anything here.** `sr_so_suffix` reports, per SO,
+whether the BASE number is already in Xero and what the highest `_N` is. Three branches, and collapsing
+any of them re-offers a number that already exists — Xero rejects the whole batch, or worse, the operator
+retries into a partial import. Same class as `o2oInvoiceNumbers()`'s three states.
+
+**Its gate is the ADMIN one and it is named in `showApp()`'s chain** — app.html:1433, `!canManage`,
+because it creates draft Sales Invoices in a real ledger. NOT the feature-flag fall-through its
+neighbours `recon`, `qinv`, `collections`, `approvals` and `o2o` use. `renderSalesRecon()` has no role
+check at all; the server wants `superAdmin` on all three `sr_*` handlers (finance.ts:857, 899, 926).
+
+**Its golden IS the screen on tab open — the `finance.upload` case, checked rather than assumed.** After
+its single `innerHTML=` write, `renderSalesRecon()` does four `addEventListener` calls (drag on
+`#sr-drop`, change on `#sr-fi`) and nothing else — no `appendChild` (`finance.qinv`), no `.className=`
+(`finance.users`). Listeners are invisible to the harness AND carry no attribute, so the React port
+attaches them **in the route by the same element ids** rather than as props; adding them as props would be
+four handlers the golden does not carry. The screen has ONE mode, no sub-views, and nothing hands off.
+What the golden does not reach is `#sr-result`'s BODY — it is captured `hide` with every div empty — so
+the cards, the account table, the tally and the 150-row preview are pinned by assertion.
 
 **Two sub-flows hand off rather than lie.** The "add this pharmacy to the master" link goes to
 `app.html#tab=pharm` (the Pharmacies LIST is migrated, its detail form is not) — the honest strangler edge `whtDocHtml()`
