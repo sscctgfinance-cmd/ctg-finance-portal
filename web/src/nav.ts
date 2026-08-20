@@ -2,15 +2,22 @@
 //
 // ── WHY ONE LIST ───────────────────────────────────────────────────────────────────────────────────
 // 36 screens exist: 14 HR OS views (`HR_NAV` + the two `HR_EMP_NAV`-only ones, hros.html:1475) and 22
-// Finance OS tabs (the `data-t` values at app.html:1127). Fifteen have React routes; the other 21 do
-// not, and they are reached by handing off to the legacy file at `#tab=<id>` (v213 — the fragment
-// scheme exists precisely so a link can land on a specific screen).
+// Finance OS tabs (the `data-t` values at app.html:1127). ALL 36 now have React routes — Company Info
+// was the last — so `migrated` is `true` on every entry today.
+//
+// The FLAG STAYS. It is not scaffolding that has served its purpose: a screen added to either legacy
+// app arrives here unmigrated and is reached by handing off to the legacy file at `#tab=<id>` (v213 —
+// the fragment scheme exists precisely so a link can land on a specific screen), and `href()` below is
+// what turns the flag into either a React route or that fragment. Both legacy apps are still live and
+// still what staff use; deleting the flag would mean the next screen someone adds to app.html has
+// nowhere to be listed until its React port exists.
 //
 // A nav that listed only the migrated screens would be worse than the developer link list it replaces:
-// it would tell an operator that two thirds of their app had disappeared. So both navs are driven from
-// this one array, with `migrated` as the only per-entry difference, and `href()` below turning that flag
-// into either a React route or a legacy fragment. Adding a screen later is ONE line here, and
-// tests/shell.test.tsx fails if this list and the routes on disk disagree — so it cannot be forgotten.
+// it would tell an operator that part of their app had disappeared. So both navs are driven from this
+// one array, with `migrated` as the only per-entry difference. Adding a screen later is ONE line here,
+// and tests/shell.test.tsx fails if this list and the routes on disk disagree — so it cannot be
+// forgotten, and it asserts the `#tab=` rule against a synthetic unmigrated copy of every entry so
+// that rule keeps being proved now that no real entry carries the flag.
 //
 // ── WHY THE PREDICATES ARE HERE AND NOT IN THE LAYOUTS ─────────────────────────────────────────────
 // Same reason `whtReachable()` lives in src/finance-wht.tsx and `claimsReachable()` in src/hr-claims.tsx:
@@ -91,7 +98,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'close', label: '📋 Close', group: 'operations', migrated: true },
   { app: 'finance', id: 'calendar', label: '📅 Calendar', group: 'operations', migrated: true },
   { app: 'finance', id: 'ap', label: '📧 AP Inbox', group: 'operations', migrated: true },
-  { app: 'finance', id: 'info', label: '🏢 Company Info', group: 'data', migrated: false },
+  { app: 'finance', id: 'info', label: '🏢 Company Info', group: 'data', migrated: true },
   { app: 'finance', id: 'pharm', label: '🏪 Pharmacies', group: 'data', migrated: true },
   { app: 'finance', id: 'users', label: '👥 Users', group: 'admin', migrated: true },
   { app: 'finance', id: 'ctgaccess', label: '🔐 CTG Access', group: 'admin', migrated: true },

@@ -181,14 +181,33 @@ describe('every screen in both apps is in the nav', () => {
     // the eighteenth Finance migration turned into a route — and a hardcoded name here means every
     // remaining migration must edit this shared file to land. Deriving it is strictly stronger: it
     // asserts the rule for whichever screen is unmigrated, and keeps asserting it down to the last one.
+    //
+    // With Company Info there ARE no unmigrated screens left, so BOTH loops below would now pass
+    // vacuously — a guard that cannot fail is not a guard. They are kept (a screen added to either
+    // legacy app lands here unmigrated, and the rule has to hold for it) and the vacuum is closed by
+    // asserting the fact that made them empty, and by proving the `#tab=` rule against a SYNTHETIC
+    // unmigrated copy of every one of the 36 entries — which is strictly more than the real subset
+    // ever covered.
     const unmigrated = FINANCE_NAV.filter((e) => !e.migrated);
     for (const e of unmigrated) expect(href(e)).toBe(`/app.html#tab=${e.id}`);
     expect(href(FINANCE_NAV.find((e) => e.id === 'wht')!)).toBe('/finance/wht/');
     expect(href(FINANCE_NAV.find((e) => e.id === 'overview')!)).toBe('/finance/overview/');
     expect(href(HR_NAV.find((e) => e.id === 'payroll')!)).toBe('/hr/payroll/');
     // The `#tab=` scheme is what makes a handoff land on the right SCREEN rather than the app's default
-    // view (v213). Every legacy destination must carry it, or the nav is 21 links to Overview.
+    // view (v213). A legacy destination that lost it is 36 links to whichever view the app opens on.
     for (const e of ALL_SCREENS.filter((x) => !x.migrated)) expect(href(e)).toContain(`#tab=${e.id}`);
+    for (const e of ALL_SCREENS) {
+      const file = e.app === 'hr' ? 'hros.html' : 'app.html';
+      expect(href({ ...e, migrated: false }), e.id).toBe(`/${file}#tab=${e.id}`);
+      expect(href({ ...e, migrated: true }), e.id).toBe(`/${e.app}/${e.id}/`);
+    }
+  });
+
+  it('is fully migrated — all 36 screens of both apps resolve to a React route', () => {
+    // The strangler is complete. This is the assertion that keeps the two loops above honest: if a
+    // screen is ever added or reverted to `migrated: false`, this fails and they start biting again.
+    expect(ALL_SCREENS.filter((e) => !e.migrated).map((e) => e.id)).toEqual([]);
+    for (const e of ALL_SCREENS) expect(href(e), e.id).toBe(`/${e.app}/${e.id}/`);
   });
 });
 

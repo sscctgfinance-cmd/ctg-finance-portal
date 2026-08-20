@@ -983,10 +983,13 @@ app.html:2113's `c.error || c.income === null` is really about — drive that, n
 Re-rounding a chart coordinate: `Number(x.toFixed(2)).toFixed(1)` is the same string, so a defect written
 that way is a no-op. Drive the component's OWN output as well as a mutated golden.
 
-**`web/tests/shell.test.tsx`'s unmigrated example is now derived from `FINANCE_NAV`, not named.** It
-hardcoded `overview` as "an unmigrated screen", so migrating Overview necessarily broke it — and with
-`cfo` and `info` still to go, both remaining migrations would have had to edit that shared file. It now
-asserts the `#tab=` rule for EVERY unmigrated entry, which is strictly stronger and holds to the last one.
+**`web/tests/shell.test.tsx`'s unmigrated example is derived from `FINANCE_NAV`, and since Company Info
+there are NO unmigrated entries left — so it also proves the rule against a SYNTHETIC one.** Deriving it
+was what let the last migrations land without editing that shared file; but with the set empty both
+`unmigrated` loops would pass vacuously, and a guard that cannot fail is not a guard. They are kept (a
+screen added to either legacy app lands here unmigrated), the fact that emptied them is asserted
+explicitly, and the `#tab=` rule is checked against `{...e, migrated:false}` for all 36 — strictly more
+than the real subset ever covered. Do the same rather than deleting an assertion its data outgrew.
 **`finance.cfo` is the counter-case to the intermediate-state trap, and both halves of the question
 matter.** The CFO Cockpit's golden has TWO sections and BOTH are loaded states — the opposite of
 `finance.ctgaccess` and `finance.gateway`, for two different reasons. `renderCFO()` writes a spinner
@@ -1035,6 +1038,61 @@ fleet can run — `finance.calendar`'s finding. Distinguish it from the analytic
 which is `hr.clock`'s case (the instant is DATA; only the zone it is read in varies) and is pinned by
 re-applying the harness's UTC override for the length of the test file.
 
+**`finance.info` (Company Info) was the LAST screen, and the strangler is complete.** All 36 screens of
+both apps have React routes; `web/src/nav.ts` carries `migrated: true` on every entry. Its golden is the
+biggest in the repo (57 KB) and holds TWO sections, NEITHER of them an intermediate state — the rarer
+answer to the question `finance.qinv`/`finance.users`/`finance.gateway` raise. `renderInfo()` writes
+`spin('info')` and `infoRender()` overwrites the SAME id (`finance.approvals`' case, so the skeleton is
+gone), and `infoRender()` then calls `infoRenderSearch()`, which writes `#info-search-results` — a NESTED
+id (`finance.gateway`'s `#gw-ref` shape) that a blank query fills with the EMPTY STRING. The one
+imperative mutation, `box.style.display`, happens to agree with the inline style the `#info` markup
+already carries, which is why this screen needed no `active`-style t=0 prop.
+
+**Its screen-local rule is an EMPTY CSS DECLARATION, `;;` — the seventh kind, and React cannot emit it.**
+app.html:5985 interpolates a conditional straight into a style attribute, so eight Quick-view fields
+carry `style="font-size:13px;;margin-top:2px;…"`; React's style serialiser emits nothing at all for an
+empty value. `collapseEmptyDecl` in `web/tests/finance-info.parity.test.tsx` turns `;;` into `;` inside a
+`style="…"` value on BOTH sides and nowhere else — `finance.close`'s `dropEmptyStyle` family, narrower.
+`tests/golden/finance.info.html` is the ONLY golden in the repo containing `;;`. **parity.ts's six
+relaxations were again untouched, which is now what all 36 screens have done.**
+
+**Its handler parity needed the bare-word widening in a THIRD spelling, and a `&quot;` decode.**
+`infoCopy()`'s argument is written with `JSON.stringify(v).replace(/"/g,'&quot;')`, so the golden carries
+no real quotes and `goldenHandlers()` returns `[]` for every one of the two dozen 📋 buttons; and
+`infoFolderOpen(f1)` / `infoDocDownload(d1)` interpolate an id UNQUOTED. Both live in the screen's own
+file. **The in-flight migrations this file kept deferring to HAVE now landed**, so the three
+consolidations it names are unblocked and safe to do in one pass: fold `identArgs()` and the identical
+`assertHandlerParity()` wrappers into `web/tests/handlers.ts`, and fold ONE character-reference decoder
+into `web/tests/parity.ts` (five screens now carry one) — taking care that it must NOT decode `&nbsp;`,
+which R2 deliberately canonicalises the other way.
+
+**Nothing was lifted, and the reason is worth reading before the next screen like it.** `company_info_save`
+(finance.ts:2473) forwards `p_patch` verbatim and re-derives nothing, so the client owns what it POSTS —
+but nothing this screen COMPUTES is posted: the patch is the operator's own typing, read back out of the
+form. The fill badges, their colour and `infoDocBytes()` never leave. That is Quick Invoice's case. What
+IS split into `src/` is the part that does leave: `savePatch()` (blank capital DELETED not posted as 0,
+blank date deleted), `saveBody()` (throws on a blank tenant, `reconcileBody('')`'s rule) and
+`printDocHtml()` (`sbiInvoiceHTML()`'s treatment — a report an auditor reads, so the string is pure and
+`window.open` stays in the route).
+
+**Two clocks, and they are NOT the same one.** The document-expiry badge compares `todayLocalISO()`
+(app.html:1263 — MYT by construction) against `inDaysLocalISO(90)` (common.js:28 — the MACHINE's zone,
+via `localISO()`'s `getFullYear/getMonth/getDate`). Mirrored, not fixed, and BOTH pinned by their SOURCE
+— `finance.calendar`'s finding in its fourth form. No fixture document carries an `expiry_date`, so all
+three badge branches are outside the golden entirely.
+
+**SEVEN defects passed a plausible test suite here, and every one was found by introducing it.** Worth
+the pattern, not just the list: each was invisible because the FIXTURE happened to sit on the safe side
+of the branch. The sidebar's ●/○ dots hardcoded to ● (the golden's company is 19/19); the company-tab
+highlight following the FIRST company (the golden's active company IS the first); the website link
+dropping its `https://` prefix (the fixture's website already has a scheme, so a bare domain resolves
+RELATIVE to the page); a file row wired to `docs[0]` (the fixture leaves one document in the root); the
+search summary slicing VALUES instead of COLUMNS (no fixture row has a blank leading column); the
+Move-to dropdown offering the folder a file is already in; and `preventDefault`/`stopPropagation`
+disappearing from the 19 sidebar anchors, the breadcrumb and the folder 🗑 — where the recorded ARGUMENT
+is identical either way, so handler parity cannot see it. **Ask of each guard which side of its branch
+the fixture sits on**, and drive the other one.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
@@ -1043,10 +1101,11 @@ theme; `web/src/hr-shell.tsx` and `web/src/finance-shell.tsx` are pure component
 **A route page therefore renders no `#app` and no `<main>`** — the shell owns both, once. A page that
 needs to read its own DOM back keeps a plain `<div ref>`.
 
-**`web/src/nav.ts` is the one list, and it names screens that are NOT migrated.** 36 entries — 14 HR views
-and 22 Finance tabs — each with a `migrated` flag. `href()` turns that flag into either `/<app>/<id>/` or
-the legacy file at `#tab=<id>`, which is what that fragment scheme (v213) is for. A nav listing only the
-migrated screens would tell an operator two thirds of their app had vanished. Adding a screen is ONE line
+**`web/src/nav.ts` is the one list, and every one of its 36 entries is now `migrated: true`.** 14 HR
+views and 22 Finance tabs. `href()` turns that flag into either `/<app>/<id>/` or the legacy file at
+`#tab=<id>`, which is what that fragment scheme (v213) is for. **Keep the flag and keep the legacy
+branch**: both legacy apps are still live and still what staff use, so a screen added to `app.html` or
+`hros.html` tomorrow arrives here unmigrated and needs somewhere to point. Adding a screen is ONE line
 here; `web/tests/shell.test.tsx` fails if this list, the legacy apps' own nav declarations, and the route
 directories on disk disagree, so it cannot be forgotten.
 
@@ -1072,7 +1131,8 @@ to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
 
 **Four things could not be ported and hand off rather than lie:** Change password (HR and Finance),
 Security/2FA, Alerts and Export are legacy modals and a legacy XLSX writer. Each keeps its label and its
-position and links into the legacy app, the same treatment the 21 unmigrated tabs get. `web/public/ctg-logo.png`
+position and links into the legacy app — with every screen migrated they are the only handoffs the nav
+still makes, alongside the four sibling PAGES named below. `web/public/ctg-logo.png`
 is app.html's inlined base64 brand mark, decoded once.
 
 **Still not done:** no toast, no confirm/credentials modal, and the saved theme is applied on mount rather
