@@ -1006,6 +1006,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="o2o.js"></script>
 <script src="salesrecon.js"></script>
 <script src="gateway.js"></script>
+<script src="pnl.js"></script>
 <script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
@@ -4358,8 +4359,8 @@ async function qiCreate(){
 
 /* ---- P&L Analysis (mirrors the CTG Xero P&L export: months across, accounts down) ---- */
 var PNL_DATA=null, PNL_MONTHS=6, PNL_SHOW_ZERO=false;
-var PNL_BLOCK_ORDER=['STAFF','CTG','BD&M','G&A','FIN','OTHER'];
-var PNL_BLOCK_COLORS={'STAFF':'#5b9bd5','CTG':'#0E9D67','BD&M':'#E0714E','G&A':'#f5a623','FIN':'#a479e2','OTHER':'#8892a6'};
+// The model, the cell accessors, the CSV and the two PNL_BLOCK_* tables are in pnl.js — every figure on
+// this screen is derived in the browser and nothing re-derives it, so there is one copy. See its header.
 
 async function renderPnl(){
   var el=document.getElementById('pnl'); if(!el) return;
@@ -4375,91 +4376,6 @@ async function renderPnl(){
 }
 function pnlSetMonths(n){ n=Number(n)||6; if(PNL_MONTHS===n) return; PNL_MONTHS=n; PNL_DATA=null; renderPnl(); }
 function pnlToggleZero(){ PNL_SHOW_ZERO=!PNL_SHOW_ZERO; pnlRender(); }
-
-// ── Cell accessors: an account may be missing from a month entirely → null, never NaN/0. ──
-function pnlAmt(row,m){ var c=(row&&row.by_month)?row.by_month[m]:null; if(!c||c.amount==null) return null; var v=Number(c.amount); return isFinite(v)?v:null; }
-function pnlPct(row,m){ var c=(row&&row.by_month)?row.by_month[m]:null; if(!c||c.pct==null) return null; var v=Number(c.pct); return isFinite(v)?v:null; }
-function pnlSecRows(section){ return (((PNL_DATA||{}).rows)||[]).filter(function(r){ return r.section===section; }); }
-function pnlSumAt(rows,m){ var any=false,s=0; (rows||[]).forEach(function(r){ var v=pnlAmt(r,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
-function pnlRowTotal(row,months){ var any=false,s=0; months.forEach(function(m){ var v=pnlAmt(row,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
-
-// Builds the display model once — the grid and the CSV both render from it, so the export
-// matches the screen exactly (raw numbers, so Excel can sum the cells).
-function pnlBuild(){
-  var d=PNL_DATA||{}, totals=d.totals||{};
-  var months=(d.months||[]).slice(0,PNL_MONTHS);
-  var ti=pnlSecRows('Trading Income'), cs=pnlSecRows('Cost of Sales'),
-      oi=pnlSecRows('Other Income'), oe=pnlSecRows('Operating Expenses');
-  var hasRows=!!(d.rows&&d.rows.length);
-  // % of revenue basis = Total Trading Income for that month (from rows; totals as fallback).
-  var rev={}; months.forEach(function(m){
-    var v=hasRows?pnlSumAt(ti,m):null;
-    if(v===null){ var t=totals[m]; v=t?Number(t.revenue!=null?t.revenue:t.income):null; }
-    rev[m]=(v===null||!isFinite(v))?null:v;
-  });
-  var pctOf=function(v,m){ return (v!==null&&rev[m])?(v/rev[m]):null; };
-  var band=function(label){ return {kind:'band',label:label,vals:months.map(function(){return {amt:null,pct:null};}),total:null}; };
-  var acctRows=function(rows){
-    return rows.filter(function(r){
-      if(PNL_SHOW_ZERO) return true;
-      return months.some(function(m){ var v=pnlAmt(r,m); return v!==null && Math.abs(v)>0.005; });
-    }).map(function(r){
-      return {kind:'acct',label:r.account||'—',
-        vals:months.map(function(m){ return {amt:pnlAmt(r,m),pct:pnlPct(r,m)}; }),
-        total:pnlRowTotal(r,months)};
-    });
-  };
-  var totRow=function(kind,label,rows){
-    var vals=months.map(function(m){ var v=pnlSumAt(rows,m); return {amt:v,pct:pctOf(v,m)}; });
-    var any=vals.some(function(c){ return c.amt!==null; });
-    return {kind:kind,label:label,vals:vals,total:any?vals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null};
-  };
-  var out=[];
-  out.push(band('Trading Income'));
-  out=out.concat(acctRows(ti));
-  var tiRow=totRow('sub','Total Trading Income',ti); out.push(tiRow);
-  out.push(band('Cost of Sales'));
-  out=out.concat(acctRows(cs));
-  var csRow=totRow('sub','Total Cost of Sales',cs); out.push(csRow);
-  // Gross Profit = Total Trading Income − Total Cost of Sales.
-  var gpVals=months.map(function(m,i){
-    var a=tiRow.vals[i].amt, b=csRow.vals[i].amt;
-    if(a===null&&b===null) return {amt:null,pct:null};
-    var v=(a||0)-(b||0); return {amt:v,pct:pctOf(v,m)};
-  });
-  var gpAny=gpVals.some(function(c){return c.amt!==null;});
-  out.push({kind:'key',label:'Gross Profit',vals:gpVals,total:gpAny?gpVals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null});
-  if(oi.length){
-    out.push(band('Other Income'));
-    out=out.concat(acctRows(oi));
-    out.push(totRow('sub','Total Other Income',oi));
-  }
-  out.push(band('Operating Expenses'));
-  // Group opex by CTG cost block, known blocks first, then anything else the backend sends.
-  var seen={}, order=[];
-  PNL_BLOCK_ORDER.forEach(function(b){ if(oe.some(function(r){return (r.block||'OTHER')===b;})){ order.push(b); seen[b]=1; } });
-  oe.forEach(function(r){ var b=r.block||'OTHER'; if(!seen[b]){ seen[b]=1; order.push(b); } });
-  order.forEach(function(b){
-    var brows=oe.filter(function(r){ return (r.block||'OTHER')===b; });
-    var accts=acctRows(brows);
-    if(!accts.length && !PNL_SHOW_ZERO) return;
-    out.push({kind:'blk',label:b,vals:months.map(function(){return {amt:null,pct:null};}),total:null});
-    out=out.concat(accts);
-    out.push(totRow('sub','Total '+b+' Cost',brows));
-  });
-  out.push(totRow('sub','Total Operating Expenses',oe));
-  // Net Profit is Xero's own authoritative figure — never recomputed as revenue − expenses.
-  var npVals=months.map(function(m){
-    var t=totals[m]; var v=(t&&t.net_profit!=null)?Number(t.net_profit):null;
-    if(v!==null&&!isFinite(v)) v=null;
-    return {amt:v,pct:pctOf(v,m)};
-  });
-  var npAny=npVals.some(function(c){return c.amt!==null;});
-  out.push({kind:'key',label:'Net Profit',vals:npVals,total:npAny?npVals.reduce(function(s,c){return c.amt===null?s:s+c.amt;},0):null});
-  return {months:months,rows:out,rev:rev,hasRows:hasRows,
-          tiRow:tiRow,csRow:csRow,gpVals:gpVals,npVals:npVals,
-          opexRow:out.filter(function(r){return r.label==='Total Operating Expenses';})[0]};
-}
 
 function pnlNum(v){ return v===null||v===undefined?'—':M(v); }
 function pnlCell(c,cls){
@@ -4519,7 +4435,7 @@ function pnlBlockChart(months, blocks){
 
 function pnlRender(){
   var el=document.getElementById('pnl'); if(!el||!PNL_DATA) return;
-  var d=PNL_DATA, mdl=pnlBuild(), months=mdl.months, totals=d.totals||{};
+  var d=PNL_DATA, mdl=pnlBuild(PNL_DATA,PNL_MONTHS,PNL_SHOW_ZERO), months=mdl.months, totals=d.totals||{};
   var scopeCo=cfoScopeName();
   var cur=months[0]||null, prv=months[1]||null;
   var at=function(vals,i){ return (i>=0&&vals&&vals[i])?vals[i].amt:null; };
@@ -4601,23 +4517,11 @@ function pnlRender(){
 function pnlExportCsv(){
   if(!PNL_DATA){ toast('Nothing to export yet',true); return; }
   try{
-    var mdl=pnlBuild(), months=mdl.months;
-    var q=function(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?('"'+s.replace(/"/g,'""')+'"'):s; };
-    var lines=[['Account'].concat(months).concat(['Total']).map(q).join(',')];
-    if(!mdl.hasRows){
-      lines=[['Month','Income','Expenses','Net profit'].map(q).join(',')];
-      months.forEach(function(m){ var t=(PNL_DATA.totals||{})[m]||{};
-        lines.push([q(m),(t.income==null?'':t.income),(t.expenses==null?'':t.expenses),(t.net_profit==null?'':t.net_profit)].join(',')); });
-    } else {
-      mdl.rows.forEach(function(r){
-        if(r.kind==='band'||r.kind==='blk'){ lines.push(q(r.label)); return; }
-        lines.push([q(r.label)].concat(r.vals.map(function(c){ return (c&&c.amt!==null&&c.amt!==undefined)?c.amt:''; }))
-          .concat([(r.total===null||r.total===undefined)?'':r.total]).join(','));
-      });
-    }
+    var mdl=pnlBuild(PNL_DATA,PNL_MONTHS,PNL_SHOW_ZERO), months=mdl.months;
+    var lines=pnlCsvLines(mdl,PNL_DATA.totals);
     var co=document.getElementById('company');
-    var coName=(co&&co.selectedIndex>=0)?co.options[co.selectedIndex].text.replace(/[^A-Za-z0-9]/g,'_'):'';
-    var fn='CTG_PnL'+((coName&&coName.indexOf('All')<0)?('_'+coName):'')+'_'+months.length+'mo_'+todayLocalISO()+'.csv';
+    var coName=(co&&co.selectedIndex>=0)?co.options[co.selectedIndex].text:'';
+    var fn=pnlCsvName(coName,months.length,todayLocalISO());
     var blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a'); a.href=url; a.download=fn; document.body.appendChild(a); a.click();

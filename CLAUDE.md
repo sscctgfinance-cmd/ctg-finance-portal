@@ -89,6 +89,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 | `o2o.js` | the O2O pharmacy-billing computation — the SKU/Package grouping, the date guard, the 19.2% commission and its master-record override, and the invoice numbering (v217) | `app.html` |
 | `salesrecon.js` | the Sales Reconciliation computation — the content-based column/SO/date recognition, the four passes (order lookup → lines → YRDZ numbering → SO suffixing → tally), the Xero CSV and the post body (v219) | `app.html` |
 | `gateway.js` | the Gateway → Xero conversion — the four per-gateway parsers (Payex / Atome / HitPay / NTT Data), the column detection, the totals, the data-check block, the CSV and its filename (v219) | `app.html` |
+| `pnl.js` | the P&L Analysis model — the cell accessors, `pnlBuild`'s grid (sections, subtotals, Gross Profit, the cost blocks, the % basis), the CSV and its filename (v220) | `app.html` |
 
 They are prep for the Next.js migration: this is the code React must import rather than re-express (see
 `data/decisions/finance-portal-nextjs-committed.md`). Each file's own header states its contract; the
@@ -875,6 +876,41 @@ model and a different file layout; the golden covers Payex at t=0 with nothing l
 hidden. Atome, HitPay (the only DERIVED fee rate) and NTT Data (single-file, payout dated on the
 transaction date) are outside the diff entirely, as is every figure the screen exists to produce, and
 they are pinned by assertion in the screen's own test against `gateway.js`'s real output.
+
+**`finance.pnl` is the SIXTH lift, and it was decided the same way Gateway's was — by reading the
+server.** `pnl_analysis` (finance.ts:2034) is a pass-through to the `portal_pnl_analysis` RPC: it sends
+per-account `rows[].by_month[m]` and per-month `totals[m]` and re-derives NOTHING, and the screen posts
+nothing back (`export_log` carries a row COUNT, not a figure). So every subtotal on a P&L — the section
+totals, Gross Profit, each cost block, Total Operating Expenses, the row totals and every % — is derived
+in the browser with no second computation anywhere that could disagree and be noticed. `pnl.js` (with
+`pnl.d.ts` beside it) is that model plus the CSV; app.html keeps only the DOM-facing halves —
+`renderPnl`/`pnlRender`, `pnlCell`, `pnlChip`, `pnlBlockChart` and the download. The ONE thing
+deliberately NOT lifted is Net Profit: it is Xero's own figure, taken from `totals[m].net_profit` and
+never recomputed as revenue − expenses.
+
+**Its golden is the LOADED screen, and that is the `finance.approvals` case — `renderPnl()` and
+`pnlRender()` write the SAME element id.** The spinner goes into `#pnl`, the fetch resolves, and
+`pnlRender()` overwrites `#pnl`; last-write-wins is per id, so the skeleton is a branch outside the
+diff, not a second section. `pnlRender()`'s `el.innerHTML=` is its last statement — no `appendChild`, no
+`.value=`, no `classList` — so unlike `finance.qinv`, `finance.users` and `finance.gateway` there is no
+invisible mutation the golden is missing. Its gate is the FEATURE kind (`pnl` is named in no branch of
+app.html:1420-1439, so it falls through to the final `else`), while `renderPnl()` itself has no role
+check at all.
+
+**A screen can have many modes and one baseline — count them and say which.** `finance.pnl` has THREE
+pre-load documents (spinner / `!r.ok` refusal / thrown error) and six independent binary modes once
+loaded: account grid vs monthly-totals fallback, 6 vs 12 months, show-zero off vs on, chart with cost
+blocks vs "no cost-block data", consolidated vs company-scoped, `generated_at` present vs absent. The
+golden covers ONE combination and none of the three pre-load documents, so everything else is pinned by
+assertion in the screen's own test — including the whole stacked chart, which the fixture's missing
+`blocks` array puts outside the diff entirely.
+
+**A guard that only reads the OUTPUT can miss the half of a defect that has no output.** Removing
+`Math.max(0, …)` from `pnlBlockChart`'s stack total leaves every bar SEGMENT untouched — only positive
+blocks are drawn — and moves only the total label printed above the bar, so `height="-"` and the
+tooltips can never catch it. The first cut of `finance-pnl`'s chart test asserted exactly those and went
+green on the defect. Read what each clamp, filter or `Math.max` actually changes before writing the
+assertion that protects it.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
