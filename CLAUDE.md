@@ -429,6 +429,32 @@ migration detail.
 to, not a branch of the list renderer. `onOpen`/`onNew` hand off to `app.html#tab=wht` — same origin,
 same session. That handoff is the honest strangler edge for any Finance tab with a second page behind it.
 
+**A screen with NO handlers still uses `assertHandlerParity()` — the empty golden IS the assertion.**
+`finance.bankfeed` is the first: its launch control is an `<a href target="_blank" rel="noopener
+noreferrer">`, so the golden carries not one `on*=`. R1 strips handlers from the string diff, so a port
+that turned that anchor into a `<button onClick>` would look identical and would have silently dropped
+the href, the new tab and the `noopener` that stops the opened program reaching back through
+`window.opener`. The shared guard-the-guard (`want.length > 0`) is unsatisfiable there; replace it — do
+not drop it — with `expect(want).toEqual([])`, so a legacy button added later fails rather than passing
+vacuously, and pin the anchor's attributes alongside it.
+
+**A NUMERIC character reference is the same finding as `hr.payroll`'s named ones.** `renderBankFeed()`
+writes `&#8599;` (↗) into its HTML string (app.html:4063), and React's text escaper emits only
+`& < > " '` as references — so neither side can be spelled into the other.
+`web/tests/finance-bankfeed.parity.test.tsx`'s `decodeNumericRefs` decodes `&#…;` on BOTH sides in its
+OWN file, with the same justification and "cannot hide" cases the six in `parity.ts` carry (including
+that it must NOT decode `&amp;#8599;`, the defect where the entity prints on the button). That is the
+SECOND screen of the character-reference kind, which by the rule above `hr-payroll`'s paragraph is what
+would justify folding ONE reference-decoding rule into `web/tests/parity.ts` — do it in the same pass as
+`identArgs()` and the `assertHandlerParity()` wrappers, once the in-flight migrations have landed.
+
+**A `loaded.<tab>` flag is not screen behaviour and does not port.** It belongs to `tab()`
+(app.html:1503) — `if(!loaded[t]) render(t)` — and stops a tab switch re-running a fetch and re-painting
+the shared div by `innerHTML`. `render(t)` already sets `loaded[t]=true` before it dispatches
+(app.html:1539), so the assignment inside a renderer is a no-op. There is no React equivalent to write:
+a component is re-rendered freely and is a pure function of props, so a render-once flag in one is state
+that can only go stale.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
