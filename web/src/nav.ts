@@ -82,7 +82,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'ocr', label: '🤖 Smart OCR', group: 'operations', migrated: true },
   { app: 'finance', id: 'o2o', label: '💊 O2O Billing', group: 'operations', migrated: true },
   { app: 'finance', id: 'qinv', label: '🧾 Quick Invoice', group: 'operations', migrated: true },
-  { app: 'finance', id: 'selfbill', label: '🧑 Personal Invoices', group: 'operations', migrated: false },
+  { app: 'finance', id: 'selfbill', label: '🧑 Personal Invoices', group: 'operations', migrated: true },
   { app: 'finance', id: 'wht', label: '🌏 Withholding Tax', group: 'operations', migrated: true },
   { app: 'finance', id: 'recon', label: '🏦 Bank Rec', group: 'operations', migrated: true },
   { app: 'finance', id: 'gateway', label: '🔁 Gateway → Xero', group: 'operations', migrated: false },

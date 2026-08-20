@@ -729,6 +729,41 @@ migrated: Roles, Sessions, Audit, Xero sync and `userForm()`'s modal hand off to
 while `🔑 Reset` is ported because it is `prompt()` plus one POST, with `resetBody()` split out and
 pinned against `userReset()`'s own text — no golden sees a request that sets someone's password.
 
+**`finance.selfbill` is Quick Invoice's case, decided by reading the SERVER.** `sbi_save`
+(finance.ts:1394-1401) recomputes gross, `wht_amount` and `net_payable` itself and stores its own
+figures, so `sbiRecalc()` is a preview an operator reads, not a second copy of the maths — nothing was
+lifted, where `wht.js` and `o2o.js` were. Ask "does the server re-derive this figure?" first; the answer
+decides, not the shape of the code. Its one mirrored gap: the preview's net is `gross − wht` while the
+server's is `gross + sst − wht`, so a record carrying SST previews low. They agree on everything the
+form can produce (it has no SST input — app.html:4399's H7 comment), and both halves are pinned in the
+screen's test rather than "fixed".
+
+**`finance.selfbill`'s gate is the ADMIN one and the legacy line says why: it CREATES PAYMENTS.**
+app.html:1429, `!canManage` — inside `showApp()`'s chain, not the final `else` its neighbours
+`approvals`/`collections`/`recon`/`qinv`/`o2o` fall through to. `renderSelfbill()` has no role check at
+all, and the payees panel is a table of individuals' IC numbers and bank accounts, so a renderer-only
+port leaks those plus buttons that approve and post payments. The route refuses to LOAD on a false.
+
+**A screen-local handler rule can be needed for a BARE BOOLEAN, and this is the first.** Both Xero
+buttons are `sbiPostXero(id, posted)`; `false` posts a SUBMITTED bill and `true` only re-attaches a PDF
+to the bill already there. `identArgs()`'s established integer widening reads both as `['12']`, so
+`web/tests/finance-selfbill.parity.test.tsx` widens it once more with `\b(true|false)\b` — strictly
+additive, in the screen's own file, with a case proving integer-only extraction would not catch the
+swap. Copy that, not `web/tests/handlers.ts`.
+
+**A screen can need BOTH reference-decoding rules in one comparison.** `sbiRender()` writes `&rsquo;`,
+`&mdash;`, `&ldquo;`, `&rdquo;` and `&rarr;` alongside the numeric `&#8635;`, so the screen's test
+carries ONE `decodeRefs` covering hr-payroll's named kind and finance-bankfeed's numeric kind together —
+still screen-local, still with its own "cannot hide" block, and still leaving `&amp;` alone so the
+doubly-escaped defect stays visible. That is now three screens of the character-reference kind; folding
+one such rule into `web/tests/parity.ts` is the change to make once the in-flight migrations land.
+
+**`sbiInvoiceHTML()` is ported, not handed off.** It is a DOCUMENT that leaves the building — the
+supplier's and the auditor's copy of a payment — so it gets `bankFile()`'s treatment: a pure
+`invoiceDocHtml()` in `src/` returning the string, `window.open` left in the route, and the payment
+block and the LHDN declaration pinned by assertion. Distinguish it from `whtDocHtml()`, which is a
+sibling PAGE the legacy renderer dispatches to and therefore hands off.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
