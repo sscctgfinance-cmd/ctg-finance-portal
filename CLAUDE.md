@@ -987,6 +987,53 @@ that way is a no-op. Drive the component's OWN output as well as a mutated golde
 hardcoded `overview` as "an unmigrated screen", so migrating Overview necessarily broke it — and with
 `cfo` and `info` still to go, both remaining migrations would have had to edit that shared file. It now
 asserts the `#tab=` rule for EVERY unmigrated entry, which is strictly stronger and holds to the last one.
+**`finance.cfo` is the counter-case to the intermediate-state trap, and both halves of the question
+matter.** The CFO Cockpit's golden has TWO sections and BOTH are loaded states — the opposite of
+`finance.ctgaccess` and `finance.gateway`, for two different reasons. `renderCFO()` writes a spinner
+into `#cfo` and `cfoRender()` overwrites THE SAME id, so last-write-wins erases it (`finance.approvals`'
+case); `cfoRender()`'s markup then contains `<div id="cfo-analytics">`, so the `#cfo` section holds that
+EMPTY while `cfoAnalyticsLoad()`/`cfoAnalyticsRender()` fill it as its own section — and within that id
+last-write-wins again. So ask BOTH halves of the question of every remaining screen: which IDS does the
+renderer write, and what does it do AFTER each write? Here the answer after the `#cfo` write is
+`loaded.cfo=true` (a no-op) and one loader call, and `cfoAnalyticsRender()` does nothing at all — both
+pinned out of app.html in `web/tests/finance-cfo.parity.test.tsx` rather than asserted from memory.
+
+**A read-only dashboard is the clearest "do not lift" there is — `finance.cfo` is `finance.overview`'s
+"neither" answer, reached one question earlier.** Before asking whether the server re-derives a figure,
+ask whether anything **leaves the building.** CFO Cockpit posts nothing, exports nothing and creates
+nothing; `group_dashboard` and `fin_analytics` own every authoritative figure, and what the client
+derives (margins, MoM, the P&L footer, bar widths, chart geometry) is a display echo. On a dashboard
+that first question settles the second, and it settles it without reading the server at all. Its ten
+chart builders are therefore mirrored coordinate for coordinate — `hr.dashboard`'s rule, the same call
+Overview made for the same reason — and the goldens diff them to the last digit.
+
+**A threshold no test CROSSES is a threshold a port can move, and a golden cannot see it.** The strongest
+finding of this migration, from deliberately breaking the shipped component: widening the intercompany
+red/green rule from `Math.abs(diff) > 1` to `> 100` — hiding a RM 99 disagreement between two companies'
+ledgers — passed every test in the file, because the fixture's difference (500) is on the same side of
+both. A case that only moves the DATA to the other side proves the branch exists, not where the boundary
+is. Drive such rules AT the boundary (1 vs 1.01, both signs). The same pass found a second: an assertion
+looking for a bare `🔴` passed with the health-dot fall-through inverted, because the alerts panel above
+prints one too — scope a colour/glyph assertion to its own cell, not to the document.
+
+**`finance.cfo` needed TWO screen-local rules, both of established kinds, and no seventh relaxation.**
+`decodeRefs` (`&rarr; &divide; &times;`) is the FOURTH screen of the character-reference kind after
+`hr.payroll`, `finance.bankfeed` and `finance.ctgaccess`; `decodeTextAmp` (the bare `&` in `P&L`) is the
+SECOND of hr.payslip's kind. Note the interaction the fourth copy makes explicit: such a rule must NOT
+decode `&nbsp;`, because parity.ts's R2 deliberately canonicalises the CHARACTER to that ENTITY so a
+dropped nbsp stays visible — decoding it hands back the exact silent failure R2 exists to prevent. That
+case is in the file's `still bites` block. Folding one reference rule into `web/tests/parity.ts` is now
+four screens overdue.
+
+**`ytdYear(now)` is the third lifted clock derivation** (after `hr.yearend`'s `taxYears(now)` and
+`finance.qinv`'s `todayLocalISO()`), and the THIRD screen to pin the IMPLEMENTATION rather than the
+output — after `finance.calendar`'s `dueLabel()` and `finance.ap`'s explicit `timeZone` option, which is
+the same finding in its third form: `cfoRender()`'s `new Date(Date.now()+8*3600000).getUTCFullYear()` is
+the MYT year computed
+without a timezone database, and rewriting it as `getFullYear()` is invisible to every output check this
+fleet can run — `finance.calendar`'s finding. Distinguish it from the analytics stamp on the same screen,
+which is `hr.clock`'s case (the instant is DATA; only the zone it is read in varies) and is pinned by
+re-applying the harness's UTC override for the length of the test file.
 
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 

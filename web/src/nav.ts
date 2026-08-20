@@ -73,7 +73,7 @@ export const FINANCE_CATS = [
 
 /** The 22 `.tab` divs — app.html:1127. Order, emoji and labels verbatim. */
 export const FINANCE_NAV: NavEntry[] = [
-  { app: 'finance', id: 'cfo', label: '🎯 CFO Cockpit', group: 'dashboard', migrated: false },
+  { app: 'finance', id: 'cfo', label: '🎯 CFO Cockpit', group: 'dashboard', migrated: true },
   { app: 'finance', id: 'overview', label: '📊 Overview', group: 'dashboard', migrated: true },
   { app: 'finance', id: 'pnl', label: '📑 P&L Analysis', group: 'dashboard', migrated: true },
   { app: 'finance', id: 'approvals', label: '✅ Approvals', group: 'operations', migrated: true },
