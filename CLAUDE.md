@@ -758,6 +758,36 @@ still screen-local, still with its own "cannot hide" block, and still leaving `&
 doubly-escaped defect stays visible. That is now three screens of the character-reference kind; folding
 one such rule into `web/tests/parity.ts` is the change to make once the in-flight migrations land.
 
+**An EMPTY `style=""` is a fifth screen-local kind, and React cannot emit it at all.** `finance.close`
+is the case: `closeLoad()` interpolates a conditional straight into an attribute (app.html:5754,
+`'<b style="'+(t.status==='done'?'opacity:.55':'')+'">'`), so four of the five golden rows carry
+`style=""`. An empty style object, an empty declaration value and `undefined` all serialise to NO
+attribute in react-dom/server, so neither side can be spelled into the other.
+`web/tests/finance-close.parity.test.tsx`'s `dropEmptyStyle` removes exactly ` style=""` from BOTH
+sides, in the screen's own file — same treatment as `dedupeAttrs` and `decodeAttrAmp`, and narrow enough
+that any style with content, and every OTHER empty attribute (`value=""` is load-bearing on that same
+screen), still diffs.
+
+**A golden handler whose argument is a ternary over `this.checked` needs the STUB's semantics applied to
+the golden, not a relaxation.** `goldenHandlers()` collects every quoted literal, so
+`closeSet('c1',this.checked?'done':'pending')` yields THREE — the row id plus both branches — while
+`reactHandlers()` invokes with `{target:{value}}` carrying no `checked`, so the React side takes the
+false branch and records two. `finance.close`'s `stubArgs()` collapses `this.checked?'A':'B'` to `'B'`
+before reading the literals: a mirror of the stub, in the screen's own file, and a TIGHTENING — a port
+that inverted the mapping records `'done'` where the golden-derived expectation is `'pending'`. The true
+branch is unreachable through the shared stub, so it is driven directly against the component in the
+same test; do that too rather than leaving half the mapping uncovered.
+
+**`finance.close` is `finance.ctgaccess`'s two-section shape, with a wrinkle: TWO different loading
+documents.** `renderClose()` writes `#close` (the frame, holding `<div id="close_out"
+class="muted">Loading…</div>`) and then `closeLoad()` overwrites `#close_out` — different ids, so both
+writes survive and the `#close` section is the frame at t=0. But the muted bare-text "Loading…" the
+frame carries is NOT the `<div class="load"><span class="spin">` that `closeLoad()` paints while its
+fetch is in flight; collapsing the two into one null state loses the golden. Its gate is the FEATURE
+kind (app.html:1434's final `else` — `close` is named in no branch), while the server requires
+`isAdmin` on both `close_list` and `close_update` (finance.ts:819, :826). Nothing was lifted: the
+progress percentage is a display echo of rows the server owns, `finance.qinv`'s case.
+
 **`sbiInvoiceHTML()` is ported, not handed off.** It is a DOCUMENT that leaves the building — the
 supplier's and the auditor's copy of a payment — so it gets `bankFile()`'s treatment: a pure
 `invoiceDocHtml()` in `src/` returning the string, `window.open` left in the route, and the payment

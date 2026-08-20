@@ -88,7 +88,7 @@ export const FINANCE_NAV: NavEntry[] = [
   { app: 'finance', id: 'gateway', label: '🔁 Gateway → Xero', group: 'operations', migrated: false },
   { app: 'finance', id: 'bankfeed', label: '🔗 Bank Feed', group: 'operations', migrated: true },
   { app: 'finance', id: 'salesrecon', label: '📊 Sales Reconciliation', group: 'operations', migrated: false },
-  { app: 'finance', id: 'close', label: '📋 Close', group: 'operations', migrated: false },
+  { app: 'finance', id: 'close', label: '📋 Close', group: 'operations', migrated: true },
   { app: 'finance', id: 'calendar', label: '📅 Calendar', group: 'operations', migrated: true },
   { app: 'finance', id: 'ap', label: '📧 AP Inbox', group: 'operations', migrated: false },
   { app: 'finance', id: 'info', label: '🏢 Company Info', group: 'data', migrated: false },
