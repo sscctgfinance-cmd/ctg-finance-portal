@@ -1170,6 +1170,43 @@ disappearing from the 19 sidebar anchors, the breadcrumb and the folder 🗑 —
 is identical either way, so handler parity cannot see it. **Ask of each guard which side of its branch
 the fixture sits on**, and drive the other one.
 
+### Every date read in `web/` is inventoried and pinned — `web/tests/timezone-audit.test.tsx`
+
+This fleet and CI both sit at UTC+8, where a whole class of defect is invisible: `new Date('2026-07-30')`
+is midnight UTC and prints 29 Jul west of Greenwich. The Calendar port was rewritten that way and all 29
+of its tests still passed. **An output assertion cannot see this. The guard has to be on the source.**
+
+That file is the audit. It scans every `.ts`/`.tsx` under `web/src` and `web/app` for date tokens in
+CODE (comments blanked — several files QUOTE `new Date` to explain why they do not call it), and every
+hit must be accounted for by an `INVENTORY` entry whose per-file COUNT matches. **A date read added
+anywhere fails there until somebody classifies it** — that count is what stops the audit becoming a
+snapshot. Four kinds are pinned, and mixing them up is the defect:
+
+| kind | shape | where |
+|---|---|---|
+| MYT | `Date.now() + 8*3600000` read back with `getUTC*` | app.html:1263's `todayLocalISO` and everything derived from it |
+| LOCAL | `getFullYear/getMonth/getDate` on a bare `new Date()` | **hros.html:1271's `todayLocalISO`** — same name, different function, different answer |
+| UTC | `toISOString().slice(0,10)` | three document stamps, deliberate |
+| BARE | `toLocaleString()` with no locale and no `timeZone` | app.html:4919/:4978, hros.html:4303 |
+
+**The strongest single line in it is the blanket: nothing in `web/` may pass a `timeZone` except
+`finance-ap.tsx`, whose legacy passes one.** Adding `Asia/Kuala_Lumpur` to any zone-less `toLocale*` is
+an *improvement* that makes React and the legacy disagree about when something happened — and it passes
+every output assertion here. Three such additions passed the whole suite before that line existed.
+
+**The audit's own first cut had seven guards that did not bite**, all found by introducing the defect
+rather than by reading: the named helpers were pinned and the INLINE reads — a `useState` initialiser, a
+JSX expression, a one-line arrow — were not. They are the `SNIPPETS` table now. Note also that
+`finance-overview.parity.test.tsx`'s harness override forces `timeZone:'UTC'` **last**, overriding the
+caller, where `hr-clock`/`hr-attendance`/`finance-cfo` spread the caller last — so on Overview a zone
+added to the component is invisible to the golden as well. Pin by source, not by output.
+
+**No category (b) was found: not one React date read exists that the legacy does not have at the same
+point.** Where the legacy is itself zone-blind it is mirrored, not fixed — `hrFormEStats`'s
+`new Date(join_date).getFullYear()` (a figure filed with LHDN) is the known one, and
+`hr-attendance`'s `dtLocal` and `finance.info`'s two-different-clocks are the others. Changing any of
+them is a decision, not a migration detail.
+
 ### SIBLING PAGES are not screens, and they live NESTED under their tab's route
 
 A migrated renderer can dispatch to another PAGE rather than render a branch: `renderWht()` swaps `#wht`
