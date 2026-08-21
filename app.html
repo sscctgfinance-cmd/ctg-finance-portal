@@ -6126,8 +6126,22 @@ function infoCollect(){
     });
     out[key]=rows;
   });
-  ['authorised_capital','paid_up_capital'].forEach(k=>{ if(out[k]==='') delete out[k]; else if(out[k]!=null) out[k]=Number(out[k]); });
-  if(out.incorporation_date==='') delete out.incorporation_date;
+  // Type every empty value before it leaves the browser. A blank <input type="date"> reads as "", and
+  // Postgres rejects ""::date outright — so ONE empty compliance date made Save fail for the WHOLE form
+  // with "invalid input syntax for type date", and nothing on the page said which field was at fault.
+  //
+  // Naming the guarded fields by hand is what allowed that: incorporation_date was listed here, and the
+  // four Compliance dates added to INFO_SECTIONS later were not. Derive the list from the schema instead,
+  // so a date or number field added tomorrow is covered the day it is added.
+  //
+  // null, not delete: a deleted key cannot express "clear this", so a date entered by mistake could never
+  // be removed. JSON null reaches the RPC as SQL NULL, which is what an empty date column should hold.
+  INFO_SECTIONS.forEach(sec=>{ (sec.fields||[]).forEach(f=>{
+    if(!(f.k in out)) return;
+    const blank = String(out[f.k]==null?'':out[f.k]).trim()==='';
+    if(f.type==='date'){ if(blank) out[f.k]=null; }
+    else if(f.type==='number'){ out[f.k] = blank ? null : Number(out[f.k]); }
+  }); });
   return out;
 }
 
