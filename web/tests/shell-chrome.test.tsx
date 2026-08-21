@@ -443,6 +443,11 @@ describe('the saved theme is applied before paint, not on mount', () => {
 
 const noop = () => {};
 
+// The four chrome controls this file does not exercise, so a shell prop added for one of them is a
+// mechanical addition here and not a change to anything asserted below. src/finance-alerts.tsx,
+// src/finance-security.tsx and src/finance-export.ts own their own behaviour.
+const CHROME = { onToggleAlerts: noop, alertBadge: null, onSecurity: noop, onExport: noop };
+
 function hrShellHtml(): ReactElement {
   return (
     <HrShell view="dashboard" entries={hrNavFor(hrRole('admin'), true)} empMode={false} viewer={false}
@@ -457,7 +462,7 @@ function financeShellHtml(onChangePassword = noop): ReactElement {
   return (
     <FinanceShell active="overview" tabs={financeNavFor(perms)} cats={[]} who="B" role="Admin"
       companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop}
-      onRefresh={noop} onChangePassword={onChangePassword} onSignOut={noop}>x</FinanceShell>
+      onRefresh={noop} onChangePassword={onChangePassword} {...CHROME} onSignOut={noop}>x</FinanceShell>
   );
 }
 
@@ -481,10 +486,41 @@ describe('Change password is a control, not a handoff', () => {
     expect(hit).toBe(1);
   });
 
-  it('Security and Alerts are still honest handoffs — neither was ported', () => {
+  // Was "Security and Alerts are still honest handoffs — neither was ported". Both ARE ported now
+  // (src/finance-security.tsx, src/finance-alerts.tsx), along with ⬇ Export, so the assertion is
+  // inverted rather than dropped: the three keep their labels and their positions, they are CONTROLS,
+  // and — the half that matters — the Finance chrome no longer links into the app it replaces at all.
+  it('Security, Alerts and Export are controls, and the chrome links into app.html nowhere', () => {
     const out = html(financeShellHtml());
-    expect(out).toContain('🔐 Security');
-    expect(out).toMatch(/<a class="btn"[^>]*href="\/app\.html"[^>]*>🔐 Security<\/a>/);
+    for (const label of ['🔐 Security', '🔔', '⬇ Export']) expect(out, label).toContain(label);
+    expect(out).not.toMatch(/<a[^>]*href="\/app\.html/);
+    const labelled = buttons(financeShellHtml()).filter((b) => /🔐 Security|🔔|⬇ Export/.test(b.text));
+    expect(labelled.length).toBe(3);
+    for (const b of labelled) expect(b.onClick, b.text).toBeTypeOf('function');
+  });
+
+  /**
+   * All four of these controls take NO argument, so "it is wired" cannot tell one from another —
+   * hr.payroll's `LEGACY_TO_PROP` finding, in the chrome. Introduced by wiring ⬇ Export to
+   * `onSecurity` and watching every other assertion in this file still pass.
+   */
+  it('each argument-free chrome control reaches its OWN prop', () => {
+    const hit: string[] = [];
+    const perms: Perms = { manage_users: true, features: ['overview'] };
+    const node = (
+      <FinanceShell active="overview" tabs={financeNavFor(perms)} cats={[]} who="B" role="Admin"
+        companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={() => hit.push('theme')}
+        onRefresh={() => hit.push('refresh')} onChangePassword={() => hit.push('password')}
+        onToggleAlerts={() => hit.push('alerts')} alertBadge={null}
+        onSecurity={() => hit.push('security')} onExport={() => hit.push('export')}
+        onSignOut={() => hit.push('signout')}>x</FinanceShell>);
+    const by = (re: RegExp) => buttons(node).find((b) => re.test(b.text))!;
+    by(/🔔/).onClick!({});
+    by(/🔐 Security/).onClick!({});
+    by(/⬇ Export/).onClick!({});
+    by(/Change Password/).onClick!({});
+    by(/Sign Out/).onClick!({});
+    expect(hit).toEqual(['alerts', 'security', 'export', 'password', 'signout']);
   });
 
   // The HR sidebar's own destinations are unchanged by any of this — shell.test.tsx diffs them against

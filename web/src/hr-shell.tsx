@@ -99,8 +99,9 @@ export interface HrShellProps {
  *
  * "Change password" used to hand off to hros.html, because there was no React password dialog. There is
  * one now (src/password-modal.tsx), so it is a button that opens it — the same control the legacy foot
- * has, in the same place. Security / 2FA has no equivalent yet and is still a handoff on the Finance
- * side; HR OS's foot never had one.
+ * has, in the same place. Security / 2FA is ported too, but on the FINANCE side only: app.html:1104 has
+ * that button and hros.html's foot (hros.html:1119-1123) has never had one, so giving HR OS a control
+ * the legacy never offered would be a new feature rather than a migration. See src/finance-security.tsx.
  */
 export default function HrShell(p: HrShellProps) {
   return (

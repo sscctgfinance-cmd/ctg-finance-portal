@@ -274,7 +274,7 @@ describe('the permission rules, in the direction that matters', () => {
     const html = renderToStaticMarkup(
       <FinanceShell active="" tabs={financeNavFor(staff)} cats={financeCatsFor(staff)} who="A" role="Viewer"
         companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop}
-        onChangePassword={noop} onSignOut={noop}>x</FinanceShell>);
+        onChangePassword={noop} {...CHROME} onSignOut={noop}>x</FinanceShell>);
     for (const id of ['selfbill', 'wht', 'gateway', 'bankfeed', 'salesrecon', 'ctgaccess']) {
       expect(html, `Finance shell advertises ${id} to a non-manager`).not.toContain(`data-t="${id}"`);
     }
@@ -341,7 +341,7 @@ describe('the shell wraps the screen without becoming one', () => {
       <FinanceShell active="wht" tabs={financeNavFor(perms)} cats={financeCatsFor(perms)} who="BOSS" role="Admin"
         companies={[{ tenant_id: 't1', tenant_name: 'CTG SDN BHD' }]} company="t1" online theme="light"
         onPickCompany={noop} onToggleTheme={noop} onRefresh={noop} onChangePassword={noop}
-        onSignOut={noop}><p id="screen">the screen</p></FinanceShell>);
+        {...CHROME} onSignOut={noop}><p id="screen">the screen</p></FinanceShell>);
     expect(html).toContain('<p id="screen">the screen</p>');
     expect(html.match(/id="app"/g)?.length).toBe(1);
     expect(html).toContain('class="tab active" data-t="wht"');
@@ -356,7 +356,7 @@ describe('the shell wraps the screen without becoming one', () => {
     const html = renderToStaticMarkup(
       <FinanceShell active="wht" tabs={financeNavFor(perms)} cats={financeCatsFor(perms)} who="B" role="Admin"
         companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop}
-        onChangePassword={noop} onSignOut={noop}>x</FinanceShell>);
+        onChangePassword={noop} {...CHROME} onSignOut={noop}>x</FinanceShell>);
     // The active tab's own category is on screen; the others are `cat-hide`, which app.html:618 hides.
     expect(html).toMatch(/class="tab active" data-t="wht" data-cat="operations"/);
     expect(html).toMatch(/class="tab cat-hide" data-t="overview"/);
@@ -365,6 +365,11 @@ describe('the shell wraps the screen without becoming one', () => {
 });
 
 const noop = () => {};
+
+// The four chrome controls this file does not exercise, so a shell prop added for one of them is a
+// mechanical addition here and not a change to anything asserted below. src/finance-alerts.tsx,
+// src/finance-security.tsx and src/finance-export.ts own their own behaviour.
+const CHROME = { onToggleAlerts: noop, alertBadge: null, onSecurity: noop, onExport: noop };
 
 /** The whole HR shell for one role, as markup. `hasEmployee` on, so My Profile is in every case. */
 function shell(role: ReturnType<typeof hrRole>, children: React.ReactNode = 'x'): string {

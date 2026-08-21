@@ -120,9 +120,13 @@ no golden can see, because a golden never presses a button. Its own lesson, and 
 this file's recurring one: the obvious test for `o2oOnTenantChange` reached it THROUGH `o2oPick`, which
 had already loaded the engine, so unwrapping it passed everything; the state that distinguishes them
 (`O2O_BUF` set, XLSX absent — what `gwLoadXlsx`'s `onerror` leaves behind) needed its own test.
-`jszip.min.js` (98 KB) is still eager, and the four React Finance routes that inject xlsx carry three
-spellings of the same injector — `web/app/finance/o2o/page.tsx`'s `loadScript` is the one worth
-sharing. Both are named seams, not oversights.
+`jszip.min.js` (98 KB) is still eager, and the React side carries FIVE spellings of the same injector
+across `o2o`, `recon`, `salesrecon`, `gateway` and `app/finance/layout.tsx` (v223's ⬇ Export). Both are
+named seams, not oversights — but read this before consolidating them: **only the layout's memoises the
+in-FLIGHT promise.** `o2o`'s `loadScript`, the one this paragraph used to nominate, checks `window.XLSX`
+and otherwise injects, so two callers before the first load lands inject two tags; that is the same
+"drops the queued one" failure the paragraph above says a hand-rolled second loader causes, in the
+spelling it recommended. Standardise on the queueing shape, whichever file it ends up in.
 
 **A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
 reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
@@ -1390,12 +1394,11 @@ which is why the href is asserted separately, for all 36 screens.
 `text-decoration: none`, because the nav became anchors and neither legacy stylesheet ever had an anchor
 to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
 
-**Three things could not be ported and hand off rather than lie:** Security/2FA, Alerts and Export are
-legacy modals and a legacy XLSX writer. Each keeps its label and its position and links into the legacy
-app — with every screen and the three sibling PAGES migrated (see "SIBLING PAGES are not screens" above),
-they and the six advanced Xero tools inside `finance.users` are the only handoffs the nav still makes.
-(Change password WAS a fourth; it is ported — see "The shell's own chrome" below.)
-`web/public/ctg-logo.png` is app.html's inlined base64 brand mark, decoded once.
+**Nothing in the Finance chrome hands off any more.** Security/2FA, Alerts, Export and Change password
+were four labels linking into the legacy app because none had a React equivalent; all four are ported
+(see "The shell's own chrome" below and the v223 section under it), and with every screen and the three
+sibling PAGES migrated, **the six advanced Xero tools inside `finance.users` are the only handoffs the
+nav still makes.** `web/public/ctg-logo.png` is app.html's inlined base64 brand mark, decoded once.
 
 ### The shell's own chrome — five files, and the rules they carry
 
@@ -1474,11 +1477,63 @@ password, so only an input satisfying both — old === new AND new !== confirm �
 ladder reaches first. Ask of every ordered rule set which input distinguishes the order, not just which
 inputs reach each branch.
 
-**Still not done:** Alerts, Security/2FA and Export remain legacy handoffs from the Finance top bar, and
-the session-expired and idle-timeout modals (app.html:1376, :2685) have no React equivalent — a React-only
-operator's session dies silently. `prompt()` is still native. The toast QUEUE's timing and the confirm's
-Escape listener are not covered by a test: vitest runs `environment: 'node'` and all 36 parity tests
-depend on that, so adding jsdom for two behaviours was not worth it.
+### The last three chrome dialogs — v223, and the Finance top bar now links nowhere
+
+`src/finance-security.tsx` (🔐 Account security / TOTP), `src/finance-alerts.tsx` (🔔 the bell) and
+`src/finance-export.ts` (⬇ Export) close the three handoffs the paragraph above used to name. **The
+Finance shell now renders no anchor into `app.html` at all**, which `web/tests/shell-chrome.test.tsx`
+asserts as a negative — the six advanced Xero tools inside `finance.users` are the only handoffs left.
+
+**Security is FINANCE-ONLY, because that is where the legacy control is.** app.html:1104 has the button;
+hros.html's sidebar foot has never had one, and TOTP is enforced at both apps' login regardless. Giving
+HR OS a control the legacy never offered is a feature, not a migration — pinned by reading both legacy
+files at run time, so a button added to hros.html surfaces as a failure here.
+
+**A dialog whose HOST cannot be mounted still needs its decisions driven — split the effect out.**
+vitest runs `environment: 'node'` and all 45 test files depend on that, so `SecurityHost` cannot be
+rendered. `submitEnroll(step, verify)` and `submitDisable(step, disable)` are therefore pure functions
+of their inputs plus ONE injected effect (`bankFile()`'s split, for an async path): `{enabled:true}` is
+returned on exactly one branch, after `verify` RESOLVED, and that is drivable. What is left in the host
+— which literal each result becomes — has no output, so it is pinned by SOURCE (`finance.calendar`'s
+rule), including that `h.onChanged(` appears exactly twice.
+
+**Two defects passed everything and were found only by introducing them, both in the bell.** Deleting
+`e.stopPropagation()` from the bell (app.html:2744) changes no argument, no text and no markup — and
+makes the panel open and close in the same click, so the bell looks dead. And an always-`display:flex`
+badge renders as an empty span, so every output check passes while every operator carries a permanent
+dot. Both are `finance.info`'s class; the guards now drive a spy event and read the badge's own style.
+A third: the four argument-free chrome controls (bell / Security / Export / Change Password) are
+indistinguishable by "it is wired", so their PROP IDENTITY is compared as a sequence — `hr.payroll`'s
+`LEGACY_TO_PROP` finding, in the chrome.
+
+**`exportCurrent()`'s file-name date is `toISOString()`, i.e. UTC, and it is mirrored.** In MYT that is
+the PREVIOUS day for the first eight hours of every morning, so a 07:00 export on the 1st is filed under
+last month. `finance.calendar`'s finding in its sixth form: the instant is an ARGUMENT
+(`exportFileName(tab, co, now)`) so the divergence is drivable on a UTC+8 machine, and the function body
+is asserted to contain no local getter. Its sibling gap is app.html's own `coName.indexOf('All')<0`,
+which drops any company whose slug contains those three letters from the file name.
+
+**The chrome cannot reach a screen's model, so `render(t)`'s one export special case is a
+REGISTRATION.** app.html:5277 dispatches `pnl` to `pnlExportCsv()` by name because the P&L grid is not a
+`.bigtable`; `registerScreenExport()` is that dispatch, called from `app/finance/pnl/page.tsx` with the
+same `onExport` its own ⬇ Export CSV button uses, so the two controls cannot produce different files.
+Scraping the grid instead would export FORMATTED cells where the legacy exports raw numbers. The scrape
+is scoped to a `<div ref>` around the layout's children, never `document` — a document-wide scrape puts
+the chrome, and once another screen has rendered another company's figures, into the workbook.
+
+**The QR image hands the TOTP secret to a third party, and that is app.html's behaviour.**
+app.html:2562 puts the whole `otpauth://` URL — which contains the shared secret — into a query string
+for `api.qrserver.com`. Drawing it locally means a new vendored dependency, which is a decision above a
+migration, so it is mirrored and `qrSrc()` is pinned by a test rather than buried. Note while you are
+there that react-dom 19 emits a `<link rel="preload" as="image">` for it, so that URL is in the markup
+TWICE where app.html writes it once — which is why the leak checks strip tags rather than count
+occurrences.
+
+**Still not done:** the session-expired and idle-timeout modals (app.html:1376, :2685) have no React
+equivalent — a React-only operator's session dies silently. `prompt()` is still native. The toast
+QUEUE's timing, the confirm's Escape listener and the alert panel's click-away listener are not covered
+by a test: vitest runs `environment: 'node'` and all 45 test files depend on that, so adding jsdom for
+three behaviours was not worth it.
 
 ## Publishing to the live site is a separate step
 

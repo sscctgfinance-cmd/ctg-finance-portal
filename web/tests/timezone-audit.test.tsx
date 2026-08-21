@@ -121,6 +121,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'app/finance/cfo/page.tsx', n: 1, cat: 'a', legacy: 'app.html:1862', note: 'ytdYear(new Date()) — the clock read lifted out of the component' },
   { file: 'app/finance/close/page.tsx', n: 1, cat: 'a', legacy: 'app.html:5305', note: 'defaultPeriod(Date.now()) — MYT month' },
   { file: 'app/finance/info/page.tsx', n: 2, cat: 'a', legacy: 'app.html:5641, :5918', note: 'now for the expiry badge; printedOn is UTC toISOString, as the legacy is' },
+  { file: 'app/finance/layout.tsx', n: 1, cat: 'a', legacy: 'app.html:5297', note: '⬇ Export hands the clock to exportFileName; the derivation is in src/finance-export.ts' },
   { file: 'app/finance/o2o/page.tsx', n: 6, cat: 'a', legacy: 'app.html:2771-2772', note: 'o2oToday/o2oPlusDays read the clock at call time; the route does the same' },
   { file: 'app/finance/ocr/page.tsx', n: 1, cat: 'c', legacy: 'app.html:6568', note: 'Date.now() in a download filename' },
   { file: 'app/finance/overview/page.tsx', n: 3, cat: 'a', legacy: 'app.html:1606, :2143', note: 'ovDates and the refresh stamp take Date.now(); both derivations are in src/' },
@@ -142,6 +143,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'src/finance-ap.tsx', n: 2, cat: 'a', legacy: 'app.html:6821, :6913, :6960', note: 'the only screen whose legacy passes timeZone explicitly — pinned in its own test' },
   { file: 'src/finance-cfo.tsx', n: 2, cat: 'a', legacy: 'app.html:1862, :2080', note: 'ytdYear is MYT; the analytics stamp is a server instant' },
   { file: 'src/finance-close.tsx', n: 2, cat: 'a', legacy: 'app.html:5305 → :1263', note: 'defaultPeriod — MYT, and the legacy comment names the 8am trap' },
+  { file: 'src/finance-export.ts', n: 1, cat: 'a', legacy: 'app.html:5297', note: 'the export filename is UTC toISOString, as the legacy is — pinned in its own test' },
   { file: 'src/finance-info.tsx', n: 5, cat: 'a', legacy: 'app.html:1263, common.js:27-28', note: 'TWO clocks that are not the same one — pinned in its own test' },
   { file: 'src/finance-o2o.tsx', n: 3, cat: 'a', legacy: 'app.html:2771-2772', note: 'todayLocal/plusDaysLocal — the MACHINE zone' },
   { file: 'src/finance-overview.tsx', n: 15, cat: 'a', legacy: 'app.html:1606-1617, :2107, :2143', note: 'todayMY is MYT; ovDates reads the MYT day back through a LOCAL Date on purpose' },
@@ -198,6 +200,12 @@ const PINS: { file: string; fn: string; kind: Kind; legacy: string; why: string 
   { file: 'app/hr/leave/page.tsx', fn: 'todayLocalISO', kind: 'LOCAL', legacy: 'hros.html:3437 → :1271', why: 'the apply-on-behalf date range' },
   { file: 'app/hr/payroll/page.tsx', fn: 'todayLocalISO', kind: 'LOCAL', legacy: 'hros.html:4270 → :1271', why: 'the last-working-day default on a resignation' },
   { file: 'src/finance-o2o.tsx', fn: 'todayLocal', kind: 'LOCAL', legacy: 'app.html:2771', why: 'the invoice date on an O2O batch' },
+
+  // The first UTC landing. app.html:5297 names the exported workbook with `toISOString()`, so on a
+  // Malaysian morning the file is stamped YESTERDAY — mirrored, because renaming an export changes what
+  // staff have been filing. `exportFileName` takes the instant as an ARGUMENT so the divergence is
+  // drivable here; the screen's own test drives it, and this pins the implementation the same way.
+  { file: 'src/finance-export.ts', fn: 'exportFileName', kind: 'UTC', legacy: 'app.html:5297', why: 'the date on a workbook of the company ledger that leaves the building' },
 ];
 
 describe('The timezone audit — the inventory is complete', () => {

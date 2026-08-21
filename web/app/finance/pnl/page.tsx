@@ -25,6 +25,7 @@ import FinancePnl, {
   PnlFailure, PnlLoading, pnlReachable,
   type Perms, type PnlData,
 } from '../../../src/finance-pnl';
+import { registerScreenExport } from '../../../src/finance-export';
 import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -133,6 +134,11 @@ export default function FinancePnlPage() {
       toast('Export failed: ' + (e instanceof Error ? e.message : String(e)), true);
     }
   }, [data, months, showZero]);
+
+  // `exportCurrent()`'s one special case — app.html:5277, "the P&L grid isn't a .bigtable … it has its
+  // own raw-number CSV writer". The chrome's ⬇ Export cannot reach this screen's model, so the screen
+  // hands it the writer for as long as it is mounted; see src/finance-export.ts.
+  useEffect(() => registerScreenExport(onExport), [onExport]);
 
   return (
     <>

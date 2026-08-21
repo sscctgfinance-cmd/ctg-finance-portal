@@ -11,14 +11,12 @@
 // rather than build a mechanism for sharing it, and that is right: the ONE thing the two shells share is
 // src/nav.ts, the list of screens, because that is the thing that must not fall out of step.
 //
-// ── THE CONTROLS THAT STILL HAND OFF ───────────────────────────────────────────────────────────────
-// Alerts (`toggleNotif`), Security (`openSecurityModal`) and Export (`exportCurrent`) are legacy modals
-// and a legacy XLSX writer with no React equivalent, so each keeps its label and its position and links
-// into app.html — the same treatment an unmigrated tab gets. Dropping them would be the bigger lie: an
-// operator looking for where they turn on 2FA would find nothing at all.
-//
-// Change Password is NO LONGER one of them: `openPwModal()` is ported (src/password-modal.tsx), so that
-// button opens the dialog here instead of sending the operator into the app this one replaces.
+// ── NOTHING IN THIS BAR HANDS OFF ANY MORE ─────────────────────────────────────────────────────────
+// Alerts (`toggleNotif`), Security (`openSecurityModal`), Export (`exportCurrent`) and Change Password
+// (`openPwModal`) were all anchors into app.html, because none of the four had a React equivalent. All
+// four are ported — src/finance-alerts.tsx, src/finance-security.tsx, src/finance-export.ts and
+// src/password-modal.tsx — so every control in the top bar is a control, and this shell renders no link
+// back into the app it replaces. The six advanced Xero tools inside `finance.users` are what is left.
 
 import type { ReactNode } from 'react';
 
@@ -53,6 +51,14 @@ export interface FinanceShellProps {
   onRefresh: () => void;
   /** `openPwModal()` — app.html:2608. Opens the ported credentials modal. */
   onChangePassword: () => void;
+  /** `toggleNotif(event)` — app.html:2744. The panel itself is rendered by the layout, at body level. */
+  onToggleAlerts: () => void;
+  /** `renderNotifBadge()` — app.html:2732. null hides the badge; '9+' is the legacy's own cap. */
+  alertBadge: string | null;
+  /** `openSecurityModal()` — app.html:2539. */
+  onSecurity: () => void;
+  /** `exportCurrent()` — app.html:5275. */
+  onExport: () => void;
   onSignOut: () => void;
   children: ReactNode;
 }
@@ -106,9 +112,13 @@ export default function FinanceShell(p: FinanceShellProps) {
             aria-label={p.theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
             title={p.theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           >{p.theme === 'light' ? '🌙' : '☀️'}</button>
-          <a className="btn bell" id="notif-btn" href={`${BASE_PATH}/app.html`} aria-label="Notifications"
-            title="Alerts — opens Finance OS, which has the notifications panel">🔔<span className="bell-badge" id="notif-badge"></span></a>
-          <a className="btn" href={`${BASE_PATH}/app.html`} title="Two-factor authentication — opens Finance OS, which has the security dialog">🔐 Security</a>
+          {/* app.html:1103. `stopPropagation` is load-bearing: the document-level listener at
+              app.html:2748 closes the panel on any click outside it, and the bell is outside it. */}
+          <button className="btn bell" id="notif-btn" aria-label="Notifications" title="Alerts"
+            onClick={(e) => { e.stopPropagation?.(); p.onToggleAlerts(); }}
+          >🔔<span className="bell-badge" id="notif-badge"
+            style={p.alertBadge ? { display: 'flex' } : { display: 'none' }}>{p.alertBadge}</span></button>
+          <button className="btn" id="sec-btn" onClick={p.onSecurity} title="Two-factor authentication">🔐 Security</button>
           <button className="btn" id="pw-btn" onClick={p.onChangePassword} title="Change your sign-in password">Change Password</button>
           <button className="btn d" onClick={p.onSignOut}>Sign Out</button>
         </div>
@@ -126,8 +136,7 @@ export default function FinanceShell(p: FinanceShellProps) {
         </select>
         <span id="co_scope" className="co-scope">{one ? 'Posting into this company' : 'All companies · read only'}</span>
         <button className="btn p" onClick={p.onRefresh}>↺ Refresh</button>
-        <a className="btn" href={`${BASE_PATH}/app.html${p.active ? `#tab=${p.active}` : ''}`}
-          title="Export this view to Excel — opens Finance OS, which has the exporter">⬇ Export</a>
+        <button className="btn" id="export-btn" onClick={p.onExport} title="Export this view to Excel">⬇ Export</button>
         <div id="last-refresh" className="status-bar" style={{ margin: 0 }}></div>
       </div>
 
