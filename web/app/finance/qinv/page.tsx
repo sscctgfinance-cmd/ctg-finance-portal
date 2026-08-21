@@ -20,6 +20,7 @@ import FinanceQinv, {
   type Company, type Perms, type QinvMeta, type QinvOut, type RawLine,
 } from '../../../src/finance-qinv';
 import { showConfirm } from '../../../src/confirm';
+import { mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `QINV_META_CACHE` / `QINV_META_TTL` — app.html:4661. Per tenant, because Xero's Items call is slow. */
@@ -118,7 +119,8 @@ export default function FinanceQinvPage() {
         customer: d.customer, contactMatch: !!d.contactMatch, lines: d.lines,
         date: val('qi_date') || todayLocalISO(Date.now()), due: val('qi_due'), ref: val('qi_ref'),
         test: !!el<HTMLInputElement>('qi_test')?.checked,
-        stamp: new Date().toISOString().slice(0, 10),
+        // v224: MALAYSIAN, as app.html:4328 now is — the preview watermark said yesterday before 8am.
+        stamp: mytISO(Date.now()),
       },
     });
   }, [companies, readForm]);

@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
-import HrAttendance, { type AttendanceList } from '../src/hr-attendance';
+import HrAttendance, { dtLocal, type AttendanceList } from '../src/hr-attendance';
 import { goldenSection, relax } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
 
@@ -154,5 +154,39 @@ describe('the comparison still bites', () => {
 
   it('catches a changed value in the page-head chrome', () => {
     expect(wrong({ companyName: 'SKINDAE SDN BHD' })).not.toBe(want);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════
+   v224 · THE PUNCH EDITOR IS MALAYSIAN, AND THIS DRIVES IT
+
+   `hrDtLocal()` (hros.html:3038) filled a <input type="datetime-local"> with the MACHINE's wall clock,
+   and `hrAttSave()` read the same box back with `new Date(value)`. The pair round-tripped perfectly —
+   which is why nothing caught it — while showing an admin outside Malaysia an hour the punch was never
+   at. Saving anything on that form (a note, a break) re-posted what was in the box, so a CORRECTION
+   moved the punch by the viewer's offset. Somebody's paid hours, and their overtime rate.
+
+   The audit pins the source. This drives the OUTPUT, because a source pin cannot tell you the answer is
+   right — only that it has not changed shape. Both are needed and neither is enough: at UTC+8 these
+   assertions pass against a machine-zone implementation too, so this block earns its keep only when the
+   suite is run elsewhere. The PR runs it under TZ=America/New_York.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('v224 · the punch editor shows Malaysian wall time', () => {
+  it('a stored instant becomes the Malaysian hour, not the viewer\'s', () => {
+    expect(dtLocal('2026-08-18T02:14:00.000Z')).toBe('2026-08-18T10:14');
+    // 23:40Z on the last day of August is 07:40 on 1 SEPTEMBER in Kuala Lumpur — the day AND the month
+    // differ from UTC, and from every zone west of Greenwich.
+    expect(dtLocal('2026-08-31T23:40:00.000Z')).toBe('2026-09-01T07:40');
+    expect(dtLocal('2026-01-01T16:00:00.000Z'), 'the YEAR rolls too').toBe('2026-01-02T00:00');
+  });
+
+  it('an OPEN punch leaves the clock-out box EMPTY, not filled with now', () => {
+    // `clock_out` is null on every punch somebody is still working. A helper that read a null as "now"
+    // would put the current time in the box, and the admin is then one Save away from clocking that
+    // person out at whatever time they happened to open the form.
+    expect(dtLocal(null)).toBe('');
+    expect(dtLocal(undefined)).toBe('');
+    expect(dtLocal('')).toBe('');
+    expect(dtLocal('not a date')).toBe('');
   });
 });

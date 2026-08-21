@@ -17,6 +17,7 @@ import HrCalculator, {
   type CalcAuditRow, type CalcEmployee, type CalcHistoryState, type CalcInputs, type CalcRates,
   type CalcSettings, type CalcState, type FlagItem, type FlagKey, type OverrideKey,
 } from '../../../src/hr-calculator';
+import { mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 import { hrAge } from '../../../../payroll.js';
 import { hrDrawPayslip } from '../../../../hr-docs.js';
@@ -163,12 +164,12 @@ export default function HrCalculatorPage() {
     if (!res) { setNotice('Enter figures first'); return; }
     if (res.overridden && !String(state.ov.reason || '').trim()) { setNotice('A reason is required to save an override'); return; }
     const e = state.empId ? employees.find((x) => x.id === state.empId) : null;
-    const now = new Date();
+    const nowMy = mytYMD(Date.now())!;   // v224: the period stamped on the audit-log row is MALAYSIAN
     try {
       await call({
         api: 'hr_calc_log', tenant: company ? company.tenant_id : null,
         employeeId: state.empId || null, employeeName: e ? e.name : 'Ad-hoc',
-        period: HR_MONTHS[now.getMonth() + 1] + ' ' + now.getFullYear(),
+        period: HR_MONTHS[nowMy.month] + ' ' + nowMy.year,
         inputs: state.inp, flags: state.flags, settings: state.settings, result: res,
         overridden: res.overridden, override: res.overridden ? state.ov : null,
         reason: res.overridden ? state.ov.reason : null,

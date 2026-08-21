@@ -52,14 +52,16 @@ const GOLDEN = goldenSection('finance.o2o', 'o2o');
 const APP = readFileSync(join(REPO, 'app.html'), 'utf8');
 
 /**
- * The instant the golden was captured at — tests/render_harness.ts's FIXED_MS, 2026-08-18T09:30Z.
+ * Noon in KUALA LUMPUR on the day the golden was captured (tests/render_harness.ts's FIXED_MS is
+ * 2026-08-18T09:30Z, i.e. 17:30 MYT the same day).
  *
- * Built from LOCAL parts rather than from the epoch ms, deliberately: `o2oToday()` reads local
- * `getFullYear/getMonth/getDate`, so a UTC instant would render 2026-08-17 in a far-western zone and
- * this file would pass or fail on the machine's timezone. hr-clock pins the zone for a whole file
- * because it formats times; this screen only needs a Date whose local Y/M/D is fixed.
+ * v224: this used to be `new Date(2026, 7, 18, 12, 0, 0)` — LOCAL parts — because `o2oToday()` read the
+ * machine's `getFullYear/getMonth/getDate`. It is now an EPOCH INSTANT, because the function under test
+ * is Malaysian and a fixture built from local parts is a different instant in every zone: under
+ * TZ=America/New_York the old fixture was 16:00Z, which is already the 19th in Kuala Lumpur, and this
+ * file failed. A fixture that moves with the runner cannot test a timezone fix.
  */
-const NOW = new Date(2026, 7, 18, 12, 0, 0);
+const NOW = new Date(Date.parse('2026-08-18T04:00:00.000Z'));
 
 const noop = () => {};
 
@@ -663,10 +665,16 @@ describe('the small pure helpers the route leans on', () => {
     expect(tenantName(COMPANIES, null)).toBe('the selected company');   // the legacy's own fallback
   });
 
-  it('the dates are a pure function of the instant handed in, and roll over months', () => {
+  it('the dates are MALAYSIAN, a pure function of the instant handed in, and roll over months', () => {
     expect(todayLocal(NOW)).toBe('2026-08-18');
     expect(plusDaysLocal(NOW, 30)).toBe('2026-09-17');
-    expect(plusDaysLocal(new Date(2026, 11, 20, 12), 30)).toBe('2027-01-19');   // year roll-over
-    expect(todayLocal(new Date(2026, 0, 5, 12))).toBe('2026-01-05');            // zero-padded
+    expect(plusDaysLocal(new Date(Date.parse('2026-12-20T04:00:00Z')), 30)).toBe('2027-01-19');   // year roll-over
+    expect(todayLocal(new Date(Date.parse('2026-01-05T04:00:00Z')))).toBe('2026-01-05');          // zero-padded
+    // v224, and the case the whole change is for: 23:30Z is 07:30 the NEXT day in Kuala Lumpur. The old
+    // machine-zone `o2oToday()` dated this batch 31 August for anyone west of Greenwich, and
+    // `o2o_issue` (finance.ts:626) forwards that date into a real Xero ledger without recomputing it.
+    const earlyMytFirst = new Date(Date.parse('2026-08-31T23:30:00.000Z'));
+    expect(todayLocal(earlyMytFirst)).toBe('2026-09-01');
+    expect(plusDaysLocal(earlyMytFirst, 30)).toBe('2026-10-01');
   });
 });

@@ -48,6 +48,7 @@
 // (`o2o_issue` wants isAdmin AND the tenant in `allowedTenants`, finance.ts:627-632), so this is tab
 // visibility, not the boundary.
 
+import { mytISO } from '../../myt.js';
 import type { O2OData, O2OLine, O2OPharmacy } from '../../o2o.js';
 
 /** `COMPANIES` — app.html:1253's company list, as `renderO2O()` reads it. */
@@ -71,17 +72,24 @@ export function o2oReachable(perms: Perms | null | undefined): boolean {
   return ((perms && perms.features) || []).indexOf('o2o') >= 0;
 }
 
-/** `o2oToday()` — app.html:2766, as a pure function of the instant it is handed. LOCAL date parts. */
-export function todayLocal(now: Date): string {
-  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-}
+/**
+ * `o2oToday()` — app.html:2771, MALAYSIAN since v224, as a pure function of the instant it is handed.
+ *
+ * It was the MACHINE's date parts. `o2o_issue` (finance.ts:626) recomputes nothing and forwards this
+ * date straight into the Xero payload, so an operator in London working before 4pm dated an entire
+ * pharmacy batch YESTERDAY, in a real ledger, with nothing on screen saying so. The names keep
+ * "Local" because they are the legacy's; the ANSWER is Kuala Lumpur's.
+ */
+export const todayLocal = (now: Date): string => mytISO(now);
 
-/** `o2oPlusDays(n)` — app.html:2767. Same `setDate` roll-over the legacy relies on for month ends. */
-export function plusDaysLocal(now: Date, n: number): string {
-  const d = new Date(now.getTime());
-  d.setDate(d.getDate() + n);
-  return todayLocal(d);
-}
+/**
+ * `o2oPlusDays(n)` — app.html:2772. The due date, 30 days out.
+ *
+ * The legacy rolls the month over with `setDate`; plain ms arithmetic is the same answer in a
+ * fixed-offset zone (Malaysia has no DST, so no day here is 23 or 25 hours long) and `mytISO` does the
+ * month/year carry itself.
+ */
+export const plusDaysLocal = (now: Date, n: number): string => mytISO(now.getTime() + n * 86400000);
 
 /**
  * `o2oInitTenant()` — app.html:2811. Defaults to Skindae when the operator has access to it, else the

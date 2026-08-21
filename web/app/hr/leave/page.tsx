@@ -11,6 +11,7 @@ import HrLeave, {
   type LeaveRequest, type LeaveType,
 } from '../../../src/hr-leave';
 import { showConfirm } from '../../../src/confirm';
+import { mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -26,11 +27,12 @@ interface LeaveAdmin {
   flow?: LeaveFlowStep[];
 }
 
-/** `todayLocalISO()` — hros.html. The clock read the component is not allowed to do. */
-function todayLocalISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+/**
+ * `todayLocalISO()` — hros.html:1271, which v224 made MALAYSIAN. The clock read the component is not
+ * allowed to do. It defaults the apply-on-behalf date range, so it is the first and last day of
+ * somebody's leave.
+ */
+const todayLocalISO = (): string => mytISO(Date.now());
 
 const BLANK_APPLY: LeaveApplyForm = {
   employee_id: '', leave_type_id: '', date_from: '', date_to: '', reason: '', half_day: false, auto_approve: true,

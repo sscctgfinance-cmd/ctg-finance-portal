@@ -70,24 +70,30 @@ describe('exportFileName() — app.html:5289-5290', () => {
   });
 
   /**
-   * The date is UTC, which in MYT is the PREVIOUS day for the first eight hours of every morning.
+   * v224: the date is MALAYSIAN. It used to be UTC — `new Date().toISOString().slice(0,10)` — which in
+   * MYT is the PREVIOUS day for the first eight hours of every morning, so an export taken at 07:00 on
+   * the 1st was filed under the last day of the previous month. app.html changed in the same commit, so
+   * the two renderers still name the file identically.
    *
-   * finance.calendar's finding: this cannot be caught by an output assertion taken on this machine or
-   * on CI, both of which sit at UTC+8 — every figure agrees. It is driven by handing the function an
-   * instant on the wrong side of midnight UTC, which is the only thing that distinguishes the two.
+   * finance.calendar's finding governs how this is checked: on this machine and on CI, both UTC+8, a
+   * zone-blind implementation agrees with a correct one. It is driven by handing the function an instant
+   * on the wrong side of midnight UTC — the ONLY thing that distinguishes the two — and pinned at the
+   * source as well, because a rewrite to a LOCAL getter would pass the drive here and fail in London.
    */
-  it('the date is UTC — an 07:00 MYT export is filed under YESTERDAY', () => {
+  it('the date is MALAYSIAN — an 07:30 MYT export is filed under TODAY, not yesterday', () => {
     const earlyMyt = new Date('2026-09-01T00:30:00.000Z');   // 08:30 MYT on 1 Sep
     expect(exportFileName('pnl', '', earlyMyt)).toContain('2026-09-01');
-    const beforeUtcMidnight = new Date('2026-08-31T23:30:00.000Z');   // 07:30 MYT on 1 Sep
-    expect(exportFileName('pnl', '', beforeUtcMidnight)).toContain('2026-08-31');
-    // …which is app.html's own behaviour, and the reason the instant is an ARGUMENT: a port that read
-    // the clock with a LOCAL getter would "fix" it invisibly here and change what staff file.
-    expect(APP).toContain("new Date().toISOString().slice(0,10)+'.xlsx'");
-    expect(SRC).toContain("now.toISOString().slice(0, 10)");
+    // THE CASE THAT MOVED. 23:30Z on 31 Aug is 07:30 on 1 Sep in Kuala Lumpur; the old UTC name said
+    // 2026-08-31, i.e. the previous month, on the one morning of the year a month-end close cares about.
+    const beforeUtcMidnight = new Date('2026-08-31T23:30:00.000Z');
+    expect(exportFileName('pnl', '', beforeUtcMidnight)).toContain('2026-09-01');
+    // …which is app.html's own behaviour. Both halves are pinned so neither can drift back alone.
+    expect(APP).toContain("'_'+todayLocalISO()+'.xlsx'");
+    expect(APP, 'the UTC name came back').not.toContain("new Date().toISOString().slice(0,10)+'.xlsx'");
+    expect(SRC).toContain('mytISO(now)');
     const body = SRC.slice(SRC.indexOf('export function exportFileName'));
     const fn = body.slice(0, body.indexOf('\n}'));
-    for (const banned of ['Date.now', 'new Date', 'getFullYear', 'getMonth', 'getDate', 'toLocale']) {
+    for (const banned of ['Date.now', 'new Date', 'getFullYear', 'getMonth', 'getDate', 'toLocale', 'toISOString']) {
       expect(fn, banned).not.toContain(banned);
     }
   });

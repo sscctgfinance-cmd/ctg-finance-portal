@@ -15,14 +15,16 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { showConfirm } from '../../../src/confirm';
 import HrExpenses, { bankFile, listCsv, selectedIds, type RcClaim, type RcMe, type RcScope } from '../../../src/hr-expenses';
+import { mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
-/** `hrToday()` — hros.html:1850. Local (MYT), not toISOString(): UTC dates a file "yesterday" before 8am. */
-function today(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
-}
+/**
+ * `hrToday()` — hros.html:1840, which v224 made MALAYSIAN. Its comment already CLAIMED "local (MYT)"
+ * while reading the machine's zone; now the claim is true. This is the date an employee's expense claim
+ * is filed under, so west of Greenwich a claim filed on the 1st was dated into the previous month —
+ * a different claim period, on a form somebody approves.
+ */
+const today = (): string => mytISO(Date.now());
 
 /** `hrDownload()` — hros.html:4447. */
 function download(name: string, text: string) {

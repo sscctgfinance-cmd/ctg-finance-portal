@@ -1140,6 +1140,7 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
 <div id="toast"></div>
 
 <!-- Shared with app.html — must load before the inline script below (classic script: these are globals). -->
+<script src="myt.js"></script>
 <script src="common.js"></script>
 <script src="payroll.js"></script>
 <script src="hr-docs.js"></script>
@@ -1269,7 +1270,11 @@ const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt
 const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 // MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
-function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+// v224: this WAS the machine's zone — the same name as app.html's todayLocalISO() and a different
+// answer, which is the trap the timezone audit named. Every caller (claim date, RC form date,
+// attendance month, leave from/to, the resignation last-working-day) means "a date in Malaysia", so
+// all of them now get one: the shared definition in myt.js.
+function todayLocalISO(){ return mytISO(); }
 
 // Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
 // + "5 contacts"), play them sequentially instead of overwriting each other.
@@ -1725,7 +1730,7 @@ function hrDashAttendance(d){ var a=d.attendance; var aD=hrTrendDelta(a.trend,'v
 function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; var cD=hrTrendDelta(c.trend,'value',false); return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),hrDCard('Salary Cost',M(c.salary_cost),{icon:'💵'}),hrDCard('Employer EPF',M(c.epf_er),{icon:'🏦'}),hrDCard('Employer SOCSO',M(c.socso_er),{icon:'🛡️'}),hrDCard('Employer EIS',M(c.eis_er),{icon:'🧯'}),hrDCard('Claim Cost',M(c.claim_cost),{icon:'🧾'}),hrDCard('OT Cost',M(c.ot_cost),{icon:'⏱️'}),hrDCard('Cost / Employee',M(c.cost_per_employee),{color:'var(--sky-soft)',icon:'👤'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(c.variance.delta)})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly cost trend',hrDashLine(c.trend,[{k:'value',color:'var(--coral)',name:'Employer cost'}]))+hrPanel('Cost by department',hrDashBars(c.by_dept,{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Cost by employee',hrDashValTable(c.by_employee,'Employer cost'))+hrDashInsights(d.insights); }
 function hrDashboard(){
-  if(!HR_DASH.year){ var dd=new Date(); HR_DASH.month=dd.getMonth()+1; HR_DASH.year=dd.getFullYear(); }
+  if(!HR_DASH.year){ var dd=mytYMD(); HR_DASH.month=dd.month; HR_DASH.year=dd.year; }
   if((!HR_DASH.data || HR_DASH.tenant!==HR.tenant) && !HR_DASH.loading){ HR_DASH.tenant=HR.tenant; HR_DASH.steps=0; HR_DASH.loading=true; setTimeout(function(){ hrDashLoad(true); },0); }
   var d=HR_DASH.data;
   var subnav=[['overview','📋 Overview'],['headcount','👥 Headcount'],['payroll','💰 Payroll'],['attendance','🕐 Attendance'],['cost','💵 Cost']];
@@ -1838,7 +1843,7 @@ function hrRCList(){
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-function hrToday(){ return todayLocalISO(); } // local (MYT) — toISOString() is UTC and dated claims "yesterday" before 8am
+function hrToday(){ return todayLocalISO(); } // MYT — toISOString() is UTC and dated claims "yesterday" before 8am
 function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
 function hrRCSelToggle(id,on){ RC.sel=RC.sel||{}; if(on)RC.sel[id]=true; else delete RC.sel[id]; hrRender(); }
 function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.sel[c.id]=true;}); hrRender(); }
@@ -2986,7 +2991,11 @@ async function hrClockAction(dir){
 }
 // ── Admin attendance: view/correct punches, hours summary, CSV ──
 var ATT={ month:'', tenant:'', data:null, loading:false, editRow:null };
-function hrDtLocal(iso){ if(!iso) return ''; var d=new Date(iso); if(isNaN(d)) return ''; var p=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+// v224: was the MACHINE's wall clock. A <input type="datetime-local"> carries no zone, so an admin
+// outside Malaysia opened a punch showing an hour it was never at — and hrAttSave() read that box back
+// through `new Date(value)`, i.e. the same wrong zone, so correcting the NOTE re-posted a MOVED punch.
+// That is someone's paid hours. mytDtLocal/mytFromDtLocal are an exact pair; see myt.js.
+function hrDtLocal(iso){ return mytDtLocal(iso); }
 function hrAttendance(){
   var mo=ATT.month||todayLocalISO().slice(0,7);
   if(ATT.month!==mo || ATT.tenant!==HR.tenant){ ATT.month=mo; ATT.tenant=HR.tenant; ATT.data=null; }
@@ -3033,7 +3042,7 @@ async function hrAttSave(){
   var emp=document.getElementById('att_emp').value; if(!emp){ toast('Select an employee',true); return; }
   var ci=document.getElementById('att_in').value; if(!ci){ toast('Clock-in time is required',true); return; }
   var co=document.getElementById('att_out').value;
-  var punch={ id:(ATT.editRow&&ATT.editRow.id)||undefined, employee_id:emp, clock_in:new Date(ci).toISOString(), clock_out:co?new Date(co).toISOString():null,
+  var punch={ id:(ATT.editRow&&ATT.editRow.id)||undefined, employee_id:emp, clock_in:(mytFromDtLocal(ci)||new Date(ci)).toISOString(), clock_out:co?(mytFromDtLocal(co)||new Date(co)).toISOString():null,   // v224: the box is Malaysian wall time (hrDtLocal), so read it back as Malaysian
     break_minutes:Number(document.getElementById('att_break').value)||0, note:document.getElementById('att_note').value||null };
   var r=await call({api:'attendance_save',punch:punch});
   if(r&&r.ok){ toast('Saved ✓'); ATT.editRow=null; ATT.data=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
@@ -3779,7 +3788,7 @@ function hrHubGet(){ try{ return JSON.parse(storageGet(hrHubKey())||'{}')||{}; }
 function hrHubTick(k,on){ var s=hrHubGet(); s[k]=!!on; storageSet(hrHubKey(), JSON.stringify(s)); hrRender(); }
 function hrUobCfg(){ try{ return JSON.parse(storageGet('hr_uob_'+HR.tenant)||'{}')||{}; }catch(_e){ return {}; } }
 function hrUobCfgSave(){ var a=(document.getElementById('hr_uob_acct')||{}).value||''; var c=(document.getElementById('hr_uob_cd')||{}).value||''; storageSet('hr_uob_'+HR.tenant, JSON.stringify({acct:String(a).replace(/[^0-9]/g,''), cd:c})); toast('UOB Infinity settings saved'); }
-function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate()); var days=Math.round((due-t)/86400000);
+function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var ty=mytYMD(); var t=new Date(ty.year, ty.month-1, ty.day); var days=Math.round((due-t)/86400000);   // v224: "today" is now MYT, not the machine's — the EPF/SOCSO deadline is a Malaysian date
   var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
   var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
   return { txt:'due 15 '+HR_MONTHS[nm]+' '+ny+(days<0?(' · OVERDUE '+(-days)+'d'):(' · '+days+' day'+(days===1?'':'s')+' left')), col:col }; }
@@ -4006,7 +4015,7 @@ function hrPayHub(tot,finalised,p){
   '</div>';
 }
 function hrPayroll(){
-  var p=HR.pay; if(!p.month){ var d=new Date(); p.month=d.getMonth()+1; p.year=d.getFullYear(); }
+  var p=HR.pay; if(!p.month){ var d=mytYMD(); p.month=d.month; p.year=d.year; }
   var picker='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'+
     '<select id="hr_pm" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+HR_MONTHS.slice(1).map(function(m,i){return '<option value="'+(i+1)+'"'+((i+1)===p.month?' selected':'')+'>'+m+'</option>';}).join('')+'</select>'+
     '<select id="hr_py" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+[p.year-1,p.year,p.year+1].map(function(y){return '<option value="'+y+'"'+(y===p.year?' selected':'')+'>'+y+'</option>';}).join('')+'</select>'+
@@ -4845,8 +4854,8 @@ function hrCalcPayslip(){
     var e={ empNo:emp?emp.emp_no:'CALC', name:emp?emp.name:'Payroll Calculation', ic:emp?emp.ic_no:'', position:emp?emp.position:'', dept:emp?emp.dept:'', basic:hrCalcNum(C.inp.basic), allowance:hrCalcNum(C.inp.allowance), bank:'', resident:C.settings.resident };
     var p={ gross:hrRound2(res.gross+res.claim), epfEe:res.epfEe, epfEr:res.epfEr, socsoEe:res.socsoEe, socsoEr:res.socsoEr, eisEe:res.eisEe, eisEr:res.eisEr, lindung:res.lindung, pcb:res.pcb, net:res.net, employerCost:res.employerCost, _meta:{epfEeRate:res._eeRate,epfErRate:res._erRate,socsoCat:res._scat,pcbCat:(C.settings.resident===false?0:1),senior:C.settings.senior} };
     var d={ bonus:hrCalcNum(C.inp.bonus), ot:0, allowance:hrCalcNum(C.inp.claim), deductions:(hrCalcNum(C.inp.deduction)?[{label:'Deduction',amount:hrCalcNum(C.inp.deduction)}]:[]), unpaid:0 };
-    var now=new Date(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
-    hrDrawPayslip(doc,e,p,{month:now.getMonth()+1,year:now.getFullYear(),label:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear()},d);
+    var now=mytYMD(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    hrDrawPayslip(doc,e,p,{month:now.month,year:now.year,label:HR_MONTHS[now.month]+' '+now.year},d);
     doc.save('Payroll_Calc_'+(emp?emp.emp_no:'adhoc')+'.pdf'); toast('Payslip generated');
   });
 }
@@ -4854,8 +4863,8 @@ async function hrCalcSave(){
   var res=hrCalcCompute(); if(!res){ toast('Enter figures first',true); return; }
   var C=HR_CALC, e=C.empId?(HR.data.employees||[]).find(function(x){return x.id===C.empId;}):null;
   if(res.overridden && !String(C.ov.reason||'').trim()){ toast('A reason is required to save an override',true); return; }
-  var now=new Date();
-  var r=await call(Object.assign({api:'hr_calc_log',tenant:HR.tenant,employeeId:C.empId||null,employeeName:e?e.name:'Ad-hoc',period:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear(),inputs:C.inp,flags:C.flags,settings:C.settings,result:res,overridden:res.overridden,override:(res.overridden?C.ov:null),reason:(res.overridden?C.ov.reason:null)}));
+  var now=mytYMD();
+  var r=await call(Object.assign({api:'hr_calc_log',tenant:HR.tenant,employeeId:C.empId||null,employeeName:e?e.name:'Ad-hoc',period:HR_MONTHS[now.month]+' '+now.year,inputs:C.inp,flags:C.flags,settings:C.settings,result:res,overridden:res.overridden,override:(res.overridden?C.ov:null),reason:(res.overridden?C.ov.reason:null)}));
   if(r&&r.ok){ toast('Calculation saved to audit log ✓'); hrCalcHistory(); } else toast((r&&r.error)||'Save failed',true);
 }
 async function hrCalcHistory(){

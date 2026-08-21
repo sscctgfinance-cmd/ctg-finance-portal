@@ -22,6 +22,8 @@
 
 import type { CSSProperties } from 'react';
 
+import { mytDtLocal } from '../../myt.js';
+
 /** One row of `attendance_list.summary` — hros.html:3058. */
 export interface AttSummary {
   employee_id?: string;
@@ -98,14 +100,16 @@ export function clkTime(iso?: string | null): string {
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-/** `hrDtLocal()` — hros.html:3038. An ISO instant as the `datetime-local` value the browser wants. */
-export function dtLocal(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
-}
+/**
+ * `hrDtLocal()` — hros.html:3038, which v224 made MALAYSIAN. IMPORTED, not re-expressed, for the same
+ * reason `hrCompute` is: a `datetime-local` box carries wall time and NO zone, so what fills it and what
+ * reads it back are one contract, and two copies of that contract eventually move a punch.
+ *
+ * It used to be the MACHINE's wall clock. An admin outside Malaysia saw an hour the punch was never at,
+ * and saving anything on that form re-posted the shifted instant — someone's paid hours. The route's
+ * save half is `mytFromDtLocal`, the exact inverse.
+ */
+export const dtLocal = (iso?: string | null): string => mytDtLocal(iso ?? null);
 
 /** The month picker's style — hros.html:3044. Same declarations, same order, so the same string. */
 const MONTH_INPUT: CSSProperties = {

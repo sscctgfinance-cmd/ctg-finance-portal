@@ -45,6 +45,7 @@
 
 import type { CSSProperties, FocusEvent, ReactNode } from 'react';
 
+import { mytYMD } from '../../myt.js';
 import { hrCompute } from '../../payroll.js';
 
 /* ───────────────────────────── the state this screen is a view of ───────────────────────────── */
@@ -245,7 +246,11 @@ export function gridAll(
  */
 export function dueInfo(month: number, year: number, now: Date): { txt: string; col: string } {
   const due = new Date(year, month, 15);
-  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // v224: "today" is MALAYSIAN — the EPF/SOCSO deadline is a Malaysian date, and the machine's zone made
+  // the countdown a day out west of Greenwich. `due` stays a LOCAL midnight and so does `t`, so the
+  // subtraction is still a whole number of days in every zone. hros.html:3831.
+  const my = mytYMD(now)!;
+  const t = new Date(my.year, my.month - 1, my.day);
   const days = Math.round((due.getTime() - t.getTime()) / 86400000);
   const nm = month === 12 ? 1 : month + 1, ny = month === 12 ? year + 1 : year;
   const col = days < 0 ? 'var(--coral-soft)' : (days <= 7 ? 'var(--amber)' : 'var(--muted)');

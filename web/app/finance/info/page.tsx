@@ -33,6 +33,7 @@ import FinanceInfo, {
 } from '../../../src/finance-info';
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
+import { mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `renderInfo()` groups both lists by tenant before rendering — app.html:5532-5533. */
@@ -157,8 +158,10 @@ export default function FinanceInfoPage() {
     if (!c) return;
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { toast('Pop-up blocked', true); return; }
-    // `new Date().toISOString().slice(0,10)` — UTC, exactly as app.html:5914. NOT todayLocalISO().
-    w.document.write(printDocHtml(c, docs, new Date().toISOString().slice(0, 10)));
+    // v224: MALAYSIAN, exactly as app.html:5928 now is. It was `toISOString()` — UTC — so a report
+    // printed at 07:00 in KL claimed to have been printed YESTERDAY. It is a date ON a document, not a
+    // figure IN one; nothing the report states about the company moved.
+    w.document.write(printDocHtml(c, docs, mytISO(Date.now())));
     w.document.close();
     setTimeout(() => w.print(), 250);
   }, [companies, active, docs]);

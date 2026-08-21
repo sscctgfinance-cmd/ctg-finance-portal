@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { showConfirm } from '../../../src/confirm';
 import HrAttendance, { type AttendanceList, type AttEmployee, type AttPunch } from '../../../src/hr-attendance';
+import { mytFromDtLocal, mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -18,11 +19,14 @@ const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
 
 interface Company { tenant_id: string; tenant_name: string }
 
-/** `todayLocalISO().slice(0,7)` — hros.html:3040, :1270. Local, not UTC: see that function's comment. */
-function thisMonth(): string {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-}
+/**
+ * `todayLocalISO().slice(0,7)` — hros.html:3040, :1271, which v224 made MALAYSIAN.
+ *
+ * Which month of attendance an admin opens on. It was the MACHINE's zone: on the 1st, an admin west of
+ * Greenwich opened LAST month's timesheet and saw an empty screen for a company that had been clocking
+ * in all morning.
+ */
+const thisMonth = (): string => mytISO(Date.now()).slice(0, 7);
 
 /** `hrNeedsClock()` — hros.html:1503. Who the punch editor may be pointed at. */
 function needsClock(e: { employment_type?: string | null; pay_type?: string | null }): boolean {
@@ -98,8 +102,11 @@ export default function HrAttendancePage() {
         punch: {
           id: (editRow as AttPunch | null)?.id || undefined,
           employee_id: emp,
-          clock_in: new Date(ci).toISOString(),
-          clock_out: co ? new Date(co).toISOString() : null,
+          // v224: the box carries MALAYSIAN wall time (`dtLocal` → `mytDtLocal`), so it is read back as
+          // Malaysian. `new Date(value)` here would read it in the browser's zone — the exact pairing
+          // failure that moved a punch by the viewer's offset. hros.html:3085 does the same.
+          clock_in: (mytFromDtLocal(ci) ?? new Date(ci)).toISOString(),
+          clock_out: co ? (mytFromDtLocal(co) ?? new Date(co)).toISOString() : null,
           break_minutes: Number(v('att_break')) || 0,
           note: v('att_note') || null,
         },

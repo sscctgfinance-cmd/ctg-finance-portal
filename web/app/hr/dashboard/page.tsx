@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import HrDashboard, { type DashData, type DashEmployee, type DashPage } from '../../../src/hr-dashboard';
+import { mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -150,8 +151,9 @@ export default function HrDashboardPage() {
         // `hrDashEmpTable()` reads the employee master, which the dashboard response does not carry.
         const boot = await call<{ employees?: DashEmployee[] }>({ api: 'hr_bootstrap', tenant: pick ? pick.tenant_id : null });
         setEmployees(boot.employees || []);
-        const now = new Date();   // `hrDashboard()`'s own first-paint default — hros.html:1727.
-        await load(pick ? pick.tenant_id : null, now.getMonth() + 1, now.getFullYear(), true);
+        // `hrDashboard()`'s own first-paint default — hros.html:1727, MALAYSIAN since v224.
+        const now = mytYMD(Date.now())!;
+        await load(pick ? pick.tenant_id : null, now.month, now.year, true);
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
         setLoading(false);

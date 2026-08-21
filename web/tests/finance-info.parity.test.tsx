@@ -1030,23 +1030,34 @@ describe('the documents section — folders, counts and the expiry badge', () =>
 
 /* ══ Dates: the implementation is the guard, because no output can see it ══════════════════════════ */
 
-describe('the two clocks, pinned in the SOURCE', () => {
-  // finance.calendar's finding, in its fourth form: this machine and CI both sit at UTC+8, so swapping
-  // either derivation for the other passes every output assertion in this file and prints the wrong day
-  // for an operator west of Greenwich. Verified by breaking each one — see the PR.
+describe('the two clocks are now ONE clock, pinned in the SOURCE', () => {
+  // v224. This screen was where "two clocks in one comparison" was found: `todayLocalISO()` was MYT and
+  // `inDaysLocalISO(90)` was the MACHINE's zone, and `expiryBadge()` compares them against each other in
+  // one expression. Both now read Kuala Lumpur, through myt.js, in both apps.
+  //
+  // finance.calendar's finding still governs HOW that is checked: this machine and CI both sit at UTC+8,
+  // so re-inlining either derivation with a local getter passes every output assertion in this file and
+  // prints the wrong day for an operator west of Greenwich. Verified by breaking each one — see the PR.
+  // Both spellings: v224 turned these two into one-line `export const … =>` arrow functions, which is
+  // the shape a delegation takes. A helper that only found `export function` would report "not found",
+  // and a "not found" that reads as a pass is how a guard stops guarding.
   const fn = (name: string) => {
-    const at = SRC.indexOf(`export function ${name}(`);
-    expect(at, `${name} not found`).toBeGreaterThan(-1);
-    return SRC.slice(at, SRC.indexOf('\n}', at)).replace(/\/\/[^\n]*/g, '');
+    const decl = SRC.indexOf(`export function ${name}(`);
+    const arrow = SRC.indexOf(`export const ${name} =`);
+    const at = decl >= 0 ? decl : arrow;
+    expect(at, `${name} not found in either spelling`).toBeGreaterThan(-1);
+    const end = decl >= 0 ? SRC.indexOf('\n}', at) : SRC.indexOf('\n', at);
+    return SRC.slice(at, end).replace(/\/\/[^\n]*/g, '');
   };
 
-  it('todayLocalISO() is Malaysia time WITHOUT a timezone database, exactly as app.html:1263 is', () => {
-    expect(APP).toContain("function todayLocalISO(){ const d=new Date(Date.now()+8*3600000); const p=n=>String(n).padStart(2,'0'); return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate()); }");
+  it('todayLocalISO() is Malaysia time WITHOUT a timezone database, exactly as app.html:1264 is', () => {
+    // Both sides delegate to myt.js now. Malaysia has no DST, so `+8h` read back with getUTC* needs no
+    // timezone database — a browser without the tz data still agrees which day it is in Kuala Lumpur,
+    // which is why this stayed arithmetic rather than becoming `timeZone: 'Asia/Kuala_Lumpur'`.
+    expect(APP).toContain('function todayLocalISO(){ return mytISO(); }');
+    expect(APP, 'app.html must load the file it now depends on').toContain('<script src="myt.js"></script>');
     const body = fn('todayLocalISO');
-    expect(body).toContain('8 * 3600000');
-    expect(body).toContain('getUTCFullYear');
-    expect(body).toContain('getUTCMonth');
-    expect(body).toContain('getUTCDate');
+    expect(body).toContain('mytISO');
     expect(body).not.toMatch(/\.getFullYear\(|\.getMonth\(|\.getDate\(|toLocale|toISOString/);
   });
 
@@ -1057,22 +1068,31 @@ describe('the two clocks, pinned in the SOURCE', () => {
     expect(todayLocalISO(0)).toBe('1970-01-01');
   });
 
-  it('inDaysLocalISO() is the MACHINE\'s zone, exactly as common.js:27-28 is', () => {
+  it('inDaysLocalISO() is MALAYSIAN too, exactly as common.js:27-28 now is', () => {
+    // common.js is loaded by BOTH apps, so this one changed HR OS as well as Finance. `inDaysLocalISO`
+    // has one caller (this badge) and `localISO` has one caller (`inDaysLocalISO`), which is what made
+    // the blast radius of the fix small enough to take.
     const common = readFileSync(join(REPO, 'common.js'), 'utf8');
-    expect(common).toContain("function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }");
-    expect(common).toContain('function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }');
+    expect(common).toContain('function localISO(d){ return mytISO(d); }');
+    expect(common).toContain('function inDaysLocalISO(days){ return mytISOPlusDays(days); }');
+    expect(common, 'the machine-zone body came back')
+      .not.toContain("return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }");
     const body = fn('inDaysLocalISO');
-    expect(body).toContain('setDate');
-    expect(body).toContain('getFullYear');
-    expect(body).not.toMatch(/getUTC|8 \* 3600000|toLocale|toISOString/);
+    expect(body).toContain('mytISO');
+    expect(body).not.toMatch(/setDate|\.getFullYear\(|toLocale|toISOString/);
   });
 
-  it('the two are NOT the same clock — the legacy inconsistency, mirrored not fixed', () => {
-    // Whatever this machine's zone is, `expiryBadge()` compares an MYT "today" against a machine-zone
-    // "+90 days". Asserted as a property of the SOURCE above, because on a UTC+8 runner the two agree
-    // and no output check can tell them apart.
-    expect(fn('todayLocalISO')).toContain('getUTC');
-    expect(fn('inDaysLocalISO')).not.toContain('getUTC');
+  it('the two ARE the same clock now — and the badge is driven across the boundary to prove it', () => {
+    // The whole point of the change. 16:00Z is already the NEXT day in Kuala Lumpur, so an implementation
+    // that read the machine's zone for one half and Malaysia's for the other puts the ⚠ threshold and the
+    // ⏳ window a day apart. Driven, not just read: at 16:00Z on 20 Aug, "today" is the 21st and "+90
+    // days" must be exactly 90 days after THAT.
+    const at = Date.parse('2026-08-20T16:00:00Z');
+    expect(todayLocalISO(at)).toBe('2026-08-21');
+    expect(inDaysLocalISO(90, at)).toBe('2026-11-19');
+    expect(inDaysLocalISO(0, at), 'the two halves disagree about today').toBe(todayLocalISO(at));
+    // …and at UTC+8 a machine-zone `inDaysLocalISO` returns the same strings, which is why the sources
+    // above are pinned as well. Run this file under TZ=America/New_York to see the difference.
   });
 
   it('inDaysLocalISO() really moves 90 days', () => {
@@ -1239,13 +1259,14 @@ describe('the printed report — a document that leaves the building', () => {
     expect(evil).toContain('&lt;script&gt;');
   });
 
-  it('is dated in UTC, exactly as infoPrint() is — mirrored, not fixed', () => {
-    // app.html:5914 uses `new Date().toISOString().slice(0,10)`, NOT todayLocalISO(). Between midnight
-    // and 08:00 in Kuala Lumpur that is the PREVIOUS day. The route hands it in so the boundary is
-    // drivable; changing it would be a behaviour change, not a migration detail.
+  it('is dated in MALAYSIA, exactly as infoPrint() now is — v224 changed both halves together', () => {
+    // It used to be `new Date().toISOString().slice(0,10)`, i.e. UTC: between midnight and 08:00 in
+    // Kuala Lumpur a report claimed to have been printed the PREVIOUS day. A date ON a document, not a
+    // figure IN one — nothing the report states about the company moved. The route hands the string in
+    // so the boundary stays drivable.
     const print = APP.slice(APP.indexOf('function infoPrint(){'), APP.indexOf('function infoRender(){'));
-    expect(print).toContain("(new Date().toISOString().slice(0,10))");
-    expect(print).not.toContain('todayLocalISO');
+    expect(print).toContain('todayLocalISO()');
+    expect(print, 'the UTC stamp came back').not.toContain('toISOString()');
     // …and printDocHtml itself reads no clock.
     const at = SRC.indexOf('export function printDocHtml(');
     expect(SRC.slice(at, SRC.indexOf('\n}\n', at))).not.toContain('new Date(');

@@ -9,19 +9,24 @@
 // — and everything with ONE right answer is here: the sheet names, the file name, and the audit body.
 // A file name is not cosmetic; it is what an operator files, mails and is later asked to produce.
 //
-// ── THE FILE NAME'S DATE IS UTC, WHICH IS WRONG IN MYT, AND IT IS MIRRORED ─────────────────────────
-// app.html:5290 is `new Date().toISOString().slice(0,10)` — the UTC date — while this repo's own
-// `todayLocalISO()` (app.html:1263) exists precisely because MYT is UTC+8 and the two disagree for the
-// first eight hours of every day. So an export taken at 07:00 on the 1st is filed under the LAST day of
+// ── THE FILE NAME'S DATE WAS UTC, AND v224 MADE IT MALAYSIAN ───────────────────────────────────────
+// app.html:5297 was `new Date().toISOString().slice(0,10)` — the UTC date — while this repo's own
+// `todayLocalISO()` (app.html:1264) exists precisely because MYT is UTC+8 and the two disagree for the
+// first eight hours of every day. So an export taken at 07:00 on the 1st was filed under the LAST day of
 // the previous month, which on a month-end close is the difference between the right period and the
-// wrong one. `finance.calendar`'s finding in another form; mirrored, not fixed, because renaming an
-// exported file is a change to what staff have been filing, and pinned by taking the instant as an
-// ARGUMENT (hr.yearend's `taxYears(now)` rule) so a "helpful" rewrite to a local getter fails a test.
+// wrong one. Both halves changed together (app.html and here), so the two renderers still agree.
+//
+// This is a DATE on a file, not a figure IN one: nothing inside the workbook moved. The statutory
+// figures that genuinely must not change without finance sign-off are named in CLAUDE.md.
+// `now` stays an ARGUMENT (hr.yearend's `taxYears(now)` rule) so the divergence is drivable on a
+// UTC+8 machine rather than being a property of whichever machine ran the test.
 //
 // ── THE 952 KB xlsx BUNDLE IS SOMEONE ELSE'S CHANGE ────────────────────────────────────────────────
 // Nothing here loads it. The route injects `xlsx.full.min.js` on first use, exactly as
 // app/finance/recon/page.tsx and app/finance/gateway/page.tsx already do, so this port neither helps nor
 // hinders the in-flight lazy-loading work; see the PR.
+
+import { mytISO } from '../../myt.js';
 
 /** `exportCurrent()`'s sheet name — app.html:5285. Excel refuses a sheet name over 31 characters. */
 export function sheetName(tab: string, i: number, count: number): string {
@@ -44,7 +49,7 @@ export function companySlug(optionText: string): string {
  */
 export function exportFileName(tab: string, companyText: string, now: Date): string {
   const co = companySlug(companyText);
-  return 'CTG_' + tab + (co && co.indexOf('All') < 0 ? '_' + co : '') + '_' + now.toISOString().slice(0, 10) + '.xlsx';
+  return 'CTG_' + tab + (co && co.indexOf('All') < 0 ? '_' + co : '') + '_' + mytISO(now) + '.xlsx';
 }
 
 /**

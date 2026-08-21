@@ -45,6 +45,7 @@ import {
   MY_EIS, MY_SOCSO_CAT1, MY_SOCSO_CAT2,
   hrEpfParts, hrProgTax, hrRound2, myLindung24, myLindungActive, myPcbRoundUp5, myStatLookup,
 } from '../../payroll.js';
+import { mytYMD } from '../../myt.js';
 
 /* ────────────────────────────── the state this screen is a view of ────────────────────────────── */
 
@@ -227,7 +228,9 @@ export function calcPayslipDoc(C: CalcState, res: CalcResult, emp: CalcEmployee 
     deductions: num(C.inp.deduction) ? [{ label: 'Deduction', amount: num(C.inp.deduction) }] : [],
     unpaid: 0,
   };
-  const month = now.getMonth() + 1, year = now.getFullYear();
+  // v224: MALAYSIAN, as hros.html:4898 now is. Was the machine's zone, so a payslip generated at 07:00
+  // in KL on the 1st was stamped with the PREVIOUS month — a document that leaves the building.
+  const { month, year } = mytYMD(now)!;
   return {
     e, p, d,
     period: { month, year, label: HR_MONTHS[month] + ' ' + year },

@@ -82,6 +82,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 
 | file | what is in it | loaded by |
 |---|---|---|
+| `myt.js` | Malaysian time — the ONE `+8h`/`getUTC*` definition, and the `datetime-local` read/write pair (v224) | both |
 | `common.js` | the ~20 top-level helpers (PR #28) and `DocScanner`, the camera → edge-detect → PDF pipeline (v212) | both |
 | `payroll.js` | the Malaysian statutory engine — EPF, SOCSO, EIS, LINDUNG 24, PCB, and the gazetted tables (v213) | `hros.html` |
 | `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/bank) and the payslip / EA / Form E jsPDF drawers (v213), plus the year-end FIGURES — `hrYePaid`, `hrFormEStats` and the whole CP8D file (v222) | `hros.html` |
@@ -1192,11 +1193,48 @@ disappearing from the 19 sidebar anchors, the breadcrumb and the folder 🗑 —
 is identical either way, so handler parity cannot see it. **Ask of each guard which side of its branch
 the fixture sits on**, and drive the other one.
 
+### The portal is ALWAYS MALAYSIAN TIME, and `myt.js` is the only place that is written
+
+**v224, and it is a behaviour change to live software, not a migration detail.** Both legacy apps are
+what staff use, and the module below is loaded by both, so what changed is what staff see today.
+
+`myt.js` (+ `myt.d.ts`) is the sixth-and-a-half shared root script: `mytDate` / `mytISO` /
+`mytISOPlusDays` / `mytYMD` / `mytDtLocal` / `mytFromDtLocal`, loaded by `app.html` and `hros.html`
+BEFORE `common.js` and imported by `web/` the way `payroll.js` is. Malaysia is UTC+8 with no DST, so
+`+8h` read back through `getUTC*` is Malaysian wall time in every browser **with no timezone database**
+— which is why it is arithmetic and not `timeZone: 'Asia/Kuala_Lumpur'`. Read its header before adding
+a date anywhere; it names what is deliberately NOT Malaysian.
+
+**`todayLocalISO()` used to be two different functions** — app.html's was MYT, hros.html's was the
+MACHINE's zone. Same name, two apps, two answers. Both now delegate. That trap is closed, and the
+audit asserts it stays closed in both directions.
+
+**Three carve-outs, and they are decisions, not misses.** A date that feeds a **filed or reported
+figure** does not move without finance sign-off: `hrFormEStats()` (hr-docs.js:267, the captain's
+explicit carve-out — a 1 January hire dropping out of Form E's `newHires`), `hrFmtDMY()`
+(hr-docs.js:229 — a cessation date on an EA form / CP8D, and `deno test` under a western zone fails on
+it **today**, before and after v224), and `myLindungActive()`'s no-period fallback (payroll.js:48).
+`web/tests/timezone-audit.test.tsx` pins all three as carve-outs, so "finishing the job" is a red test
+rather than a silent filing change.
+
+**What is deliberately still not Malaysian, and why it CANNOT be here:** the BARE `toLocale*` calls that
+display an INSTANT (a punch time, a password-reset stamp). `tests/render_harness.ts` makes the local
+getters read as UTC and forces `timeZone:'UTC'` on every `toLocale*`, so shifting one by 8 hours moves a
+committed golden — and regenerating 40 goldens is a bigger, separate change. The consequence is real and
+worth knowing: an admin abroad sees a Malaysian hour in the punch EDITOR and their own in the punch
+TABLE beside it. Fixing that means regenerating goldens on purpose.
+
 ### Every date read in `web/` is inventoried and pinned — `web/tests/timezone-audit.test.tsx`
 
 This fleet and CI both sit at UTC+8, where a whole class of defect is invisible: `new Date('2026-07-30')`
 is midnight UTC and prints 29 Jul west of Greenwich. The Calendar port was rewritten that way and all 29
-of its tests still passed. **An output assertion cannot see this. The guard has to be on the source.**
+of its tests still passed. **An output assertion cannot see this. The guard has to be on the source —
+and the suite has to be RUN somewhere else.** `TZ=America/New_York npm test` in `web/` is the other half
+and is green; a fix that is only green at UTC+8 has proven nothing. v224 measured it: the same
+machine-zone regression trips **11** tests in New York and **2** at UTC+8, one of those a source pin.
+A test FIXTURE built from local parts (`new Date(2026, 7, 18, 12)`) is the same trap one level up — it
+is a different instant in every zone, and it made `finance-o2o.parity` fail in New York until it became
+an epoch instant.
 
 That file is the audit. It scans every `.ts`/`.tsx` under `web/src` and `web/app` for date tokens in
 CODE (comments blanked — several files QUOTE `new Date` to explain why they do not call it), and every
@@ -1206,10 +1244,11 @@ snapshot. Four kinds are pinned, and mixing them up is the defect:
 
 | kind | shape | where |
 |---|---|---|
-| MYT | `Date.now() + 8*3600000` read back with `getUTC*` | app.html:1263's `todayLocalISO` and everything derived from it |
-| LOCAL | `getFullYear/getMonth/getDate` on a bare `new Date()` | **hros.html:1271's `todayLocalISO`** — same name, different function, different answer |
-| UTC | `toISOString().slice(0,10)` | three document stamps, deliberate |
-| BARE | `toLocaleString()` with no locale and no `timeZone` | app.html:4919/:4978, hros.html:4303 |
+| MYT | `Date.now() + 8*3600000` read back with `getUTC*` | `myt.js`, plus eight inline copies in `web/` that predate it and are individually pinned |
+| MYT_SHARED | delegates to a `myt*` helper and spells no clock idiom of its own | every derivation v224 converted |
+| LOCAL | `getFullYear/getMonth/getDate` on a bare `new Date()` | two left, both zone-FREE: `finance-qinv`'s `fmtDate` and `hr-payroll`'s `dueInfo` subtraction |
+| UTC | `toISOString()` | the punch POST — an instant, correctly zone-free |
+| BARE | `toLocaleString()` with no locale and no `timeZone` | app.html:4919/:4978, hros.html:4303 — an instant DISPLAYED, and pinned by the goldens |
 
 **The strongest single line in it is the blanket: nothing in `web/` may pass a `timeZone` except
 `finance-ap.tsx`, whose legacy passes one.** Adding `Asia/Kuala_Lumpur` to any zone-less `toLocale*` is
@@ -1224,10 +1263,19 @@ caller, where `hr-clock`/`hr-attendance`/`finance-cfo` spread the caller last �
 added to the component is invisible to the golden as well. Pin by source, not by output.
 
 **No category (b) was found: not one React date read exists that the legacy does not have at the same
-point.** Where the legacy is itself zone-blind it is mirrored, not fixed — `hrFormEStats`'s
-`new Date(join_date).getFullYear()` (a figure filed with LHDN) is the known one, and
-`hr-attendance`'s `dtLocal` and `finance.info`'s two-different-clocks are the others. Changing any of
-them is a decision, not a migration detail.
+point.** v224 then converted the zone-blind ones in BOTH renderers in one commit, which is the only way
+to change one — a React-only fix makes the two apps disagree about what day it is, and no golden and no
+output assertion on this fleet can see that either.
+
+**A `datetime-local` box is a PAIR, and a pair that agrees with itself proves nothing.** `hrDtLocal()`
+filled the punch editor with the machine's wall clock and `hrAttSave()` read it back with
+`new Date(value)`: a perfect round trip, invisible to every test, showing an admin outside Malaysia an
+hour the punch was never at — so correcting the NOTE on that form re-posted a MOVED punch. Somebody's
+paid hours. `mytDtLocal`/`mytFromDtLocal` are the replacement pair and the audit drives the round trip
+across a month end AND asserts what the box SHOWS, because only the second half catches a machine-zone
+rewrite. Note also that `null` there means "no instant" and must stay empty: a helper that read a null
+`clock_out` as "now" puts the current time in an OPEN punch's box, one Save from clocking that person
+out.
 
 ### SIBLING PAGES are not screens, and they live NESTED under their tab's route
 

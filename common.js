@@ -35,8 +35,13 @@ function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIC
 function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
 function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }
 function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
-function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
-function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }
+// v224: both of these were the MACHINE's zone, and `inDaysLocalISO(90)` is compared against
+// app.html's `todayLocalISO()` (MYT) in ONE expression — the document-expiry badge at app.html:5651.
+// Two clocks, one comparison: west of Greenwich the "expires soon" window was off by a day at its
+// far edge. Both now read Malaysian time, through the single definition in myt.js.
+// `localISO(d)` keeps its name because it is a global both apps expose; its ANSWER changed.
+function localISO(d){ return mytISO(d); }
+function inDaysLocalISO(days){ return mytISOPlusDays(days); }
 function toast(msg,isErr){ _toastQueue.push({msg,isErr}); if(!_toastPlaying) _playNextToast(); }
 function _playNextToast(){
   const next=_toastQueue.shift();

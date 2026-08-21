@@ -45,6 +45,8 @@
 
 import { Fragment, type ReactNode } from 'react';
 
+import { mytISO } from '../../myt.js';
+
 /* ══ Types ═════════════════════════════════════════════════════════════════════════════════════════ */
 
 /** A folder id. The fixture's are strings; a live one is a bigint the legacy interpolates unquoted. */
@@ -326,28 +328,20 @@ const M = (n: unknown) => 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { min
  * early for an operator west of Greenwich. The screen's test pins this function's SOURCE, not its
  * output — `finance.calendar`'s finding, in its fourth form.
  */
-export function todayLocalISO(now: number): string {
-  const d = new Date(now + 8 * 3600000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate());
-}
+export const todayLocalISO = (now: number): string => mytISO(now);
 
 /**
- * `inDaysLocalISO()` + `localISO()` — common.js:27-28, character for character.
+ * `inDaysLocalISO()` + `localISO()` — common.js:27-28, MALAYSIAN since v224.
  *
- * The MACHINE's zone, not Malaysia's — `getFullYear/getMonth/getDate`. That is NOT the same clock
- * `todayLocalISO()` above reads, and the two are compared against each other in `expiryBadge()`. It is
- * the legacy's own inconsistency and it is mirrored, not fixed: "expires within 90 days" straddling a
- * midnight differently from "expired" is a one-day edge on an amber pill, and changing it is a
- * behaviour change rather than a migration detail. The screen's test pins BOTH sources, in both
- * directions, precisely because neither is visible in any output on this fleet.
+ * THIS IS THE "TWO CLOCKS" FIX. It used to be the MACHINE's zone — `getFullYear/getMonth/getDate` —
+ * while `todayLocalISO()` above was MYT, and `expiryBadge()` compares the two against each other in one
+ * expression. One comparison, two definitions of "now": west of Greenwich the ⏳ window's far edge sat a
+ * day off the ⚠ threshold, so a licence could be reported as expiring in 90 days and expired on the same
+ * screen. Both halves now read Kuala Lumpur, in both apps, from myt.js.
+ *
+ * Neither is visible in any output on this fleet (UTC+8), so the screen's test pins both SOURCES.
  */
-export function inDaysLocalISO(days: number, now: number): string {
-  const d = new Date(now);
-  d.setDate(d.getDate() + days);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
-}
+export const inDaysLocalISO = (days: number, now: number): string => mytISO(now + days * 86400000);
 
 /* ══ Folders ═══════════════════════════════════════════════════════════════════════════════════════ */
 

@@ -1003,6 +1003,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
      function. ⚠ Do NOT use xlsx@0.18.x — its serial-date parsing lands 25s before midnight under
      Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
 <!-- Shared with hros.html — must load before the inline script below (classic script: these are globals). -->
+<script src="myt.js"></script>
 <script src="common.js"></script>
 <script src="wht.js"></script>
 <script src="o2o.js"></script>
@@ -1261,7 +1262,10 @@ const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
 // H6: pin "today" to MYT (UTC+8) regardless of the viewer's browser timezone. A browser set to a
 // western TZ was computing period presets, close-month and invoice-date defaults one day early.
-function todayLocalISO(){ const d=new Date(Date.now()+8*3600000); const p=n=>String(n).padStart(2,'0'); return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate()); }
+// v224: the +8h shift itself now lives in myt.js — one definition for both apps and for web/. The
+// answer here is unchanged; the NAME is kept because ~10 call sites and hros.html's own
+// todayLocalISO() (which used to be the machine's zone and no longer is) both read as "today in KL".
+function todayLocalISO(){ return mytISO(); }
 
 // Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
 // + "5 contacts"), play them sequentially instead of overwriting each other.
@@ -2769,8 +2773,10 @@ var O2O_LAST_ISSUED=null;
 // v62: keep the raw Excel bytes so switching target company re-parses under the right mode
 // (Skindae uses fixed-SKU matching; other tenants use the Package column as line description).
 var O2O_BUF=null;
-function o2oToday(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function o2oPlusDays(n){ var d=new Date(); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+// v224: was the MACHINE's zone. An operator in London opening O2O before 4pm dated the whole batch
+// YESTERDAY, and o2o_issue (finance.ts:626) forwards that date into Xero untouched.
+function o2oToday(){ return mytISO(); }
+function o2oPlusDays(n){ return mytISOPlusDays(n); }
 function o2oResetDates(){
   var inv=document.getElementById('o2o-invdate'); if(inv) inv.value=o2oToday();
   var due=document.getElementById('o2o-duedate'); if(due) due.value=o2oPlusDays(30);
@@ -3076,7 +3082,7 @@ async function o2oDownloadPdfs(retryOnly){
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
-        var stamp = new Date().toISOString().slice(0,10);
+        var stamp = todayLocalISO();   // v224: was toISOString() (UTC) — a 7am KL download filed under yesterday
         a.download = 'o2o_invoices_'+stamp+(retryOnly?'_retry':'')+'.zip';
         document.body.appendChild(a); a.click();
         setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
@@ -4319,7 +4325,7 @@ function qiPreview(){
         '<tr><td colspan="2" style="padding-top:8px;text-align:right;color:#7c8694;font-size:11px">Due Date: '+esc(fmtDate(due)||'—')+'</td></tr>'+
       '</table>'+
     '</td></tr></table>'+
-    '<div style="margin-top:48px;padding-top:14px;border-top:1px solid #d9dde2;text-align:center;font-size:10px;color:#7c8694;letter-spacing:.05em">CTG Finance Portal · Preview · '+new Date().toISOString().slice(0,10)+'</div>'+
+    '<div style="margin-top:48px;padding-top:14px;border-top:1px solid #d9dde2;text-align:center;font-size:10px;color:#7c8694;letter-spacing:.05em">CTG Finance Portal · Preview · '+todayLocalISO()+'</div>'+
   '</div>';
 
   document.getElementById('qi_out').innerHTML=
@@ -5294,7 +5300,9 @@ function exportCurrent(){
       XLSX.utils.book_append_sheet(wb,ws,(t+(tables.length>1?('_'+(i+1)):'')).slice(0,31));
     });
     var co=document.getElementById('company'); var coName=(co&&co.selectedIndex>=0)?co.options[co.selectedIndex].text.replace(/[^A-Za-z0-9]/g,'_'):'';
-    var fn='CTG_'+t+(coName&&coName.indexOf('All')<0?('_'+coName):'')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    // v224: was toISOString() (UTC) — an export run at 07:00 in KL was filed under yesterday, and on
+    // the 1st of a month under LAST month.
+    var fn='CTG_'+t+(coName&&coName.indexOf('All')<0?('_'+coName):'')+'_'+todayLocalISO()+'.xlsx';
     XLSX.writeFile(wb,fn);
     toast('Exported '+fn);
     // Fire-and-forget audit so admins can see who exported what (data_export action).
@@ -5925,7 +5933,7 @@ function infoPrint(){
   function val(v){ return v==null||v===''?'—':String(v); }
   function fldRow(f, val){ return '<div style="display:grid;grid-template-columns:200px 1fr;padding:6px 0;border-bottom:1px solid #eee"><div style="color:#666;font-size:12px">'+f.l+'</div><div>'+esc(val)+'</div></div>'; }
   let body='<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:30px auto;padding:0 40px;color:#222;line-height:1.5}h1{font-size:24px;margin:0 0 4px}h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:#666;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #222}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}th,td{text-align:left;padding:6px 10px;border:1px solid #ddd}th{background:#f4f4f4;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#555}.meta{color:#888;font-size:12px;margin-bottom:24px}</style>';
-  body+='<h1>'+esc(c.tenant_name)+'</h1><div class="meta">Company Information Report · printed '+(new Date().toISOString().slice(0,10))+(c.updated_at?' · last edit '+esc(String(c.updated_at).slice(0,10)):'')+'</div>';
+  body+='<h1>'+esc(c.tenant_name)+'</h1><div class="meta">Company Information Report · printed '+todayLocalISO()+(c.updated_at?' · last edit '+esc(String(c.updated_at).slice(0,10)):'')+'</div>';
   INFO_SECTIONS.forEach(sec=>{
     if(!infoSectionFilled(c, sec)) return;
     body+='<h2>'+sec.icon+' '+esc(sec.title)+'</h2>';

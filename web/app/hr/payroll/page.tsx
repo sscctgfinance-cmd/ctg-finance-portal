@@ -19,6 +19,7 @@ import HrPayroll, {
   type StatFile, type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
 import { showConfirm } from '../../../src/confirm';
+import { mytISO, mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -33,17 +34,19 @@ function readJson<T>(key: string, fallback: T): T {
   try { return (JSON.parse(localStorage.getItem(key) || 'null') as T) || fallback; } catch { return fallback; }
 }
 
-/** `todayLocalISO()` — the row menu's resign-date default. */
-function todayLocalISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+/**
+ * `todayLocalISO()` — hros.html:1271, which v224 made MALAYSIAN. The row menu's resign-date default,
+ * i.e. an employee's last working day, which decides their final month's proration.
+ */
+const todayLocalISO = (): string => mytISO(Date.now());
 
 export default function HrPayrollPage() {
-  const now = new Date();
+  // v224: MALAYSIAN, as hros.html:4058 now is. Was the machine's zone, so on the 1st an operator west
+  // of Greenwich opened LAST month's payroll run.
+  const now = mytYMD(Date.now())!;
   const [company, setCompany] = useState<Company | null>(null);
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.month);
+  const [year, setYear] = useState(now.year);
   const [data, setData] = useState<PayData | null>(null);
   const [grid, setGrid] = useState<Record<string, GridRow>>({});
   const [dirty, setDirty] = useState(false);
