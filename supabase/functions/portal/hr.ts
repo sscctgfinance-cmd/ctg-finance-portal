@@ -17,6 +17,21 @@ import {
 } from "./lib.ts";
 
 
+// The site's public address — the ONE place it is written in this function. The five links below all
+// travel by EMAIL (leave approvals, claim approvals, employee credentials, admin credentials, clock
+// reminders), which is how staff reach the app, so every one of them must stay ABSOLUTE: a relative
+// path in a mail client resolves against nothing.
+//
+// Three runtimes hold this address and none can import from another (a `_shared/` module would sit
+// outside the deploy workflow's `paths:` trigger and so would ship silently late), which makes three
+// declarations the floor: this one, `SITE_URL` in common.js (the browser) and `SITE_URL` in
+// supabase/functions/ctg-sso/index.ts (the sign-in allow-list). tests/site_url_test.ts fails if they
+// stop agreeing, and fails if a fourth hardcoded copy appears anywhere in the shipped source.
+const SITE_URL  = "https://os.ctg4u.com";
+const HROS_URL  = SITE_URL + "/hros.html";
+const APP_URL   = SITE_URL + "/app.html";
+const CLOCK_URL = HROS_URL + "#clock";
+
 // ===== Reimbursement / Claim engine helpers =====
 export function rcStatusForRole(role){ return role==="manager"?"Pending Manager Approval":role==="hr"?"Pending HR Approval":role==="finance"?"Pending Finance Approval":role==="director"?"Pending Director Approval":"Submitted"; }
 export async function rcAuditLog(claimId, action, me, fromS, toS, detail){ try{ await sb.from("hr_claim_audit_logs").insert({ claim_id:claimId, action, actor_id:(me&&me.user&&me.user.id)||null, actor_name:(me&&me.user&&me.user.email)||null, from_status:fromS||null, to_status:toS||null, details:detail||{} }); }catch(_e){} }
@@ -374,7 +389,7 @@ export async function leaveNotifyStep(reqId:any){ try{
   const seen:any={};
   for(const to of recips){ if(seen[to])continue; seen[to]=1;
     await rcSendEmail(to, "[HR OS] Leave request needs your approval",
-      "Hi,\n\n"+((emp&&emp.name)||"An employee")+" requested "+req.leave_type+" leave "+req.date_from+" → "+req.date_to+" ("+req.days+" day(s)).\nReason: "+(req.reason||"—")+"\nApproval step: "+(step.name||step.approver_role)+"\n\nApprove / reject in HR OS → Leave:\n  https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html\n\n— CTG HR OS (automated)");
+      "Hi,\n\n"+((emp&&emp.name)||"An employee")+" requested "+req.leave_type+" leave "+req.date_from+" → "+req.date_to+" ("+req.days+" day(s)).\nReason: "+(req.reason||"—")+"\nApproval step: "+(step.name||step.approver_role)+"\n\nApprove / reject in HR OS → Leave:\n  "+HROS_URL+"\n\n— CTG HR OS (automated)");
   }
 }catch(_e){} }
 export async function rcNotifyStepApprover(claimId:any){ try{
@@ -396,7 +411,7 @@ export async function rcNotifyStepApprover(claimId:any){ try{
       const ins=await sb.from("hr_claim_email_actions").insert({ token:tok, claim_id:claimId, step_order:inst.current_step, approver_employee_id:r.empId, approver_email:r.email, expires_at:new Date(Date.now()+14*86400000).toISOString() });
       if(!ins.error) link=rcFnBase()+"?rc="+tok;
     } catch(_e){}
-    const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\n"+(link?("Review & approve here (no login needed, link valid 14 days):\n  "+link+"\n\n"):"")+"Or log in to HR OS → Reimbursement → Pending:\n  https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html\n\n— CTG HR OS (automated)";
+    const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\n"+(link?("Review & approve here (no login needed, link valid 14 days):\n  "+link+"\n\n"):"")+"Or log in to HR OS → Reimbursement → Pending:\n  "+HROS_URL+"\n\n— CTG HR OS (automated)";
     await rcSendEmail(r.email, subj, body);
     // v172: also buzz their phone. Payloadless push — the service worker asks push_pending for the text.
     try { if(r.empId) await pushToEmployee(r.empId); } catch(_e){}
@@ -889,13 +904,13 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       if (!tenant) return j({ ok:false, error:"tenant required" });
       const alw = await allowedTenants(b.token);
       if (alw.indexOf(tenant) < 0) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
-      const loginUrl = String(b.login_url||"https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html");
+      const loginUrl = String(b.login_url||HROS_URL);
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", tenant).maybeSingle();
       const coName = (tn && tn.tenant_name) || "your company";
       // v189: point the person at the app they can actually use. An admin sent to hros.html is not
       // wrong exactly, but the Finance Portal is their home screen and the HR-only URL looks like a
       // downgrade.
-      const portalUrl = "https://sscctgfinance-cmd.github.io/ctg-finance-portal/app.html";
+      const portalUrl = APP_URL;
       const mkBody = (name:string, email:string, pass:string, role:string)=>{
         const isEmp = String(role||"employee")==="employee";
         const url = isEmp ? loginUrl : portalUrl;
@@ -1124,7 +1139,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         const today = mytNow.toISOString().slice(0,10);
         const { data: emps } = await sb.from("hr_employees").select("id,name,email,shift_start,shift_end,tenant_id,clock_remind_in_date,clock_remind_out_date").eq("status","active").eq("clock_reminder",true);
         let sent=0;
-        const clkBase="https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html#clock";
+        const clkBase=CLOCK_URL;
         for(const e of (emps||[])){
           if(!e.email) continue;
           const { data: open } = await sb.from("hr_timeclock").select("id,work_date").eq("employee_id",e.id).eq("status","open").maybeSingle();

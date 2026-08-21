@@ -24,13 +24,16 @@ const PORTAL_ORIGIN = Deno.env.get("CTG_AUTH_PORTAL_ORIGIN") || "https://api.ctg
 const SELF          = `${SUPABASE_URL}/functions/v1/ctg-sso`;
 const REDIRECT_URI  = `${SELF}/callback`;
 
-const PAGES = "https://sscctgfinance-cmd.github.io/ctg-finance-portal";
+// The site's public address. One constant here, and the twin declarations in common.js (the browser)
+// and supabase/functions/portal/hr.ts (the emails) — three runtimes, none able to import from another.
+// tests/site_url_test.ts fails if the three stop agreeing.
+const SITE_URL = "https://os.ctg4u.com";
 // Allow-list, not a parameter. A redirect target taken from the query string is an open redirect, and
 // an open redirect on a login callback is a credential-stealing primitive.
 const APPS: Record<string, string> = {
-  hros:   `${PAGES}/hros.html`,
-  portal: `${PAGES}/app.html`,
-  index:  `${PAGES}/index.html`,
+  hros:   `${SITE_URL}/hros.html`,
+  portal: `${SITE_URL}/app.html`,
+  index:  `${SITE_URL}/index.html`,
 };
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);

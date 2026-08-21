@@ -2770,7 +2770,7 @@ async function hrEnableLoginBulk(){
   } else toast((r&&r.error)||'Failed',true);
 }
 function hrShowCreds(created, skipped){
-  var url='https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html';
+  var url=SITE_URL+'/hros.html';
   var rows=created.map(function(c){ return '<tr><td>'+esc(c.name||'')+'</td><td>'+esc(c.email||'')+'</td><td style="font-family:monospace"><b>'+esc(c.temp_password||'')+'</b></td></tr>'; }).join('');
   var skipHtml=(skipped&&skipped.length)?'<div class="muted" style="font-size:11px;margin-top:8px">Skipped ('+skipped.length+'): '+skipped.map(function(s){return esc(s.name)+' — '+esc(s.reason);}).join('; ')+'</div>':'';
   var txt='HR OS login: '+url+'\n\n'+created.map(function(c){return (c.name||'')+'\t'+(c.email||'')+'\t'+(c.temp_password||'');}).join('\n');

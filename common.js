@@ -20,6 +20,17 @@
 // state and touches no DOM until `DocScanner.open()` is called. Keep it that way; a load-time read of
 // API/TOKEN/ME from this file would be undefined for both apps.
 
+// The site's public address — the ONE place it is written for the browser half of this repo. Anything
+// needing an absolute URL for this app (the credential hand-out sheet, anything printed or copied out)
+// references this name instead of spelling the host again. It is a bare string literal, so it does not
+// break the "nothing here runs at load time" rule above: it reads no per-app state and touches no DOM.
+//
+// Three runtimes hold this address and none can import from another, so three declarations is the floor:
+// this one, `SITE_URL` in supabase/functions/portal/hr.ts (the five emails), and `SITE_URL` in
+// supabase/functions/ctg-sso/index.ts (the sign-in allow-list). tests/site_url_test.ts fails if they
+// stop agreeing, and fails if a fourth hardcoded copy appears anywhere in the shipped source.
+const SITE_URL = 'https://os.ctg4u.com';
+
 function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIComponent(app); }
 function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
 function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }

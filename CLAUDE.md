@@ -1535,6 +1535,33 @@ QUEUE's timing, the confirm's Escape listener and the alert panel's click-away l
 by a test: vitest runs `environment: 'node'` and all 45 test files depend on that, so adding jsdom for
 three behaviours was not worth it.
 
+## The site's address is `SITE_URL`, declared three times because three runtimes hold it
+
+`https://os.ctg4u.com`. It used to be written out longhand in seven places. It is now `SITE_URL` in
+`common.js` (the browser half of both legacy apps), `SITE_URL` + `HROS_URL`/`APP_URL`/`CLOCK_URL` in
+`supabase/functions/portal/hr.ts` (the five links that travel by EMAIL — leave approvals, claim
+approvals, employee credentials, admin credentials, clock reminders), and `SITE_URL` in
+`supabase/functions/ctg-sso/index.ts` (the sign-in redirect allow-list, which is an allow-list and not
+a parameter precisely because an open redirect on a login callback steals credentials).
+
+**Three, not one, and the reason is a boundary rather than taste.** Those three runtimes cannot import
+from one another. A `supabase/functions/_shared/site.ts` would collapse the last two, and it is the
+documented Supabase pattern — but it would sit outside `deploy-supabase-portal.yml`'s `paths:` trigger,
+so a change to it would ship silently late. That is the same failure the `paths:` comment already warns
+about, in the one file whose whole job is to be correct on cutover day.
+
+**`tests/site_url_test.ts` is what makes "one constant" mean something.** It evaluates all three
+declarations and requires them to agree, requires every derived URL to be absolute with its separator
+intact, pins each of the five emails to the constant it must use, and **fails if a fourth hardcoded copy
+of the host appears anywhere in the shipped source** — `web/` included. The ONE exception is
+`cutover/old-origin/forward.html`, which is deployed by hand into the `publish` repo and must name both
+hosts literally — it is served from the OLD origin and cannot import this constant from anywhere. It is
+not in the scan list, and `tests/forwarding_page_test.ts` is what pins it instead. Adding a link to a new email
+means adding a constant there, not a string.
+
+**`ctg-sso` is not deployed by any workflow** (see "Things that are not covered by a push"), so its
+`SITE_URL` takes effect only when a human deploys it. Deploying it before the new domain answers sends
+every SSO sign-in to an address that is not there yet.
 ## The old address gets a forwarding page — `cutover/old-origin/`
 
 At cutover (GitHub Pages → `https://os.ctg4u.com`) the old GitHub Pages address stays alive serving
