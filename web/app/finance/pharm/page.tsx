@@ -17,10 +17,10 @@
 // same text. That is the safe direction: it can only over-state the refusal, never render a refusal as
 // an empty success.
 //
-// `pharmOpen(id)` / `pharmNewStart()` open `pharmRenderDetail()` (app.html:6733) — the seven-section
-// profile form with its save, delete and Xero-contact-link modal, which is NOT migrated. Handing off to
-// the legacy tab is the honest strangler edge `finance.wht` uses for `whtDocHtml()`: same origin, same
-// session, and the operator lands on the screen that can actually edit the record.
+// `pharmOpen(id)` / `pharmNewStart()` open `pharmRenderDetail()` (app.html:6320) — the seven-section
+// profile form with its save, delete and Xero-contact-link modal. It IS migrated now:
+// app/finance/pharm/detail/, addressed by `?id=` (or `?new=1`). The handoff to app.html this used to
+// make is gone, so an operator who opens a pharmacy from React stays in React.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -57,7 +57,8 @@ export default function FinancePharmPage() {
     timer.current = setTimeout(() => setSearch(v), 180);
   }, []);
 
-  const toLegacy = useCallback(() => { location.href = `${legacyUrl('app.html')}#tab=pharm`; }, []);
+  const openDetail = useCallback((id: number) => { location.href = `${BASE}/finance/pharm/detail/?id=${encodeURIComponent(String(id))}`; }, []);
+  const newDetail = useCallback(() => { location.href = `${BASE}/finance/pharm/detail/?new=1`; }, []);
 
   if (signedIn === false) {
     return (
@@ -82,12 +83,15 @@ export default function FinancePharmPage() {
         refused={refused}
         failed={failed}
         onSearch={onSearch}
-        onOpen={toLegacy}
-        onNew={toLegacy}
+        onOpen={openDetail}
+        onNew={newDetail}
       />
     </>
   );
 }
+
+/** The one place a base path is read in this route — src/portal.ts is the one place it is defined. */
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
 function Banner() {
   return (

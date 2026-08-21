@@ -47,8 +47,9 @@
 // them against app.html's own text rather than trusting this file.
 //
 // `WHT.page==='doc'` — `whtDocHtml()`, the printable computation with its editable payment lines — is
-// NOT ported. It is a sibling PAGE that `renderWht()` dispatches to, not a branch of this renderer, and
-// it is its own screen's worth of work. `onOpen` / `onNew` hand off to the legacy tab; see the route.
+// a sibling PAGE that `renderWht()` dispatches to, not a branch of this renderer. It IS ported now, in
+// src/finance-wht-doc.tsx + app/finance/wht/doc/, and `onOpen` / `onNew` go there instead of handing
+// off to app.html. It has no golden of its own, so its test is structural; read its header first.
 
 import { WHT_TYPES, whtCompute, whtMoney, whtTypeLabel } from '../../wht.js';
 

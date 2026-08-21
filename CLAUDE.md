@@ -487,9 +487,10 @@ BLANK as `0` (withhold nothing) rather than leaving the rate alone — `pct()` a
 are mirrored as-is and pinned in the screen's test; changing either is a behaviour change, not a
 migration detail.
 
-**`whtDocHtml()` (`WHT.page==='doc'`) is NOT migrated.** It is a sibling PAGE `renderWht()` dispatches
-to, not a branch of the list renderer. `onOpen`/`onNew` hand off to `app.html#tab=wht` — same origin,
-same session. That handoff is the honest strangler edge for any Finance tab with a second page behind it.
+**`whtDocHtml()` (`WHT.page==='doc'`) is a sibling PAGE `renderWht()` dispatches to, not a branch of the
+list renderer.** It was the pilot's honest strangler edge — `onOpen`/`onNew` handed off to
+`app.html#tab=wht` — and it is now migrated to `app/finance/wht/doc/?id=`. See "SIBLING PAGES are not
+screens" below for how a sibling page is routed and tested.
 
 **A screen with NO handlers still uses `assertHandlerParity()` — the empty golden IS the assertion.**
 `finance.bankfeed` is the first: its launch control is an `<a href target="_blank" rel="noopener
@@ -742,9 +743,9 @@ four handlers the golden does not carry. The screen has ONE mode, no sub-views, 
 What the golden does not reach is `#sr-result`'s BODY — it is captured `hide` with every div empty — so
 the cards, the account table, the tally and the 150-row preview are pinned by assertion.
 
-**Two sub-flows hand off rather than lie.** The "add this pharmacy to the master" link goes to
-`app.html#tab=pharm` (the Pharmacies LIST is migrated, its detail form is not) — the honest strangler edge `whtDocHtml()`
-uses. Everything else, including the Xero-contact search/link and the JSZip PDF batch, is ported: an
+**One sub-flow hands off rather than lie.** The "add this pharmacy to the master" link goes to
+`app.html#tab=pharm` — the honest strangler edge, still worth reading even though the Pharmacies detail
+form itself has since been migrated (see "SIBLING PAGES are not screens" below). Everything else, including the Xero-contact search/link and the JSZip PDF batch, is ported: an
 operator who posts live from React would otherwise lose the invoice PDFs, and the batch only exists in
 that page's memory.
 
@@ -759,7 +760,8 @@ stale list leaking past it). Note the one place `web/src/portal.ts` cannot mirro
 RETURNS an HTTP-200 `{ok:false}` (→ 🔒) and THROWS otherwise (→ ⚠️), while `portal.ts` throws on both,
 so the route splits on `e instanceof TypeError` — the safe direction, since it can only over-state a
 refusal. `pharmRenderDetail()` (the seven-section profile form, its save/delete and the Xero-link modal)
-is a sibling PAGE, not a branch, and hands off to `app.html#tab=pharm` exactly as `whtDocHtml()` does.
+is a sibling PAGE, not a branch; it is migrated to `app/finance/pharm/detail/?id=`, and it renders the
+SAME `Refused` panel this list does — see "SIBLING PAGES are not screens" below.
 
 **A legacy `onmouseover="this.style.background='…'"` is hr-expenses' `event.stopPropagation()` case, not
 a new one.** `finance.pharm`'s rows are the first with hover handlers: they repaint the row and call no
@@ -882,7 +884,7 @@ progress percentage is a display echo of rows the server owns, `finance.qinv`'s 
 supplier's and the auditor's copy of a payment — so it gets `bankFile()`'s treatment: a pure
 `invoiceDocHtml()` in `src/` returning the string, `window.open` left in the route, and the payment
 block and the LHDN declaration pinned by assertion. Distinguish it from `whtDocHtml()`, which is a
-sibling PAGE the legacy renderer dispatches to and therefore hands off.
+sibling PAGE the legacy renderer dispatches to and therefore gets its own route.
 
 **A derivation whose defect is ZONE-DEPENDENT must be pinned in the SOURCE, not by its output.**
 `finance.calendar`'s `dueLabel()` mirrors app.html:6929, which splits the `YYYY-MM-DD` string by hand and
@@ -1150,6 +1152,60 @@ disappearing from the 19 sidebar anchors, the breadcrumb and the folder 🗑 —
 is identical either way, so handler parity cannot see it. **Ask of each guard which side of its branch
 the fixture sits on**, and drive the other one.
 
+### SIBLING PAGES are not screens, and they live NESTED under their tab's route
+
+A migrated renderer can dispatch to another PAGE rather than render a branch: `renderWht()` swaps `#wht`
+between `whtListHtml()` and `whtDocHtml()`, `pharmRender()` between the list and `pharmRenderDetail()`,
+`hrApprovalsRender()` between `hrApvLeave()` and `hrApvRc()`. Those three were the last handoffs back to
+the legacy apps and are now ported: `web/src/finance-wht-doc.tsx`, `web/src/finance-pharm-detail.tsx`,
+`web/src/hr-approvals-rc.tsx`, with routes at `app/finance/wht/doc/`, `app/finance/pharm/detail/` and
+(no new route) the existing `/hr/approvals/` under `tab === 'rc'`.
+
+**A sibling page's route is NESTED under the tab's own directory and takes `?id=`.** `web/tests/shell.test.tsx`
+checks `app/finance/`'s **top-level** directories against `nav.ts`'s 22 tab ids, so a top-level
+`wht-doc/` would fail it — and should: a sibling page is not a nav entry and must never become one.
+`useSearchParams()` needs a Suspense boundary under `output: 'export'`; read `location.search` in the
+mount effect instead.
+
+**No golden holds any of them, which changes the job.** With no baseline there is no `relax()` diff to
+lean on, so each test asserts STRUCTURE — the field ids the legacy reads the form back by, the POST
+body, the printed document's own text, and which control is bound to which row — and reads every claim
+about the legacy out of `app.html` / `hros.html` at run time. Whether to capture new goldens: see
+`tests/COVERAGE.md` and the note at the end of this section.
+
+**An uncontrolled legacy form ports as UNCONTROLLED + a re-mount key.** All three legacy pages read
+their form back out of the DOM (`whtSync()`, `pharmCollect()`, `hrApvWfSyncInputs()`), and all three
+re-materialise every input by rewriting `innerHTML` whenever state changes a field from OUTSIDE it —
+picking a payee rewrites the WHT rate box, adding a step re-renders the workflow form. The React
+equivalent is `defaultValue` + the legacy ids + bumping a `gen` counter used as the component's `key` on
+exactly those events. Typing never bumps it, so the caret never moves. Going controlled instead is a
+caret-jump on every keystroke that moves a derived cell.
+
+**A page that can be REFUSED must render the refusal as a refusal on the sibling page too.** Pharmacies
+is gated server-side, and the detail page loads `pharmacy_list` itself (a URL cannot rely on
+`PHARM_DATA` already being in memory). `Refused` / `Failed` are exported from `web/src/finance-pharm.tsx`
+and imported by the detail page rather than re-written: an empty TABLE reads as "no pharmacies", an
+empty FORM reads as "this pharmacy has no details" and comes with a Save button.
+
+**Three legacy findings raised here and deliberately NOT fixed.** (1) `whtDocHtml()` writes TWO `style=`
+attributes twice — on the "Fee (RM)" header (app.html:3438) and on the "Total payable to LHDN" cell
+(app.html:3449) — so that column's min-width and that figure's coral colour have never reached the DOM.
+Same finding as `ln()` (hros.html:4837); React cannot emit a duplicate attribute, so the port matches the
+DOM the legacy actually has. (2) `whtRecalc()` (app.html:3369) never updates `w_grossbase`, so typing an
+amount moves the tax and leaves the fee it was charged on stale; the React port derives everything in one
+pass and *cannot* reproduce it — a divergence in the safe direction. (3) `tests/render_fixtures.ts`'s
+`hr_rc_config.role_approvers` writes `claim_role`, but the server returns `hr_claim_role_approvers.*`
+(hr.ts:1966) where the column is `role` — which is what `hrApvRc()` groups by. Under that fixture every
+role reads "none", which is the same output a broken grouping gives, so `web/tests/hr-approvals-rc.parity.test.tsx`
+builds its own approver rows in the server's shape.
+
+**Two guards that did NOT bite, found by introducing the defect.** Counting a printed document's
+DESCRIPTIONS does not catch blank rows reaching a statutory filing — a blank row has no description
+either; count ROWS. And "the Xero suggestion is computed over the whole contact list, not the filtered
+one" is UNOBSERVABLE in the markup (the badge can only land on a row that survived the filter), so it is
+pinned against app.html's source instead of asserted through a render. Ask of every guard which side of
+its branch the fixture sits on, and whether the property is visible in the output at all.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
@@ -1188,8 +1244,8 @@ to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
 
 **Four things could not be ported and hand off rather than lie:** Change password (HR and Finance),
 Security/2FA, Alerts and Export are legacy modals and a legacy XLSX writer. Each keeps its label and its
-position and links into the legacy app — with every screen migrated they are the only handoffs the nav
-still makes, alongside the four sibling PAGES named below. `web/public/ctg-logo.png`
+position and links into the legacy app — with every screen and the three sibling PAGES migrated (see
+"SIBLING PAGES are not screens" above), they are the only handoffs the nav still makes. `web/public/ctg-logo.png`
 is app.html's inlined base64 brand mark, decoded once.
 
 **Still not done:** no toast, no confirm/credentials modal, and the saved theme is applied on mount rather

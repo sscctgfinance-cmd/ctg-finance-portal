@@ -24,10 +24,11 @@
 // screen's own test instead of by the diff.
 //
 // `PHARM_ACTIVE !== null || PHARM_NEW` — `pharmRenderDetail()`, the seven-section profile form with its
-// save, delete and Xero-contact-link modal — is NOT ported. It is a sibling PAGE that `pharmRender()`
-// dispatches to (app.html:6622), not a branch of the list renderer, and it is its own screen's worth of
-// work. Same call `finance.wht` made about `whtDocHtml()`: `onOpen`/`onNew` hand off to
-// `app.html#tab=pharm` — same origin, same session. See the route.
+// save, delete and Xero-contact-link modal — is a sibling PAGE that `pharmRender()` dispatches to
+// (app.html:6622), not a branch of the list renderer. It IS ported now, in src/finance-pharm-detail.tsx
+// + app/finance/pharm/detail/, and `onOpen`/`onNew` go there. `Refused` and `Failed` below are exported
+// so that page renders the SAME refusal: it loads `pharmacy_list` too, and a refusal on a FORM must not
+// read as "a pharmacy with no details".
 //
 // ── ARITHMETIC ────────────────────────────────────────────────────────────────────────────────────
 // There is none to lift. The only number this screen computes is `(Number(p.commission_rate||19.2))
@@ -139,8 +140,14 @@ function Loading() {
   );
 }
 
-/** app.html:6603 — the server refused. THE branch this screen's gate lives in; see the header. */
-function Refused({ message }: { message: string }) {
+/**
+ * app.html:6603 — the server refused. THE branch this screen's gate lives in; see the header.
+ *
+ * Exported so the DETAIL page (src/finance-pharm-detail.tsx) renders the SAME refusal from the same
+ * source rather than a second copy that can drift. Both pages load `pharmacy_list`, and a refusal on
+ * either must read as a refusal — never as an empty form or an empty table.
+ */
+export function Refused({ message }: { message: string }) {
   return (
     <div className="empty">
       <div className="empty-ico">🔒</div>
@@ -150,8 +157,9 @@ function Refused({ message }: { message: string }) {
   );
 }
 
-/** app.html:6609 — `renderPharm()`'s catch. No SKINDAE sentence: it is not a refusal. */
-function Failed({ message }: { message: string }) {
+/** app.html:6609 — `renderPharm()`'s catch. No SKINDAE sentence: it is not a refusal. Exported for the
+ * detail page, for the same reason `Refused` is. */
+export function Failed({ message }: { message: string }) {
   return <div className="empty"><div className="empty-ico">⚠️</div><div>{message}</div></div>;
 }
 

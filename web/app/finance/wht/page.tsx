@@ -133,11 +133,12 @@ export default function FinanceWhtPage() {
               payeeList={payeeList}
               payees={payees}
               editPayee={editPayee}
-              // `whtOpen(id)` and `whtNew()` open `WHT.page==='doc'` — `whtDocHtml()`, which is NOT
-              // migrated. Handing off to the legacy tab is the honest strangler edge: same origin, same
-              // session, and the operator lands on the screen that can actually draw the computation.
-              onOpen={() => { location.href = `${legacyUrl('app.html')}#tab=wht`; }}
-              onNew={() => { location.href = `${legacyUrl('app.html')}#tab=wht`; }}
+              // `whtOpen(id)` and `whtNew()` open `WHT.page==='doc'` — `whtDocHtml()`, the sibling PAGE
+              // the legacy renderer dispatches to. It IS migrated now: app/finance/wht/doc/, addressed
+              // by `?id=` (no id is `whtNew()`). The handoff to app.html this used to make is gone, so
+              // an operator who opens a computation from React stays in React.
+              onOpen={(id) => { location.href = `${BASE}/finance/wht/doc/?id=${encodeURIComponent(String(id))}`; }}
+              onNew={() => { location.href = `${BASE}/finance/wht/doc/`; }}
               onTogglePayees={() => setPayees((x) => !x)}
               onEditPayee={onEditPayee}
               onSavePayee={onSavePayee}
@@ -149,6 +150,9 @@ export default function FinanceWhtPage() {
     </>
   );
 }
+
+/** The one place a base path is read in this route — src/portal.ts is the one place it is defined. */
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
 function Panel({ children }: { children: React.ReactNode }) {
   return <div className="panel"><div className="muted" style={{ padding: '18px' }}>{children}</div></div>;

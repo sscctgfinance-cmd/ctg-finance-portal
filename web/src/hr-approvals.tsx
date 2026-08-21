@@ -12,10 +12,12 @@
 // The markup mirrors the legacy string concatenation element for element, inline `style` strings
 // included. It is not "better" — it is the SAME, because the golden is the contract.
 //
-// SCOPE: the Reimbursement tab (`hrApvRc()`, hros.html:3592, plus the workflow form) is NOT migrated.
-// The golden captures `APV.tab === 'leave'`, which is the first-paint state, and the rc half is its own
-// screen's worth of markup. The tab bar is still rendered from props so the active-button class stays a
-// function of state rather than a hardcode; `tab === 'rc'` renders no body here and the route says so.
+// SCOPE: the golden captures `APV.tab === 'leave'`, the first-paint state (hros.html:3535), so the
+// LEAVE half is the diffed half. The Reimbursement tab (`hrApvRc()`, hros.html:3592, plus the workflow
+// form) is its own screen's worth of markup and lives in src/hr-approvals-rc.tsx — it is handed in as
+// the `rc` node and rendered INSIDE this component's outer div, which is where `hrApprovalsRender()`
+// puts it (hros.html:3562). The golden is untouched by that: it is `tab === 'leave'`, where `rc` is
+// never rendered.
 //
 // VIEWERS: the legacy wraps the write controls in `hrRW()` (hros.html:1374). Not reproduced, because
 // hros.html:1535 bounces a viewer off this view entirely before the renderer runs — so on this screen
@@ -50,6 +52,12 @@ export interface HrApprovalsProps {
   onLevelDel: (index: number) => void;
   onLevelAdd: () => void;
   onSave: () => void;
+  /**
+   * The Reimbursement tab's body — `hrApvRc()` (hros.html:3592), rendered only when `tab === 'rc'`.
+   * Passed in as a node rather than imported here so this file stays the LEAVE screen the golden holds;
+   * see src/hr-approvals-rc.tsx.
+   */
+  rc?: React.ReactNode;
 }
 
 /** `APV_MINI` + the `min-width` the flow select adds — hros.html:3537, 3570. */
@@ -72,7 +80,7 @@ function stepValue(s: ApvStep): string {
     : 'role:' + (s.approver_role || '');
 }
 
-export default function HrApprovals({ flow, employees, companyName, tab, onTab, onLevelSet, onLevelDel, onLevelAdd, onSave }: HrApprovalsProps) {
+export default function HrApprovals({ flow, employees, companyName, tab, onTab, onLevelSet, onLevelDel, onLevelAdd, onSave, rc }: HrApprovalsProps) {
   return (
     <>
       {/* The page head is built by hrRender(), not hrApprovalsRender() — hros.html:1538. Shared chrome,
@@ -99,7 +107,9 @@ export default function HrApprovals({ flow, employees, companyName, tab, onTab, 
             <button key={id} className={'btn sm' + (tab === id ? ' p' : '')} onClick={() => onTab(id)}>{label}</button>
           ))}
         </div>
-        {tab === 'leave' ? <LeaveLevels flow={flow} employees={employees} onLevelSet={onLevelSet} onLevelDel={onLevelDel} onLevelAdd={onLevelAdd} onSave={onSave} /> : null}
+        {tab === 'leave'
+          ? <LeaveLevels flow={flow} employees={employees} onLevelSet={onLevelSet} onLevelDel={onLevelDel} onLevelAdd={onLevelAdd} onSave={onSave} />
+          : rc}
       </div>
     </>
   );
