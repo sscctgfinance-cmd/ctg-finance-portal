@@ -1193,9 +1193,11 @@ describe('the fill badge and the sidebar dots', () => {
 /* ══ What leaves the building ══════════════════════════════════════════════════════════════════════ */
 
 describe('the save patch — no golden sees a request body', () => {
-  it('deletes a BLANK capital rather than posting zero', () => {
-    // Posting 0 would overwrite a real paid-up capital on a record the operator never touched.
-    expect(savePatch({ authorised_capital: '', paid_up_capital: '' })).toEqual({});
+  it('posts a BLANK capital as null rather than zero', () => {
+    // Posting 0 would overwrite a real paid-up capital on a record the operator never touched; posting
+    // '' is rejected by the numeric column. null is the only honest reading of an empty box.
+    expect(savePatch({ authorised_capital: '', paid_up_capital: '' }))
+      .toEqual({ authorised_capital: null, paid_up_capital: null });
   });
 
   it('posts a capital as a NUMBER, not the input\'s string', () => {
@@ -1203,20 +1205,32 @@ describe('the save patch — no golden sees a request body', () => {
     expect(savePatch({ paid_up_capital: '0' })).toEqual({ paid_up_capital: 0 });
   });
 
-  it('deletes a blank incorporation_date rather than posting an empty string', () => {
-    expect(savePatch({ incorporation_date: '' })).toEqual({});
+  it('posts EVERY blank date as null — "" is what broke the live save', () => {
+    // The live failure: `invalid input syntax for type date: ""`, from a Compliance date nobody had
+    // touched, and the form named no field. Walk the schema so a date added later is covered here too.
+    const dates = INFO_SECTIONS.flatMap((s) => s.fields || []).filter((f) => f.type === 'date').map((f) => f.k);
+    expect(dates.length).toBeGreaterThan(1);   // a hand-written guard list is what missed four of them
+    for (const k of dates) expect(savePatch({ [k]: '' })).toEqual({ [k]: null });
     expect(savePatch({ incorporation_date: '2018-04-12' })).toEqual({ incorporation_date: '2018-04-12' });
+    expect(savePatch({ incorporation_date: '   ' })).toEqual({ incorporation_date: null });
   });
 
-  it('passes everything else through verbatim', () => {
+  it('passes everything else through verbatim, including a CLEARED text field', () => {
     expect(savePatch({ ssm_new: '201801012345', directors: [{ name: 'A' }] }))
       .toEqual({ ssm_new: '201801012345', directors: [{ name: 'A' }] });
+    // A blanked text box must still travel as '', or clearing a value becomes a silent no-op.
+    expect(savePatch({ trade_name: '' })).toEqual({ trade_name: '' });
   });
 
-  it('mirrors app.html:6111-6114 exactly', () => {
+  it('stays in step with app.html, which derives the same fields from the same schema', () => {
+    // Pinned on the SHAPE of the legacy guard, not its old literal text: both sides now walk
+    // INFO_SECTIONS, so neither can drift by having a field added to one list and not the other.
     const collect = APP.slice(APP.indexOf('function infoCollect(){'), APP.indexOf('function infoRowAdd('));
-    expect(collect).toContain("['authorised_capital','paid_up_capital'].forEach(k=>{ if(out[k]==='') delete out[k]; else if(out[k]!=null) out[k]=Number(out[k]); });");
-    expect(collect).toContain("if(out.incorporation_date==='') delete out.incorporation_date;");
+    expect(collect).toContain('INFO_SECTIONS.forEach(sec=>{ (sec.fields||[]).forEach(f=>{');
+    expect(collect).toContain("if(f.type==='date'){ if(blank) out[f.k]=null; }");
+    expect(collect).toContain("else if(f.type==='number'){ out[f.k] = blank ? null : Number(out[f.k]); }");
+    // And the bug itself can never come back: no hand-written field list.
+    expect(collect).not.toContain('delete out.incorporation_date');
   });
 
   it('refuses to post without a tenant', () => {

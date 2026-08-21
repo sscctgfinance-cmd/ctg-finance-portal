@@ -1,0 +1,11 @@
+# Every text file in this repo is stored with LF, and several tests compare files BYTE FOR BYTE:
+# tests/golden/*.html against renderer output, tests/route_parity.golden.jsonl against live responses,
+# and the React parity suite slices app.html looking for "\n<!-- #id -->".
+#
+# Without this, a Windows clone with the default core.autocrlf=true checks those files out as CRLF while
+# the code still emits LF, and the ENTIRE golden suite fails on the developer's machine while CI stays
+# green. That is the worst kind of red: 42 failures that are all noise, which teaches everyone to stop
+# reading the output of the one command CLAUDE.md says to run before every push.
+#
+# This changes no stored object — the blobs are already LF. It only stops the checkout from rewriting them.
+* text=auto eol=lf
