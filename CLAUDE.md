@@ -107,6 +107,23 @@ rules they all share:
 - **One documented exception to "reads no app state":** `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY`,
   which stay in `hros.html`. `hr-docs.js`'s header says what a bundler has to do about it.
 
+**`xlsx.full.min.js` is NOT in `app.html`'s head — `gwLoadXlsx()` loads it on demand.** 952 KB raw,
+335 KB gzipped: 54% of everything a Finance page used to transfer, paid by all 22 tabs when six
+functions touch it. That one loader (in app.html's Gateway section, Gateway's by birth) is now the
+app's ONLY xlsx entry point — `o2oPick`, `o2oOnTenantChange`, `exportCurrent`, `reconPick`, `srFiles`
+and `gwHandleFiles` all go through it. It memoises on `window.XLSX` AND queues concurrent callers, so
+two exports fired before the fetch lands share one download and BOTH complete; a hand-rolled second
+loader is what drops the queued one, and an export that silently does nothing is worse than a slow
+page. `tests/xlsx_lazy_test.ts` drives every one of them through `tests/render_harness.ts` with XLSX
+genuinely absent, and pins the call-site SET — a bare `XLSX.` added to a cold path is a ReferenceError
+no golden can see, because a golden never presses a button. Its own lesson, and the general form of
+this file's recurring one: the obvious test for `o2oOnTenantChange` reached it THROUGH `o2oPick`, which
+had already loaded the engine, so unwrapping it passed everything; the state that distinguishes them
+(`O2O_BUF` set, XLSX absent — what `gwLoadXlsx`'s `onerror` leaves behind) needed its own test.
+`jszip.min.js` (98 KB) is still eager, and the four React Finance routes that inject xlsx carry three
+spellings of the same injector — `web/app/finance/o2o/page.tsx`'s `loadScript` is the one worth
+sharing. Both are named seams, not oversights.
+
 **A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
 reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
 evaluates `inlineScript()` — the 40 goldens included — parses and runs your file too, and

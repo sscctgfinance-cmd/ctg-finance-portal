@@ -998,8 +998,10 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 <style>html{font-family:'Inter var',Inter,system-ui,-apple-system,sans-serif}</style>
-<!-- SheetJS 0.20.3 (vendored). ⚠ Do NOT use xlsx@0.18.x — its serial-date parsing lands 25s before
-     midnight under Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
+<!-- SheetJS 0.20.3 (vendored) is NOT loaded here — it is 952 KB, and only five of the 22 tabs ever
+     touch it. `gwLoadXlsx()` below injects it on first use; every XLSX entry point goes through that one
+     function. ⚠ Do NOT use xlsx@0.18.x — its serial-date parsing lands 25s before midnight under
+     Asia/Kuala_Lumpur (historical-TZ bug), shifting EVERY Excel date -1 day. -->
 <!-- Shared with hros.html — must load before the inline script below (classic script: these are globals). -->
 <script src="common.js"></script>
 <script src="wht.js"></script>
@@ -1008,7 +1010,6 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="gateway.js"></script>
 <script src="pnl.js"></script>
 <script src="ap.js"></script>
-<script src="xlsx.full.min.js"></script>
 <script src="jszip.min.js"></script>
 <script>
 /* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
@@ -2829,7 +2830,7 @@ function o2oOnTenantChange(sel){
   if(note) note.innerHTML = o2oTenantNoteHTML();
   // v62: switching company changes how we parse the Excel (SKU-mode vs Package-mode).
   // Re-parse the last-loaded file so the preview reflects the new company right away.
-  if(O2O_BUF){
+  if(O2O_BUF) gwLoadXlsx(function(){
     try{
       O2O_DATA = o2oParse(O2O_BUF);
       o2oEnrichWithPharmacyMaster().then(o2oRenderPreview).catch(function(err){
@@ -2838,7 +2839,7 @@ function o2oOnTenantChange(sel){
     }catch(e){
       var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Re-parse failed: '+esc(e.message)+'</div>';
     }
-  }
+  });
 }
 function renderO2O(){
   o2oInitTenant();
@@ -2896,15 +2897,17 @@ function o2oPick(input){
   var f=input.files[0]; if(!f)return;
   var rd=new FileReader();
   rd.onload=function(e){
-    try{
-      O2O_BUF=e.target.result;
-      O2O_DATA=o2oParse(O2O_BUF);
-      o2oEnrichWithPharmacyMaster().then(o2oRenderPreview).catch(function(err){
-        var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Enrichment failed: '+esc(err&&err.message||err)+'</div>';
-      });
-    }catch(err){
-      var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>';
-    }
+    O2O_BUF=e.target.result;
+    gwLoadXlsx(function(){
+      try{
+        O2O_DATA=o2oParse(O2O_BUF);
+        o2oEnrichWithPharmacyMaster().then(o2oRenderPreview).catch(function(err){
+          var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Enrichment failed: '+esc(err&&err.message||err)+'</div>';
+        });
+      }catch(err){
+        var out=document.getElementById('o2o-out'); if(out) out.innerHTML='<div style="color:var(--red-soft)">Parse failed: '+esc(err.message)+'</div>';
+      }
+    });
   };
   rd.readAsArrayBuffer(f);
 }
@@ -3759,6 +3762,10 @@ function renderBankFeed(){
 // ===== Gateway → Xero bank-statement converter (Payex / Atome) =====
 var GW={ provider:'payex', payex:{txn:null,set:null}, atome:{txn:null,payout:null}, hitpay:{txn:null,payout:null}, nttdata:{txn:null}, out:[], xlsxLoading:null, rendered:false };
 // The pure Gateway computation now lives in gateway.js (loaded above) — see its header for why.
+// gwLoadXlsx is the app's ONLY xlsx entry point — Gateway's by birth, app-wide since the eager tag for
+// it came out of the head (952 KB, on all 22 tabs). It is memoised on window.XLSX and it QUEUES
+// concurrent callers, so two exports fired in quick succession share one 952 KB fetch. Every site that
+// touches XLSX goes through it; a bare `XLSX.` anywhere else is a ReferenceError on a cold page.
 function gwLoadXlsx(cb){
   if(window.XLSX) return cb();
   if(GW.xlsxLoading){ GW.xlsxLoading.push(cb); return; }
@@ -5279,6 +5286,7 @@ function exportCurrent(){
   var panel=document.getElementById(t);
   var tables=panel?panel.querySelectorAll('table.bigtable'):[];
   if(!tables||!tables.length){ toast('Nothing to export on this tab',true); return; }
+  gwLoadXlsx(function(){
   try{
     var wb=XLSX.utils.book_new();
     [].slice.call(tables).forEach(function(tb,i){
@@ -5296,6 +5304,7 @@ function exportCurrent(){
       call({api:'export_log', what:t, tab:t, rows:rowsTotal, filename:fn}).catch(function(){});
     }catch(_e){}
   }catch(e){ toast('Export failed: '+(e.message||e),true); }
+  });
 }
 
 
@@ -5364,8 +5373,9 @@ function renderRecon(){
 function reconPick(input){
   var f=input.files[0]; if(!f)return;
   var rd=new FileReader();
-  rd.onload=function(e){ try{ RECON_LINES=bankParse(e.target.result,/\.csv$/i.test(f.name)); if(!RECON_LINES.length){document.getElementById('rc_out').innerHTML='<div style="color:var(--amber)">No usable rows found in the statement.</div>';return;} reconRun(); }
-    catch(err){ document.getElementById('rc_out').innerHTML='<div style="color:var(--red-soft)">'+esc(err.message)+'</div>'; } };
+  rd.onload=function(e){ gwLoadXlsx(function(){
+    try{ RECON_LINES=bankParse(e.target.result,/\.csv$/i.test(f.name)); if(!RECON_LINES.length){document.getElementById('rc_out').innerHTML='<div style="color:var(--amber)">No usable rows found in the statement.</div>';return;} reconRun(); }
+    catch(err){ document.getElementById('rc_out').innerHTML='<div style="color:var(--red-soft)">'+esc(err.message)+'</div>'; } }); };
   rd.readAsArrayBuffer(f);
 }
 async function reconRun(){
