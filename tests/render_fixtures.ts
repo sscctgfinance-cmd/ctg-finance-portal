@@ -74,6 +74,32 @@ export const FIXTURES: Record<string, any> = {
       { user_id: "u2", tenant_id: CO1, role: "" }, { user_id: "u3", tenant_id: CO2, role: "viewer" },
     ] },
 
+  // The four Users SUB-VIEWS. No golden surface reaches them — `renderUsers()` opens on
+  // `USERS_VIEW||'users'` — so these exist for the React parity tests and for tools/serve_both.ts, which
+  // is the only way to drive the migrated sub-views end to end without production credentials.
+  //
+  // Timestamps are relative to tests/render_harness.ts's FIXED_MS (2026-08-18T09:30:00Z) so every
+  // duration band the two `relSec()`/`relTime()` ladders have is exercised, INCLUDING the 5-minute
+  // freshness boundary the session dot turns on: `last_seen_at` values sit at 2 minutes (fresh) and at
+  // exactly 5 minutes (NOT fresh — the legacy test is `< 5*60*1000`).
+  sessions_list: { ok: true, sessions: [
+    { sid: "s1", user_name: "BOSS", user_email: "boss@ctg.test", user_role: "admin", token_short: "a1b2…9f0", created_at: "2026-08-18T07:30:00.000Z", last_seen_at: "2026-08-18T09:28:00.000Z", is_self: true },
+    { sid: "s2", user_name: "AZLINA BINTI OTHMAN", user_email: "acct@ctg.test", user_role: "finance", token_short: "c3d4…1a2", created_at: "2026-08-18T09:29:12.000Z", last_seen_at: "2026-08-18T09:25:00.000Z", is_self: false },
+    { sid: "s3", user_name: "", user_email: "audit@ctg.test", user_role: "viewer", token_short: "e5f6…3b4", created_at: "2026-08-15T02:00:00.000Z", last_seen_at: null, is_self: false },
+  ] },
+  audit_list: { ok: true, events: [
+    { action: "password_reset", created_at: "2026-08-18T09:12:00.000Z", user_email: "boss@ctg.test", ref: "acct@ctg.test", detail: { by: "BOSS" } },
+    { action: "user_update", created_at: "2026-08-18T08:44:00.000Z", user_email: "boss@ctg.test", ref: "audit@ctg.test", detail: { role: "viewer", tenants: ["a", "b"] } },
+    { action: "role_delete", created_at: "2026-08-17T23:05:00.000Z", user_email: "boss@ctg.test", ref: "billing_clerk", detail: null },
+    // An action `actMeta` does not name — it must print the RAW action, not a blank cell.
+    { action: "totp_disable", created_at: "2026-08-17T10:00:00.000Z", user_email: null, ref: "", detail: {} },
+  ] },
+  webhook_events: { ok: true, configured: true, contact_cache: 12480, invoice_cache: 104233, pending: 3, events: [
+    { received_at: "2026-08-18T09:29:40.000Z", event_type: "UPDATE", event_category: "INVOICE", tenant_name: "SKINDAE SDN BHD", processed: true, resource_id: "1f0c0a1e-0000-4000-8000-000000000001" },
+    { received_at: "2026-08-18T09:28:02.000Z", event_type: "CREATE", event_category: "CONTACT", tenant_name: "I PROCARE MALAYSIA SDN BHD", processed: false, resource_id: "1f0c0a1e-0000-4000-8000-000000000002" },
+    { received_at: "2026-08-18T09:10:11.000Z", event_type: "DELETE", event_category: "INVOICE", tenant_name: "SKINDAE SDN BHD", processed: true, resource_id: "1f0c0a1e-0000-4000-8000-000000000003" },
+  ] },
+
   // ── CTG Access ────────────────────────────────────────────────────────────────────────────────
   ctg_access_list: { ok: true, counts: { ctg_total: 4, linked: 2 },
     orphans: [{ name: "LEFT THE COMPANY", email: "leaver@ctg.test", role: "viewer" }],

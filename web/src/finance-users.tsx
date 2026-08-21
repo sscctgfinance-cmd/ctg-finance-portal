@@ -82,8 +82,11 @@ export function usersReachable(perms: Perms | null | undefined): boolean {
 export const USERS_VIEWS = ['users', 'roles', 'sessions', 'audit', 'xero'] as const;
 export type UsersView = (typeof USERS_VIEWS)[number];
 
-/** Only the `users` sub-view is migrated; the other four hand off to app.html. See the route. */
-export const MIGRATED_VIEW: UsersView = 'users';
+/**
+ * The sub-view `renderUsers()` opens on — app.html:4678, `usersView(USERS_VIEW||'users')`. All five are
+ * now migrated; this is the landing one, and it is why the golden holds the `users` table and no other.
+ */
+export const DEFAULT_VIEW: UsersView = 'users';
 
 /** One row of `{api:'roles_list'}`.roles — app.html:5160, fixture at tests/render_fixtures.ts:61. */
 export interface Role { name: string; label?: string | null }

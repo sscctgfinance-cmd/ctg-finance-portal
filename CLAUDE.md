@@ -816,10 +816,11 @@ sub-view, and the screen's test pins both statements out of app.html so the clai
 **The `users` gate quirk `finance.ctgaccess` names above is now OWNED.** `usersReachable()` in
 `web/src/finance-users.tsx` mirrors the effective rule — the FEATURE flag, because app.html:1422's
 `!canManage` is overwritten by the chain's final `else` — pinned in both directions and against the
-shipped `my_perms` fixture, whose feature list deliberately omits `users`. Only the `users` sub-view is
-migrated: Roles, Sessions, Audit, Xero sync and `userForm()`'s modal hand off to `app.html#tab=users`,
-while `🔑 Reset` is ported because it is `prompt()` plus one POST, with `resetBody()` split out and
-pinned against `userReset()`'s own text — no golden sees a request that sets someone's password.
+shipped `my_perms` fixture, whose feature list deliberately omits `users`. ALL FIVE sub-views are now
+migrated — see "A migrated SCREEN is not a migrated TAB" below; what still hands off from this tab is the
+six advanced Xero tools below the webhook panel. `🔑 Reset` is `prompt()` plus one POST, with
+`resetBody()` split out and pinned against `userReset()`'s own text — no golden sees a request that sets
+someone's password.
 
 **`finance.selfbill` is Quick Invoice's case, decided by reading the SERVER.** `sbi_save`
 (finance.ts:1394-1401) recomputes gross, `wht_amount` and `net_payable` itself and stores its own
@@ -1206,6 +1207,99 @@ one" is UNOBSERVABLE in the markup (the badge can only land on a row that surviv
 pinned against app.html's source instead of asserted through a render. Ask of every guard which side of
 its branch the fixture sits on, and whether the property is visible in the output at all.
 
+### A migrated SCREEN is not a migrated TAB — `finance.users` had five sub-views and shipped one
+
+The 36-screen strangler counted `render(t)` targets. `finance.users` is one of them and is really FIVE
+screens behind one `data-t`: `usersView()` (app.html:4680) dispatches over `users` / `roles` / `sessions`
+/ `audit` / `xero`, plus two modals (`userForm()`, `roleForm()`). Only `users` had a golden, because
+`renderUsers()` opens on `USERS_VIEW||'users'` and the harness never reached the other four renderers.
+All five now render in `web/app/finance/users/page.tsx`; the rules that came out of closing that gap:
+
+**Where there is no golden, pin the legacy's own STRING LITERALS and render every branch.**
+`web/tests/finance-users-subviews.test.tsx`'s `pinsLegacyMarkup()` reads each legacy renderer out of
+app.html at run time, extracts every complete markup fragment it concatenates, puts BOTH sides through
+the same `relax()` the 36 golden diffs use, and requires each fragment to appear in the React render of
+the state that produces it. That is byte-level on everything the legacy spells statically AND it reaches
+branches no golden can hold (empty tables, error boxes, the not-configured webhook panel) — but it
+CANNOT see two correct fragments emitted in the wrong ORDER, so per-row handler binding and per-figure
+assertions still carry that half. Two mechanical traps, both solved in that file: app.html contains
+REGEX literals whose `[' ]` classes desync a whole-file quote scanner (`whoSafe`'s
+`.replace(/['\\]/g,'')`, app.html:4704), so literals are read LINE BY LINE and an unbalanced line is
+dropped — with an assertion that no dropped line carried markup; and a fragment that begins or ends
+mid-attribute cannot survive R4's attribute SORT, so it is discarded rather than compared under a rule
+that would pass either way. React also fixes `value` at the END of an `<input>` however the JSX orders
+it, which is why every "is this box ticked" check reads the whole tag, not a position inside it.
+
+**A conditional space in the legacy is not the same document as an unconditional one.** `normalise()`
+splits on `><` only, so `'</b> '+pill+'<br>'` with an empty pill is ONE line (`</b> <br>`) while
+`</b><br/>` is two. Transcribe `{' '}` unconditionally where the legacy concatenates a bare space, and
+conditionally where the legacy puts the space inside the conditional string (`roleDelete`'s
+`' <button…'`). Every screen-local markup pin turns on this.
+
+**A tab whose sub-views each fetch needs ONE gate, and the test must prove nothing loads before it.**
+The first cut of `every sub-view sits behind the SAME single gate` asserted only that one mount effect
+existed and mentioned `my_perms` — and inserting `loadAudit();` in front of that call PASSED. The guard
+now splits the effect at `if (usersReachable(p))` and requires the part before it to contain no load and
+to ask the server for nothing but `my_perms`. Same class as `finance.info`'s seven: ask which side of
+its branch the check actually sits on.
+
+**A WITHHELD-direction assertion driven only by the fixture is not a guard.** `sessions_list` sends a
+shortened token, so "the markup contains no 40-character string" passed with the component ALSO printing
+a full token. It now hands the component a session carrying a secret that must not reach the screen and
+checks for that secret. Drive the leak, do not observe its absence.
+
+**A handler with no identifying argument is pinned through the attribute it reads.**
+`onclick="sessionRevoke(this.dataset.sid,this.dataset.who)"` carries no quoted literal and no bare
+integer, so every established widening returns `[]` for every row. What is comparable is that the
+`data-sid` rendered into row i equals the sid row i's handler dispatches — a mismatch signs the wrong
+person out. Same shape for any legacy handler that passes its row through `this.dataset`.
+
+**Read the SERVER per function, and the answer here was "nothing to lift" in both directions.** No
+arithmetic exists on any of the four sub-views: `relSec()` is a duration format, the three Xero stat
+cards are server-owned counts, and `auditDetail()` is a display string. The one thing lifted OUT of the
+route is what LEAVES — `roleSaveBody`, `roleDeleteBody`, `revokeBody`, `userSaveBody`, `ufTenants`,
+`webhookKeyBody`, `xeroActionBody` — each pinned against its legacy caller's own text.
+
+**`ufTenants()` is `finance.qinv`'s split, and both of its rules are invisible in markup.** Only TICKED
+rows are sent (the server replaces the whole set, so sending an unticked row GRANTS the company it was
+meant to remove), and a blank per-company override is sent as `null` not `''` (`null` means "inherit the
+global role"; `''` is a role name no `roles_list` row matches, and `roleLabelFor()` prints an unmatched
+name raw). The DOM read that produces its input stays in the route, as `qiCollect()` does.
+
+**`FEATURE_META` (app.html:4846) is the permission VOCABULARY and is NOT `nav.ts`'s 22 Finance tabs.**
+Ten entries. A key added is offered as grantable whether or not `showApp()` would honour it; a key
+removed can never be granted through the roles form again. Twelve Finance tabs are deliberately absent.
+Copied verbatim, pinned against app.html's own text, and the absences asserted by name.
+
+**`roleKey()` is what stops an edit renaming a role.** `roleSave()` slugs the typed key only when
+`RF_NAME` is null — i.e. on a CREATE. On an edit the disabled input is ignored, because a renamed role
+stops matching `PERMS.role` and every user holding it loses every tab at once.
+
+**Three irreversible-ish Xero actions: mirror the legacy's gap in the MARKUP, close it in the ROUTE.**
+`xeroBackfill` / `xeroDeltaNow` / `xeroSyncNow` each disable ONLY the button that was clicked
+(app.html:4990, :5033, :5041), so a second, DIFFERENT sync can start against a live Xero connection while
+the first runs. `XeroPanel` reproduces that exactly (`busy` names one button); `onXeroAction` refuses a
+repeat. `finance.approvals`' treatment of the same class of gap.
+
+**`xeroSyncLoad()` writes SEVEN panels in one statement and only the first was in scope.** 🏢 Company
+names, 🩺 sync health, 🔬 live AR audit, 🔧 force-resync, 🧨 emergency rebuild and 💰 AR aging hand off
+to `app.html#tab=users` and are named as data in `XERO_HANDOFF_PANELS`, with a test that reads the six
+titles back out of app.html — so the handoff cannot silently stop naming one. Emergency rebuild WIPES a
+company's cached invoice history before re-pulling from 2015; that is not a migration detail.
+
+**`auditLoad()` and `xeroSyncLoad()` both format an instant with a bare `toLocaleString()`** — no locale,
+no `timeZone` — unlike `finance.ap`, which passes `Asia/Kuala_Lumpur` to all three of its date calls.
+Mirrored, not fixed, and pinned BY SOURCE on both sides: this fleet and CI sit at UTC+8, so ADDING the
+zone (an improvement) passes every output assertion while making the two renderers disagree about when a
+password was reset. `finance.calendar`'s finding in its fifth form. Note also that `xeroSyncLoad()`'s
+Live AR audit panel reuses the element id `audit_out` that `auditLoad()` writes — harmless only because
+`#uv_body` is replaced wholesale between sub-views.
+
+**The audit log is READ ONLY and the test asserts the withheld direction.** One control (↻ Refresh), no
+input, no select, no form, no second button — in the loaded state AND the empty state — and the route
+asks for exactly `audit_list` on that sub-view. It is the record of who changed the permissions the other
+three sub-views hand out, and five of the seven actions `actMeta` names are this screen's own.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
@@ -1245,7 +1339,8 @@ to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
 **Four things could not be ported and hand off rather than lie:** Change password (HR and Finance),
 Security/2FA, Alerts and Export are legacy modals and a legacy XLSX writer. Each keeps its label and its
 position and links into the legacy app — with every screen and the three sibling PAGES migrated (see
-"SIBLING PAGES are not screens" above), they are the only handoffs the nav still makes. `web/public/ctg-logo.png`
+"SIBLING PAGES are not screens" above), they and the six advanced Xero tools inside `finance.users` are
+the only handoffs the nav still makes. `web/public/ctg-logo.png`
 is app.html's inlined base64 brand mark, decoded once.
 
 **Still not done:** no toast, no confirm/credentials modal, and the saved theme is applied on mount rather
