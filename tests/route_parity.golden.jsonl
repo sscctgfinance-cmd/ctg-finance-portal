@@ -14,7 +14,6 @@
 {"api":"ap_rules_list","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"ap_settings_get","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"ap_settings_save","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
-{"api":"approval_reminders","status":200,"body":"{\"ok\":true,\"approvers\":0,\"results\":[]}"}
 {"api":"approve","status":200,"body":"null"}
 {"api":"attendance_delete","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"attendance_list","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
@@ -28,7 +27,6 @@
 {"api":"clock_in","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"clock_out","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"clock_status","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
-{"api":"clockin_reminder_run","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"close_list","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"close_update","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"collections","status":200,"body":"null"}
@@ -155,10 +153,6 @@
 {"api":"pnl_analysis","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"pnl_refresh","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized (full-scope admin only)\"}"}
 {"api":"pnl_report","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
-{"api":"push_pending","status":200,"body":"{\"ok\":true,\"title\":\"HR OS\",\"body\":\"Open HR OS to see what needs you.\"}"}
-{"api":"push_pubkey","status":200,"body":"{\"ok\":false,\"publicKey\":null}"}
-{"api":"push_subscribe","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
-{"api":"push_test","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"push_unsubscribe","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"quick_invoice","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"receivables","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}

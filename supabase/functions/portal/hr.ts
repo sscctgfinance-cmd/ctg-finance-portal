@@ -12,7 +12,7 @@
 import {
   sb, j, xeroAccessToken, meFromToken, isAdmin, superAdmin,
   hrManage, hrCanView, logAudit, NO_TENANT, allowedTenants, isFullScopeAdmin,
-  userWriteAllowed, denyTenant, vapidConfig, pushToEmployee, resolveModel, callVisionLLM,
+  userWriteAllowed, denyTenant, resolveModel, callVisionLLM,
   sendEmailTo,
 } from "./lib.ts";
 
@@ -413,8 +413,7 @@ export async function rcNotifyStepApprover(claimId:any){ try{
     } catch(_e){}
     const body="Hi,\n\nA reimbursement claim is waiting for your approval:\n\n  Claim:    "+((claim&&claim.claim_no)||"")+"\n  Employee: "+nm+"\n  Amount:   "+rcMoney(claim&&claim.amount)+"\n\n"+(link?("Review & approve here (no login needed, link valid 14 days):\n  "+link+"\n\n"):"")+"Or log in to HR OS → Reimbursement → Pending:\n  "+HROS_URL+"\n\n— CTG HR OS (automated)";
     await rcSendEmail(r.email, subj, body);
-    // v172: also buzz their phone. Payloadless push — the service worker asks push_pending for the text.
-    try { if(r.empId) await pushToEmployee(r.empId); } catch(_e){}
+    // v172 also buzzed their phone; v224 retired Web Push. The email above is the whole notification now.
   }
 }catch(_e){} }
 // Resolve an employee id into the {isAdmin:false, employee, roles} shape rcDecideOne/rcCanActStep expect (email-approval identity).
@@ -1826,35 +1825,18 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       return j({ ok:true, runId:run.id, server_recomputed:true });
     }
     // ===== Reimbursement / Claim module (hr_rc_*) =====
-    if (api === "push_pubkey") {
-      const cfg = await vapidConfig();
-      return j({ ok:!!cfg, publicKey: cfg?cfg.pub:null });
-    }
-    if (api === "push_subscribe") {
-      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
-      const who = await rcMe(me); if(!who.employee) return j({ ok:false, error:"Your login isn’t linked to an employee profile yet." });
-      const sub = b.subscription||{}; const endpoint = String(sub.endpoint||""); if(!endpoint) return j({ ok:false, error:"no endpoint" });
-      const keys = sub.keys||{};
-      const row:any = { employee_id:who.employee.id, user_id:(me.user&&me.user.id)||null, tenant_id:who.employee.tenant_id||null,
-        endpoint, p256dh:keys.p256dh||null, auth:keys.auth||null, user_agent:String(b.ua||"").slice(0,300), fail_count:0 };
-      const { data:ex } = await sb.from("hr_push_subscriptions").select("id").eq("endpoint",endpoint).maybeSingle();
-      if(ex) await sb.from("hr_push_subscriptions").update(row).eq("id",ex.id);
-      else { const { error } = await sb.from("hr_push_subscriptions").insert(row); if(error) return j({ ok:false, error:error.message }); }
-      await logAudit(me,"push_subscribe",String(who.employee.id),{});
-      return j({ ok:true });
-    }
+    // v224 — Web Push RETIRED. push_pubkey / push_subscribe / push_test are gone: nothing sends a push
+    // any more, and leaving push_subscribe reachable would let a home-screen install of the OLD hros.html
+    // (which still carries the enable button, because an installed copy never updates) create fresh rows
+    // in a table nothing drains. push_unsubscribe below is kept for the opposite reason.
     if (api === "push_unsubscribe") {
+      // KEPT past the v224 retirement, deliberately. The forwarding page on the old GitHub Pages origin
+      // calls this while unregistering sw.js, and with the sender gone the 404/410 prune in
+      // pushToEmployee() — previously the other way a row died — never runs again. This is now the only
+      // path a subscription leaves hr_push_subscriptions short of a manual DELETE.
       const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
       const endpoint=String(b.endpoint||""); if(endpoint) await sb.from("hr_push_subscriptions").delete().eq("endpoint",endpoint);
       return j({ ok:true });
-    }
-    if (api === "push_test") {
-      const me = await meFromToken(b.token); if(!me||!me.ok) return j({ ok:false, error:"unauthorized" },401);
-      const who = await rcMe(me); if(!who.employee) return j({ ok:false, error:"no employee profile" });
-      const res = await pushToEmployee(who.employee.id);
-      if(res.total===0) return j({ ok:false, error:"No device is subscribed yet — tap “Enable reminders” first." });
-      if(res.sent===0) return j({ ok:false, error:"Couldn’t deliver to your device — try re-enabling reminders." });
-      return j({ ok:true, ...res });
     }
     if (api === "hr_shift_save") {
       // A part-timer arranges their OWN timetable (shift start/end + work days) — drives the clock-in
@@ -1885,55 +1867,11 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       await logAudit(me,"hr_shift_save",empId,{ shift_start:patch.shift_start, shift_end:patch.shift_end, work_days:wd, reminders_on:patch.reminders_on, self:isSelf });
       return j({ ok:true });
     }
-    if (api === "clockin_reminder_run") {
-      // Called by pg_cron (no user token) — authenticated by a shared secret. Reminds part-timers to
-      // clock IN (start arrived, not clocked in) and clock OUT (end arrived, still clocked in). One
-      // reminder of each kind per employee per day (hr_push_reminder_log PK employee_id+work_date+kind).
-      const { data: cfgRow } = await sb.from("hr_push_config").select("cron_secret").eq("id",1).maybeSingle();
-      const secret = cfgRow && cfgRow.cron_secret;
-      if(!secret || String(b.secret||"")!==secret) return j({ ok:false, error:"forbidden" },403);
-      const myt = new Date(Date.now() + 8*3600*1000);
-      const today = myt.toISOString().slice(0,10);
-      const weekday = ((myt.getUTCDay()+6)%7)+1;                 // 1=Mon .. 7=Sun (MYT)
-      const minsNow = myt.getUTCHours()*60 + myt.getUTCMinutes();
-      const toMin=(t:any)=>{ const hm=String(t).slice(0,5).split(":"); return Number(hm[0])*60+Number(hm[1]); };
-      const alreadyLogged=async(id:any,kind:string)=>{ const { data }=await sb.from("hr_push_reminder_log").select("employee_id").eq("employee_id",id).eq("work_date",today).eq("kind",kind).maybeSingle(); return !!data; };
-      const { data: emps } = await sb.from("hr_employees")
-        .select("id,tenant_id,shift_start,shift_end,work_days,employment_type,pay_type")
-        .eq("reminders_on",true);
-      let pushedIn=0, pushedOut=0, dueIn=0, dueOut=0;
-      for(const e of (emps||[])){
-        const isPT = e.employment_type==="Part-time" || e.pay_type==="hourly" || e.pay_type==="daily";
-        if(!isPT) continue;
-        const wd = Array.isArray(e.work_days)?e.work_days:[];
-        if(wd.indexOf(weekday)<0) continue;
-        // CLOCK-IN: start time arrived (within a 3h window), no punch today yet
-        if(e.shift_start){
-          const sMin=toMin(e.shift_start);
-          if(minsNow>=sMin-5 && minsNow<=sMin+180){
-            dueIn++;
-            const { data: punch } = await sb.from("hr_timeclock").select("id").eq("employee_id",e.id).eq("work_date",today).limit(1);
-            if(!(punch && punch.length) && !(await alreadyLogged(e.id,"in"))){
-              const res=await pushToEmployee(e.id); if(res.sent>0){ pushedIn++; await sb.from("hr_push_reminder_log").insert({ employee_id:e.id, work_date:today, kind:"in" }); }
-            }
-          }
-        }
-        // CLOCK-OUT: end time arrived (within a 3h window), still clocked in (an open punch today)
-        if(e.shift_end){
-          const eMin=toMin(e.shift_end);
-          if(minsNow>=eMin-5 && minsNow<=eMin+180){
-            const { data: open } = await sb.from("hr_timeclock").select("id").eq("employee_id",e.id).eq("work_date",today).eq("status","open").limit(1);
-            if(open && open.length){
-              dueOut++;
-              if(!(await alreadyLogged(e.id,"out"))){
-                const res=await pushToEmployee(e.id); if(res.sent>0){ pushedOut++; await sb.from("hr_push_reminder_log").insert({ employee_id:e.id, work_date:today, kind:"out" }); }
-              }
-            }
-          }
-        }
-      }
-      return j({ ok:true, today, weekday, minsNow, candidates:(emps||[]).length, dueIn, dueOut, pushedIn, pushedOut });
-    }
+    // v224 — `clockin_reminder_run` RETIRED with Web Push. It was push-only: it read
+    // hr_employees.reminders_on, sent through pushToEmployee() and logged to hr_push_reminder_log, and
+    // did nothing else. The EMAIL clock reminder is a DIFFERENT handler with a name one word away —
+    // `cron_clock_reminders` (:1116), gated on hr_employees.clock_reminder — and it is untouched and must
+    // stay scheduled. Unscheduling the pg_cron job that called THIS one is a captain action.
     if (api === "hr_signature_save") {
       // Your own handwritten signature, stamped on the reimbursement form next to your name.
       // Self-service only by default: a signature is forgeable by anyone who can print the form, so

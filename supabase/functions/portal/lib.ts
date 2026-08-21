@@ -134,7 +134,7 @@ export const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_
 // HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
 export const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 export function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }
-export const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","client_error","push_pending","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_pubkey","push_subscribe","push_unsubscribe","push_test"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_*: self-service device notifications, available to employees.
+export const AUTH_BASIC_ACTIONS = new Set(["me","login","logout","__ping__","client_error","totp_setup","totp_verify","totp_disable","totp_status","changepw","push_unsubscribe"]); // changepw: every role may change its own password (RPC re-verifies the old one). push_unsubscribe: the last survivor of the retired Web Push feature (v224) — the old origin's forwarding page calls it to clear a device.
 export async function logAudit(me, action, ref, detail){ try{ await sb.from("portal_audit").insert({ user_id:(me&&me.user&&me.user.id)||null, user_email:(me&&me.user&&me.user.email)||null, action:action, ref:String(ref||""), detail:detail||{} }); }catch(_e){} }
 // Returns the tenant_ids this caller may touch. FAIL-CLOSED: the RPC returns a non-matching sentinel
 // UUID (not []) for an invalid token or a user with no company assignment, and on any error here we
@@ -192,114 +192,15 @@ export async function tenantPinned(token, tenantId){
 }
 export async function denyTenant(me, action, tenant){ await logAudit(me, "tenant_access_denied", String(tenant||""), { action }); return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
 
-// ===== Web Push (clock-in reminders) — payloadless VAPID push (RFC 8292), no AES-GCM payload crypto =====
-export let _vapid:any = null;
-export async function vapidConfig(){
-  if(_vapid) return _vapid;
-  const { data } = await sb.from("hr_push_config").select("*").eq("id",1).maybeSingle();
-  if(!data) return null;
-  _vapid = { pub:data.vapid_public, jwk:data.vapid_private, subject:data.subject||"mailto:ssc.ctgfinance@gmail.com", key:null as any };
-  return _vapid;
-}
-export function b64urlBytesPush(bytes:Uint8Array){ let s=""; for(const b of bytes) s+=String.fromCharCode(b); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
-export function vapidB64Json(obj:any){ return b64urlBytesPush(new TextEncoder().encode(JSON.stringify(obj))); }
-export async function vapidJwt(aud:string){
-  const cfg = await vapidConfig(); if(!cfg) throw new Error("push not configured");
-  if(!cfg.key) cfg.key = await crypto.subtle.importKey("jwk", cfg.jwk, {name:"ECDSA", namedCurve:"P-256"}, false, ["sign"]);
-  const signingInput = vapidB64Json({typ:"JWT",alg:"ES256"}) + "." + vapidB64Json({ aud, exp:Math.floor(Date.now()/1000)+12*3600, sub:cfg.subject });
-  const sig = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, cfg.key, new TextEncoder().encode(signingInput));
-  return signingInput + "." + b64urlBytesPush(new Uint8Array(sig));   // Web Crypto ECDSA already gives raw r||s
-}
-// Fire one payloadless push. gone=true → the subscription is dead and should be deleted.
-export async function webPushSend(endpoint:string){
-  const cfg = await vapidConfig(); if(!cfg) return { ok:false, status:0, gone:false };
-  let aud:string; try{ aud = new URL(endpoint).origin; }catch(_e){ return { ok:false, status:0, gone:true }; }
-  try{
-    const jwt = await vapidJwt(aud);
-    const r = await fetch(endpoint, { method:"POST", headers:{ "Authorization":"vapid t="+jwt+", k="+cfg.pub, "TTL":"3600", "Content-Length":"0" } });
-    return { ok:r.status>=200&&r.status<300, status:r.status, gone:(r.status===404||r.status===410) };
-  }catch(_e){ return { ok:false, status:0, gone:false }; }
-}
-// Push to every device an employee has subscribed; prunes dead subscriptions as it goes.
-export async function pushToEmployee(employeeId:any){
-  const { data: subs } = await sb.from("hr_push_subscriptions").select("id,endpoint").eq("employee_id",employeeId);
-  let sent=0, dead=0;
-  for(const s of (subs||[])){
-    const res = await webPushSend(s.endpoint);
-    if(res.ok){ sent++; await sb.from("hr_push_subscriptions").update({ last_ok_at:new Date().toISOString(), fail_count:0 }).eq("id",s.id); }
-    else if(res.gone){ dead++; await sb.from("hr_push_subscriptions").delete().eq("id",s.id); }
-  }
-  return { sent, dead, total:(subs||[]).length };
-}
-
-// v172: what is sitting on THIS person's desk right now. Used by the approval push (the service worker
-// asks for the text, because a payloadless push cannot carry it) and by the daily reminder.
-export async function pendingForEmployee(empId:any){
-  const out = { claims:0, amount:0, leave:0, first:"" };
-  if(!empId) return out;
-  try {
-    // Which roles does this person hold? Same resolution the decide path uses.
-    const { data: ras } = await sb.from("hr_claim_role_approvers").select("role").eq("employee_id",empId);
-    const { data: emp } = await sb.from("hr_employees").select("claim_role,name").eq("id",empId).maybeSingle();
-    const roles = new Set<string>((ras||[]).map((r:any)=>String(r.role)));
-    if(emp && emp.claim_role) roles.add(String(emp.claim_role));
-
-    // v173: batched. The first cut fetched EVERY approval instance and then issued two more queries per
-    // instance — fine at 9 claims, hundreds of round trips at a few hundred. This runs on every push and
-    // every daily reminder, so it has to be flat: filter to open requests FIRST, then fetch instances and
-    // steps in one .in() each. Five queries total, whatever the volume.
-    const RC_ACTIONABLE=["Submitted","Pending Manager Approval","Pending HR Approval",
-                         "Pending Finance Approval","Pending Director Approval","Need More Info"];
-    const { data: openClaims } = await sb.from("hr_claim_requests")
-      .select("id,claim_no,amount,employee_id").in("status", RC_ACTIONABLE);
-    const claimIds = (openClaims||[]).map((c:any)=>String(c.id));
-    if(claimIds.length){
-      const { data: insts } = await sb.from("hr_claim_approval_instances")
-        .select("id,claim_id,current_step").in("claim_id", claimIds);
-      const instIds = (insts||[]).map((i:any)=>String(i.id));
-      const { data: steps } = instIds.length
-        ? await sb.from("hr_claim_approval_steps")
-            .select("instance_id,step_order,approver_employee_id,approver_role").in("instance_id", instIds)
-        : { data: [] as any[] };
-      const stepBy:any = {};                       // instance_id|step_order -> step
-      for(const s of (steps||[])) stepBy[String(s.instance_id)+"|"+String(s.step_order)] = s;
-      const claimBy:any = {};
-      for(const c of (openClaims||[])) claimBy[String(c.id)] = c;
-      for(const inst of (insts||[])){
-        const step = stepBy[String(inst.id)+"|"+String(inst.current_step)];
-        if(!step) continue;
-        const mine = (step.approver_employee_id && String(step.approver_employee_id)===String(empId))
-                  || (step.approver_role && roles.has(String(step.approver_role)));
-        if(!mine) continue;
-        const c = claimBy[String(inst.claim_id)];
-        if(!c) continue;
-        if(String(c.employee_id)===String(empId)) continue;    // nobody approves their own
-        out.claims++; out.amount += Number(c.amount)||0;
-        if(!out.first) out.first = String(c.claim_no||"");
-      }
-    }
-
-    const { data: lv } = await sb.from("hr_leave_requests")
-      .select("id,employee_id,current_step").in("status",
-        ["Pending","Pending Approval","Pending Manager Approval","Pending HR Approval",
-         "Pending Finance Approval","Pending Director Approval"]);
-    const lvIds = (lv||[]).map((r:any)=>String(r.id));
-    if(lvIds.length){
-      const { data: lsteps } = await sb.from("hr_leave_approval_steps")
-        .select("leave_request_id,step_order,approver_employee_id,approver_role").in("leave_request_id", lvIds);
-      const lstepBy:any = {};
-      for(const s of (lsteps||[])) lstepBy[String(s.leave_request_id)+"|"+String(s.step_order)] = s;
-      for(const r of (lv||[])){
-        if(String(r.employee_id)===String(empId)) continue;
-        const st = lstepBy[String(r.id)+"|"+String(r.current_step||1)];
-        if(!st) continue;
-        if((st.approver_employee_id && String(st.approver_employee_id)===String(empId))
-          || (st.approver_role && roles.has(String(st.approver_role)))) out.leave++;
-      }
-    }
-  } catch(_e){}
-  return out;
-}
+// ===== Web Push (clock-in reminders) — RETIRED v224 =====
+// The VAPID stack (vapidConfig / vapidJwt / webPushSend / pushToEmployee) and pendingForEmployee lived
+// here. The captain retired the installable HR app and Web Push at the new-domain cutover: every push
+// reminder already went out by email as well, so nothing is lost. Nothing in this function SENDS a push
+// any more. `push_unsubscribe` (hr.ts) is deliberately the one handler kept — the forwarding page on the
+// old GitHub Pages origin calls it to clear a device, and with the sender gone the 404/410 prune that
+// used to be the other way a row died never runs again, so it is now the ONLY path. Dropping
+// hr_push_subscriptions / hr_push_reminder_log / hr_push_config, and unscheduling the two pg_cron jobs,
+// are captain actions — see the PR.
 // â”€â”€ Xero GET with proper 429 rate-limit handling (Retry-After header). â”€â”€
 // Previous behaviour: silent fail on 429 â†’ break upstream loops â†’ cache silently stale.
 // New behaviour: honour Retry-After (cap at 90s), retry up to 3 times, then throw.

@@ -48,7 +48,7 @@ The function is four files, all in `supabase/functions/portal/`:
 | file | what is in it |
 |---|---|
 | `index.ts` | the router — `Deno.serve`, the GET/webhook/inbound-email entry points, the auth and tenant gates, and the dispatch to the two handler chains. ~110 lines. |
-| `lib.ts` | shared library both halves use: Supabase client, `j()`/CORS, auth + role + tenant guards, TOTP, Web Push, the Xero OAuth/REST client and cache, the P&L parser, OCR / Document AI, the AP inbound-email pipeline, cron internals. |
+| `lib.ts` | shared library both halves use: Supabase client, `j()`/CORS, auth + role + tenant guards, TOTP, the Xero OAuth/REST client and cache, the P&L parser, OCR / Document AI, the AP inbound-email pipeline, cron internals. |
 | `hr.ts` | HR OS: the reimbursement/claim/leave helpers, the Malaysian statutory payroll engine, and the `hr_` / `attendance_` / `clock_` handler chain. |
 | `finance.ts` | Finance OS + platform: cron, login/2FA, users & roles, CTG SSO access, o2o, Xero sync, AP inbox, WHT, SBI, P&L, close, collections, company documents. |
 
@@ -164,7 +164,7 @@ screen that puts a `useEffect` in `src/` has stepped outside the thing that prov
 correctly.
 
 **Client-only, and no `app/api/`.** Not a hosting constraint any more — Vercel runs a server — but the
-backend is not moving: Xero webhooks, Supabase cron, inbound email and Web Push all hold the edge
+backend is not moving: Xero webhooks, Supabase cron and inbound email all hold the edge
 function's URL. A second server in front of it buys nothing and adds a failure mode.
 
 **The session is not bridged and must not be.** `web/src/portal.ts` reads the same
@@ -441,17 +441,35 @@ plus its 6px margin, `null` for a pad nobody drew on), `sigUploadSize()`, `sigSt
 `sigFileRefusal()`. The alpha threshold is `> 8`, not `> 0`: antialiasing leaves a haze, and a lower bar
 turns an untouched pad into somebody's signature on a claim form. Split a drawing surface the same way.
 
-**Web Push registers the SAME `sw.js`, by `legacyUrl()`.** `navigator.serviceWorker.register('sw.js')`
-from `/hr/clock/` resolves to `/hr/clock/sw.js` and 404s; `legacyUrl('sw.js')` gives the root scope both
-apps already share, so a device subscribed on either is subscribed on both and neither file changed. A
-notification still opens the LEGACY screen — that is what `sw.js` navigates to, and it is not ours to
-change. **The open question is iOS**: `hrPushCard()`'s iPhone branch says "Add to Home Screen", and the
-React routes link no `manifest.json`, so that instruction is honest only for the legacy app. Enabling
-push from React on an iPhone is the installable-app decision, deliberately not pre-empted here.
+**The installable HR app and Web Push are RETIRED — v224, a captain decision at the `os.ctg4u.com`
+cutover.** Rationale: every push reminder already went out by email as well, so retiring the phone nudge
+loses no channel. Gone from both halves — `hros.html`'s manifest link and iOS install metadata, its
+`PUSH` block and card, `web/src/hr-clock.tsx`'s `PushCard`, and the device half in
+`web/app/hr/clock/page.tsx`. Gone from the server — `push_pubkey`, `push_subscribe`, `push_test`,
+`push_pending`, `approval_reminders`, `clockin_reminder_run`, and the whole VAPID stack in `lib.ts`.
+Three things about that are load-bearing and easy to get wrong:
 
-**Three regions of these screens exist in no golden and never can.** `hrPushCard()` returns `''` unless
-`PUSH.supported`, which reads `'serviceWorker' in navigator` — the offline harness has no navigator, so
-no fixture can reach it. `hrTp1Panel()` and `HR.submitPack` are both reset by navigation
+- **`push_unsubscribe` is deliberately KEPT.** The forwarding page on the old GitHub Pages origin calls
+  it while unregistering `sw.js`, and with the sender gone the 404/410 prune inside `pushToEmployee()`
+  never runs again — so it is now the *only* way a row leaves `hr_push_subscriptions`. `sw.js`,
+  `manifest.json` and `logo.png` stay in the repo for the same reason: the old origin must still be able
+  to unregister what it installed.
+- **The EMAIL clock reminder is a DIFFERENT handler with a name one word away.** `cron_clock_reminders`
+  (`hr.ts`) is the survivor and must stay scheduled; `clockin_reminder_run` was the push one and is gone.
+  Confusing them silences the channel the retirement was justified by.
+- **Removing the card moved NO golden**, and that is the interesting part: `hrPushCard()` returned `''`
+  unless `PUSH.supported`, which reads `'serviceWorker' in navigator`, so the offline harness could never
+  reach it. `tools/render_probe.ts` regenerates all 40 surfaces byte-identical. A feature invisible to
+  the goldens is also a feature the goldens cannot protect — `web/tests/hr-clock.parity.test.tsx` pins
+  its absence on both sides by reading `hros.html` and `hr.ts` at run time instead.
+
+Two captain actions this could not do from the repo: **unschedule the two pg_cron jobs** that call
+`clockin_reminder_run` and `approval_reminders` (they now hit a removed action every run), and **drop
+`hr_push_reminder_log` / `hr_push_config`, then `hr_push_subscriptions` LAST**, after the forwarding
+page has stopped needing `push_unsubscribe`.
+
+**Two regions of these screens exist in no golden and never can** (`hrPushCard()` was the third until
+v224 retired it — see above). `hrTp1Panel()` and `HR.submitPack` are both reset by navigation
 (hros.html:3843, :4375). All three are mirrored from the legacy source and asserted in their screens'
 own tests; none needed a seventh relaxation, and `web/tests/parity.ts` and `web/tests/handlers.ts` were
 again untouched. Note while you are there that `hrTp1Panel()` writes a category label with a bare `&`

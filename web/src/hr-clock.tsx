@@ -12,13 +12,11 @@
 // The markup deliberately mirrors the legacy string concatenation element for element, including the
 // inline `style` strings. It is not "better" — it is the SAME, because the golden is the contract.
 //
-// `hrPushCard()` (hros.html:3011) IS here now (v222), and it is the one part of this screen the golden
-// cannot see: it renders nothing at all unless `PUSH.supported`, and the render harness has no
-// ServiceWorker, so `tests/golden/hr.clock.html` holds no trace of it. It is mirrored from the legacy
-// source and its four states are asserted in the screen's own test instead. The DEVICE half — the
-// service-worker registration, the Notification permission prompt, the PushManager subscription — is in
-// app/hr/clock/page.tsx, where the geolocation already lives; `PushCard` below is a pure function of
-// what that half found out.
+// v224 — `hrPushCard()` and its whole device half are GONE, on both sides, because the installable app
+// and Web Push are retired. The clock-in reminder survives as EMAIL (`cron_clock_reminders`,
+// hr.ts:1116), which is what made retiring the phone nudge acceptable. The golden did not move: the card
+// was never in it (`PUSH.supported` reads `'serviceWorker' in navigator` and the render harness has no
+// navigator), which is why removing it is a zero-line diff against `tests/golden/hr.clock.html`.
 
 import type { CSSProperties } from 'react';
 
@@ -64,14 +62,6 @@ export interface HrClockProps {
   acting?: boolean;
   onClockAction: (dir: 'in' | 'out') => void;
   onSchedSave: () => void;
-  /**
-   * `PUSH` — hros.html:2979. `null` means "this browser cannot do Web Push" (`PUSH.supported` false),
-   * which is the state the golden was captured in and renders no card at all.
-   */
-  push?: PushState | null;
-  onPushEnable?: () => void;
-  onPushDisable?: () => void;
-  onPushTest?: () => void;
 }
 
 /** `M()` — hros.html:1268. */
@@ -110,13 +100,7 @@ const LABEL: CSSProperties = { fontSize: '11px', display: 'block', marginBottom:
 
 const DAYS: [number, string][] = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
 
-/**
- * What the device half found out. `on` is `!!PUSH.sub`; `iosNeedsInstall` is
- * `pushIsIOS() && !pushStandalone()` (hros.html:3013); `busy` is `PUSH.busy`.
- */
-export interface PushState { on: boolean; busy: boolean; iosNeedsInstall: boolean }
-
-export default function HrClock({ data, companyName, elapsed, now, acting = false, onClockAction, onSchedSave, push, onPushEnable, onPushDisable, onPushTest }: HrClockProps) {
+export default function HrClock({ data, companyName, elapsed, now, acting = false, onClockAction, onSchedSave }: HrClockProps) {
   const open = data.open;
   const emp = data.employee || {};
   const today = data.today || [];
@@ -191,53 +175,11 @@ export default function HrClock({ data, companyName, elapsed, now, acting = fals
 
         <SchedCard emp={emp} onSchedSave={onSchedSave} />
 
-        <PushCard push={push} onEnable={onPushEnable} onDisable={onPushDisable} onTest={onPushTest} />
-
         <div className="muted" style={{ fontSize: '11.5px', marginTop: '12px', lineHeight: '1.6' }}>
           📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.
         </div>
       </div>
     </>
-  );
-}
-
-/**
- * `hrPushCard()` — hros.html:3011.
- *
- * NOT IN THE GOLDEN, and not because of a state the fixture happened to be in: `PUSH.supported` reads
- * `'serviceWorker' in navigator`, and the offline render harness has no navigator at all, so this card
- * can never appear in a captured surface. Mirrored from the legacy source and asserted state by state
- * in the screen's own test.
- *
- * The iOS branch is the interesting one: Safari refuses Web Push to a page opened in the browser, so
- * the only path is Add to Home Screen first. It is copy, not code, and it must not be dropped — without
- * it an iPhone user taps Enable, is refused by the OS, and has nothing to act on.
- */
-function PushCard({ push, onEnable, onDisable, onTest }: {
-  push?: PushState | null;
-  onEnable?: () => void;
-  onDisable?: () => void;
-  onTest?: () => void;
-}) {
-  if (!push) return null;   // `if(!PUSH.supported) return '';`
-  return (
-    <div className="panel" style={{ marginTop: '12px' }}>
-      <div className="panel-hd"><h3>🔔 Clock-in reminders</h3></div>
-      <div className="muted" style={{ fontSize: '12px', marginBottom: '10px' }}>Get a notification on this phone when it’s time to clock in. Set it up once on each phone you use.</div>
-      {push.on ? (
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <span className="pill pill-ok" style={{ fontSize: '11px' }}>🔔 On for this device</span>
-          <button className="btn sm" onClick={onTest}>Send test</button>
-          <button className="btn sm d" onClick={onDisable}>Turn off</button>
-        </div>
-      ) : push.iosNeedsInstall ? (
-        <div className="muted" style={{ fontSize: '12px', lineHeight: '1.5' }}>
-          📱 <b>On iPhone</b>, first tap <b>Share → Add to Home Screen</b>, then open HR OS from that new icon and turn reminders on here.
-        </div>
-      ) : (
-        <button className="btn p sm" disabled={push.busy} onClick={onEnable}>{push.busy ? 'Enabling…' : '🔔 Enable clock-in reminders'}</button>
-      )}
-    </div>
   );
 }
 

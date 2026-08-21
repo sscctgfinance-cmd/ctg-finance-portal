@@ -547,10 +547,10 @@ function EmpForm(p: HrEmployeesProps & { x: Employee }) {
       </div>
 
       <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '10px', fontSize: '12.5px' }}>
-        <Ck k="clockReminder" lbl="🔔 Send a phone reminder to clock in at the shift start time" on={x.reminders_on !== false} />
+        <Ck k="clockReminder" lbl="🔔 Email a reminder to clock in at the shift start time" on={x.reminders_on !== false} />
       </div>
 
-      <div className="muted" style={{ fontSize: '11px', marginBottom: '12px' }}>{'Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. The clock-in reminder pushes at '}<b>Shift start</b>{' on the ticked '}<b>Work days</b>{', only if they haven’t clocked in yet, and only to phones where they’ve enabled reminders (Time Clock → Enable). One push per day.'}</div>
+      <div className="muted" style={{ fontSize: '11px', marginBottom: '12px' }}>{'Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. The clock-in reminder emails them at '}<b>Shift start</b>{' on the ticked '}<b>Work days</b>{', only if they haven’t clocked in yet. One email per day. (v224: the phone push that used to accompany it is retired.)'}</div>
 
       <button className="btn p sm" onClick={p.onSave}>{x.id ? 'Save changes' : 'Add employee'}</button>
     </div>

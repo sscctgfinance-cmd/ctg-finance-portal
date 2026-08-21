@@ -8,6 +8,8 @@
 //
 // No seventh relaxation. The six the pilot argued cover this screen as it stands.
 
+import { readFileSync } from 'node:fs';
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -143,76 +145,46 @@ describe('the comparison still bites', () => {
 });
 
 /**
- * CLOCK-IN REMINDERS — the one part of this screen no golden can hold.
+ * CLOCK-IN REMINDERS — RETIRED in v224 with the installable app and Web Push.
  *
- * `hrPushCard()` (hros.html:3011) returns `''` unless `PUSH.supported`, and `PUSH.supported` reads
- * `'serviceWorker' in navigator` — which the offline render harness has no navigator for. So the card is
- * absent from `tests/golden/hr.clock.html` no matter what fixture is used, and these cases are its whole
- * coverage. The stake is a person being paid: the reminder is what stops a part-timer forgetting to
- * clock in, and a card that renders the wrong state (or silently renders nothing) fails quietly.
+ * `hrPushCard()` and its four states used to be asserted here, because `PUSH.supported` reads
+ * `'serviceWorker' in navigator` and the offline harness has no navigator, so the card could never reach
+ * `tests/golden/hr.clock.html`. That same fact is why removing it moved the golden by zero bytes — the
+ * regenerated surface is byte-identical. These two negatives are what is left of that coverage: they
+ * fail if the card comes back on either side, which is the only way this screen can now disagree with
+ * the legacy one about push.
  */
-describe('the clock-in reminders card', () => {
-  const full = (push: Parameters<typeof HrClock>[0]['push']) => renderToStaticMarkup(screen({ push }));
-  /**
-   * JUST the reminders panel. The screen's own closing tip already says "Add to Home Screen"
-   * (hros.html:2950), so a document-wide assertion for that phrase passes whatever the card renders —
-   * the same trap CLAUDE.md records for finance.cfo's 🔴. Slice the card out and assert against it.
-   */
-  const html = (push: Parameters<typeof HrClock>[0]['push']) => {
-    const doc = full(push);
-    const i = doc.indexOf('🔔 Clock-in reminders');
-    if (i < 0) return '';
-    const start = doc.lastIndexOf('<div class="panel"', i);
-    return doc.slice(start, doc.indexOf('<div class="muted" style="font-size:11.5px;margin-top:12px', i));
-  };
-
-  it('renders NOTHING on a browser that cannot do Web Push — which is why the golden has none', () => {
-    expect(full(null)).not.toContain('Clock-in reminders');
-    expect(html(null)).toBe('');
-    // …and the golden really is that state, so the parity diff above is not silently covering this.
-    expect(relax(GOLDEN)).not.toContain('Clock-in reminders');
-    expect(html({ on: false, busy: false, iosNeedsInstall: false })).toContain('Clock-in reminders');
+describe('the clock-in reminders card is gone from BOTH sides', () => {
+  it('renders nothing about push, whatever props it is handed', () => {
+    const doc = renderToStaticMarkup(screen());
+    expect(doc).not.toContain('Clock-in reminders');
+    expect(doc).not.toContain('Enable clock-in reminders');
+    expect(doc).not.toContain('On for this device');
   });
 
-  it('offers Enable when off, and says so while it is enabling', () => {
-    const off = html({ on: false, busy: false, iosNeedsInstall: false });
-    expect(off).toContain('🔔 Enable clock-in reminders');
-    expect(off).not.toContain('disabled');
-    const busy = html({ on: false, busy: true, iosNeedsInstall: false });
-    expect(busy).toContain('Enabling…');
-    expect(busy).toContain('disabled');
-    // The permission prompt is a one-shot per browser: a second click while the first is in flight is
-    // how a subscription gets created twice and the "on" state disagrees with the server.
+  it('the legacy screen it mirrors no longer builds one either', () => {
+    // Read hros.html rather than trust this file: the two halves are only in step if the LEGACY one
+    // stopped too. A card restored there would otherwise diverge silently, since no golden holds it.
+    const legacy = readFileSync(new URL('../../hros.html', import.meta.url), 'utf8');
+    expect(legacy).not.toContain('hrPushCard');
+    expect(legacy).not.toContain('pushInitSW');
+    expect(legacy).not.toContain('rel="manifest"');
+    expect(legacy).not.toContain('name="apple-mobile-web-app-capable"');
+    // …and the guard is not vacuous: the file really is the one this screen mirrors.
+    expect(legacy).toContain('function hrClockRender(');
   });
 
-  it('shows the iPhone instruction INSTEAD of a button that Safari would refuse', () => {
-    const ios = html({ on: false, busy: false, iosNeedsInstall: true });
-    expect(ios).toContain('Add to Home Screen');
-    expect(ios).not.toContain('Enable clock-in reminders');
-  });
-
-  it('an ALREADY-SUBSCRIBED device offers Turn off, never Enable again', () => {
-    const on = html({ on: true, busy: false, iosNeedsInstall: true });
-    expect(on).toContain('🔔 On for this device');
-    expect(on).toContain('Send test');
-    expect(on).toContain('Turn off');
-    // `on` beats `iosNeedsInstall`, exactly as hros.html:3014's if/else-if order does: an iPhone that
-    // subscribed from the home-screen app and is now being viewed in Safari must still be able to turn
-    // it OFF, not be shown the install instructions for something it already has.
-    expect(on).not.toContain('Add to Home Screen');
-  });
-
-  it('the three buttons are distinct handlers — they take no arguments to tell them apart', () => {
-    const calls: string[] = [];
-    const tree = screen({
-      push: { on: true, busy: false, iosNeedsInstall: false },
-      onPushTest: () => calls.push('test'),
-      onPushDisable: () => calls.push('disable'),
-      onPushEnable: () => calls.push('enable'),
-    });
-    reactHandlers(tree).forEach((h) => h.invoke());
-    // Send test then Turn off, in the legacy's order. `enable` must not appear: wiring Turn off to
-    // Enable is invisible in the markup and re-prompts instead of unsubscribing.
-    expect(calls).toEqual(['test', 'disable']);
+  it('the EMAIL reminder — the reason retiring push was acceptable — is untouched', () => {
+    const raw = readFileSync(new URL('../../supabase/functions/portal/hr.ts', import.meta.url), 'utf8');
+    // Comments are blanked before the negative, the same reason web/tests/timezone-audit.test.tsx blanks
+    // them: the v224 notes left in hr.ts NAME `pushToEmployee` to say it is gone, and a word-match on the
+    // raw text would read that as the call still being there.
+    const hr = raw.replace(/^\s*\/\/.*$/gm, '');
+    expect(hr).toContain('if (api === "cron_clock_reminders")');
+    expect(hr).toContain('[HR OS] Time to clock in');
+    expect(hr).toContain('[HR OS] Don\u2019t forget to clock out');
+    expect(hr).toContain('.eq("clock_reminder",true)');
+    // The push sender is what went; the email sender is what stayed.
+    expect(hr).not.toContain('pushToEmployee');
   });
 });

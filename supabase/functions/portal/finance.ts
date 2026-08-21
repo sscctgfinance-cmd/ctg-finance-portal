@@ -9,7 +9,7 @@ import {
   sb, j, SKINDAE_TENANT, O2O_REVENUE_CODE, CLOSE_TEMPLATE, genTotpSecret,
   totpVerify, otpAuthUrl, xeroOrgName, xeroAccessToken, meFromToken, isAdmin,
   superAdmin, hrManage, logAudit, allowedTenants, isFullScopeAdmin, userWriteAllowed,
-  tenantsAssignable, denyTenant, pushToEmployee, pendingForEmployee, xeroGet, xeroInvoicesAll,
+  tenantsAssignable, denyTenant, xeroGet, xeroInvoicesAll,
   xeroInvoicesWhere, resolveContact, getWebhookKey, recordVendorCodingHistory, sha256Hex, sha256HexBytes,
   parsePnl, refreshPnlCache, invToCacheRow, processPendingDedup, syncStateUpdate, docaiAccessToken,
   callDocAI, processApEmail, logDecision, buildSelfBilledInvoicePdf, runBackfill, runDelta,
@@ -105,48 +105,13 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       return j({ ok:true, year:yr, checked:(emps||[]).length, short, no_join_date:noJoin,
         basis:"Employment Act 1955 s.60E (annual 8/12/16) and s.60F (sick 14/18/22) by completed years of continuous service" });
     }
-    if (api === "push_pending") {
-      // v172: a payloadless Web Push cannot carry text, so the service worker asks what to display.
-      // Identity is the device's OWN push subscription endpoint — a service worker cannot read
-      // localStorage, so it has no session token, but it does know its own endpoint and we already store
-      // that against an employee. Deliberately returns COUNTS AND TITLES ONLY, never an approval token:
-      // the endpoint is a device secret, not proof of identity strong enough to act on.
-      const ep = String(b.endpoint||"");
-      if(!ep) return j({ ok:true, title:"HR OS", body:"Open HR OS to see what needs you." });
-      const { data: sub } = await sb.from("hr_push_subscriptions").select("employee_id").eq("endpoint",ep).maybeSingle();
-      if(!sub) return j({ ok:true, title:"HR OS", body:"Open HR OS to see what needs you." });
-      const p = await pendingForEmployee(sub.employee_id);
-      if(!p.claims && !p.leave)
-        return j({ ok:true, title:"⏰ Time Clock reminder", body:"Open HR OS to clock in or out for your shift.", url:"./hros.html#clock" });
-      const bits:string[] = [];
-      if(p.claims) bits.push(p.claims + " claim" + (p.claims>1?"s":"") + " (" + rcMoney(p.amount) + ")");
-      if(p.leave)  bits.push(p.leave  + " leave request" + (p.leave>1?"s":""));
-      return j({ ok:true,
-        title:"✅ Waiting for your approval",
-        body: bits.join(" and ") + ". Tap to review.",
-        url:"./hros.html#claims" });
-    }
-    if (api === "approval_reminders") {
-      // v172: a nudge so nothing sits forgotten — the point of the whole feature is not having to log in
-      // just to CHECK. One push per approver per day, deduped through hr_push_reminder_log.
-      const today = new Date(Date.now()+8*3600*1000).toISOString().slice(0,10);
-      const { data: appr } = await sb.from("hr_claim_role_approvers").select("employee_id");
-      const ids = Array.from(new Set((appr||[]).map((a:any)=>String(a.employee_id))));
-      const out:any[] = [];
-      for(const empId of ids){
-        const { data: devs } = await sb.from("hr_push_subscriptions").select("id").eq("employee_id",empId);
-        if(!devs || !devs.length) { out.push({ empId, skipped:"no device" }); continue; }
-        const { data: done } = await sb.from("hr_push_reminder_log")
-          .select("employee_id").eq("employee_id",empId).eq("work_date",today).eq("kind","approval").maybeSingle();
-        if(done) { out.push({ empId, skipped:"already reminded today" }); continue; }
-        const p = await pendingForEmployee(empId);
-        if(!p.claims && !p.leave) { out.push({ empId, skipped:"nothing pending" }); continue; }
-        const res = await pushToEmployee(empId);
-        if(res.sent) await sb.from("hr_push_reminder_log").insert({ employee_id:empId, work_date:today, kind:"approval" });
-        out.push({ empId, claims:p.claims, leave:p.leave, sent:res.sent });
-      }
-      return j({ ok:true, approvers: ids.length, results: out });
-    }
+    // v224 — `push_pending` and `approval_reminders` RETIRED with Web Push.
+    //
+    // `push_pending` existed only because a payloadless push cannot carry text, so sw.js called back to
+    // ask what to display. Nothing sends a push now, so nothing ever calls it. `approval_reminders` was
+    // the daily approver nudge; the approval EMAIL that always accompanied it (rcNotifyStepApprover /
+    // rcNotifyLeaveApprover, hr.ts:361/380) is untouched, which is what made retiring the push
+    // acceptable. Unscheduling the pg_cron job that called `approval_reminders` is a captain action.
     // ── O2O pharmacy → Xero contact, PER ORGANISATION (v179) ────────────────────────────────────
     // Each Xero org keeps its own contact list with its own ContactIDs, and all five companies issue
     // O2O invoices — so the link is keyed by (pharmacy, tenant). Verified against the live data: the

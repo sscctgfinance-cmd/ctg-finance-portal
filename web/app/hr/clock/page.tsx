@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import HrClock, { type ClockStatus, type PushState } from '../../../src/hr-clock';
+import HrClock, { type ClockStatus } from '../../../src/hr-clock';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `hrClkTick()` — hros.html:2910. Same arithmetic; here it feeds a prop instead of `el.textContent`. */
@@ -43,43 +43,11 @@ function getGeo(): Promise<Record<string, number>> {
   });
 }
 
-/* ────────────────────── Web Push, the device half — hros.html:2979-3010 ────────────────────── */
-
-/** `pushB64ToU8()` — hros.html:2981. */
-function b64ToU8(base64: string): Uint8Array {
-  const pad = '='.repeat((4 - base64.length % 4) % 4);
-  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
-
-/** `pushIsIOS()` / `pushStandalone()` — hros.html:2982-2983. */
-const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent);
-const standalone = () =>
-  (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
-  (navigator as unknown as { standalone?: boolean }).standalone === true;
-
-/** `PUSH.supported` — hros.html:2979. */
-const pushSupported = () =>
-  typeof navigator !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-
-/**
- * `pushInitSW()` — hros.html:2984.
- *
- * `sw.js` is the SAME service worker the legacy app registers, loaded from the same origin by its own
- * path — `legacyUrl()`, because `navigator.serviceWorker.register('sw.js')` from `/hr/clock/` would
- * resolve to `/hr/clock/sw.js` and 404. Nothing in sw.js changes: it is registered at the root scope by
- * both apps, so a device that enabled reminders on one is already subscribed on the other. A push
- * notification still opens the LEGACY screen, because that is what sw.js navigates to.
- */
-async function initSW(): Promise<ServiceWorkerRegistration | null> {
-  try {
-    const reg = await navigator.serviceWorker.register(legacyUrl('sw.js'));
-    await navigator.serviceWorker.ready;
-    return reg;
-  } catch { return null; }
-}
+// v224 — the Web Push device half that used to sit here (b64ToU8 / pushIsIOS / pushStandalone /
+// pushInitSW and the enable / disable / test handlers, hros.html:2977-3024) is GONE with the feature.
+// `sw.js` is no longer registered from this route; the only thing that still registers it is the
+// forwarding page on the OLD origin, whose job is to unregister it. The clock-in reminder survives as
+// email — `cron_clock_reminders`, hr.ts:1116 — and nothing here touched that path.
 
 export default function HrClockPage() {
   const [company, setCompany] = useState<string | null>(null);
@@ -89,10 +57,6 @@ export default function HrClockPage() {
   const [acting, setActing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const schedRef = useRef<HTMLDivElement>(null);
-  /** `PUSH` — hros.html:2979. `null` until the mount check runs, and permanently on an unsupported browser. */
-  const [push, setPush] = useState<PushState | null>(null);
-  const pushReg = useRef<ServiceWorkerRegistration | null>(null);
-  const pushSub = useRef<PushSubscription | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -152,79 +116,6 @@ export default function HrClockPage() {
     }
   }, [load]);
 
-  /**
-   * `pushInitSW()`'s call site — the legacy app runs it at boot; here it runs on mount, and only to find
-   * out what to RENDER. It asks for no permission and creates no subscription: `getSubscription()`
-   * reports one that already exists, which is how a device that enabled reminders on either app shows as
-   * on here. Anything that prompts is behind the button.
-   */
-  useEffect(() => {
-    if (!pushSupported()) return;   // stays null → hrPushCard()'s `return ''`
-    let live = true;
-    setPush({ on: false, busy: false, iosNeedsInstall: isIOS() && !standalone() });
-    void (async () => {
-      const reg = await initSW();
-      if (!live) return;
-      pushReg.current = reg;
-      const sub = reg ? await reg.pushManager.getSubscription() : null;
-      if (!live) return;
-      pushSub.current = sub;
-      setPush({ on: !!sub, busy: false, iosNeedsInstall: isIOS() && !standalone() });
-    })();
-    return () => { live = false; };
-  }, []);
-
-  /** `pushEnable()` — hros.html:2989. */
-  const onPushEnable = useCallback(async () => {
-    if (!push || push.busy) return;
-    if (isIOS() && !standalone()) {
-      setErr('On iPhone: Share → Add to Home Screen, open it from there, then enable.');
-      setPush({ ...push, iosNeedsInstall: true });
-      return;
-    }
-    setPush({ ...push, busy: true });
-    const stop = (msg: string) => { setErr(msg); setPush((p) => (p ? { ...p, busy: false } : p)); };
-    try {
-      if (await Notification.requestPermission() !== 'granted') {
-        return stop('Notifications not allowed — turn them on in your phone/browser settings.');
-      }
-      if (!pushReg.current) pushReg.current = await initSW();
-      if (!pushReg.current) return stop('Couldn’t start the notifier');
-      const pk = await call<{ publicKey?: string }>({ api: 'push_pubkey' });
-      if (!pk || !pk.publicKey) return stop('Push isn’t set up yet — tell HR.');
-      const existing = await pushReg.current.pushManager.getSubscription();
-      const sub = existing || await pushReg.current.pushManager.subscribe({
-        userVisibleOnly: true, applicationServerKey: b64ToU8(pk.publicKey) as never,
-      });
-      pushSub.current = sub;
-      await call({ api: 'push_subscribe', subscription: sub.toJSON(), ua: navigator.userAgent.slice(0, 200) });
-      setPush({ on: true, busy: false, iosNeedsInstall: false });
-    } catch (e) {
-      stop('Setup failed: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }, [push]);
-
-  /** `pushDisable()` — hros.html:3005. The endpoint is read BEFORE unsubscribing, as the legacy does:
-      once `unsubscribe()` resolves there is nothing left to tell the server to forget. */
-  const onPushDisable = useCallback(async () => {
-    const sub = pushSub.current;
-    try {
-      if (sub) {
-        const endpoint = sub.endpoint;
-        try { await sub.unsubscribe(); } catch { /* already gone */ }
-        await call({ api: 'push_unsubscribe', endpoint });
-        pushSub.current = null;
-      }
-    } catch { /* hros.html swallows this too — the local state is what the operator sees */ }
-    setPush((p) => (p ? { ...p, on: false, busy: false } : p));
-  }, []);
-
-  /** `pushTest()` — hros.html:3010. */
-  const onPushTest = useCallback(async () => {
-    try { await call({ api: 'push_test' }); setErr(null); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }, []);
-
   return (
     <div ref={schedRef}>
       <Banner />
@@ -245,10 +136,6 @@ export default function HrClockPage() {
             acting={acting}
             onClockAction={onClockAction}
             onSchedSave={onSchedSave}
-            push={push}
-            onPushEnable={onPushEnable}
-            onPushDisable={onPushDisable}
-            onPushTest={onPushTest}
           />
         )}
     </div>
