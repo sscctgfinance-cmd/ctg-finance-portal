@@ -4926,7 +4926,7 @@ function hrYearend(){
     '<button class="btn sm" onclick="hrYePick()">Load</button></div>';
   if(ye.annual===null){ if(!ye.loading) hrYeLoad(); return picker+'<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Aggregating finalised payslips for '+ye.year+'…</div></div>'; }
   var emps=(HR.data.employees||[]); var ann=ye.annual||{};
-  var withPay=emps.filter(function(e){ return ann[e.id]&&ann[e.id].months>0; });
+  var withPay=hrYePaid(emps,ann);   // hr-docs.js — the same predicate the EA and CP8D populations use
   var tg=0,tp=0,subj=0; withPay.forEach(function(e){ var t=ann[e.id]; tg+=t.gross; tp+=t.pcb; if(t.pcb>0)subj++; });
   var empNo=(ye.employer&&ye.employer.employer_no)||'';
   var warn = empNo? '' : '<div class="panel" style="border-color:var(--amber);background:rgba(240,180,40,.06);padding:10px 14px;margin-bottom:12px;font-size:12.5px">⚠️ Employer E-number is not set in <b>hr_employer_info</b>. EA / Form E / CP8D will print a placeholder — set it before filing with LHDN.</div>';
@@ -4948,13 +4948,14 @@ async function hrYeLoad(){
   try{ var r=await call({api:'hr_annual',year:HR_YE.year,tenant:HR.tenant}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
   catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
 }
-var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,months:0 };
+// HR_EA_ZERO, hrYePaid, hrFormEStats and hrCp8dFile are in hr-docs.js (v222) — the figures LHDN
+// receives are the filing, not the button, and hrDrawEA/hrDrawFormE were already there.
 function hrExpEA(empId){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:'',address:''}, year=HR_YE.year;
     var list;
     if(empId){ var one=(HR.data.employees||[]).find(function(x){return x.id===empId;}); if(!one){toast('Employee not found',true);return;} list=[one]; }
-    else { list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }); if(!list.length){toast('No paid employees for '+year,true);return;} }
+    else { list=hrYePaid(HR.data.employees||[],ann); if(!list.length){toast('No paid employees for '+year,true);return;} }
     var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
     list.forEach(function(e,i){ if(i>0)doc.addPage(); hrDrawEA(doc,hrEmpView(e),ann[e.id]||HR_EA_ZERO,year,emp); });
     doc.save(empId?('EA_'+list[0].emp_no+'_YA'+year+'.pdf'):('EA_forms_YA'+year+'.pdf'));
@@ -4964,28 +4965,17 @@ function hrExpEA(empId){
 function hrExpFormE(){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:''}, year=HR_YE.year, emps=(HR.data.employees||[]);
-    var totalGross=0,totalPcb=0,subjectPcb=0; emps.forEach(function(e){ var t=ann[e.id]; if(t){ totalGross+=t.gross; totalPcb+=t.pcb; if(t.pcb>0)subjectPcb++; } });
-    var newHires=emps.filter(function(e){ return e.join_date&&new Date(e.join_date).getFullYear()===year; }).length;
-    var ceased=emps.filter(function(e){ return e.resign_date&&new Date(e.resign_date).getFullYear()===year; }).length;
     var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
-    hrDrawFormE(doc,emp,{ total:emps.length, newHires:newHires, ceased:ceased, subjectPcb:subjectPcb, totalGross:totalGross, totalPcb:totalPcb },year);
+    hrDrawFormE(doc,emp,hrFormEStats(emps,ann,year),year);
     doc.save('FormE_YA'+year+'.pdf'); toast('Form E generated');
   });
 }
 function hrExpCp8d(fmt){
   var ann=HR_YE.annual||{}, emp=HR_YE.employer||{employer_no:''}, year=HR_YE.year;
-  var list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });
+  var list=hrYePaid(HR.data.employees||[],ann).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });
   if(!list.length){ toast('No paid employees for '+year,true); return; }
-  if(fmt==='txt'){
-    var eno=(String(emp.employer_no||'').replace(/\D/g,''))||'0000000000';
-    var lines=list.map(function(o){ var e=o.emp,t=o.tot; var ic=(String(e.ic||'').replace(/[\s-]/g,''))||'000000000000'; var children=e.numChildren||0;
-      return [ String(e.name||'').slice(0,60), e.taxNo?String(e.taxNo).replace(/\D/g,''):'', ic.slice(0,12), hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, children, hrIntNoSen(children*2000), hrIntNoSen(t.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ].join('|'); });   // v196: SOCSO field now includes LINDUNG 24
-    hrDownload('P'+eno+'_'+year+'.txt',lines.join('\r\n')+'\r\n'); toast('CP8D TXT generated');
-  } else {
-    var head=['No','Name','TIN','IC/Passport','Category','Status','End date','Tax borne','Children','Child relief','Gross remuneration','BIK','VOLA','ESOS','Exempt','TP1','Zakat (TP1)','EPF','Zakat (salary)','MTD','CP38','Medical ins.','SOCSO'];
-    var body=list.map(function(o,i){ var e=o.emp,t=o.tot; return [ i+1, e.name, e.taxNo||'', (String(e.ic||'').replace(/[\s-]/g,''))||'000000000000', hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, e.numChildren||0, hrIntNoSen((e.numChildren||0)*2000), hrIntNoSen(t.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ]; });   // v196: SOCSO field now includes LINDUNG 24
-    hrDownload('CP8D_YA'+year+'.csv',hrCsv([head].concat(body))); toast('CP8D CSV generated');
-  }
+  var out=hrCp8dFile(list, emp.employer_no, year, fmt);
+  hrDownload(out.name,out.text); toast(fmt==='txt'?'CP8D TXT generated':'CP8D CSV generated');
 }
 
 

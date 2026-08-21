@@ -91,6 +91,12 @@ export interface HrProfileProps {
   onSave: () => void;
   onSigStart: () => void;
   onSigClearSaved: () => void;
+  /** `SIG.open` — hros.html:3313. False in the golden (it is reset by every `hrNav()`). */
+  sigOpen?: boolean;
+  onSigSave?: () => void;
+  onSigWipe?: () => void;
+  onSigCancel?: () => void;
+  onSigUpload?: (input: HTMLInputElement) => void;
   onPwModal: () => void;
 }
 
@@ -228,7 +234,16 @@ export default function HrProfile(props: HrProfileProps) {
         <>
           <EmploymentCard emp={emp} companyName={companyName} />
           <DetailsForm emp={emp} banks={banks} onSave={onSave} />
-          <SigPanel emp={emp} onSigStart={onSigStart} onSigClearSaved={onSigClearSaved} />
+          <SigPanel
+            emp={emp}
+            sigOpen={props.sigOpen}
+            onSigStart={onSigStart}
+            onSigClearSaved={onSigClearSaved}
+            onSigSave={props.onSigSave}
+            onSigWipe={props.onSigWipe}
+            onSigCancel={props.onSigCancel}
+            onSigUpload={props.onSigUpload}
+          />
           <div className="panel" style={{ marginTop: '14px' }}>
             <div className="panel-hd"><h3>Security</h3></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
@@ -343,16 +358,27 @@ function DetailsForm({ emp, banks, onSave }: { emp: ProfileEmployee; banks: Bank
 /**
  * `hrSigPanel()` — hros.html:3312.
  *
- * The SAVED branch is not in the golden (the fixture employee has no signature) and the pad is not
- * either (`SIG.open` is false after every `hrNav()`), so neither is covered by the parity diff. Both are
- * mirrored from the legacy source anyway — dropping them would leave "Re-sign" and "Remove" wired to
- * nothing for anyone who has signed — and the test asserts the saved branch separately.
+ * NOT COVERED BY THE PARITY DIFF, and there are now three such branches here: the SAVED branch (the
+ * fixture employee has no signature), the PAD (`SIG.open` is false after every `hrNav()`), and the
+ * "Saved <date>" stamp. All three are mirrored from the legacy source and asserted separately in this
+ * screen's own test — dropping them would leave Re-sign, Remove and the pad's four controls wired to
+ * nothing for anyone who has ever signed.
  *
- * The pad itself is NOT migrated: `hrSigBind()` (hros.html:3327) is a canvas drawing surface driven by
- * mouse/touch listeners and `hrSigSave()` reads `toDataURL()` back off it. That is imperative device
- * code, not markup, and it has no golden. `onSigStart` hands off; the legacy screen keeps the pad.
+ * The pad is a DRAWING SURFACE: it has no markup worth diffing, and its correctness is entirely in what
+ * it captures and what it stores. That part is `sigTrimBox()` / `sigStoreRefusal()` / `sigUploadSize()`
+ * below — pure functions, pinned in the test — with the canvas listeners and `toDataURL()` in the route,
+ * which is where `hrSigBind()`'s (hros.html:3327) mouse and touch handlers belong.
  */
-function SigPanel({ emp, onSigStart, onSigClearSaved }: { emp: ProfileEmployee; onSigStart: () => void; onSigClearSaved: () => void }) {
+function SigPanel({ emp, sigOpen, onSigStart, onSigClearSaved, onSigSave, onSigWipe, onSigCancel, onSigUpload }: {
+  emp: ProfileEmployee;
+  sigOpen?: boolean;
+  onSigStart: () => void;
+  onSigClearSaved: () => void;
+  onSigSave?: () => void;
+  onSigWipe?: () => void;
+  onSigCancel?: () => void;
+  onSigUpload?: (input: HTMLInputElement) => void;
+}) {
   const cur = emp && emp.signature;
   return (
     <div className="panel" style={{ marginTop: '14px' }}>
@@ -371,8 +397,90 @@ function SigPanel({ emp, onSigStart, onSigClearSaved }: { emp: ProfileEmployee; 
           <button className="btn p xs" onClick={onSigStart}>✍️ Add my signature</button>
         </div>
       )}
+      {sigOpen ? (
+        <div style={{ marginTop: '12px' }}>
+          {/* The canvas keeps the legacy id AND the legacy pixel dimensions. Both are the contract: the
+              route binds by id, and `hrSigBind()`'s `pos()` maps a client coordinate onto the BACKING
+              store with `cv.width / rect.width`, so a canvas of a different intrinsic size draws the
+              stroke somewhere other than under the pointer. `touch-action:none` is what stops a finger
+              scrolling the page instead of signing. */}
+          <canvas id="sigpad" width={600} height={180} style={{ width: '100%', maxWidth: '600px', height: '180px', background: '#fff', border: '1px dashed var(--border)', borderRadius: '8px', touchAction: 'none', cursor: 'crosshair' }}></canvas>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <button className="btn p sm" onClick={onSigSave}>Save signature</button>
+            <button className="btn sm" onClick={onSigWipe}>Clear</button>
+            <button className="btn sm" onClick={onSigCancel}>Cancel</button>
+            <label className="btn sm" style={{ cursor: 'pointer', marginLeft: '4px' }}>📁 Upload image<input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => onSigUpload && onSigUpload(e.target)} /></label>
+            <span className="muted" style={{ fontSize: '11px' }}>Sign with your mouse, or your finger on a phone.</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+/* ───────────────────── the signature: what it captures and what it stores ───────────────────── */
+
+/** The largest data URI `hr_signature_save` is asked to store — hros.html:3348. */
+export const SIG_MAX_URI = 200000;
+
+/**
+ * `hrSigTrim()`'s bounding box — hros.html:3335.
+ *
+ * Given a canvas's RGBA bytes, the rectangle actually inked, grown by 6px of margin and clamped to the
+ * canvas. `null` when nothing was drawn, which is what makes "Draw your signature first" a refusal
+ * rather than a 600x180 blank being stored as somebody's signature.
+ *
+ * A pure function of the pixels, so the whole trim is testable without a canvas: the route does the
+ * `getImageData` and the `drawImage`, this decides where.
+ *
+ * The alpha threshold is >8, not >0: antialiasing leaves a haze of near-zero alpha, so a lower bar
+ * would return most of the canvas for a pad that is effectively empty.
+ */
+export function sigTrimBox(data: ArrayLike<number>, w: number, h: number): { x: number; y: number; w: number; h: number } | null {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 < 0) return null;
+  const pad = 6;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/**
+ * `hrSigUpload()`'s downscale — hros.html:3359. A photographed signature is usually several thousand
+ * pixels wide; 520 is the width the claim form prints at. Never scales UP.
+ */
+export function sigUploadSize(w: number, h: number): { w: number; h: number } {
+  const sc = Math.min(1, 520 / w);
+  return { w: Math.round(w * sc), h: Math.round(h * sc) };
+}
+
+/**
+ * The store refusals, with the legacy wording — hros.html:3348 and :3364. Returns the message, or
+ * `null` to go ahead.
+ *
+ * `kind` matters: a signature too big to store is the operator's own drawing ("sign a bit simpler") and
+ * an uploaded one is a file ("try a smaller picture").
+ */
+export function sigStoreRefusal(kind: 'draw' | 'upload', uriLength: number): string | null {
+  if (uriLength <= SIG_MAX_URI) return null;
+  return kind === 'draw'
+    ? 'Signature is too detailed — clear it and sign a bit simpler'
+    : 'Image too large — try a smaller or simpler picture';
+}
+
+/** `hrSigUpload()`'s file-size gate — hros.html:3354, checked BEFORE the image is decoded. */
+export function sigFileRefusal(bytes: number): string | null {
+  return bytes > 4 * 1024 * 1024 ? 'Image too large — pick one under 4 MB' : null;
 }
 
 /** `hrDT()` — hros.html:1246. Malaysia wall clock from a stored UTC instant, arithmetic not zone lookup,

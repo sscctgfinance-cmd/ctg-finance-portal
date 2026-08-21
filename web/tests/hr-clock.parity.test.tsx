@@ -141,3 +141,78 @@ describe('the comparison still bites', () => {
     expect(wrong({ acting: true })).not.toBe(want);
   });
 });
+
+/**
+ * CLOCK-IN REMINDERS — the one part of this screen no golden can hold.
+ *
+ * `hrPushCard()` (hros.html:3011) returns `''` unless `PUSH.supported`, and `PUSH.supported` reads
+ * `'serviceWorker' in navigator` — which the offline render harness has no navigator for. So the card is
+ * absent from `tests/golden/hr.clock.html` no matter what fixture is used, and these cases are its whole
+ * coverage. The stake is a person being paid: the reminder is what stops a part-timer forgetting to
+ * clock in, and a card that renders the wrong state (or silently renders nothing) fails quietly.
+ */
+describe('the clock-in reminders card', () => {
+  const full = (push: Parameters<typeof HrClock>[0]['push']) => renderToStaticMarkup(screen({ push }));
+  /**
+   * JUST the reminders panel. The screen's own closing tip already says "Add to Home Screen"
+   * (hros.html:2950), so a document-wide assertion for that phrase passes whatever the card renders —
+   * the same trap CLAUDE.md records for finance.cfo's 🔴. Slice the card out and assert against it.
+   */
+  const html = (push: Parameters<typeof HrClock>[0]['push']) => {
+    const doc = full(push);
+    const i = doc.indexOf('🔔 Clock-in reminders');
+    if (i < 0) return '';
+    const start = doc.lastIndexOf('<div class="panel"', i);
+    return doc.slice(start, doc.indexOf('<div class="muted" style="font-size:11.5px;margin-top:12px', i));
+  };
+
+  it('renders NOTHING on a browser that cannot do Web Push — which is why the golden has none', () => {
+    expect(full(null)).not.toContain('Clock-in reminders');
+    expect(html(null)).toBe('');
+    // …and the golden really is that state, so the parity diff above is not silently covering this.
+    expect(relax(GOLDEN)).not.toContain('Clock-in reminders');
+    expect(html({ on: false, busy: false, iosNeedsInstall: false })).toContain('Clock-in reminders');
+  });
+
+  it('offers Enable when off, and says so while it is enabling', () => {
+    const off = html({ on: false, busy: false, iosNeedsInstall: false });
+    expect(off).toContain('🔔 Enable clock-in reminders');
+    expect(off).not.toContain('disabled');
+    const busy = html({ on: false, busy: true, iosNeedsInstall: false });
+    expect(busy).toContain('Enabling…');
+    expect(busy).toContain('disabled');
+    // The permission prompt is a one-shot per browser: a second click while the first is in flight is
+    // how a subscription gets created twice and the "on" state disagrees with the server.
+  });
+
+  it('shows the iPhone instruction INSTEAD of a button that Safari would refuse', () => {
+    const ios = html({ on: false, busy: false, iosNeedsInstall: true });
+    expect(ios).toContain('Add to Home Screen');
+    expect(ios).not.toContain('Enable clock-in reminders');
+  });
+
+  it('an ALREADY-SUBSCRIBED device offers Turn off, never Enable again', () => {
+    const on = html({ on: true, busy: false, iosNeedsInstall: true });
+    expect(on).toContain('🔔 On for this device');
+    expect(on).toContain('Send test');
+    expect(on).toContain('Turn off');
+    // `on` beats `iosNeedsInstall`, exactly as hros.html:3014's if/else-if order does: an iPhone that
+    // subscribed from the home-screen app and is now being viewed in Safari must still be able to turn
+    // it OFF, not be shown the install instructions for something it already has.
+    expect(on).not.toContain('Add to Home Screen');
+  });
+
+  it('the three buttons are distinct handlers — they take no arguments to tell them apart', () => {
+    const calls: string[] = [];
+    const tree = screen({
+      push: { on: true, busy: false, iosNeedsInstall: false },
+      onPushTest: () => calls.push('test'),
+      onPushDisable: () => calls.push('disable'),
+      onPushEnable: () => calls.push('enable'),
+    });
+    reactHandlers(tree).forEach((h) => h.invoke());
+    // Send test then Turn off, in the legacy's order. `enable` must not appear: wiring Turn off to
+    // Enable is invisible in the markup and re-prompts instead of unsubscribing.
+    expect(calls).toEqual(['test', 'disable']);
+  });
+});

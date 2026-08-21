@@ -19,7 +19,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
-import HrProfile, { profileBody, PROFILE_KEYS, type Bank, type ProfileEmployee } from '../src/hr-profile';
+import HrProfile, {
+  profileBody, PROFILE_KEYS, SIG_MAX_URI, sigFileRefusal, sigStoreRefusal, sigTrimBox, sigUploadSize,
+  type Bank, type ProfileEmployee,
+} from '../src/hr-profile';
 import { goldenSection, relax, REPO } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
 
@@ -380,5 +383,81 @@ describe('the comparison still bites', () => {
     got.forEach((h) => h.invoke());
     const expected = goldenHandlers(GOLDEN).map((h) => LEGACY_TO_PROP[h.raw.replace(/\(.*$/, '')]);
     expect(calls).not.toEqual(expected);
+  });
+});
+
+/**
+ * THE SIGNATURE PAD — a drawing surface, so there is no markup worth diffing and the correctness is in
+ * what it CAPTURES and what it STORES.
+ *
+ * `SIG.open` is false after every `hrNav()` (hros.html:3313), so the pad appears in no golden at all;
+ * these cases are the whole of its coverage. What is at stake is a document: the signature is stamped
+ * above "Prepared by" on the reimbursement claim form the employee submits, so a blank one, a
+ * mis-cropped one, or one that silently failed to store is a defect nothing downstream would catch.
+ */
+describe('the signature pad', () => {
+  /** A canvas's RGBA bytes with `on` pixels inked opaque. */
+  const pixels = (w: number, h: number, on: [number, number][], alpha = 255) => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (const [x, y] of on) d[(y * w + x) * 4 + 3] = alpha;
+    return d;
+  };
+
+  it('renders nothing at all until the pad is opened — which is why no golden holds it', () => {
+    expect(renderToStaticMarkup(screen())).not.toContain('id="sigpad"');
+    expect(renderToStaticMarkup(screen({ sigOpen: true }))).toContain('id="sigpad"');
+  });
+
+  it('keeps the canvas ids and the intrinsic size the coordinate maths depends on', () => {
+    // `hrSigBind()`'s pos() scales a client coordinate by `cv.width / rect.width`. The element is laid
+    // out at the panel's width; the BACKING store must stay 600x180 or the ink lands away from the
+    // pointer, which looks like a broken pen rather than a wrong number.
+    const html = renderToStaticMarkup(screen({ sigOpen: true }));
+    expect(html).toContain('width="600"');
+    expect(html).toContain('height="180"');
+    expect(html).toContain('touch-action:none');
+    // The four controls hros.html:3307-3313 gives the pad, all present.
+    for (const label of ['Save signature', 'Clear', 'Cancel', '📁 Upload image']) expect(html).toContain(label);
+    expect(html).toContain('accept="image/*"');
+  });
+
+  it('an untouched pad has NO bounding box — a blank signature is a refusal, not a document', () => {
+    expect(sigTrimBox(pixels(60, 30, []), 60, 30)).toBeNull();
+    // …and the antialiasing haze around nothing does not count as ink either.
+    expect(sigTrimBox(pixels(60, 30, [[10, 10]], 8), 60, 30)).toBeNull();
+    expect(sigTrimBox(pixels(60, 30, [[10, 10]], 9), 60, 30)).not.toBeNull();
+  });
+
+  it('the trim keeps every inked pixel, plus the 6px margin the form prints against', () => {
+    // The box must CONTAIN the ink. A box that clipped it would crop the tail off a signature, and the
+    // cropped form still prints and still gets filed.
+    const box = sigTrimBox(pixels(600, 180, [[100, 50], [140, 90]]), 600, 180)!;
+    expect(box).toEqual({ x: 94, y: 44, w: 53, h: 53 });
+    expect(box.x).toBeLessThanOrEqual(100);
+    expect(box.x + box.w).toBeGreaterThan(140);
+    expect(box.y + box.h).toBeGreaterThan(90);
+  });
+
+  it('the margin is clamped to the canvas — a stroke against the edge is not cropped', () => {
+    const box = sigTrimBox(pixels(20, 10, [[0, 0], [19, 9]]), 20, 10)!;
+    expect(box).toEqual({ x: 0, y: 0, w: 20, h: 10 });
+  });
+
+  it('an uploaded image is scaled DOWN to the print width and never up', () => {
+    expect(sigUploadSize(2080, 1040)).toEqual({ w: 520, h: 260 });
+    expect(sigUploadSize(300, 100)).toEqual({ w: 300, h: 100 });
+    // A wide, short photograph keeps its aspect ratio — a squashed signature is not the person's.
+    expect(sigUploadSize(1040, 130)).toEqual({ w: 520, h: 65 });
+  });
+
+  it('refuses to store more than the column holds, and says which thing to fix', () => {
+    expect(sigStoreRefusal('draw', SIG_MAX_URI)).toBeNull();
+    expect(sigStoreRefusal('draw', SIG_MAX_URI + 1)).toBe('Signature is too detailed — clear it and sign a bit simpler');
+    expect(sigStoreRefusal('upload', SIG_MAX_URI + 1)).toBe('Image too large — try a smaller or simpler picture');
+  });
+
+  it('refuses an oversized FILE before decoding it', () => {
+    expect(sigFileRefusal(4 * 1024 * 1024)).toBeNull();
+    expect(sigFileRefusal(4 * 1024 * 1024 + 1)).toBe('Image too large — pick one under 4 MB');
   });
 });

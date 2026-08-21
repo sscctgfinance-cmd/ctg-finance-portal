@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
 import HrCalculator, {
-  CALC_INITIAL, calcCompute,
+  CALC_INITIAL, calcCompute, calcPayslipDoc,
   type CalcEmployee, type CalcRates, type CalcState,
 } from '../src/hr-calculator';
 import { goldenSection, relax } from './parity';
@@ -302,5 +302,90 @@ describe('dedupeAttrs cannot hide a real change', () => {
 
   it('is load-bearing: the golden really does carry duplicate style attributes', () => {
     expect(relax(GOLDEN)).not.toBe(sameDocument(GOLDEN));
+  });
+});
+
+/**
+ * THE PAYSLIP THE CALCULATOR EXPORTS — no golden sees a PDF.
+ *
+ * `hrCalcPayslip()` (hros.html:4890) hands `hrDrawPayslip()` four objects built from the calculator's
+ * own state. The parity diff above proves the 📄 Payslip button exists and is wired; it says nothing
+ * about what is on the page. `calcPayslipDoc()` is that mapping as a pure function of a Date it is
+ * HANDED — hr.yearend's rule, because the legacy one stamps the document with the month it is RUN in —
+ * and these are the cases that fail if it drifts. The drawing itself is hr-docs.js's and is not
+ * re-expressed on this side at all.
+ */
+describe('the payslip the calculator exports', () => {
+  const EMP: CalcEmployee = { id: 'e9', emp_no: 'T009', name: 'TEST NINE', ic_no: '961008-02-6006', position: 'Pharmacist', dept: 'Retail' };
+  const STATE_WITH = {
+    ...STATE,
+    empId: 'e9',
+    inp: { ...STATE.inp, basic: '3500', allowance: '200', claim: '150', bonus: '1000', deduction: '80' },
+  } as CalcState;
+  const NOW = new Date('2026-08-18T09:30:00.000Z');
+  const res = () => calcCompute(STATE_WITH, BOOT.rates)!;
+
+  it('prints the SELECTED employee, not the ad-hoc placeholder', () => {
+    const d = calcPayslipDoc(STATE_WITH, res(), EMP, NOW);
+    expect(d.e).toMatchObject({ empNo: 'T009', name: 'TEST NINE', ic: '961008-02-6006', position: 'Pharmacist', dept: 'Retail' });
+    expect(d.fileName).toBe('Payroll_Calc_T009.pdf');
+  });
+
+  it('an ad-hoc calculation is labelled as one and never carries a stale employee', () => {
+    const d = calcPayslipDoc(STATE_WITH, res(), null, NOW);
+    expect(d.e).toMatchObject({ empNo: 'CALC', name: 'Payroll Calculation', ic: '', position: '', dept: '' });
+    expect(d.fileName).toBe('Payroll_Calc_adhoc.pdf');
+  });
+
+  it('the printed deductions explain the printed net — the invariant a payslip has to hold', () => {
+    // tests/lindung_reporting_test.ts is the Deno half of this: a money component that reaches net pay
+    // must reach the document. Here the risk is the OPPOSITE direction — `gross` is `res.gross +
+    // res.claim` because the engine leaves a reimbursed claim out of gross, and dropping that `+ claim`
+    // prints a gross the deductions no longer reconcile to.
+    const r = res();
+    const d = calcPayslipDoc(STATE_WITH, r, EMP, NOW);
+    const gross = d.p.gross as number;
+    const listed = r.epfEe + r.socsoEe + r.lindung + r.eisEe + r.pcb + r.deduction;
+    // `net` already carries the claim back in (hr-calculator.tsx's `+ claim`), so the payslip's gross
+    // minus its printed deductions IS the net — plus zakat, which reduces MTD and is then deducted
+    // again from net rather than being one of the lines above.
+    expect(Math.round((gross - listed) * 100) / 100).toBe(Math.round((r.net + r.zakat) * 100) / 100);
+    // Guard the guard: the fixture really does carry a claim, so `+ res.claim` is load-bearing here.
+    expect(r.claim).toBeGreaterThan(0);
+    expect(gross).not.toBe(r.gross);
+  });
+
+  it('the claim is paid as an allowance and the calculator allowance is the header figure', () => {
+    // Two different fields with confusable names, mirrored from hros.html:4896-4897. Swapping them
+    // moves RM150 of reimbursement into the fixed-salary header and RM200 of salary into the payslip's
+    // allowance line — the totals still add up, so nothing on screen looks wrong.
+    const d = calcPayslipDoc(STATE_WITH, res(), EMP, NOW);
+    expect(d.e.allowance).toBe(200);
+    expect(d.d.allowance).toBe(150);
+    expect(d.d.bonus).toBe(1000);
+    expect(d.d.deductions).toEqual([{ label: 'Deduction', amount: 80 }]);
+  });
+
+  it('a zero deduction is NO deduction line, not a line reading zero', () => {
+    const zero = { ...STATE_WITH, inp: { ...STATE_WITH.inp, deduction: '' } } as CalcState;
+    expect(calcPayslipDoc(zero, calcCompute(zero, BOOT.rates)!, EMP, NOW).d.deductions).toEqual([]);
+  });
+
+  it('the period is the month the payslip is RUN in, and it is a parameter', () => {
+    expect(calcPayslipDoc(STATE_WITH, res(), EMP, NOW).period).toEqual({ month: 8, year: 2026, label: 'August 2026' });
+    expect(calcPayslipDoc(STATE_WITH, res(), EMP, new Date('2025-01-09T12:00:00.000Z')).period)
+      .toEqual({ month: 1, year: 2025, label: 'January 2025' });
+  });
+
+  it('the statutory meta the drawer prints is the engine’s own, not re-derived', () => {
+    const r = res();
+    const meta = (calcPayslipDoc(STATE_WITH, r, EMP, NOW).p as { _meta: Record<string, unknown> })._meta;
+    expect(meta.epfEeRate).toBe(r._eeRate);
+    expect(meta.epfErRate).toBe(r._erRate);
+    expect(meta.socsoCat).toBe(r._scat);
+    // hros.html:4896 — a non-resident is PCB category 0, everyone else 1.
+    expect(meta.pcbCat).toBe(1);
+    const nonRes = { ...STATE_WITH, settings: { ...STATE_WITH.settings, resident: false } } as CalcState;
+    expect((calcPayslipDoc(nonRes, calcCompute(nonRes, BOOT.rates)!, EMP, NOW).p as { _meta: { pcbCat: number } })._meta.pcbCat).toBe(0);
   });
 });

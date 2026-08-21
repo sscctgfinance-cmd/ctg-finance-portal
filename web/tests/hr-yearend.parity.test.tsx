@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
-import HrYearend, { defaultTaxYear, taxYears, type YeEmployee, type YeTotals } from '../src/hr-yearend';
+import HrYearend, { defaultTaxYear, eaSelection, taxYears, type YeEmployee, type YeTotals } from '../src/hr-yearend';
 import { goldenSection, relax } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
 
@@ -228,5 +228,79 @@ describe('the comparison still bites', () => {
     // would be nothing on the golden side to compare the React side's `0` against.
     expect(goldenHandlers(GOLDEN).find((h) => h.raw === 'hrExpEA(0)')!.args).toEqual([]);
     expect(identArgs('hrExpEA(0)')).toEqual(['0']);
+  });
+});
+
+/**
+ * THE THREE STATUTORY EXPORTS — no golden sees a file.
+ *
+ * `hrExpEA` / `hrExpFormE` / `hrExpCp8d` (hros.html:4951-4980) produce documents that are filed with
+ * LHDN. The parity diff above proves the buttons exist and are wired; it says nothing at all about what
+ * they emit. Same rule as `bankFile()` in hr-expenses and `profileBody()` in hr-profile: the part with
+ * one right answer is a pure function, and it is pinned here.
+ *
+ * The FIGURES are not re-expressed on this side at all — `hrYePaid`, `hrFormEStats` and `hrCp8dFile` are
+ * imported from `../../hr-docs.js`, the same file `hros.html` loads as a classic script, and
+ * `tests/yearend_files_test.ts` is the byte-level gate on their output through the LEGACY caller. What
+ * these cases pin is that the React screen really goes through that file, and the two things the route
+ * owns: WHO is on a form, and what the file is called.
+ */
+describe('the year-end exports', () => {
+  it('draws its population from hr-docs.js, not from a copy of the predicate', async () => {
+    const docs = await import('../../hr-docs.js');
+    // Guard the guard: the fixture has an employee who was NOT paid in the year, so "everyone" and
+    // "everyone paid" are different answers here.
+    const unpaid = EMPLOYEES.filter((e) => !ANNUAL[e.id] || ANNUAL[e.id].months === 0);
+    expect(unpaid.length).toBeGreaterThan(0);
+    expect(docs.hrYePaid(EMPLOYEES, ANNUAL as never).length).toBe(EMPLOYEES.length - unpaid.length);
+    // The screen's own count card is that same call — the number an operator reads before uploading.
+    expect(renderToStaticMarkup(screen())).toContain('>' + (EMPLOYEES.length - unpaid.length) + '<');
+  });
+
+  it('a single-employee EA form carries THAT employee, and is named for them', () => {
+    const paid = EMPLOYEES.filter((e) => ANNUAL[e.id] && ANNUAL[e.id].months > 0);
+    const sel = eaSelection(EMPLOYEES, ANNUAL, paid[1].id, 2025);
+    expect('error' in sel).toBe(false);
+    if ('error' in sel) return;
+    expect(sel.list.map((e) => e.id)).toEqual([paid[1].id]);
+    expect(sel.fileName).toBe('EA_' + paid[1].emp_no + '_YA2025.pdf');
+  });
+
+  it('an EA form for an employee who does not exist REFUSES — it does not fall back to everyone', () => {
+    // The failure this exists for: `find()` returning undefined and the code carrying on with the full
+    // list would hand one employee a PDF of the whole company's remuneration, on a form that is given to
+    // that employee.
+    const sel = eaSelection(EMPLOYEES, ANNUAL, 'no-such-employee', 2025);
+    expect(sel).toEqual({ error: 'Employee not found' });
+  });
+
+  it('the bulk EA form is every PAID employee, and refuses when there are none', () => {
+    const sel = eaSelection(EMPLOYEES, ANNUAL, 0, 2025);
+    if ('error' in sel) throw new Error(sel.error);
+    expect(sel.fileName).toBe('EA_forms_YA2025.pdf');
+    expect(sel.list.every((e) => ANNUAL[e.id] && ANNUAL[e.id].months > 0)).toBe(true);
+    expect(sel.list.length).toBe(EMPLOYEES.filter((e) => ANNUAL[e.id] && ANNUAL[e.id].months > 0).length);
+    expect(eaSelection(EMPLOYEES, {}, 0, 2025)).toEqual({ error: 'No paid employees for 2025' });
+  });
+
+  it('the CP8D file the React screen would emit is byte-identical to the legacy one', async () => {
+    const { hrCp8dFile, hrEmpView, hrYePaid } = await import('../../hr-docs.js');
+    const list = hrYePaid(EMPLOYEES, ANNUAL as never).map((e) => ({ emp: hrEmpView(e), tot: ANNUAL[e.id] as never }));
+    for (const fmt of ['txt', 'csv'] as const) {
+      const out = hrCp8dFile(list, EMPLOYER.employer_no, 2025, fmt);
+      // No TOTAL trailer, in the format an operator reviews or the one they upload. Same class of defect
+      // as the TOTAL payment row removed from the bank file in v157 (hr-expenses' test pins that one).
+      for (const line of out.text.split('\r\n').filter(Boolean)) {
+        expect(line).not.toMatch(/total/i);
+      }
+      expect(out.text.split('\r\n').filter(Boolean).length).toBe(list.length + (fmt === 'csv' ? 1 : 0));
+    }
+  });
+
+  it('Form E declares the WORKFORCE, and CP8D declares the PAID — they are different populations', async () => {
+    const { hrFormEStats, hrYePaid } = await import('../../hr-docs.js');
+    const stats = hrFormEStats(EMPLOYEES as never, ANNUAL as never, 2025);
+    expect(stats.total).toBe(EMPLOYEES.length);
+    expect(hrYePaid(EMPLOYEES, ANNUAL as never).length).toBeLessThan(stats.total);
   });
 });

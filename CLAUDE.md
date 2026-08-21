@@ -84,7 +84,7 @@ now lives in classic scripts loaded before each file's inline `<script>`:
 |---|---|---|
 | `common.js` | the ~20 top-level helpers (PR #28) and `DocScanner`, the camera → edge-detect → PDF pipeline (v212) | both |
 | `payroll.js` | the Malaysian statutory engine — EPF, SOCSO, EIS, LINDUNG 24, PCB, and the gazetted tables (v213) | `hros.html` |
-| `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/CP8D/bank) and the payslip / EA / Form E jsPDF drawers (v213) | `hros.html` |
+| `hr-docs.js` | the statutory FILE layouts (KWSP/ASSIST/CP39/bank) and the payslip / EA / Form E jsPDF drawers (v213), plus the year-end FIGURES — `hrYePaid`, `hrFormEStats` and the whole CP8D file (v222) | `hros.html` |
 | `wht.js` | the withholding-tax computation — s.109/s.109B, gross vs net basis, the s.26A service tax and the s.109(2) increase, plus the charging-section table (v215) | `app.html` |
 | `o2o.js` | the O2O pharmacy-billing computation — the SKU/Package grouping, the date guard, the 19.2% commission and its master-record override, and the invoice numbering (v217) | `app.html` |
 | `salesrecon.js` | the Sales Reconciliation computation — the content-based column/SO/date recognition, the four passes (order lookup → lines → YRDZ numbering → SO suffixing → tally), the Xero CSV and the post body (v219) | `app.html` |
@@ -379,6 +379,63 @@ employee from the token (`hr.ts:1362`) and the request carries no id, so the pro
 assert no key is or contains one. `web/tests/hr-profile.parity.test.tsx` also pins the v159 rule that
 lives half in each half: an ABSENT `bankCode` means "unchanged", an empty one means "clear it", and the
 form paints before `hr_banks_list` resolves.
+
+### The exports and the drawing surfaces — v222, the gap after all 36 screens
+
+Every screen was migrated before any of the **files** was. These five are what closed that gap on the HR
+side; the payroll statutory-file builders (`hrExpBank` / `hrExpKwsp` / `hrExpAssist` / `hrExpCp39` /
+`hrExpSummary` / `hrExpPayslips`) are the seam still open, and `web/app/hr/payroll/page.tsx` still hands
+them off. **`HR.submitPack`'s tracker takes the pack as a PROP**, so whoever ports those builders wires
+one prop and the panel appears.
+
+**The year-end statutory figures are LIFTED, and the question that decided it is not "does the server
+re-derive this?".** `hrDrawEA` and `hrDrawFormE` were already in `hr-docs.js`, so the two PDFs could not
+fork — but the numbers they are drawn FROM, and the whole of CP8D, were assembled inside hros.html's
+export buttons. Nothing about a filed figure is re-derived anywhere: a second copy is a filing that
+eventually disagrees with itself, and it disagrees with LHDN's copy, not with a screen. So `hrYePaid`,
+`hrFormEStats`, `hrCp8dFile` and `HR_EA_ZERO` moved into `hr-docs.js` (declared in `hr-docs.d.ts`,
+imported by `web/src/hr-yearend.tsx` and its route); hros.html keeps choosing the employee, loading
+jsPDF, saving the file and the toast. `tests/yearend_files_test.ts` is the gate and runs through the
+LEGACY caller, so it fails wherever the defect is introduced.
+
+**A CP8D file must not end with a total row, and this is the SECOND time that trap has been found here.**
+The first was v157's TOTAL trailer in the bank payment file (hros.html:1849) — a payment row, payee
+"TOTAL", for the whole batch. CP8D is one record per employee and a trailing total is read by the
+uploader as one more employee. Check every file your change produces for the equivalent, and note the
+CP8D-specific half: the CSV an operator REVIEWS and the TXT that is UPLOADED must carry the same values,
+because a review copy that can disagree with the file proves nothing. Both are asserted.
+
+**Two zone-dependent derivations on a statutory form are pinned by their SOURCE, mirrored not fixed.**
+`hrFormEStats` reads `new Date(e.join_date).getFullYear()` and `hrFmtDMY` reads `getDate()/getMonth()`
+off a `new Date('YYYY-MM-DD')` — midnight UTC through a LOCAL getter. At UTC+8 (this machine and CI)
+every output assertion passes either way; west of Greenwich a 1 January hire drops out of Form E's
+`newHires` and a cessation date is declared as the previous day. `finance.calendar`'s finding, on the HR
+side, and the same treatment: the source is pinned so a change is deliberate, and changing a declared
+figure is a decision, not a migration detail.
+
+**A DRAWING SURFACE has no markup to diff, so its contract is what it captures and what it stores.**
+`hrSigBind()` (hros.html:3327) is now `web/app/hr/profile/page.tsx`'s canvas effect, and the parts that
+are not device code are pure functions in `web/src/hr-profile.tsx` — `sigTrimBox()` (the ink bounding box
+plus its 6px margin, `null` for a pad nobody drew on), `sigUploadSize()`, `sigStoreRefusal()`,
+`sigFileRefusal()`. The alpha threshold is `> 8`, not `> 0`: antialiasing leaves a haze, and a lower bar
+turns an untouched pad into somebody's signature on a claim form. Split a drawing surface the same way.
+
+**Web Push registers the SAME `sw.js`, by `legacyUrl()`.** `navigator.serviceWorker.register('sw.js')`
+from `/hr/clock/` resolves to `/hr/clock/sw.js` and 404s; `legacyUrl('sw.js')` gives the root scope both
+apps already share, so a device subscribed on either is subscribed on both and neither file changed. A
+notification still opens the LEGACY screen — that is what `sw.js` navigates to, and it is not ours to
+change. **The open question is iOS**: `hrPushCard()`'s iPhone branch says "Add to Home Screen", and the
+React routes link no `manifest.json`, so that instruction is honest only for the legacy app. Enabling
+push from React on an iPhone is the installable-app decision, deliberately not pre-empted here.
+
+**Three regions of these screens exist in no golden and never can.** `hrPushCard()` returns `''` unless
+`PUSH.supported`, which reads `'serviceWorker' in navigator` — the offline harness has no navigator, so
+no fixture can reach it. `hrTp1Panel()` and `HR.submitPack` are both reset by navigation
+(hros.html:3843, :4375). All three are mirrored from the legacy source and asserted in their screens'
+own tests; none needed a seventh relaxation, and `web/tests/parity.ts` and `web/tests/handlers.ts` were
+again untouched. Note while you are there that `hrTp1Panel()` writes a category label with a bare `&`
+(hros.html:3889, `Medical & education insurance`) — hr-payslip's `decodeTextAmp` finding, in a place no
+golden can see it.
 
 ### Finance OS screens are NOT HR screens — `finance.wht` is the pilot for the other 21
 

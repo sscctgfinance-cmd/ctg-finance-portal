@@ -14,8 +14,8 @@ import { describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
 import HrPayroll, {
-  dueInfo, gridAll, gridInit, gridState,
-  type GridRow, type HubKey, type PayData, type PayEmployee,
+  HR_TP1_CATS, dueInfo, gridAll, gridInit, gridState, tp1Body,
+  type GridRow, type HubKey, type PayData, type PayEmployee, type Tp1Line, type Tp1State,
 } from '../src/hr-payroll';
 import { goldenSection, relax } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
@@ -165,7 +165,8 @@ describe('HR Payroll — React vs the legacy golden', () => {
  * It also compares the FUNCTION each handler stands for, derived from the golden's own text through
  * LEGACY_TO_PROP, because four of this screen's buttons (⚙️ Rates, 🏢 Company, 🆔 Statutory numbers,
  * 🧾 TP1) carry no arguments at all — argument parity alone cannot tell them apart, and the Company
- * button opening the rates editor would pass. That is a strict widening of ./tests/handlers.ts's
+ * button opening the rates editor would pass. Since v222 that also catches 🧾 TP1 reverting to the
+ * legacy handoff: it maps to the real opener, not to `legacy:tp1`. That is a strict widening of ./tests/handlers.ts's
  * default, and it lives here rather than there because handlers.ts is shared with sibling migrations.
  *
  * Inline rather than in ./tests/handlers.ts for the same reason: that file exports exactly the two
@@ -176,7 +177,7 @@ const LEGACY_TO_PROP: Record<string, string> = {
   hrEmployerToggle: 'legacy:employer',
   hrRatesToggle: 'legacy:rates',
   hrStatIdsOpen: 'legacy:statids',
-  hrTp1Open: 'legacy:tp1',
+  hrTp1Open: 'tp1Open',   // v222: the TP1 panel is migrated, so this is no longer a legacy handoff
   hrGridSave: 'gridSave',
   hrFinalise: 'finalise',
   hrGRowMenu: 'rowMenu',
@@ -217,6 +218,7 @@ function assertHandlerParity(over: Partial<Props> = {}) {
     onDedOpen: record('dedOpen') as never,
     onPcbCell: record('pcbCell') as never,
     onPcbAuto: record('pcbAuto') as never,
+    onTp1Open: record('tp1Open') as never,
     onSubmitAll: record('submitAll') as never,
     onUobSave: record('uobSave') as never,
     onExpBank: record('expBank') as never,
@@ -431,5 +433,129 @@ describe('decodeNamedRefs cannot hide a real change', () => {
 
   it('is load-bearing: the golden really does carry named references', () => {
     expect(relax(GOLDEN)).not.toBe(sameDocument(GOLDEN));
+  });
+});
+
+/**
+ * 🧾 TP1 RELIEFS and the SUBMISSION-PACK TRACKER — the two regions of this screen no golden reaches.
+ *
+ * `hrTp1Panel()` returns `''` unless `HR_TP1.open` (hros.html:3879), and `HR.submitPack` is null until
+ * Submit all has built the ZIP and is reset by every period change (hros.html:4375). Neither can appear
+ * in a captured surface, so these cases are their whole coverage — and both matter beyond markup: a TP1
+ * line changes what LHDN is paid for that person every month from its effective month, and the tracker
+ * is what an operator reads to decide which files they still have to upload.
+ */
+describe('the TP1 relief panel', () => {
+  const TP1 = {
+    year: 2026,
+    empId: null as string | null,
+    lines: [] as Tp1Line[],
+    effMonth: 1,
+    note: '',
+    employees: DATA.employees || [],
+  };
+  const html = (over: Partial<Tp1State> = {}) => renderToStaticMarkup(screen({ tp1: { ...TP1, ...over } }));
+
+  it('is closed by default — which is why no golden holds it', () => {
+    expect(renderToStaticMarkup(screen())).not.toContain('TP1 relief declarations');
+    expect(html()).toContain('TP1 relief declarations -- 2026');
+  });
+
+  it('shows the picker and NOTHING else until an employee is chosen', () => {
+    const shut = html();
+    expect(shut).toContain('-- pick an employee --');
+    expect(shut).not.toContain('+ Add relief');
+    expect(shut).not.toContain('Save TP1');
+    // Guard the guard: the fixture really does have employees to pick.
+    expect(TP1.employees.length).toBeGreaterThan(0);
+    expect(shut).toContain(String(TP1.employees[0].name));
+  });
+
+  it('offers every LHDN relief category, not a shortened list', () => {
+    const open = html({ empId: TP1.employees[0].id, lines: [{ category: 'lifestyle', amount: 0, note: '' }] });
+    // `&` is compared in its escaped form: hros.html:3889 interpolates the label without esc(), so the
+    // legacy emits a bare `&` and React always emits `&amp;`. No golden covers this panel, so that is a
+    // note rather than a relaxation — the same finding hr-payslip's decodeTextAmp exists for.
+    for (const [, label] of HR_TP1_CATS) expect(open).toContain(label.replace('&', '&amp;'));
+    expect(HR_TP1_CATS.length).toBe(12);
+  });
+
+  it('the total is the sum of the declared lines', () => {
+    const open = html({
+      empId: TP1.employees[0].id,
+      lines: [{ category: 'lifestyle', amount: 2500, note: '' }, { category: 'sspn', amount: 800.5, note: 'ref' }],
+    });
+    expect(open).toContain('<b id="tp1_total">RM 3,300.50</b>');
+  });
+
+  it('the POST drops a zero line — an unfilled row is not a declaration of RM0', () => {
+    const body = tp1Body({ ...TP1, empId: 'e1', lines: [
+      { category: 'lifestyle', amount: 2500, note: 'receipt' },
+      { category: 'medical', amount: 0, note: '' },
+      { category: 'sspn', amount: -5, note: '' },
+    ] }) as Record<string, unknown>;
+    expect(body.items).toEqual([{ category: 'lifestyle', amount: 2500, note: 'receipt' }]);
+    expect(body).toMatchObject({ api: 'hr_tp1_save', employee_id: 'e1', year: 2026, effective_month: 1 });
+  });
+
+  it('the POST names the employee and NOTHING that could aim it at another company', () => {
+    const body = tp1Body({ ...TP1, empId: 'e1', lines: [{ category: 'lifestyle', amount: 1, note: '' }] }) as Record<string, unknown>;
+    for (const k of Object.keys(body)) expect(k).not.toMatch(/tenant|company|org/i);
+  });
+
+  it('refuses to post with no employee picked', () => {
+    expect(tp1Body({ ...TP1, empId: null })).toEqual({ error: 'Pick an employee first' });
+  });
+
+  it('the effective month is what the panel shows, and it is sent as a number', () => {
+    const open = html({ empId: TP1.employees[0].id, effMonth: 7, lines: [{ category: 'lifestyle', amount: 1, note: '' }] });
+    expect(open).toContain('<option value="7" selected="">July</option>');
+    expect((tp1Body({ ...TP1, empId: 'e1', effMonth: 7, lines: [{ category: 'lifestyle', amount: 1, note: '' }] }) as Record<string, unknown>).effective_month).toBe(7);
+  });
+});
+
+describe('the submission-pack tracker', () => {
+  const PACK = {
+    per: 'July 2026',
+    items: [
+      { key: 'salary' as HubKey, label: 'Salaries (UOB Infinity)', file: { name: 'CTG_UOB_July2026.csv', count: 3, total: 9450.25 } },
+      { key: 'pcb' as HubKey, label: 'PCB — LHDN CP39', file: { name: 'CTG_CP39_July2026.txt', count: 2, total: 161.35 } },
+    ],
+  };
+  const html = () => renderToStaticMarkup(screen({ submitPack: PACK }));
+
+  it('is absent until Submit all has run — which is why no golden holds it', () => {
+    expect(renderToStaticMarkup(screen())).not.toContain('Submission pack generated');
+    expect(html()).toContain('✓ Submission pack generated — July 2026 (2 files in the ZIP)');
+  });
+
+  it('counts the files that were BUILT, not the four it tried', () => {
+    // v157 (hros.html:4664): a generator that blocks returns `{error}` and is excluded from `items`, and
+    // the pack used to say "✓ generated" while shipping three of four — the salary file the likeliest
+    // to vanish. The heading must be items.length, so a short pack reads as short.
+    expect(html()).toContain('(2 files in the ZIP)');
+    expect(html()).not.toContain('(4 files in the ZIP)');
+  });
+
+  it('names each file and points at the portal it is uploaded to', () => {
+    const out = html();
+    expect(out).toContain('CTG_UOB_July2026.csv');
+    expect(out).toContain('CTG_CP39_July2026.txt');
+    expect(out).toContain('3 staff · RM 9,450.25');
+    expect(out).toContain('Upload Bulk Files');
+    expect(out).toContain('e-PCB / e-Data PCB');
+    // Wrong destination = an operator uploading a bank file to LHDN. The salary row must not carry the
+    // PCB path, and vice versa.
+    const salaryRow = out.slice(out.indexOf('CTG_UOB_July2026.csv'), out.indexOf('CTG_CP39_July2026.txt'));
+    expect(salaryRow).toContain('UOB Infinity');
+    expect(salaryRow).not.toContain('e-PCB');
+  });
+
+  it('each row carries ITS OWN checklist tick', () => {
+    const calls: string[] = [];
+    const tree = screen({ submitPack: PACK, onHubTick: ((k: string) => calls.push(k)) as never });
+    reactHandlers(tree).forEach((h) => h.invoke());
+    // The pack's two ticks come first (the tracker is above the hub sections), then the hub's own five.
+    expect(calls.slice(0, 2)).toEqual(['salary', 'pcb']);
   });
 });

@@ -7,17 +7,24 @@
 //   app/<area>/<screen>/page.tsx   'use client', loads, holds state, wires handlers   — not golden-tested
 //   src/<screen>.tsx              pure, props in / markup out                         — golden-tested
 //
-// TWO handlers hand off to the legacy screen rather than being re-implemented, and both are shell or
-// device work rather than screen work:
-//   • `hrSigStart()` (hros.html:3326) opens a <canvas> and binds mouse/touch listeners to draw on it.
-//     Imperative device code, no golden, and `hrSigSave()` reads `toDataURL()` back off the canvas.
-//   • `hrPwModal()` (hros.html:1316) is the app shell's modal, which `web/` does not have yet
-//     (report.md §3.5 — re-implement the chrome once in the Next shell, not per screen).
-// Handing off is honest: the legacy screen is still the one staff use and it does both properly.
+// ONE handler still hands off, and it is shell work rather than screen work: `hrPwModal()`
+// (hros.html:1316) is the app shell's modal, which `web/` does not have yet (report.md §3.5 —
+// re-implement the chrome once in the Next shell, not per screen).
+//
+// THE SIGNATURE PAD lives here now (v222). `hrSigBind()` (hros.html:3327) is imperative device code —
+// mouse and touch listeners on a <canvas>, and `toDataURL()` read back off it — so it belongs on this
+// side of the line, exactly like the geolocation in app/hr/clock. What it CAPTURES and what it STORES
+// is not device code and is not here: `sigTrimBox()`, `sigUploadSize()`, `sigStoreRefusal()` and
+// `sigFileRefusal()` are pure functions in src/hr-profile.tsx, pinned by the screen's own test, because
+// a signature is stamped on a reimbursement claim form and a blank or wrong one is a document defect
+// that nothing downstream would catch.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import HrProfile, { profileBody, type Bank, type ProfileEmployee } from '../../../src/hr-profile';
+import HrProfile, {
+  profileBody, sigFileRefusal, sigStoreRefusal, sigTrimBox, sigUploadSize,
+  type Bank, type ProfileEmployee,
+} from '../../../src/hr-profile';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 const LEGACY = () => `${legacyUrl('hros.html')}#tab=profile`;
@@ -96,6 +103,135 @@ export default function HrProfilePage() {
     }
   }, [saving, banks]);
 
+  /* ── the signature pad — `SIG`, hros.html:3313 ────────────────────────────────────────────────── */
+
+  const [sigOpen, setSigOpen] = useState(false);
+  /** `SIG.dirty` — a ref, not state: it is set from a pointer handler on every stroke. */
+  const sigDirty = useRef(false);
+
+  const sigCanvas = useCallback(() => formRef.current?.querySelector<HTMLCanvasElement>('#sigpad') || null, []);
+
+  /** `hrSigPut()` — hros.html:3372. */
+  const sigPut = useCallback(async (uri: string) => {
+    try {
+      await call({ api: 'hr_signature_save', signature: uri });
+      setSigOpen(false);
+      sigDirty.current = false;
+      setNote('Signature saved ✓');
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [load]);
+
+  /**
+   * `hrSigBind()` — hros.html:3327, as an effect rather than a `setTimeout(…, 30)` after a re-render.
+   *
+   * `pos()` maps a client coordinate onto the canvas's BACKING store (`cv.width / rect.width`), which is
+   * why the canvas keeps its intrinsic 600x180 in the component: the element is laid out at whatever
+   * width the panel gives it, and without that ratio the ink lands somewhere other than the pointer.
+   * `preventDefault` on down/move is what stops a finger scrolling the page instead of signing.
+   */
+  useEffect(() => {
+    if (!sigOpen) return;
+    const cv = sigCanvas();
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+    let drawing = false;
+    const pos = (e: MouseEvent | TouchEvent) => {
+      const r = cv.getBoundingClientRect();
+      const t = ('touches' in e && e.touches[0]) || (e as MouseEvent);
+      return { x: (t.clientX - r.left) * (cv.width / r.width), y: (t.clientY - r.top) * (cv.height / r.height) };
+    };
+    const down = (e: MouseEvent | TouchEvent) => {
+      e.preventDefault(); drawing = true; sigDirty.current = true;
+      const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y);
+    };
+    const move = (e: MouseEvent | TouchEvent) => {
+      if (!drawing) return;
+      e.preventDefault();
+      const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke();
+    };
+    const up = () => { drawing = false; };
+    cv.addEventListener('mousedown', down);
+    cv.addEventListener('mousemove', move);
+    cv.addEventListener('touchstart', down, { passive: false });
+    cv.addEventListener('touchmove', move, { passive: false });
+    cv.addEventListener('touchend', up);
+    window.addEventListener('mouseup', up);
+    return () => {
+      cv.removeEventListener('mousedown', down);
+      cv.removeEventListener('mousemove', move);
+      cv.removeEventListener('touchstart', down);
+      cv.removeEventListener('touchmove', move);
+      cv.removeEventListener('touchend', up);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [sigOpen, sigCanvas]);
+
+  /** `hrSigTrim()` — hros.html:3335. `sigTrimBox()` decides WHERE; the canvas work is here. */
+  const sigTrim = useCallback((cv: HTMLCanvasElement): string | null => {
+    const ctx = cv.getContext('2d');
+    if (!ctx) return null;
+    const box = sigTrimBox(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
+    if (!box) return null;
+    const out = document.createElement('canvas');
+    out.width = box.w; out.height = box.h;
+    out.getContext('2d')!.drawImage(cv, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+    return out.toDataURL('image/png');   // PNG keeps the transparent background
+  }, []);
+
+  /** `hrSigSave()` — hros.html:3344. */
+  const onSigSave = useCallback(async () => {
+    const cv = sigCanvas();
+    if (!cv) return;
+    if (!sigDirty.current) { setNote('Draw your signature first'); return; }
+    const uri = sigTrim(cv);
+    if (!uri) { setNote('Draw your signature first'); return; }
+    const refusal = sigStoreRefusal('draw', uri.length);
+    if (refusal) { setNote(refusal); return; }
+    await sigPut(uri);
+  }, [sigCanvas, sigPut, sigTrim]);
+
+  /** `hrSigWipe()` — hros.html:3333. */
+  const onSigWipe = useCallback(() => {
+    const cv = sigCanvas();
+    if (!cv) return;
+    cv.getContext('2d')?.clearRect(0, 0, cv.width, cv.height);
+    sigDirty.current = false;
+  }, [sigCanvas]);
+
+  /** `hrSigCancel()` — hros.html:3327. */
+  const onSigCancel = useCallback(() => { setSigOpen(false); sigDirty.current = false; }, []);
+
+  /** `hrSigUpload()` — hros.html:3352. */
+  const onSigUpload = useCallback((input: HTMLInputElement) => {
+    const f = input && input.files && input.files[0];
+    if (!f) return;
+    const tooBig = sigFileRefusal(f.size);
+    if (tooBig) { setNote(tooBig); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = sigUploadSize(img.width, img.height);
+        const cv = document.createElement('canvas');
+        cv.width = size.w; cv.height = size.h;
+        cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+        let uri = cv.toDataURL('image/png');
+        if (sigStoreRefusal('upload', uri.length)) uri = cv.toDataURL('image/jpeg', 0.85);
+        const refusal = sigStoreRefusal('upload', uri.length);
+        if (refusal) { setNote(refusal); return; }
+        void sigPut(uri);
+      };
+      img.onerror = () => setNote('That file isn’t a readable image');
+      img.src = String(rd.result);
+    };
+    rd.readAsDataURL(f);
+  }, [sigPut]);
+
   /** `hrSigClearSaved()` — hros.html:3377. Destructive, so it keeps the legacy confirm. */
   const onSigClearSaved = useCallback(async () => {
     if (!confirm('Remove your signature? Claim forms will print a blank line for you to sign by hand.')) return;
@@ -129,8 +265,13 @@ export default function HrProfilePage() {
               companyName={company}
               banks={banks}
               onSave={onSave}
-              onSigStart={toLegacy}
+              sigOpen={sigOpen}
+              onSigStart={() => setSigOpen(true)}
               onSigClearSaved={onSigClearSaved}
+              onSigSave={onSigSave}
+              onSigWipe={onSigWipe}
+              onSigCancel={onSigCancel}
+              onSigUpload={onSigUpload}
               onPwModal={toLegacy}
             />
           </>

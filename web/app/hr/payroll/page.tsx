@@ -14,9 +14,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import HrPayroll, {
-  HR_MONTHS, dueInfo, gridAll, gridInit, gridState,
+  HR_MONTHS, dueInfo, gridAll, gridInit, gridState, tp1Body,
   type CellField, type GridRow, type HubKey, type LegacyPanel, type PayData, type PayEmployee,
-  type StatFile, type UobCfg,
+  type StatFile, type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -193,8 +193,79 @@ export default function HrPayrollPage() {
   const toLegacy = useCallback((what: string) =>
     setNotice(`${what} is on the legacy screen — open HR OS · Payroll.`), []);
   const legacyPanel = useCallback((k: LegacyPanel) => toLegacy(
-    { rates: 'The statutory rates editor', employer: 'The company details editor', statids: 'The statutory numbers editor', tp1: 'The TP1 relief editor' }[k],
+    { rates: 'The statutory rates editor', employer: 'The company details editor', statids: 'The statutory numbers editor' }[k],
   ), [toLegacy]);
+
+  /* ── 🧾 TP1 relief declarations — hros.html:3844-3910 ─────────────────────────────────────────── */
+
+  const [tp1, setTp1] = useState<Tp1State | null>(null);
+
+  /** `hrTp1Open()` — hros.html:3844. */
+  const onTp1Open = useCallback(() => {
+    if (!company) { setNotice('Pick a company first'); return; }
+    setTp1({ year: year, empId: null, lines: [], effMonth: 1, note: '', employees: data?.employees || [] });
+  }, [company, data, year]);
+
+  /**
+   * `hrTp1Pick()` — hros.html:3851. A blank pick clears the form rather than leaving the previous
+   * employee's declared reliefs on screen under a new name.
+   */
+  const onTp1Pick = useCallback(async (empId: string) => {
+    setTp1((t) => (t ? { ...t, empId: empId || null, lines: [], effMonth: 1, note: '', loading: !!empId } : t));
+    if (!empId) return;
+    const blank: Tp1Line[] = [{ category: 'lifestyle', amount: 0, note: '' }];
+    try {
+      const r = await call<{ declaration?: { items?: Tp1Line[]; effective_month?: number; note?: string } }>(
+        { api: 'hr_tp1_get', employee_id: empId, year: tp1?.year ?? year });
+      const d = r.declaration;
+      const lines = (d?.items || []).map((i) => ({ category: i.category || 'other', amount: Number(i.amount) || 0, note: i.note || '' }));
+      setTp1((t) => (t && t.empId === empId
+        ? { ...t, loading: false, lines: lines.length ? lines : blank, effMonth: Number(d?.effective_month) || 1, note: d?.note || '' }
+        : t));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setTp1((t) => (t && t.empId === empId ? { ...t, loading: false, lines: blank } : t));
+    }
+  }, [tp1, year]);
+
+  /** `hrTp1Line()` — hros.html:3865. An amount is a NUMBER; the other two fields are text. */
+  const onTp1Line = useCallback((i: number, field: keyof Tp1Line, v: string) => {
+    setTp1((t) => {
+      if (!t || !t.lines[i]) return t;
+      const lines = t.lines.slice();
+      lines[i] = { ...lines[i], [field]: field === 'amount' ? (Number(v) || 0) : v };
+      return { ...t, lines };
+    });
+  }, []);
+
+  /** `hrTp1Add()` / `hrTp1Del()` — hros.html:3868-3869. Deleting the last line leaves a blank one, so
+      the table never disappears with no way to add a row back. */
+  const onTp1Add = useCallback(() => setTp1((t) => (t ? { ...t, lines: t.lines.concat([{ category: 'lifestyle', amount: 0, note: '' }]) } : t)), []);
+  const onTp1Del = useCallback((i: number) => setTp1((t) => {
+    if (!t) return t;
+    const lines = t.lines.filter((_, k) => k !== i);
+    return { ...t, lines: lines.length ? lines : [{ category: 'lifestyle', amount: 0, note: '' }] };
+  }), []);
+
+  /**
+   * `hrTp1Save()` — hros.html:3870. The BODY is `tp1Body()` in src/, pinned by the parity test: this
+   * declaration changes what is withheld from that employee every month from `effective_month`.
+   * Reloads the month afterwards, exactly as the legacy `HR.pay.data=null` does, because the PCB on the
+   * grid is now stale.
+   */
+  const onTp1Save = useCallback(async () => {
+    if (!tp1) return;
+    const body = tp1Body(tp1);
+    if ('error' in body) { setNotice(body.error as string); return; }
+    try {
+      const r = await call<{ lines?: number; total?: number }>(body);
+      setNotice(`TP1 saved -- ${r.lines ?? 0} relief line(s). PCB recalculates from month ${tp1.effMonth}.`);
+      setTp1(null);
+      await load(month, year);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [load, month, tp1, year]);
 
   const period = useMemo(() => ({ month, year }), [month, year]);
   const A = useMemo(() => (data ? gridAll(data, grid, period) : null), [data, grid, period]);
@@ -239,6 +310,16 @@ export default function HrPayrollPage() {
             today={todayLocalISO()}
             onPickPeriod={onPickPeriod}
             onLegacyPanel={legacyPanel}
+            tp1={tp1}
+            onTp1Open={onTp1Open}
+            onTp1Close={() => setTp1(null)}
+            onTp1Pick={onTp1Pick}
+            onTp1Line={onTp1Line}
+            onTp1Add={onTp1Add}
+            onTp1Del={onTp1Del}
+            onTp1EffMonth={(m) => setTp1((t) => (t ? { ...t, effMonth: Number(m) || 1 } : t))}
+            onTp1Note={(v) => setTp1((t) => (t ? { ...t, note: v } : t))}
+            onTp1Save={onTp1Save}
             onGridSave={onGridSave}
             onFinalise={onFinalise}
             onEditFinalised={() => setEditFinal(true)}
@@ -288,7 +369,8 @@ function Banner() {
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('hros.html')}#tab=payroll`}>hros.html · Payroll</a>, unchanged. This page runs the
         same statutory engine (<code>payroll.js</code>) from the same session and is diffed against the same golden.
-        The statutory file exports and the rates / company / TP1 editors are on the legacy screen only.
+        The statutory file exports and the rates / company / statutory-numbers editors are on the legacy
+        screen only; 🧾 TP1 reliefs is migrated.
       </div>
     </div>
   );

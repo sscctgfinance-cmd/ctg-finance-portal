@@ -228,6 +228,97 @@ function hrIntNoSen(n){ return String(Math.trunc(Number(n)||0)); }
 function hrDec2(n){ return (Number(n)||0).toFixed(2); }
 function hrFmtDMY(d){ if(!d)return ''; var x=new Date(d); if(isNaN(x))return ''; var p=function(v){return ('0'+v).slice(-2);}; return p(x.getDate())+'-'+p(x.getMonth()+1)+'-'+x.getFullYear(); }
 
+// ===== Year-end: the FIGURES that go to LHDN =====
+//
+// v222: lifted verbatim out of hros.html's hrExpEA / hrExpFormE / hrExpCp8d for the same reason the
+// drawers above were lifted — they are the FILING, not the button. hrDrawEA and hrDrawFormE were already
+// here, so the PDFs could not fork; the numbers those two forms and the CP8D file are built FROM were
+// still assembled inside the legacy screen, so a React port had to either re-express them or hand off.
+// A second copy of a statutory figure is a filing that eventually disagrees with itself.
+//
+// What stayed in hros.html: choosing the employee, loading jsPDF, saving the file, the toast. Those are
+// the button. Everything below is a pure function of its arguments.
+
+/** The totals row for an employee with no finalised payslip in the year — hros.html's HR_EA_ZERO. */
+var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,months:0 };
+
+// Who gets filed. "Paid in the year" is months>0, NOT merely having an employee row: an employee with
+// no finalised payslip has nothing to put on an EA form and must not appear in CP8D either, or the
+// employer declares remuneration of zero for a person LHDN will then chase. The EA population, the CP8D
+// population and the count on the screen are this one predicate, so they cannot drift apart.
+function hrYePaid(employees, annual){
+  var ann=annual||{};
+  return (employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; });
+}
+
+// Form E (C.P.8) part B — the six declared figures. `total`/`newHires`/`ceased` count EVERY employee
+// row, not just the paid ones (Form E declares the workforce; CP8D declares the remuneration), which is
+// why this walks `employees` and not hrYePaid().
+//
+// KNOWN, MIRRORED, NOT FIXED: `new Date(e.join_date).getFullYear()` parses a bare YYYY-MM-DD as midnight
+// UTC, so west of Greenwich a 1 January hire reads as the PREVIOUS year and drops out of `newHires`.
+// This machine and CI both sit at UTC+8, where it cannot be observed. Changing it changes a declared
+// figure, so it is lifted exactly as hros.html has always computed it; tests pin the source so a port
+// cannot quietly "fix" or worsen it either.
+function hrFormEStats(employees, annual, year){
+  var emps=employees||[], ann=annual||{};
+  var totalGross=0,totalPcb=0,subjectPcb=0;
+  emps.forEach(function(e){ var t=ann[e.id]; if(t){ totalGross+=t.gross; totalPcb+=t.pcb; if(t.pcb>0)subjectPcb++; } });
+  var newHires=emps.filter(function(e){ return e.join_date&&new Date(e.join_date).getFullYear()===year; }).length;
+  var ceased=emps.filter(function(e){ return e.resign_date&&new Date(e.resign_date).getFullYear()===year; }).length;
+  return { total:emps.length, newHires:newHires, ceased:ceased, subjectPcb:subjectPcb, totalGross:totalGross, totalPcb:totalPcb };
+}
+
+// CP8D — the per-employee remuneration schedule that accompanies Form E. `list` is
+// [{emp:hrEmpView(e), tot:annual[e.id]}, ...] for hrYePaid()'s population; `fmt` is 'txt' (the
+// pipe-delimited file MyTax ingests) or 'csv' (the same records, for a human to check before uploading).
+// Returns {name, text} — the caller downloads it.
+//
+// The two layouts carry the SAME 23 values in the same order and must stay that way: the CSV is what an
+// operator reviews and signs off, and if it can disagree with the TXT then the review proves nothing.
+// v196: the SOCSO field is the Second-Schedule contribution PLUS LINDUNG 24 — see
+// tests/lindung_reporting_test.ts for what happened when it was not.
+//
+// The one deliberate difference from the two copies this replaces: a NULL name reached the CSV as the
+// four characters `null` (hrCsv stringifies whatever it is handed) and the TXT as the empty string. Both
+// now take the TXT's reading. That is the point of one builder — a review copy that can disagree with
+// the uploaded file is not a review.
+//
+// NO TOTAL ROW, in either format, deliberately: CP8D is a record-per-employee schedule and a trailing
+// "TOTAL" line is read by the uploader as one more employee — the same class of defect as the TOTAL
+// trailer that was removed from the bank payment file in v157 (hros.html:1849).
+function hrCp8dFile(list, employerNo, year, fmt){
+  var rows=(list||[]).map(function(o){
+    var e=o.emp, t=o.tot||HR_EA_ZERO;
+    return {
+      name:String(e.name||''),
+      tin:e.taxNo?String(e.taxNo).replace(/\D/g,''):'',
+      ic:(String(e.ic||'').replace(/[\s-]/g,''))||'000000000000',
+      cat:hrCp8dCategory(e),
+      ceased:e.resignDate?hrFmtDMY(e.resignDate):'',
+      children:e.numChildren||0,
+      gross:t.gross, epfEe:t.epfEe, pcb:t.pcb,
+      socso:(Number(t.socsoEe)||0)+(Number(t.lindung)||0)
+    };
+  });
+  if(fmt==='txt'){
+    var eno=(String(employerNo||'').replace(/\D/g,''))||'0000000000';
+    var lines=rows.map(function(r){
+      return [ r.name.slice(0,60), r.tin, r.ic.slice(0,12), r.cat, 2, r.ceased, 2, r.children,
+        hrIntNoSen(r.children*2000), hrIntNoSen(r.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(r.epfEe),
+        hrDec2(0), hrDec2(r.pcb), '', 0, hrIntNoSen(r.socso) ].join('|');
+    });
+    return { name:'P'+eno+'_'+year+'.txt', text:lines.join('\r\n')+'\r\n' };
+  }
+  var head=['No','Name','TIN','IC/Passport','Category','Status','End date','Tax borne','Children','Child relief','Gross remuneration','BIK','VOLA','ESOS','Exempt','TP1','Zakat (TP1)','EPF','Zakat (salary)','MTD','CP38','Medical ins.','SOCSO'];
+  var body=rows.map(function(r,i){
+    return [ i+1, r.name, r.tin, r.ic, r.cat, 2, r.ceased, 2, r.children,
+      hrIntNoSen(r.children*2000), hrIntNoSen(r.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(r.epfEe),
+      hrDec2(0), hrDec2(r.pcb), '', 0, hrIntNoSen(r.socso) ];
+  });
+  return { name:'CP8D_YA'+year+'.csv', text:hrCsv([head].concat(body)) };
+}
+
 // Consumable by a bundler without touching this file again — see the note in payroll.js. The one thing
 // that does not survive the trip untouched is hrDrawPayslip's HR_EMPLOYER/HR_COMPANY read, described
 // above; every other export here is a pure function of its arguments.
@@ -235,4 +326,5 @@ if (typeof module !== 'undefined' && module.exports) module.exports = {
   hrEmpView, HR_money2, hrCsv, hrAscii, hrMissingIds, hrPadR, hrPadL, hrCents,
   hrFitReset, hrFitNote, HR_BANK_CODE, hrBankCode, hrSwift,
   hrDrawPayslip, hrDrawEA, hrDrawFormE, hrCp8dCategory, hrIntNoSen, hrDec2, hrFmtDMY,
+  HR_EA_ZERO, hrYePaid, hrFormEStats, hrCp8dFile,
 };

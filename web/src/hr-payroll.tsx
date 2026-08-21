@@ -298,8 +298,42 @@ function M(n: number): string {
   return 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Which of the four un-migrated legacy panels a button asked for. */
-export type LegacyPanel = 'rates' | 'employer' | 'statids' | 'tp1';
+/** Which of the three un-migrated legacy panels a button asked for. TP1 is no longer one of them. */
+export type LegacyPanel = 'rates' | 'employer' | 'statids';
+
+/** `HR_TP1_CATS` — hros.html:3839. The relief categories LHDN's TP1 form lists. */
+export const HR_TP1_CATS: [string, string][] = [
+  ['lifestyle', 'Lifestyle'], ['medical', 'Medical (self/spouse/child)'], ['education', 'Education fees (self)'],
+  ['insurance_life', 'Life insurance / takaful'], ['insurance_medical', 'Medical & education insurance'],
+  ['sspn', 'SSPN net deposit'], ['childcare', 'Childcare / kindergarten fees'], ['disabled_person', 'Disabled individual'],
+  ['disabled_spouse', 'Disabled spouse'], ['parent_medical', 'Parent medical / care'], ['donation', 'Approved donation'],
+  ['other', 'Other declared relief'],
+];
+
+/** One declared relief line — `HR_TP1.lines`, hros.html:3843. */
+export interface Tp1Line { category: string; amount: number; note: string }
+
+/** `HR_TP1` — hros.html:3843. `null` is the panel CLOSED, which is every golden's state. */
+export interface Tp1State {
+  year: number;
+  empId: string | null;
+  lines: Tp1Line[];
+  effMonth: number;
+  note: string;
+  loading?: boolean;
+  /** `HR.pay.data.employees` — the picker's options. Everyone, including anyone skipped this month. */
+  employees: PayEmployee[];
+}
+
+/** One member of the ZIP `hrSubmitAll()` builds — `HR.submitPack.items`, hros.html:4675. */
+export interface SubmitPackItem {
+  key: HubKey;
+  label: string;
+  file: { name: string; count: number; total: number };
+}
+
+/** `HR.submitPack` — hros.html:4675. `null` until Submit all has run, which is every golden's state. */
+export interface SubmitPack { per: string; items: SubmitPackItem[] }
 
 /** The grid cells `hrGCell()` draws — hros.html:4081. */
 export type CellField = 'basic' | 'allow' | 'bonus' | 'ot' | 'allowance' | 'unpaid';
@@ -341,6 +375,10 @@ export interface HrPayrollProps {
   rowMenu?: string | null;
   /** `todayLocalISO()` — the default in the row menu's resign-date field. */
   today?: string;
+  /** `HR_TP1` — hros.html:3843. `null` when the panel is closed. */
+  tp1?: Tp1State | null;
+  /** `HR.submitPack` — hros.html:4675. `null` until Submit all has built the ZIP. */
+  submitPack?: SubmitPack | null;
 
   onPickPeriod: () => void;
   onLegacyPanel: (p: LegacyPanel) => void;
@@ -372,6 +410,15 @@ export interface HrPayrollProps {
   onEmailAll: () => void;
   onExpStatutory: (f: StatFile) => void;
   onHubTick: (k: HubKey, on: boolean) => void;
+  onTp1Open?: () => void;
+  onTp1Close?: () => void;
+  onTp1Pick?: (empId: string) => void;
+  onTp1Line?: (i: number, field: keyof Tp1Line, v: string) => void;
+  onTp1Add?: () => void;
+  onTp1Del?: (i: number) => void;
+  onTp1EffMonth?: (m: string) => void;
+  onTp1Note?: (v: string) => void;
+  onTp1Save?: () => void;
 }
 
 /* The inline styles, verbatim from the legacy strings. Property ORDER is preserved — React serialises a
@@ -695,6 +742,11 @@ function PayHub({ p, period }: { p: HrPayrollProps; period: string }) {
   const done = HUB_KEYS.filter((k) => p.ticks[k]).length;
   const dd = <span style={{ fontSize: '10.5px', color: p.due.col }}>{p.due.txt}</span>;
   return (
+    <>
+    {/* `hrPayHub()` returns `hrStatIdsPanel()+hrTp1Panel()+<the hub panel>` — hros.html:4031, so the TP1
+        panel sits ABOVE the hub, not inside it. Both return '' when closed, which is why no golden holds
+        either. hrStatIdsPanel() is still a handoff. */}
+    <Tp1Panel p={p} />
     <div className="panel" style={{ marginTop: '14px' }}>
       <div className="panel-hd">
         <h3>💸 Payment &amp; Statutory Hub — {period}</h3>
@@ -705,13 +757,11 @@ function PayHub({ p, period }: { p: HrPayrollProps; period: string }) {
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', background: 'linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05))', border: '1px solid rgba(226,96,75,.4)', borderRadius: '11px', padding: '12px 14px', marginBottom: '12px' }}>
         <button className="btn p" onClick={() => p.onSubmitAll()} style={{ fontSize: '14px' }}>📤 Submit all — generate every file</button>
         <button className="btn" onClick={() => p.onLegacyPanel('statids')} style={{ fontSize: '13px' }}>🆔 Statutory numbers</button>
-        <button className="btn" onClick={() => p.onLegacyPanel('tp1')} style={{ fontSize: '13px' }}>🧾 TP1 reliefs</button>
+        <button className="btn" onClick={() => p.onTp1Open && p.onTp1Open()} style={{ fontSize: '13px' }}>🧾 TP1 reliefs</button>
         <span className="muted" style={{ fontSize: '11.5px', flex: '1', minWidth: '160px' }}>One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. {p.finalised ? null : <b style={{ color: 'var(--amber)' }}>Finalise payroll first for authoritative figures.</b>}</span>
       </div>
 
-      {/* `HR.submitPack`'s generated-file list (hros.html:4010) is NOT migrated with this screen: it
-          exists only after hrSubmitAll() has built the ZIP, which is the export half. Not in the golden
-          either — the pack is null when it is captured. */}
+      <PackTracker p={p} />
 
       <HubSection
         p={p} icon="🏦" title="Salaries — UOB Infinity" k="salary"
@@ -781,7 +831,142 @@ function PayHub({ p, period }: { p: HrPayrollProps; period: string }) {
       </div>
       <div className="muted" style={{ fontSize: '10.5px', marginTop: '8px', lineHeight: '1.5' }}>Checklist ticks save per company + month (this browser). Statutory amounts are system-computed estimates — verify against the official portal figure before paying, and do a one-time test upload for each file type.</div>
     </div>
+    </>
   );
+}
+
+/** The upload destination each pack member goes to — hros.html:4013. */
+const PACK_PATH: Partial<Record<HubKey, React.ReactNode>> = {
+  salary: <>UOB Infinity → Pay &amp; Transfer → Bulk Transactions → Upload Bulk Files → “IBG Payroll with Payment Advice”</>,
+  epf: <>KWSP i-Akaun (Majikan) → Contribution → Upload</>,
+  perkeso: <>PERKESO ASSIST → Monthly Contribution → Upload</>,
+  pcb: <>LHDN e-PCB / e-Data PCB → Upload CP39 → pay by FPX</>,
+};
+
+/**
+ * `HR.submitPack`'s generated-file list — hros.html:4010.
+ *
+ * NOT IN THE GOLDEN: `HR.submitPack` is null until Submit all has run, and `hrPickPeriod()` resets it
+ * (hros.html:4375), so no captured surface can hold it. Asserted in this screen's own test instead.
+ *
+ * It lists ONLY the files that were actually built. v157's rule (hros.html:4664) is that a generator
+ * which BLOCKS returns `{error}` and is excluded from `items` — the pack used to report "✓ generated"
+ * for four files while shipping three, with the salary file the likeliest to vanish. So the count in
+ * the heading is `items.length` and nothing here may pad it back out to the four it tried.
+ */
+function PackTracker({ p }: { p: HrPayrollProps }) {
+  const pack = p.submitPack;
+  if (!pack) return null;
+  return (
+    <div style={{ background: 'var(--ok-soft,rgba(34,197,94,.08))', border: '1px solid var(--green-soft)', borderRadius: '10px', padding: '11px 13px', marginBottom: '12px' }}>
+      <div style={{ fontSize: '12.5px', fontWeight: '700', color: 'var(--green-soft)', marginBottom: '4px' }}>{'✓ Submission pack generated — ' + pack.per + ' (' + pack.items.length + ' files in the ZIP)'}</div>
+      <div className="muted" style={{ fontSize: '11px', marginBottom: '6px' }}>Upload each file at its portal below, then tick it. Files are also individually downloadable from each row further down.</div>
+      {pack.items.map((it) => (
+        <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>
+          <span style={{ flex: 'none', fontFamily: 'monospace', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: '5px', padding: '2px 7px', fontSize: '10.5px' }}>{it.file.name}</span>
+          <span style={{ flex: '1', minWidth: '120px' }}>
+            <b>{it.label}</b>{' · ' + it.file.count + ' staff · ' + M(it.file.total)}
+            <div className="muted" style={{ fontSize: '10.5px', marginTop: '1px' }}>→ {PACK_PATH[it.key]}</div>
+          </span>
+          <HubTick p={p} k={it.key} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * `hrTp1Panel()` — hros.html:3879.
+ *
+ * NOT IN THE GOLDEN (`HR_TP1.open` is false until the button is pressed), so it is mirrored from the
+ * legacy source and asserted in this screen's own test.
+ *
+ * What this panel changes is PCB: LHDN obliges the employer to take a declared relief into account when
+ * computing MTD, so a line saved here moves what is deducted from that employee's pay from
+ * `effective_month` onward — which is why `onTp1Save` reloads the month. Everything is UNCONTROLLED
+ * except what the legacy holds in `HR_TP1`, and the running total is a `<b id="tp1_total">` the legacy
+ * updates imperatively (hros.html:3866); here it is simply re-rendered, which is the same number.
+ */
+function Tp1Panel({ p }: { p: HrPayrollProps }) {
+  const t = p.tp1;
+  if (!t) return null;   // `if(!HR_TP1.open) return '';`
+  const total = t.lines.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  return (
+    <div className="panel" style={{ marginTop: '14px', borderColor: 'var(--coral-soft)' }}>
+      <div className="panel-hd">
+        <h3>{'TP1 relief declarations -- ' + t.year}</h3>
+        <button className="btn sm" onClick={() => p.onTp1Close && p.onTp1Close()}>Close</button>
+      </div>
+      <div className="muted" style={{ fontSize: '11.5px', padding: '0 2px 10px', lineHeight: '1.6' }}>
+        What the employee declared to you on their <b>TP1</b>. LHDN obliges the employer to take these into account when computing MTD -- without them the employee over-pays PCB all year and only gets it back on assessment. Keep the signed form on file.
+      </div>
+      <div style={{ marginBottom: '12px' }}>
+        <select value={t.empId || ''} onChange={(e) => p.onTp1Pick && p.onTp1Pick(e.target.value)} style={{ minWidth: '280px', padding: '6px 8px', fontSize: '12.5px', borderRadius: '6px' }}>
+          <option value="">-- pick an employee --</option>
+          {t.employees.map((e) => <option key={e.id} value={e.id}>{(e.emp_no || '') + ' ' + (e.name || '')}</option>)}
+        </select>
+      </div>
+      {t.loading ? <div className="muted" style={{ padding: '16px', textAlign: 'center' }}>Loading...</div> : t.empId ? (
+        <>
+          <div className="tbl-wrap" style={{ overflowX: 'auto' }}>
+            <table className="bigtable" style={{ minWidth: '620px' }}>
+              <thead><tr><th style={{ minWidth: '220px' }}>Relief</th><th style={{ minWidth: '120px' }}>Amount (RM)</th><th>Reference</th><th></th></tr></thead>
+              <tbody>
+                {t.lines.map((l, i) => (
+                  <tr key={i}>
+                    <td>
+                      <select value={l.category} onChange={(e) => p.onTp1Line && p.onTp1Line(i, 'category', e.target.value)} style={TP1_CELL}>
+                        {HR_TP1_CATS.map((c) => <option key={c[0]} value={c[0]}>{c[1]}</option>)}
+                      </select>
+                    </td>
+                    <td><input type="number" step="0.01" min="0" value={String(Number(l.amount) || 0)} onChange={(e) => p.onTp1Line && p.onTp1Line(i, 'amount', e.target.value)} style={TP1_CELL} /></td>
+                    <td><input value={l.note || ''} placeholder="reference / receipt" onChange={(e) => p.onTp1Line && p.onTp1Line(i, 'note', e.target.value)} style={TP1_CELL} /></td>
+                    <td style={{ width: '34px' }}><button className="btn xs" onClick={() => p.onTp1Del && p.onTp1Del(i)} title="Remove">x</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '10px' }}>
+            <button className="btn sm" onClick={() => p.onTp1Add && p.onTp1Add()}>+ Add relief</button>
+            <span className="muted" style={{ fontSize: '12px' }}>Applies from</span>
+            <select value={String(t.effMonth)} onChange={(e) => p.onTp1EffMonth && p.onTp1EffMonth(e.target.value)} style={{ padding: '5px 7px', fontSize: '12px', borderRadius: '6px' }}>
+              {HR_MONTHS.slice(1).map((mo, i) => <option key={mo} value={i + 1}>{mo}</option>)}
+            </select>
+            <span style={{ marginLeft: 'auto', fontSize: '13px' }}>Total declared: <b id="tp1_total">{M(total)}</b></span>
+          </div>
+          <div style={{ marginTop: '10px' }}>
+            <input value={t.note || ''} placeholder="Note (e.g. TP1 dated 05/01/2026, filed)" onChange={(e) => p.onTp1Note && p.onTp1Note(e.target.value)} style={{ width: '100%', padding: '6px 8px', fontSize: '12px', borderRadius: '6px' }} />
+          </div>
+          <div style={{ marginTop: '12px' }}><button className="btn p sm" onClick={() => p.onTp1Save && p.onTp1Save()}>Save TP1</button></div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+const TP1_CELL: CSSProperties = { width: '100%', padding: '5px 7px', fontSize: '12px', borderRadius: '6px' };
+
+/**
+ * `hrTp1Save()`'s POST body — hros.html:3870. Split out of the route for the same reason
+ * `profileBody()` was: no golden sees a request, and this one changes what LHDN is paid for that person
+ * every month from `effective_month`.
+ *
+ * Two things it must keep doing. A line with a ZERO (or negative) amount is DROPPED, not sent — the
+ * panel always shows at least one blank row, so sending it would file a relief of RM0 as a declaration.
+ * And there is no tenant in the body: `hr_tp1_save` resolves the employee's company itself, so a body
+ * that carried one would be a way to aim it elsewhere.
+ */
+export function tp1Body(t: Tp1State): { error: string } | Record<string, unknown> {
+  if (!t.empId) return { error: 'Pick an employee first' };
+  return {
+    api: 'hr_tp1_save',
+    employee_id: t.empId,
+    year: t.year,
+    items: t.lines.filter((l) => Number(l.amount) > 0),
+    effective_month: t.effMonth,
+    note: t.note,
+  };
 }
 
 /* ───────────────────── the two panels the golden does not reach — hros.html:3794/:4267 ───────────────────── */

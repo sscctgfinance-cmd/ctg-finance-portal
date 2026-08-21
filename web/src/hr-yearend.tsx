@@ -17,11 +17,18 @@
 
 import type { CSSProperties } from 'react';
 
-/** One employee, as `HR.data.employees` carries them. Only the three fields this screen reads. */
+import { hrYePaid } from '../../hr-docs.js';
+
+/**
+ * One employee, as `HR.data.employees` carries them. The screen itself reads three fields; the whole row
+ * is carried through because the EA / CP8D exports below hand it to `hrEmpView()`, which reads the IC,
+ * the TIN, the marital status, the children and the resignation date off it.
+ */
 export interface YeEmployee {
   id: string;
   emp_no?: string | null;
   name?: string | null;
+  [k: string]: unknown;
 }
 
 /** One entry of `hr_annual`'s `annual` map, keyed by employee id. */
@@ -33,6 +40,8 @@ export interface YeTotals {
   /** LINDUNG 24 is a SOCSO contribution and is shown INSIDE the SOCSO column — v196, hros.html:4935. */
   lindung?: number | null;
   pcb: number;
+  /** The response carries more per-employee totals than this screen reads; the EA form draws them. */
+  [k: string]: unknown;
 }
 
 export interface HrYearendProps {
@@ -137,9 +146,11 @@ function Loading({ year }: { year: number }) {
 
 function Loaded({ year, employees, annual, employerNo, onExpEA, onExpFormE, onExpCp8d }:
   HrYearendProps & { annual: Record<string, YeTotals> }) {
-  // hros.html:4929 — "paid in <year>" is months>0, not merely having a row. An employee with a row and
-  // no finalised payslip has nothing to put on an EA form.
-  const withPay = employees.filter((e) => annual[e.id] && annual[e.id].months > 0);
+  // hros.html:4929 — "paid in <year>" is months>0, not merely having a row. IMPORTED from hr-docs.js
+  // rather than re-expressed: the count on this screen and the population of the EA and CP8D files are
+  // the same predicate, and an operator who reads "3 employees paid" and uploads a CP8D naming four has
+  // no way to see which of the two lied.
+  const withPay = hrYePaid(employees, annual);
 
   let tg = 0, tp = 0, subj = 0;
   withPay.forEach((e) => { const t = annual[e.id]; tg += t.gross; tp += t.pcb; if (t.pcb > 0) subj++; });
@@ -219,6 +230,28 @@ function Loaded({ year, employees, annual, employerNo, onExpEA, onExpFormE, onEx
       <div className="muted" style={{ fontSize: '11px', marginTop: '8px' }}>EA must reach each employee by 28 Feb. File Form e-E on MyTax by 31 March. PCB is an estimate — verify against LHDN before filing. BIK / VOLA / bonus must be added manually.</div>
     </>
   );
+}
+
+/**
+ * `hrExpEA()`'s population and filename — hros.html:4952.
+ *
+ * Split out of the route for the same reason `bankFile()` was split out of hr-expenses: NO GOLDEN SEES A
+ * FILE. `0` is the legacy sentinel for "every paid employee"; anything else is one employee's id, and an
+ * id that resolves to nobody must NOT quietly fall back to the whole company — a single employee's EA
+ * form is handed to that employee.
+ *
+ * Returns `{ error }` for the two refusals the legacy screen toasts, so the route can say the same thing.
+ */
+export function eaSelection(employees: YeEmployee[], annual: Record<string, YeTotals>, empId: string | 0, year: number):
+  { error: string } | { list: YeEmployee[]; fileName: string } {
+  if (empId) {
+    const one = employees.find((x) => x.id === empId);
+    if (!one) return { error: 'Employee not found' };
+    return { list: [one], fileName: 'EA_' + one.emp_no + '_YA' + year + '.pdf' };
+  }
+  const list = hrYePaid(employees, annual);
+  if (!list.length) return { error: 'No paid employees for ' + year };
+  return { list, fileName: 'EA_forms_YA' + year + '.pdf' };
 }
 
 /** The legacy `#hr_yey` control style — hros.html:4925. */

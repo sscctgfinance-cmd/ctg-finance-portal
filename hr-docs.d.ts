@@ -30,3 +30,55 @@ export function hrDrawPayslip(
   period: { month: number; year: number; label: string },
   d: Record<string, unknown>,
 ): void;
+
+/** One employee's annual totals — `hr_annual`'s `annual` map, keyed by employee id. */
+export interface HrAnnualTotals {
+  months: number;
+  gross: number;
+  epfEe: number;
+  socsoEe?: number | null;
+  lindung?: number | null;
+  pcb: number;
+  [k: string]: unknown;
+}
+
+/** The totals row for an employee with no finalised payslip in the year. */
+export const HR_EA_ZERO: HrAnnualTotals;
+
+/** Who gets filed: employees with at least one finalised payslip in the year (`months > 0`). */
+export function hrYePaid<T extends { id: string }>(
+  employees: T[],
+  annual: Record<string, HrAnnualTotals> | null | undefined,
+): T[];
+
+/** Form E (C.P.8) part B — the six declared figures. Counts every employee row, not only the paid. */
+export function hrFormEStats(
+  employees: { id: string; join_date?: string | null; resign_date?: string | null }[],
+  annual: Record<string, HrAnnualTotals> | null | undefined,
+  year: number,
+): { total: number; newHires: number; ceased: number; subjectPcb: number; totalGross: number; totalPcb: number };
+
+/** CP8D — the per-employee remuneration schedule. `'txt'` is uploaded, `'csv'` is reviewed; same values. */
+export function hrCp8dFile(
+  list: { emp: Record<string, unknown>; tot: HrAnnualTotals }[],
+  employerNo: string | null | undefined,
+  year: number,
+  fmt: 'txt' | 'csv',
+): { name: string; text: string };
+
+/** Draws one Borang EA (C.P.8A) page into a jsPDF document. */
+export function hrDrawEA(
+  doc: unknown,
+  e: Record<string, unknown>,
+  t: HrAnnualTotals,
+  year: number,
+  emp: Record<string, unknown>,
+): void;
+
+/** Draws the Form E (C.P.8) working summary into a jsPDF document. */
+export function hrDrawFormE(
+  doc: unknown,
+  employer: Record<string, unknown>,
+  stats: ReturnType<typeof hrFormEStats>,
+  year: number,
+): void;

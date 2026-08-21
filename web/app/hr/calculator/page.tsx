@@ -13,12 +13,32 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import HrCalculator, {
-  CALC_INITIAL, calcCompute,
+  CALC_INITIAL, calcCompute, calcPayslipDoc,
   type CalcAuditRow, type CalcEmployee, type CalcHistoryState, type CalcInputs, type CalcRates,
   type CalcSettings, type CalcState, type FlagItem, type FlagKey, type OverrideKey,
 } from '../../../src/hr-calculator';
 import { call, legacyUrl, token } from '../../../src/portal';
 import { hrAge } from '../../../../payroll.js';
+import { hrDrawPayslip } from '../../../../hr-docs.js';
+
+/** The employer header a payslip is printed under — `hr_bootstrap`'s `employer` (hros.html:4444). */
+interface Employer { name?: string }
+
+/**
+ * `hrLoadJsPDF()` — hros.html:4432, as app/hr/payslip/page.tsx already does it. Resolves either way
+ * rather than rejecting, so awaiting code fails visibly instead of hanging.
+ */
+function loadJsPDF(): Promise<(new (o: Record<string, unknown>) => { save: (n: string) => void }) | null> {
+  const w = window as unknown as { jspdf?: { jsPDF?: unknown } };
+  if (w.jspdf && w.jspdf.jsPDF) return Promise.resolve(w.jspdf.jsPDF as never);
+  return new Promise((res) => {
+    const s = document.createElement('script');
+    s.src = legacyUrl('jspdf.umd.min.js');
+    s.onload = () => res((w.jspdf && w.jspdf.jsPDF) as never);
+    s.onerror = () => res(null);
+    document.head.appendChild(s);
+  });
+}
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -48,6 +68,7 @@ interface BootEmployee extends CalcEmployee {
 export default function HrCalculatorPage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [employees, setEmployees] = useState<BootEmployee[]>([]);
+  const [employer, setEmployer] = useState<Employer | null>(null);
   const [rates, setRates] = useState<CalcRates | null>(null);
   const [state, setState] = useState<CalcState>(CALC_INITIAL);
   const [history, setHistory] = useState<CalcHistoryState>(null);
@@ -67,10 +88,11 @@ export default function HrCalculatorPage() {
       setCompany(pick);
       // One payload, exactly as the legacy app's own bootstrap (hros.html:1451): the picker's employees
       // and `rates`, which is what `calcCompute()` refuses to run without.
-      const boot = await call<{ employees?: BootEmployee[]; rates?: CalcRates }>(
+      const boot = await call<{ employees?: BootEmployee[]; rates?: CalcRates; employer?: Employer | null }>(
         { api: 'hr_bootstrap', tenant: pick ? pick.tenant_id : null });
       setEmployees(boot.employees || []);
       setRates(boot.rates || null);
+      setEmployer(boot.employer || null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -159,13 +181,34 @@ export default function HrCalculatorPage() {
   }, [state, rates, employees, company, onHistory]);
 
   /**
-   * `hrCalcPayslip()` — hros.html:4890 — is NOT migrated. It draws the PDF with `hrDrawPayslip`
-   * (hr-docs.js), and that function is the one documented exception to "the shared scripts read no app
-   * state": it reads `HR_EMPLOYER` and `HR_COMPANY`, which are still in hros.html. Wiring it here would
-   * mean lifting the employer chrome out too, which is a bigger change than one screen. The button says
-   * so instead of failing silently.
+   * `hrCalcPayslip()` — hros.html:4890.
+   *
+   * The PDF is DRAWN BY THE SHARED FILE: `hrDrawPayslip` from ../../../../hr-docs.js, the same file
+   * hros.html loads as a classic script. The mapping from the calculator's state to the four objects it
+   * draws is `calcPayslipDoc()` in `src/`, pinned by this screen's own test — no golden sees a PDF.
+   *
+   * `hrDrawPayslip` reads `HR_EMPLOYER` / `HR_COMPANY` as globals; hr-docs.js's own header says so, and
+   * app/hr/payslip/page.tsx does the same thing. They are set from `hr_bootstrap`'s own `employer`, which
+   * is exactly where hros.html:1454 sets them from, so the header on a payslip printed here is the one
+   * printed there. `new Date()` is read HERE and handed in, so the mapping stays testable.
    */
-  const onPayslip = useCallback(() => setNotice('The payslip PDF is on the legacy screen — open HR OS · Calculator.'), []);
+  const onPayslip = useCallback(async () => {
+    const res = calcCompute(state, rates);
+    if (!res) { setNotice('Enter figures first'); return; }
+    const jsPDF = await loadJsPDF();
+    if (!jsPDF) { setNotice('Could not load the PDF engine (jspdf.umd.min.js).'); return; }
+    const emp = state.empId ? employees.find((x) => x.id === state.empId) || null : null;
+    const g = window as unknown as { HR_EMPLOYER?: unknown; HR_COMPANY?: unknown };
+    g.HR_EMPLOYER = employer;
+    // hros.html:1454 sets HR_COMPANY from hrCompanyName() — the SELECTED company — in admin mode, and
+    // only employee mode (:3232) falls back to the employer record's own name. The Calculator is admin.
+    g.HR_COMPANY = company ? company.tenant_name : '';
+    const doc0 = calcPayslipDoc(state, res, emp, new Date());
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    hrDrawPayslip(doc, doc0.e, doc0.p, doc0.period, doc0.d);
+    doc.save(doc0.fileName);
+    setNotice('Payslip generated');
+  }, [company, employees, employer, rates, state]);
 
   const result = calcCompute(state, rates);
 

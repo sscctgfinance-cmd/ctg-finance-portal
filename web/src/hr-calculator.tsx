@@ -136,8 +136,18 @@ export interface CalcResult {
   deduction: number; claim: number; zakat: number; relief: number;
 }
 
-/** The employee rows the prefill picker lists — `HR.data.employees`. */
-export interface CalcEmployee { id: string; emp_no: string; name: string }
+/**
+ * The employee rows the prefill picker lists — `HR.data.employees`. The picker itself shows `emp_no` and
+ * `name`; the other four are what `hrCalcPayslip()` (hros.html:4890) prints in the PDF header.
+ */
+export interface CalcEmployee {
+  id: string;
+  emp_no: string;
+  name: string;
+  ic_no?: string | null;
+  position?: string | null;
+  dept?: string | null;
+}
 
 /** One row of `hr_calc_history` — hros.html:4910. */
 export interface CalcAuditRow {
@@ -155,6 +165,75 @@ export type CalcHistoryState =
   | { error: string }
   | { rows: CalcAuditRow[] }
   | null;
+
+/** `HR_MONTHS` — hros.html:1265. */
+const HR_MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** What `hrDrawPayslip()` is handed, plus the name the file is saved under. */
+export interface CalcPayslipDoc {
+  e: Record<string, unknown>;
+  p: Record<string, unknown>;
+  period: { month: number; year: number; label: string };
+  d: Record<string, unknown>;
+  fileName: string;
+}
+
+/**
+ * `hrCalcPayslip()`'s ARGUMENTS — hros.html:4890.
+ *
+ * NO GOLDEN SEES A PDF, so this is split out of the route the same way `bankFile()` was split out of
+ * hr-expenses and `profileBody()` out of hr-profile: the mapping from the calculator's state to the four
+ * objects `hrDrawPayslip()` draws is the part with one right answer, and it is pinned in this screen's
+ * own test. The drawing itself is `hr-docs.js`'s and is not re-expressed anywhere.
+ *
+ * `now` is a PARAMETER, not `new Date()`: the legacy function stamps the payslip with the month it is
+ * RUN in (not the month being calculated), and a component or helper that read the clock itself would
+ * be untestable and would drift on the 1st. hr.yearend's `taxYears(now)` rule.
+ *
+ * Two things here look like mistakes and are not — both are mirrored from the legacy source, and the
+ * test pins them so a later "tidy-up" is a red test rather than a wrong document:
+ *   • `gross` is `res.gross + res.claim`. The claim is EXCLUDED from `res.gross` by the engine (it is
+ *     usually a non-taxable reimbursement) and added back for the payslip, because the employee is paid
+ *     it. Drop the `+ res.claim` and the printed deductions no longer explain the printed net.
+ *   • the claim is carried into the payslip's `allowance` slot, and the calculator's own `allowance`
+ *     input into `e.allowance` (the fixed monthly figure in the header). They are different fields.
+ */
+export function calcPayslipDoc(C: CalcState, res: CalcResult, emp: CalcEmployee | null, now: Date): CalcPayslipDoc {
+  const e = {
+    empNo: emp ? emp.emp_no : 'CALC',
+    name: emp ? emp.name : 'Payroll Calculation',
+    ic: emp ? emp.ic_no : '',
+    position: emp ? emp.position : '',
+    dept: emp ? emp.dept : '',
+    basic: num(C.inp.basic),
+    allowance: num(C.inp.allowance),
+    bank: '',
+    resident: C.settings.resident,
+  };
+  const p = {
+    gross: hrRound2(res.gross + res.claim),
+    epfEe: res.epfEe, epfEr: res.epfEr, socsoEe: res.socsoEe, socsoEr: res.socsoEr,
+    eisEe: res.eisEe, eisEr: res.eisEr, lindung: res.lindung, pcb: res.pcb,
+    net: res.net, employerCost: res.employerCost,
+    _meta: {
+      epfEeRate: res._eeRate, epfErRate: res._erRate, socsoCat: res._scat,
+      pcbCat: (C.settings.resident === false ? 0 : 1), senior: C.settings.senior,
+    },
+  };
+  const d = {
+    bonus: num(C.inp.bonus),
+    ot: 0,
+    allowance: num(C.inp.claim),
+    deductions: num(C.inp.deduction) ? [{ label: 'Deduction', amount: num(C.inp.deduction) }] : [],
+    unpaid: 0,
+  };
+  const month = now.getMonth() + 1, year = now.getFullYear();
+  return {
+    e, p, d,
+    period: { month, year, label: HR_MONTHS[month] + ' ' + year },
+    fileName: 'Payroll_Calc_' + (emp ? emp.emp_no : 'adhoc') + '.pdf',
+  };
+}
 
 /* ────────────────────────────────────── the computation ────────────────────────────────────── */
 
