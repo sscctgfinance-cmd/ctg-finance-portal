@@ -1535,6 +1535,31 @@ QUEUE's timing, the confirm's Escape listener and the alert panel's click-away l
 by a test: vitest runs `environment: 'node'` and all 45 test files depend on that, so adding jsdom for
 three behaviours was not worth it.
 
+## The old address gets a forwarding page — `cutover/old-origin/`
+
+At cutover (GitHub Pages → `https://os.ctg4u.com`) the old GitHub Pages address stays alive serving
+`cutover/old-origin/forward.html`. Nothing in either app loads it; it is deployed BY HAND into the
+`publish` repo as three copies — `index.html`, `app.html`, `hros.html`. `cutover/old-origin/README.md`
+has the commands and the after-checks.
+
+**Its redirect is the least important third of it.** `sw.js`'s `install` calls `skipWaiting()` and its
+`activate` calls `clients.claim()` (`sw.js:6-7`), so the old service worker stays registered and stays
+subscribed on every device that ever opened the Time Clock screen, visited again or not — and
+`hr_push_subscriptions` has no `origin` column (`hr.ts:1822`), so the server cannot tell a stale row
+from a live one. `registration.unregister()` **from a page on that origin** is the only thing that
+clears it, which is why the old address stays alive at all. Deleting `sw.js` from the publish repo does
+nothing for a device that already has the worker.
+
+**It must be live BEFORE the DNS moves.** A device that enables reminders on the new origin first, then
+visits the old one, ends up with two subscriptions and the duplicate is permanent and unidentifiable.
+
+`tests/forwarding_page_test.ts` evaluates the page's own inline `<script>` through
+`tools/extract.ts`, so the tests cannot drift from the file the captain deploys, and it asserts what
+the cleanup CALLED rather than what the page rendered: an unregister that silently no-ops looks
+exactly like success and is unobservable afterwards, because the affected devices never report back.
+Its boot check blanks comments first — the first cut read raw source, so commenting the boot line out
+still matched it and the whole suite stayed green on a page that did nothing.
+
 ## Publishing to the live site is a separate step
 
 Merging a PR into `origin/main` does **not** make anything live. After merging:
