@@ -1,0 +1,147 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Admin</div>
+<h2 class="page-title">Approvals</h2>
+<div class="page-sub">Configure the multi-level approval chain for leave &amp; reimbursement</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div>
+<div class="muted" style="font-size:12px;margin-bottom:14px;max-width:660px;line-height:1.55">One place to control <b>who approves</b> — and in what order — for every leave request and expense claim in I PROCARE MALAYSIA SDN BHD. Changes apply to <b>future</b> submissions; requests already in flight keep their original chain.</div>
+<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+<button class="btn sm p" onclick="APV.tab='leave';APV.wfEdit=null;hrRender()">🌴 Leave approval</button>
+<button class="btn sm" onclick="APV.tab='rc';APV.wfEdit=null;hrRender()">🧾 Reimbursement approval</button>
+</div>
+<div class="panel" style="max-width:560px">
+<div class="panel-hd">
+<h3>Leave approval levels</h3>
+<span class="muted" style="font-size:11px">every leave request passes through these, in order</span>
+</div>
+<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:14px">Current chain: <b>Manager → HR</b>
+</div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+<span class="pill pill-neu" style="min-width:30px;text-align:center">1</span>
+<select onchange="hrApvLeaveSet(0,this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;min-width:230px">
+<optgroup label="People">
+<option value="emp:e1">AHMAD BIN ISMAIL</option>
+<option value="emp:e2">SITI NURHALIZA BINTI OMAR</option>
+<option value="emp:e3">RAJESH A/L KUMAR</option>
+</optgroup>
+<optgroup label="Roles">
+<option value="role:hr">Any HR</option>
+<option value="role:director">Any Director</option>
+</optgroup>
+</select>
+<a onclick="hrApvLeaveDel(0)" style="cursor:pointer;color:var(--coral-soft);font-size:12px">remove</a>
+</div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+<span class="pill pill-neu" style="min-width:30px;text-align:center">2</span>
+<select onchange="hrApvLeaveSet(1,this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;min-width:230px">
+<optgroup label="People">
+<option value="emp:e1">AHMAD BIN ISMAIL</option>
+<option value="emp:e2">SITI NURHALIZA BINTI OMAR</option>
+<option value="emp:e3">RAJESH A/L KUMAR</option>
+</optgroup>
+<optgroup label="Roles">
+<option value="role:hr">Any HR</option>
+<option value="role:director">Any Director</option>
+</optgroup>
+</select>
+<a onclick="hrApvLeaveDel(1)" style="cursor:pointer;color:var(--coral-soft);font-size:12px">remove</a>
+</div>
+<div style="display:flex;gap:8px;margin-top:6px">
+<button class="btn xs" onclick="hrApvLeaveAdd()">+ Add level</button>
+<button class="btn p xs" onclick="hrApvLeaveSave()">💾 Save leave flow</button>
+</div>
+<div class="muted" style="font-size:11px;margin-top:10px">Pick a specific person, the applicant’s <b>direct manager</b> (resolves per employee), or a role (HR / Finance / Director → whoever holds it). Set role holders in the Reimbursement tab → Role approvers.</div>
+</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link on" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

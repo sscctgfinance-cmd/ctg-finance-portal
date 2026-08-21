@@ -1,0 +1,91 @@
+<!-- #pharm -->
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+<div style="flex:1;min-width:240px;max-width:520px">
+<input id="pharm-search" value="" oninput="_pharmSearchDebounced(this.value)" placeholder="🔍 Search pharmacy / city / PIC / phone…" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px"/>
+</div>
+</div>
+<div class="cards" style="margin-bottom:14px">
+<div class="card">
+<div class="n" style="color:var(--coral-soft)">3</div>
+<div class="l">Total pharmacies</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--green-soft)">2</div>
+<div class="l">Active</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--muted)">1</div>
+<div class="l">Inactive</div>
+</div>
+</div>
+<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;overflow:hidden">
+<table class="bigtable" style="width:100%;border-collapse:collapse">
+<thead>
+<tr>
+<th style="text-align:left;padding:10px 14px">Pharmacy</th>
+<th style="text-align:left;padding:10px 14px">Location</th>
+<th style="text-align:left;padding:10px 14px">PIC</th>
+<th style="text-align:left;padding:10px 14px">Phone</th>
+<th style="text-align:right;padding:10px 14px">Commission</th>
+<th style="text-align:center;padding:10px 14px">Status</th>
+<th style="width:80px">
+</th>
+</tr>
+</thead>
+<tbody>
+<tr onclick="pharmOpen(1)" style="cursor:pointer;border-top:1px solid var(--panel-border)" onmouseover="this.style.background='rgba(255,255,255,.03)'" onmouseout="this.style.background='transparent'">
+<td style="padding:10px 14px">
+<b>FARMASI SIHAT SDN BHD</b>
+</td>
+<td style="padding:10px 14px">Shah Alam, Selangor</td>
+<td style="padding:10px 14px">
+<span class="muted">—</span>
+</td>
+<td style="padding:10px 14px">03-5511 2233</td>
+<td style="padding:10px 14px;text-align:right">19.2%</td>
+<td style="padding:10px 14px;text-align:center">
+<span class="pill pill-green" style="font-size:10px">Active</span>
+</td>
+<td style="padding:10px 14px;text-align:right">
+<span class="muted">›</span>
+</td>
+</tr>
+<tr onclick="pharmOpen(2)" style="cursor:pointer;border-top:1px solid var(--panel-border)" onmouseover="this.style.background='rgba(255,255,255,.03)'" onmouseout="this.style.background='transparent'">
+<td style="padding:10px 14px">
+<b>PHARMACY ALPHA</b>
+</td>
+<td style="padding:10px 14px">Georgetown, Pinang</td>
+<td style="padding:10px 14px">
+<span class="muted">—</span>
+</td>
+<td style="padding:10px 14px">04-226 7788</td>
+<td style="padding:10px 14px;text-align:right">19.2%</td>
+<td style="padding:10px 14px;text-align:center">
+<span class="pill pill-green" style="font-size:10px">Active</span>
+</td>
+<td style="padding:10px 14px;text-align:right">
+<span class="muted">›</span>
+</td>
+</tr>
+<tr onclick="pharmOpen(3)" style="cursor:pointer;border-top:1px solid var(--panel-border)" onmouseover="this.style.background='rgba(255,255,255,.03)'" onmouseout="this.style.background='transparent'">
+<td style="padding:10px 14px">
+<b>KLINIK &amp; FARMASI DESA</b>
+</td>
+<td style="padding:10px 14px">Johor Bahru, Johor</td>
+<td style="padding:10px 14px">
+<span class="muted">—</span>
+</td>
+<td style="padding:10px 14px">
+<span class="muted">—</span>
+</td>
+<td style="padding:10px 14px;text-align:right">19.2%</td>
+<td style="padding:10px 14px;text-align:center">
+<span class="pill" style="background:rgba(255,255,255,.06);color:var(--muted);font-size:10px">Inactive</span>
+</td>
+<td style="padding:10px 14px;text-align:right">
+<span class="muted">›</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

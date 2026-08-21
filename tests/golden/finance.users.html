@@ -1,0 +1,105 @@
+<!-- #users -->
+<div class="subnav" style="display:flex;gap:8px;margin-bottom:14px">
+<button class="btn sm" id="uv_users" onclick="usersView('users')">👥 Users</button>
+<button class="btn sm" id="uv_roles" onclick="usersView('roles')">🛡 Roles &amp; permissions</button>
+<button class="btn sm" id="uv_sessions" onclick="usersView('sessions')">🖥 Active sessions</button>
+<button class="btn sm" id="uv_audit" onclick="usersView('audit')">📜 Audit log</button>
+<button class="btn sm" id="uv_xero" onclick="usersView('xero')">🔗 Xero sync</button>
+</div>
+<div id="uv_body">
+</div>
+<div id="user_modal">
+</div>
+<div id="role_modal">
+</div>
+<!-- #users_out -->
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>User</th>
+<th>Role</th>
+<th>Company access</th>
+<th>Last login</th>
+<th>Status</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<b>BOSS</b> <span class="pill pill-green" style="font-size:9px" title="Two-factor authentication on">🔐 2FA</span>
+<br>
+<span class="muted" style="font-size:11px">boss@ctg.test</span>
+</td>
+<td>
+<span class="pill pill-coral">Administrator</span>
+</td>
+<td class="muted" style="font-size:11.5px">All companies (admin)</td>
+<td>
+<div class="muted" style="font-size:11px">19 min ago · <span style="font-family:monospace">203.0.113.7</span> · 412×</div>
+</td>
+<td>
+<span class="pill pill-green">active</span>
+</td>
+<td style="white-space:nowrap">
+<button class="btn sm" onclick="userEdit(0)">Edit</button> <button class="btn sm" onclick="userReset(0)">🔑 Reset</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>AZLINA BINTI OTHMAN</b> <br>
+<span class="muted" style="font-size:11px">acct@ctg.test</span>
+</td>
+<td>
+<span class="pill pill-draft">Finance</span>
+</td>
+<td class="muted" style="font-size:11.5px">SKINDAE SDN BHD</td>
+<td>
+<div class="muted" style="font-size:11px">2 d ago · <span style="font-family:monospace">203.0.113.44</span> · 88×</div>
+</td>
+<td>
+<span class="pill pill-green">active</span>
+</td>
+<td style="white-space:nowrap">
+<button class="btn sm" onclick="userEdit(1)">Edit</button> <button class="btn sm" onclick="userReset(1)">🔑 Reset</button>
+</td>
+</tr>
+<tr>
+<td>
+<b>READ ONLY</b> <br>
+<span class="muted" style="font-size:11px">audit@ctg.test</span>
+</td>
+<td>
+<span class="pill pill-draft">Viewer</span>
+</td>
+<td class="muted" style="font-size:11.5px">I PROCARE MALAYSIA SDN BHD <span style="color:var(--coral-soft);font-size:10.5px">(viewer)</span>
+</td>
+<td>
+<div class="muted" style="font-size:11px">
+<span class="muted">never</span>
+</div>
+</td>
+<td>
+<span class="pill pill-draft">disabled</span>
+</td>
+<td style="white-space:nowrap">
+<button class="btn sm" onclick="userEdit(2)">Edit</button> <button class="btn sm" onclick="userReset(2)">🔑 Reset</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- #uv_body -->
+<div class="panel">
+<div class="panel-hd">
+<h3>User access · who can log in &amp; what they see</h3>
+<button class="btn p" onclick="userForm(null)">+ Add user</button>
+</div>
+<div id="users_out">
+<div class="load">
+<span class="spin">
+</span>Loading…</div>
+</div>
+</div>

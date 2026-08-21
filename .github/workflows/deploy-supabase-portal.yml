@@ -6,8 +6,10 @@ on:
     branches:
       - main
     paths:
-      - portal_current.ts
-      - supabase/functions/portal/index.ts
+      # v209: the function is a directory of modules, not one file. Trigger on ALL of it — a change to
+      # hr.ts or lib.ts is just as much a deploy as a change to the router, and a `paths:` list that
+      # names individual files would silently NOT deploy them.
+      - supabase/functions/portal/**
       - supabase/config.toml
       - .github/workflows/deploy-supabase-portal.yml
 
@@ -34,29 +36,62 @@ jobs:
           sudo mv supabase /usr/local/bin/supabase
           supabase --version
 
-      - name: Sync portal source
-        run: cp portal_current.ts supabase/functions/portal/index.ts
-
       - name: Guard against stub / truncated source
-        # The real portal is ~149 KB. A truncated or stub file is the #1 way
-        # production has gone down. Refuse to deploy anything suspiciously small
-        # or missing the core feature markers.
+        # A truncated or stub source is the #1 way production has gone down. Before v209 this was one
+        # file, so one byte count caught it. It is now a directory, and a total-bytes check alone would
+        # NOT: a stubbed 200-byte index.ts sitting next to three intact modules still totals ~600 KB and
+        # would sail through. So this checks the total AND pins each file by a marker only its real
+        # contents carry, AND counts the action branches — the router is worthless if the handler chains
+        # it delegates to have been truncated away.
         run: |
           set -e
-          f="supabase/functions/portal/index.ts"
-          bytes=$(wc -c < "$f")
-          echo "index.ts is $bytes bytes"
-          if [ "$bytes" -lt 120000 ]; then
-            echo "::error::Refusing to deploy — index.ts is only $bytes bytes (expected ~149 KB). Looks like a stub/truncated file."
-            exit 1
-          fi
-          for marker in "processApEmail" "pnl_report" "portal up"; do
-            if ! grep -q "$marker" "$f"; then
-              echo "::error::Refusing to deploy — required marker '$marker' missing from source."
+          d="supabase/functions/portal"
+          ls -l "$d"
+
+          # 1. Every module must be present. A missing one is a broken import at boot, not a small deploy.
+          for f in index.ts lib.ts hr.ts finance.ts; do
+            if [ ! -s "$d/$f" ]; then
+              echo "::error::Refusing to deploy — $d/$f is missing or empty."
               exit 1
             fi
           done
-          if grep -q "raw.githubusercontent" "$f"; then
+
+          # 2. Total size across the function directory (the real tree is ~600 KB).
+          bytes=$(cat "$d"/*.ts | wc -c | tr -d " ")
+          echo "function directory is $bytes bytes across $(ls "$d"/*.ts | wc -l) modules"
+          if [ "$bytes" -lt 480000 ]; then
+            echo "::error::Refusing to deploy — the function directory is only $bytes bytes (expected ~600 KB). Looks like a stub/truncated source."
+            exit 1
+          fi
+
+          # 3. Per-file markers. These are what a total-bytes check cannot do: they fail if any ONE
+          #    module is stubbed while the others are intact.
+          check_marker () {
+            if ! grep -q "$2" "$d/$1"; then
+              echo "::error::Refusing to deploy — required marker '$2' missing from $d/$1."
+              exit 1
+            fi
+            echo "  ✓ $1 contains $2"
+          }
+          check_marker index.ts   "portal up"        # the GET health response the check below looks for
+          check_marker index.ts   "Deno.serve"       # the request entry itself
+          check_marker index.ts   "financeRoutes"    # the router still delegates to both chains
+          check_marker index.ts   "hrRoutes"
+          check_marker lib.ts     "processApEmail"   # AP inbound email pipeline
+          check_marker finance.ts "pnl_report"       # Finance OS handler chain
+          check_marker hr.ts      "hr_emp_save"      # HR OS handler chain
+
+          # 4. The handler chains themselves. 209 `api === "..."` comparisons over 203 action names is
+          #    the shape of the real portal; a truncated chain is a silently dead feature per branch.
+          actions=$(grep -ho 'api === "' "$d"/*.ts | wc -l | tr -d " ")
+          echo "action branches: $actions"
+          if [ "$actions" -lt 209 ]; then
+            echo "::error::Refusing to deploy — only $actions 'api === \"...\"' branches found (expected at least 209). The handler chain has been truncated."
+            exit 1
+          fi
+
+          # 5. Unchanged from before: never deploy a GitHub-raw bootstrap instead of the real source.
+          if grep -rq "raw.githubusercontent" "$d"; then
             echo "::error::Refusing to deploy — source still contains a GitHub-raw bootstrap import (fragile). Deploy the real inline source instead."
             exit 1
           fi
@@ -71,8 +106,8 @@ jobs:
         run: |
           set -eo pipefail
           echo "=== source about to deploy ==="
-          sha256sum supabase/functions/portal/index.ts || true
-          wc -c supabase/functions/portal/index.ts
+          sha256sum supabase/functions/portal/*.ts || true
+          wc -c supabase/functions/portal/*.ts
           for attempt in 1 2 3; do
             echo "=== deploy attempt $attempt ==="
             if supabase functions deploy portal --project-ref cmostxcjtbuhbzfojuid --no-verify-jwt 2>&1 | tee /tmp/deploy.log; then
@@ -124,7 +159,7 @@ jobs:
           # that hitting it returns 401 (unauth = wired) rather than the fallback hint
           # (= action not present in deployed code).
           for action in tenants_refresh; do
-            if ! grep -q "\"$action\"" supabase/functions/portal/index.ts; then
+            if ! grep -rq "\"$action\"" supabase/functions/portal; then
               echo "action $action not in source, skipping"
               continue
             fi

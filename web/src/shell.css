@@ -1,0 +1,27 @@
+/*
+ * The ONLY hand-written CSS in web/. Five declarations, and they exist for one reason.
+ *
+ * Both legacy navs are built from `<button onclick="…">` and `<div class="tab" onclick="…">`, because
+ * each app was one page. In the React shell half of every nav's destinations are routes and half are
+ * handoffs into the legacy file, so every nav control is an `<a href>` — which is what makes
+ * middle-click, hover-to-see-target and Back work. Neither legacy stylesheet resets `text-decoration`
+ * (they never had an anchor to reset), so without this the ported nav is identical to the live app
+ * except that every item is underlined.
+ *
+ * This is NOT a place to put legacy CSS. app/hr/legacy.css and app/finance/legacy.css are generated from
+ * hros.html and app.html by scripts/sync-legacy-css.mjs and are the only source of those rules; a rule
+ * hand-copied here would be a second source of truth that starts drifting the day it is written. What
+ * belongs here is only what the React port ADDS, which today is this.
+ *
+ * `.btn` is on the list for the same reason: Finance's top bar has three controls that are legacy modals
+ * or a legacy XLSX writer with no React equivalent (Alerts, Security, Export), so each keeps its label
+ * and its position and links into app.html instead. app.html writes
+ * `style="text-decoration:none"` by hand wherever it puts `.btn` on an anchor (app.html:4063) — this is
+ * that, once.
+ */
+.side-link,
+.side-foot-btn,
+.mob-tab,
+.tabs .tab,
+.tab-cat,
+.btn { text-decoration: none; }

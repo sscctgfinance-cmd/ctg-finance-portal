@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Generated from the legacy apps' own <style> blocks by scripts/sync-legacy-css.mjs on every
+# dev/build/test — one per route tree, because the two apps disagree on 38 selectors. Never commit
+# either: a committed copy is a second source of truth that starts drifting from the legacy stylesheet.
+app/hr/legacy.css
+app/finance/legacy.css

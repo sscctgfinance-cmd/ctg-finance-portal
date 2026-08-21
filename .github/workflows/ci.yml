@@ -1,4 +1,4 @@
-name: CI — lint & payroll tests
+name: CI — lint, payroll tests & React parity
 
 # Runs on EVERY push and PR, including changes to hros.html.
 #
@@ -49,6 +49,16 @@ jobs:
             "
             test -s ".ci/$f.js"
           done
+          # common.js (PR #28) is a real <script src=> file, so the matcher above cannot see it — but both
+          # apps load it, so a syntax error in it white-screens Finance OS and HR OS at once. Copy it in
+          # so the lint loop below picks it up. FAIL-CLOSED: missing or empty is an error, not a skip.
+          if [ ! -s common.js ]; then
+            echo "::error::common.js is missing or empty — both app.html and hros.html load it, so it must be syntax-checked, not skipped."
+            exit 1
+          fi
+          cp common.js .ci/common.js
+          echo "common.js -> .ci/common.js ($(wc -c < .ci/common.js | tr -d ' ') bytes)"
+
           # hros.html is the big one; anything tiny means the extraction silently broke.
           bytes=$(wc -c < .ci/hros.html.js)
           echo "extracted hros script: $bytes bytes"
@@ -98,26 +108,112 @@ jobs:
           fi
 
       - name: Backend parses
+        # v209: the edge function is a directory of modules, not one file. Lint ALL of them — a syntax
+        # error in hr.ts is exactly as fatal at boot as one in the router, and linting only index.ts
+        # would have checked 9 KB of a 600 KB function. Fail-closed on both counts: refuse if the
+        # expected modules are not there, and refuse if lint produced no output for a file (which means
+        # it did not actually inspect it, so "no SyntaxError found" is not good news).
         run: |
           set -e
-          if deno lint portal_current.ts 2>&1 | grep -qiE "SyntaxError|Expression expected"; then
-            echo "::error file=portal_current.ts::portal_current.ts does not parse."
+          d="supabase/functions/portal"
+          n=$(ls "$d"/*.ts | wc -l | tr -d " ")
+          echo "linting $n module(s) in $d"
+          if [ "$n" -lt 4 ]; then
+            echo "::error::Only $n .ts file(s) in $d — expected the router plus lib.ts / hr.ts / finance.ts."
             exit 1
           fi
-          echo "portal_current.ts parses OK"
+          fail=0
+          for f in "$d"/*.ts; do
+            out=$(deno lint "$f" 2>&1 || true)
+            if [ -z "$out" ]; then
+              echo "::error::deno lint produced no output for $f — treating as a failed check."
+              exit 1
+            fi
+            if echo "$out" | grep -qiE "SyntaxError|Unexpected token|Expression expected"; then
+              echo "::error file=$f::$f does not parse — the whole portal would fail to boot."
+              echo "$out" | grep -iE -A4 "SyntaxError|Unexpected token|Expression expected" | head -20
+              fail=1
+            else
+              echo "$f parses OK"
+            fi
+          done
+          exit $fail
 
-      - name: Edge function source matches portal_current.ts
-        # The deploy workflow copies portal_current.ts over supabase/functions/portal/index.ts. If they are
-        # already out of sync in the repo, a reviewer is reading different code from what ships.
+      - name: Edge function is the single source of truth
+        # Replaces the old "matches portal_current.ts" diff check. portal_current.ts was a byte-identical
+        # duplicate at the repo root that the deploy workflow copied over index.ts; it could not survive
+        # the split into modules, so it is gone and supabase/functions/portal/ is the only copy. This
+        # step exists so the duplicate cannot quietly come back — two copies is how a reviewer ends up
+        # reading different code from what ships.
         run: |
-          if ! diff -q portal_current.ts supabase/functions/portal/index.ts >/dev/null; then
-            echo "::error::portal_current.ts and supabase/functions/portal/index.ts differ. Run: cp portal_current.ts supabase/functions/portal/index.ts"
+          set -e
+          if [ -e portal_current.ts ]; then
+            echo "::error::portal_current.ts is back. The edge function lives ONLY in supabase/functions/portal/ — a second copy will drift from it silently."
             exit 1
           fi
-          echo "Edge function source is in sync."
+          test -s supabase/functions/portal/index.ts
+          grep -q "Deno.serve" supabase/functions/portal/index.ts
+          echo "supabase/functions/portal/ is the single source of truth."
 
-      - name: Payroll tests — statutory tables & engine parity
-        # The two that matter most:
+      - name: Payroll tests, and the router still routes
+        # The three that matter most:
         #  - the gazetted SOCSO/EIS anchors (a wrong table over-deducts from every employee, silently)
         #  - frontend/backend parity (any drift 409s payroll for the whole company, unrecoverably)
+        #  - route parity (v209): boots the edge function offline and replays an anonymous POST against
+        #    all 203 actions, comparing to a golden captured before the module split. Catches a dropped
+        #    handler and a lost auth gate — the ~200 actions have no other coverage.
         run: deno test --allow-read tests/
+
+  # The React half (web/). A separate job on purpose: the Deno job above is the gate on the code that is
+  # LIVE for every user, and it must not start depending on npm being reachable to report on hros.html.
+  # These two never share a step.
+  react:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: HR Access still matches the legacy golden
+        # THE pilot check. tests/golden/hr.access.html was captured from hrAccessRender() in hros.html;
+        # this renders the React component from the same fixture and diffs it under the golden harness's
+        # own normaliser plus the documented relaxations in web/tests/parity.ts. It fails if either side
+        # moves — including if someone edits hros.html, regenerates the goldens, and forgets the React one.
+        #
+        # The same run also proves the relaxation layer still bites (four deliberate defects) and that the
+        # handler wiring matches, which is what makes "drop the on*= attributes" safe rather than blind.
+        working-directory: web
+        run: npm test
+
+      - name: The app builds
+        # A parity test that passes against a component the app cannot build is not worth anything.
+        working-directory: web
+        run: npm run build
+
+      - name: Nothing generated got committed
+        # The legacy stylesheets are extracted from hros.html and app.html on every build — one per route
+        # tree, because the two apps disagree on 38 selectors (see web/scripts/sync-legacy-css.mjs).
+        # Committing either creates a second stylesheet that drifts from the one users actually see;
+        # web/.gitignore says so and this enforces it. Listed by name: there is no glob, so a third
+        # legacy app needs a line here too.
+        run: |
+          set -e
+          for f in web/app/hr/legacy.css web/app/finance/legacy.css web/app/legacy.css; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error::$f is committed. It is generated by web/scripts/sync-legacy-css.mjs — a committed copy is a second source of truth that drifts."
+              exit 1
+            fi
+          done
+          if git ls-files web/node_modules | grep -q .; then
+            echo "::error::web/node_modules is committed. This repository is mirrored to a PUBLIC repo."
+            exit 1
+          fi
+          echo "clean."

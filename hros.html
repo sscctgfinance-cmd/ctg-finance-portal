@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- build-marker:1784982561 -->
 <title>HR OS · CTG</title><!-- build:v87-multi-line-claims -->
-<!-- PWA / Web Push (clock-in reminders). On iPhone, notifications only work once the app is added to the Home Screen. -->
-<link rel="manifest" href="manifest.json">
+<!-- v224: the installable app and Web Push are RETIRED (email covers the reminders). No manifest and no
+     apple-mobile-web-app-capable, so "Add to Home Screen" now makes an ordinary browser shortcut — which is
+     all the Time Clock tip below ever promised. theme-color and apple-touch-icon stay — they give that
+     shortcut its colour and its icon, and neither makes the page installable. sw.js stays in the repo for the old
+     origin's forwarding page, which has to be able to unregister it. -->
 <meta name="theme-color" content="#0b1220">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="HR OS">
 <link rel="apple-touch-icon" href="logo.png">
 <style>
 /* ════════════════════════════════════════════
@@ -1138,6 +1139,11 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
 
 <div id="toast"></div>
 
+<!-- Shared with app.html — must load before the inline script below (classic script: these are globals). -->
+<script src="myt.js"></script>
+<script src="common.js"></script>
+<script src="payroll.js"></script>
+<script src="hr-docs.js"></script>
 <script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 // ── v162: client error beacon ────────────────────────────────────────────────────────────────────────
@@ -1199,7 +1205,6 @@ const CTG_SSO = "https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/ctg-sso";
     history.replaceState(null, "", location.pathname + location.search);
   } catch(_e){}
 })();
-function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIComponent(app); }
 // Reveal the SSO button only once CTG has issued an app_id. Any failure here leaves it hidden — the
 // password form is always the working path, so a probe that cannot answer must never block sign-in.
 (function(){
@@ -1210,9 +1215,8 @@ function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIC
   } catch(_e){}
 })();
 let TOKEN = STORAGE_OK ? (localStorage.getItem("ctg_portal_token")||"") : "";
-// Safe wrappers so the rest of the code can blindly call storage.
-function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
-function storageSet(k,v){ try { if(STORAGE_OK) localStorage.setItem(k,v); } catch(_e){} }
+// Safe wrappers so the rest of the code can blindly call storage: storageGet / storageSet /
+// storageRemove are in common.js and read STORAGE_OK from here.
 /* ── v9: inline-SVG icon set (Lucide-style, inherits currentColor) ── */
 var ICONS={
  dashboard:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>',
@@ -1258,7 +1262,6 @@ function hrToggleNav(){ var s=document.querySelector('.side'); if(!s) return; va
   }
   document.documentElement.setAttribute('data-theme', storageGet('hros_theme')==='dark'?'dark':'light');
 }catch(_e){ document.documentElement.setAttribute('data-theme','light'); } })();
-function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } catch(_e){} }
 let ME=null, COMPANIES=[];
 let PERMS=null;            // {role,label,features:[],manage_users}
 const loaded={};
@@ -1267,67 +1270,23 @@ const esc=x=>(x==null?'':String(x)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt
 const M=n=>'RM '+(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
 // MYT-safe date helpers — `Date#toISOString()` returns UTC, which between 00:00-08:00 MYT
 // rolls back to yesterday. Use local-tz formatting to keep invoice dates / expiry comparisons correct.
-function todayLocalISO(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
-function localISO(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
-function inDaysLocalISO(days){ const d=new Date(); d.setDate(d.getDate()+days); return localISO(d); }
+// v224: this WAS the machine's zone — the same name as app.html's todayLocalISO() and a different
+// answer, which is the trap the timezone audit named. Every caller (claim date, RC form date,
+// attendance month, leave from/to, the resignation last-working-day) means "a date in Malaysia", so
+// all of them now get one: the shared definition in myt.js.
+function todayLocalISO(){ return mytISO(); }
 
 // Toast queue: when several toasts fire back-to-back (e.g. "saved" + "loaded"
 // + "5 contacts"), play them sequentially instead of overwriting each other.
+// The queue lives here; toast() / _playNextToast() are in common.js.
 const _toastQueue=[]; let _toastPlaying=false;
-function toast(msg,isErr){ _toastQueue.push({msg,isErr}); if(!_toastPlaying) _playNextToast(); }
-function _playNextToast(){
-  const next=_toastQueue.shift();
-  if(!next){ _toastPlaying=false; return; }
-  _toastPlaying=true;
-  const e=document.getElementById('toast');
-  e.textContent=next.msg;
-  e.style.borderColor=next.isErr?'rgba(239,68,68,.45)':'';
-  e.style.color=next.isErr?'var(--red-soft)':'';
-  e.classList.add('show');
-  setTimeout(()=>{ e.classList.remove('show'); setTimeout(_playNextToast, 240); }, 2400);
-}
 
-// ── Network resilience (v28.1) ──
+// ── Network resilience (v28.1) — call() itself is in common.js ──
 // • 30s timeout with AbortController
 // • Auto-retry once on transient 5xx (502/503/504) — Supabase edge cold-starts
 // • Detect session-expired (401 / "unauthorized" on a token-bearing call) → graceful sign-out modal
 // • Convert raw network errors into human-readable messages
 let SESSION_EXPIRED_SHOWN=false;
-async function call(body){
-  const reqToken = body && body.token !== undefined ? body.token : TOKEN;
-  // Don't make calls after we already know the session is dead — except for login/me probes.
-  const isAuthExempt = body && (body.api==='login' || body.api==='login_2fa');
-  for(let attempt=0; attempt<2; attempt++){
-    const ctrl=new AbortController();
-    const tm=setTimeout(()=>ctrl.abort(),30000);
-    try{
-      const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
-      // Retry once on transient 5xx
-      if((r.status===502||r.status===503||r.status===504) && attempt===0){
-        clearTimeout(tm);
-        await new Promise(rs=>setTimeout(rs, 1000));
-        continue;
-      }
-      let data; try{ data=await r.json(); }catch(_e){
-        if(r.status>=500) throw new Error('Server returned an unexpected response — please retry');
-        throw new Error('Server returned an unexpected response');
-      }
-      // Session-expired detection: if we had a token and the server says unauthorized → token died.
-      const isUnauth = (r.status===401) || (data && data.ok===false && data.error==='unauthorized');
-      if(isUnauth && reqToken && !isAuthExempt){
-        handleSessionExpired();
-        // Throw so callers don't try to render data; the modal will guide the user.
-        throw new Error('Session expired — please sign in again');
-      }
-      if(!r.ok && data && data.error) throw new Error(data.error);
-      return data;
-    }catch(e){
-      if(e && e.name==='AbortError') throw new Error('Request timed out — server or Xero is slow, please retry');
-      if(e instanceof TypeError) throw new Error('Network error — check your connection and retry');
-      throw e;
-    }finally{clearTimeout(tm);}
-  }
-}
 // Show a modal explaining the session ended, with one button to sign back in.
 function handleSessionExpired(){
   if(SESSION_EXPIRED_SHOWN) return;
@@ -1338,22 +1297,6 @@ function handleSessionExpired(){
     '<p style="color:var(--text-soft);font-size:13.5px;margin:0 0 18px;line-height:1.6">For your security, you have been signed out. Please sign in again to continue.</p>'+
     '<div class="modal-ft" style="justify-content:flex-end"><button class="btn p" onclick="location.href=\'hros.html\'">Sign in</button></div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
-}
-async function doLogin(e){
-  e.preventDefault();
-  const email=document.getElementById('email').value.trim();
-  const pass=document.getElementById('pass').value;
-  const b=document.getElementById('lbtn'),er=document.getElementById('lerr');
-  er.classList.add('hide');b.disabled=true;b.textContent='Signing in…';
-  try{
-    const r=await call({api:'login',email,pass,token:''});
-    if(r&&r.ok){TOKEN=r.token;storageSet('ctg_portal_token',TOKEN);ME=r.user;COMPANIES=r.companies||[];enterApp();return;}
-    if(r&&r.need_2fa){ show2faPrompt(r.login_token); b.disabled=false; b.textContent='Sign In'; return; }
-    if(r&&r.locked){er.textContent='🔒 Account locked after too many failed attempts. Try again in '+(r.retry_minutes||15)+' min.';}
-    else er.textContent='Incorrect email or password';
-    er.classList.remove('hide');
-  }catch(x){er.textContent='Connection failed, please retry';er.classList.remove('hide');}
-  b.disabled=false;b.textContent='Sign In';
 }
 var TFA_TOKEN=null;
 function show2faPrompt(loginToken){
@@ -1368,24 +1311,6 @@ function show2faPrompt(loginToken){
     '<div class="modal-ft"><button class="btn" onclick="cancel2fa()">Cancel</button><button class="btn p" id="tfa_btn" onclick="submit2fa()">Verify</button></div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
   setTimeout(function(){ var i=document.getElementById('tfa_code'); if(i){ i.focus(); i.addEventListener('keydown', function(e){ if(e.key==='Enter') submit2fa(); }); } },30);
-}
-function cancel2fa(){ TFA_TOKEN=null; var o=document.getElementById('tfa_overlay'); if(o) o.remove(); document.getElementById('login').classList.remove('hide'); }
-async function submit2fa(){
-  var er=document.getElementById('tfa_err'); var btn=document.getElementById('tfa_btn');
-  var code=(document.getElementById('tfa_code').value||'').replace(/\s|-/g,'');
-  er.classList.add('hide');
-  if(!/^\d{6}$/.test(code)){ er.textContent='Enter the 6-digit code from your authenticator app'; er.classList.remove('hide'); return; }
-  btn.disabled=true; btn.textContent='Verifying…';
-  try{
-    var r=await call({api:'login_2fa', login_token:TFA_TOKEN, code:code, token:''});
-    if(r&&r.ok){
-      TOKEN=r.token; storageSet('ctg_portal_token',TOKEN); ME=r.user; COMPANIES=r.companies||[];
-      var o=document.getElementById('tfa_overlay'); if(o) o.remove();
-      enterApp(); return;
-    }
-    er.textContent=(r&&r.error)||'Incorrect code'; er.classList.remove('hide');
-  }catch(x){ er.textContent='Network error, please retry'; er.classList.remove('hide'); }
-  btn.disabled=false; btn.textContent='Verify';
 }
 
 function logout(){storageRemove('ctg_portal_token');location.reload();}
@@ -1523,171 +1448,7 @@ function hrPickCompany(tid){
   if(typeof HRA!=='undefined'){ HRA.data=null; HRA.loading=false; HRA.err=null; }
   renderHR();
 }
-var HR_TAX_BANDS=[[5000,0],[20000,0.01],[35000,0.03],[50000,0.06],[70000,0.11],[100000,0.19],[400000,0.25],[600000,0.26],[2000000,0.28],[Infinity,0.30]];
-/* v155: Official PERKESO Second Schedule (Cat1 <60, Cat2 60+) + EIS tables, RM6,000 ceiling (eff. 1 Oct
-   2024). Row = [wageUpperBound, employeeAmt, employerAmt]. MUST stay byte-identical to the server engine
-   (portal_current.ts) — the finalise step recomputes and rejects on any >1-sen difference. */
-var MY_SOCSO_CAT1=[[30,0.10,0.40],[50,0.20,0.70],[70,0.30,1.10],[100,0.40,1.50],[140,0.60,2.10],[200,0.85,2.95],[300,1.25,4.35],[400,1.75,6.15],[500,2.25,7.85],[600,2.75,9.65],[700,3.25,11.35],[800,3.75,13.15],[900,4.25,14.85],[1000,4.75,16.65],[1100,5.25,18.35],[1200,5.75,20.15],[1300,6.25,21.85],[1400,6.75,23.65],[1500,7.25,25.35],[1600,7.75,27.15],[1700,8.25,28.85],[1800,8.75,30.65],[1900,9.25,32.35],[2000,9.75,34.15],[2100,10.25,35.85],[2200,10.75,37.65],[2300,11.25,39.35],[2400,11.75,41.15],[2500,12.25,42.85],[2600,12.75,44.65],[2700,13.25,46.35],[2800,13.75,48.15],[2900,14.25,49.85],[3000,14.75,51.65],[3100,15.25,53.35],[3200,15.75,55.15],[3300,16.25,56.85],[3400,16.75,58.65],[3500,17.25,60.35],[3600,17.75,62.15],[3700,18.25,63.85],[3800,18.75,65.65],[3900,19.25,67.35],[4000,19.75,69.15],[4100,20.25,70.85],[4200,20.75,72.65],[4300,21.25,74.35],[4400,21.75,76.15],[4500,22.25,77.85],[4600,22.75,79.65],[4700,23.25,81.35],[4800,23.75,83.15],[4900,24.25,84.85],[5000,24.75,86.65],[5100,25.25,88.35],[5200,25.75,90.15],[5300,26.25,91.85],[5400,26.75,93.65],[5500,27.25,95.35],[5600,27.75,97.15],[5700,28.25,98.85],[5800,28.75,100.65],[5900,29.25,102.35],[6000,29.75,104.15]];
-var MY_SOCSO_CAT2=[[30,0,0.30],[50,0,0.50],[70,0,0.80],[100,0,1.05],[140,0,1.50],[200,0,2.10],[300,0,3.10],[400,0,4.40],[500,0,5.60],[600,0,6.90],[700,0,8.10],[800,0,9.40],[900,0,10.60],[1000,0,11.90],[1100,0,13.10],[1200,0,14.40],[1300,0,15.60],[1400,0,16.90],[1500,0,18.10],[1600,0,19.40],[1700,0,20.60],[1800,0,21.90],[1900,0,23.10],[2000,0,24.40],[2100,0,25.60],[2200,0,26.90],[2300,0,28.10],[2400,0,29.40],[2500,0,30.60],[2600,0,31.90],[2700,0,33.10],[2800,0,34.40],[2900,0,35.60],[3000,0,36.90],[3100,0,38.10],[3200,0,39.40],[3300,0,40.60],[3400,0,41.90],[3500,0,43.10],[3600,0,44.40],[3700,0,45.60],[3800,0,46.90],[3900,0,48.10],[4000,0,49.40],[4100,0,50.60],[4200,0,51.90],[4300,0,53.10],[4400,0,54.40],[4500,0,55.60],[4600,0,56.90],[4700,0,58.10],[4800,0,59.40],[4900,0,60.60],[5000,0,61.90],[5100,0,63.10],[5200,0,64.40],[5300,0,65.60],[5400,0,66.90],[5500,0,68.10],[5600,0,69.40],[5700,0,70.60],[5800,0,71.90],[5900,0,73.10],[6000,0,74.40]];
-var MY_EIS=[[30,0.05,0.05],[50,0.10,0.10],[70,0.10,0.10],[100,0.15,0.15],[140,0.25,0.25],[200,0.35,0.35],[300,0.50,0.50],[400,0.70,0.70],[500,0.90,0.90],[600,1.10,1.10],[700,1.30,1.30],[800,1.50,1.50],[900,1.70,1.70],[1000,1.90,1.90],[1100,2.10,2.10],[1200,2.30,2.30],[1300,2.50,2.50],[1400,2.70,2.70],[1500,2.90,2.90],[1600,3.10,3.10],[1700,3.30,3.30],[1800,3.50,3.50],[1900,3.70,3.70],[2000,3.90,3.90],[2100,4.10,4.10],[2200,4.30,4.30],[2300,4.50,4.50],[2400,4.70,4.70],[2500,4.90,4.90],[2600,5.10,5.10],[2700,5.30,5.30],[2800,5.50,5.50],[2900,5.70,5.70],[3000,5.90,5.90],[3100,6.10,6.10],[3200,6.30,6.30],[3300,6.50,6.50],[3400,6.70,6.70],[3500,6.90,6.90],[3600,7.10,7.10],[3700,7.30,7.30],[3800,7.50,7.50],[3900,7.70,7.70],[4000,7.90,7.90],[4100,8.10,8.10],[4200,8.30,8.30],[4300,8.50,8.50],[4400,8.70,8.70],[4500,8.90,8.90],[4600,9.10,9.10],[4700,9.30,9.30],[4800,9.50,9.50],[4900,9.70,9.70],[5000,9.90,9.90],[5100,10.10,10.10],[5200,10.30,10.30],[5300,10.50,10.50],[5400,10.70,10.70],[5500,10.90,10.90],[5600,11.10,11.10],[5700,11.30,11.30],[5800,11.50,11.50],[5900,11.70,11.70],[6000,11.90,11.90]];
-function myStatLookup(tbl,wage){ if(!(wage>0)) return {ee:0,er:0}; for(var i=0;i<tbl.length;i++){ if(wage<=tbl[i][0]) return {ee:tbl[i][1],er:tbl[i][2]}; } var L=tbl[tbl.length-1]; return {ee:L[1],er:L[2]}; }
-// ── PERKESO LINDUNG 24 Jam (SKBBK) — Act A1788, in force 1 June 2026 ────────────────────────────────
-// Employee-only, banded like the rest of Act 4, RM6,000 ceiling. Phase 1 (1 Jun 2026 – 31 May 2028) is
-// 0.75%; it rises to 1.00% and then 1.25% later.
-//
-// DERIVED, not transcribed — PERKESO publishes this only as a scanned table, and v155 was exactly a
-// hand-entered contribution table that was wrong for weeks. Phase-1 TOTAL employee contribution is 1.25%
-// (0.5% invalidity + 0.75% SKBBK), and HR OS already holds the gazetted 1.25% column (Cat 2 employer) and
-// the 0.5% column (Cat 1 employee), so SKBBK = Cat2_employer − Cat1_employee. Hits both published anchors
-// (RM44.65 at the ceiling, RM22.85 in the RM3,000.01–3,100 band); a naive midpoint×0.75% would be wrong on
-// 32 of 64 bands. Must mirror computePayrollMY exactly.
-function myLindung24(wage){
-  var a=myStatLookup(MY_SOCSO_CAT2,wage).er, b=myStatLookup(MY_SOCSO_CAT1,wage).ee;
-  return Math.round((a-b)*100)/100;
-}
-function myLindungActive(period){
-  var now=new Date();
-  var y=Number(period&&period.year)||now.getUTCFullYear();
-  var m=Number(period&&period.month)||(now.getUTCMonth()+1);
-  return (y>2026) || (y===2026 && m>=6);
-}
-function myPcbRoundUp5(n){ n=Math.floor((Number(n)||0)*100)/100; return Math.round(Math.ceil(n/0.05-1e-9)*0.05*100)/100; }
-function myServiceMonths(emp,period){ if(!period||!period.year) return 12; var y=Number(period.year),start=1,end=12;
-  if(emp.join_date){ var d=new Date(emp.join_date); if(!isNaN(d.getTime())){ if(d.getUTCFullYear()>y) return 0; if(d.getUTCFullYear()===y) start=d.getUTCMonth()+1; } }
-  if(emp.resign_date){ var d2=new Date(emp.resign_date); if(!isNaN(d2.getTime())){ if(d2.getUTCFullYear()<y) return 0; if(d2.getUTCFullYear()===y) end=d2.getUTCMonth()+1; } }
-  return Math.max(1,end-start+1); }
 var HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
-function hrRoundUp(n){ return Math.ceil(n-1e-9); }
-function hrRound2(n){ return Math.round((Number(n)||0)*100)/100; }
-function hrRound5(n){ return Math.round((Number(n)||0)*20)/20; }          // nearest 5 sen (SOCSO/EIS table)
-function hrBandMid(w){ if(w<=0) return 0; var upper=Math.ceil((w-1e-9)/100)*100; return upper-50; } // RM100 contribution-band midpoint
-// v157: must mirror payAge() in portal_current.ts EXACTLY — age as at the end of the payroll period, and
-// UTC getters throughout (the old local getters also disagreed with the server on a birthday off-MYT,
-// which produced a 409 recompute_mismatch).
-function hrAge(dob,period){ if(!dob) return null; var d=new Date(dob); if(isNaN(d)) return null;
-  var t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
-  var a=t.getUTCFullYear()-d.getUTCFullYear(); var m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
-// EPF — KWSP Third Schedule behaviour: wages <=20k use RM20 wage bands; each side rounded UP to next ringgit.
-function hrEpfParts(wage,eeRate,erRate){ var w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?hrRoundUp(w*eeRate):0, er:erRate>0?hrRoundUp(w*erRate):0 }; }
-// SOCSO / EIS — contribution table: midpoint of the RM100 wage band × rate, rounded to nearest 5 sen; wage capped at ceiling.
-function hrTableParts(wage,ceiling,eeRate,erRate){ var w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; var mid=hrBandMid(w); return { ee:eeRate>0?hrRound5(mid*eeRate):0, er:erRate>0?hrRound5(mid*erRate):0 }; }
-function hrProgTax(chargeable){ var tax=0,prev=0; for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0],rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
-// cfg = hr_statutory_rates.rates. emp carries eligibility flags + date_of_birth + epf_ee_rate + socso_category + marital_status/spouse_working/num_children + resident.
-function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
-  var earn=adj.filter(function(a){return ['allowance','bonus','ot'].indexOf(a.kind)>=0;});
-  var addEarn=earn.reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var addEarnStat=earn.filter(function(a){return a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var unpaid=adj.filter(function(a){return a.kind==='unpaid_leave';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var otherDed=adj.filter(function(a){return a.kind==='deduction';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  var base=Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0);
-  var gross=hrRound2(base+addEarn-unpaid);
-  var statWage=Math.max(0, base+addEarnStat-unpaid);   // unpaid leave lowers the statutory wage too
-  var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
-  // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
-  // from the employee and over-contributed for the company. The Employees' Social Security Act 1969
-  // definition of wages excludes bonus, and EIS (Act 800) uses the same definition. EPF is the opposite:
-  // bonus IS EPF wages, so EPF keeps using statWage.
-  // Cross-checked against payroll.my on 3,500 + 369 bonus: it charges SOCSO/EIS on 3,500 (EIS 6.90) while
-  // charging EPF on 3,869 (EPF ee 427.00) — EPF already agreed to the sen; SOCSO/EIS did not.
-  // Must mirror computePayrollMY exactly or hr_payroll_finalise rejects with 409 recompute_mismatch.
-  var statWageExBonus=Math.max(0, statWage - bonusStat);
-  var age=hrAge(emp.date_of_birth, period), senior=(age!=null&&age>=60);
-  // ---- EPF (KWSP) ----
-  // v166: citizenship, which is NOT the same question as `resident` (that is tax residency, for PCB).
-  // Permanent Residents follow the Malaysian rates; only a non-PR foreigner is on the 2% schedule.
-  // Must mirror computePayrollMY exactly.
-  var nonCitizen=String(emp.citizen_status||'citizen')==='non_citizen';
-  var over75=(age!=null && age>=75);          // EPF liability ceases at 75 for everyone
-  var epfOn=emp.epf_eligible!==false && !over75;
-  var ncEe=cfg.epf.nonCitizenEe!=null?cfg.epf.nonCitizenEe:0.02;
-  var ncEr=cfg.epf.nonCitizenEr!=null?cfg.epf.nonCitizenEr:0.02;
-  var eeRate=(emp.epf_ee_rate!=null&&emp.epf_ee_rate!=='') ? Number(emp.epf_ee_rate)
-           : nonCitizen ? ncEe : (senior ? (cfg.epf.eeSenior!=null?cfg.epf.eeSenior:0) : cfg.epf.eeRate);
-  // v183: employer rate override (above-statutory contribution). Must mirror computePayrollMY exactly.
-  var erRate=(emp.epf_er_rate!=null&&emp.epf_er_rate!=='') ? Number(emp.epf_er_rate)
-           : nonCitizen ? ncEr
-           : (senior ? (cfg.epf.erSenior!=null?cfg.epf.erSenior:0.04) : (statWage<=cfg.epf.threshold?cfg.epf.erRateLow:cfg.epf.erRateHigh));
-  var ep=epfOn?hrEpfParts(statWage,eeRate,erRate):{ee:0,er:0}; var epfEe=ep.ee, epfEr=ep.er;
-  // ---- SOCSO (PERKESO) — Cat 1 (below 60) or Cat 2 (60+/registered late: employer-only) ----
-  var socsoOn=emp.socso_eligible!==false;
-  var scat=(emp.socso_category!=null&&emp.socso_category!=='') ? Number(emp.socso_category) : (senior?2:1);
-  var sp=socsoOn?myStatLookup(scat===2?MY_SOCSO_CAT2:MY_SOCSO_CAT1, statWageExBonus):{ee:0,er:0}; var socsoEe=sp.ee, socsoEr=sp.er;   // v155: exact PERKESO table / v180: ex-bonus
-  // ---- EIS (SIP) — 18 to 60 only ----
-  // v166: EIS (Act 800) covers Malaysian citizens and Permanent Residents ONLY. A foreign worker
-  // contributes nothing and is entitled to nothing — they are covered by Act 4 instead.
-  var eisOn=emp.eis_eligible!==false && !senior && !nonCitizen;
-  var ip=eisOn?myStatLookup(MY_EIS, statWageExBonus):{ee:0,er:0}; var eisEe=ip.ee, eisEr=ip.er;   // v155: exact EIS table / v180: ex-bonus
-  // ---- LINDUNG 24 Jam (SKBBK) — employee-only, no employer share. Must mirror computePayrollMY. ----
-  var lindungOn = myLindungActive(period) && (nonCitizen ? true : emp.lindung24!==false) && socsoOn;
-  var lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
-  // ---- PCB / MTD (annualised chargeable-income estimate) ----
-  // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
-  // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).
-  // Normal remuneration is annualised; the bonus's tax = tax(normal + bonus) − tax(normal), added once.
-  var statWageNormal=statWageExBonus;   // same quantity — one definition only
-  // v155/v156: LHDN MTD — annualise over ACTUAL service months, reconcile against income & PCB already
-  // paid earlier this year (ytd), LHDN rounding (truncate 2dp → up to 5 sen), MTD < RM10 = nil.
-  var N=myServiceMonths(emp, period);
-  var yg=Number(ytd&&ytd.gross)||0, ye=Number(ytd&&ytd.epf)||0, yp=Number(ytd&&ytd.pcb)||0, ym=Number(ytd&&ytd.months)||0;
-  var remain=Math.max(1, N - ym);
-  var pcb, pcbCat=1;
-  if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); pcbCat=0; }
-  else {
-    var ms=String(emp.marital_status||'single').toLowerCase();
-    var cat2=(ms==='married' && emp.spouse_working===false);   // married, spouse not working -> spouse relief + rebate
-    pcbCat=cat2?2:( ms==='married'?3:1 );
-    var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
-    var kids=Number(emp.num_children||0);
-    var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
-    // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year.
-    // Must mirror computePayrollMY exactly. Leaving it out over-deducted PCB from every employee.
-    // v184: SKBBK is an Act 4 contribution, so it shares the RM350 SOCSO/EIS MTD relief.
-    var projSocsoEis=Number((ytd&&ytd.socsoEis)||0) + (socsoEe+eisEe+lindung)*remain;
-    var rSocsoEis=cfg.reliefSocsoEisMax!=null?cfg.reliefSocsoEisMax:350;
-    // v167: TP1 declared reliefs. Must mirror computePayrollMY exactly.
-    var tp1=Math.max(0, Number((ytd&&ytd.tp1))||0);
-    // v185: PCB method (cfg.pcbMethod). Must mirror computePayrollMY exactly.
-    //   "payroll_my" (default, operator's choice) — no SOCSO/EIS relief, and the bonus is charged the
-    //   residual annual tax minus the normal MTD that will ACTUALLY be deducted (nil under RM10).
-    //   "lhdn" — the prescribed method HR OS used through v184.
-    var pcbMy = String(cfg.pcbMethod||'payroll_my')==='payroll_my';
-    var reliefs=rPers + (cat2?rSp:0) + kids*rCh + Math.min(projEpf, rEpf)
-              + (pcbMy ? 0 : Math.min(projSocsoEis, rSocsoEis)) + tp1;
-    var chargeable=Math.max(0, projGross - reliefs);
-    var tax=hrProgTax(chargeable);
-    var rebate=chargeable<=35000 ? (400 + (cat2?400:0)) : 0;   // individual (+spouse) rebate, s.6A
-    var monthlyBase=Math.max(0, ((tax-rebate) - yp) / remain);
-    var bonusAnnual=function(){
-      var chargeableB=Math.max(0, projGross + bonusStat - reliefs);
-      var taxB=hrProgTax(chargeableB);
-      var rebateB=chargeableB<=35000 ? (400 + (cat2?400:0)) : 0;
-      return (taxB-rebateB);
-    };
-    if(pcbMy){
-      var norm=myPcbRoundUp5(monthlyBase); if(norm<10) norm=0;
-      var addl = bonusStat>0 ? Math.max(0, (bonusAnnual() - yp) - norm*remain) : 0;
-      pcb = hrRound2(norm + (addl>0 ? myPcbRoundUp5(addl) : 0));
-    } else {
-      var addlTax = bonusStat>0 ? Math.max(0, bonusAnnual()-(tax-rebate)) : 0;
-      var pcbR=myPcbRoundUp5(monthlyBase + addlTax);
-      pcb = pcbR < 10 ? 0 : pcbR;   // LHDN: monthly MTD of less than RM10 is nil
-    }
-  }
-  // v165: zakat reduces tax RINGGIT-FOR-RINGGIT (net MTD = MTD − zakat for the month), it is not an
-  // ordinary deduction. Must mirror computePayrollMY exactly. HR OS offered "Zakat" as a payroll
-  // deduction but charged the employee zakat AND the full PCB on top.
-  var zakatMonth=adj.filter(function(a){ return a.kind==='deduction' && /^zakat/i.test(String(a.label||'')); })
-                    .reduce(function(s,a){ return s+Number(a.amount||0); },0);
-  if(zakatMonth>0) pcb = Math.max(0, hrRound2(pcb - zakatMonth));
-  // v195: explicit PCB for this period wins over everything above. Must mirror computePayrollMY exactly,
-  // including being applied AFTER zakat — otherwise finalise 409s the whole run.
-  var pcbSetRows=adj.filter(function(a){return a.kind==='pcb_set';});
-  if(pcbSetRows.length){ pcb=Math.max(0, hrRound2(Number(pcbSetRows[pcbSetRows.length-1].amount)||0)); }
-  // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
-  var net=hrRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
-  var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
-}
 async function renderHR(){
   var el=document.getElementById('hr'); if(!el) return; loaded.hr=true;
   el.innerHTML='<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Loading HR…</div></div>';
@@ -1699,7 +1460,7 @@ async function renderHR(){
     HR.data=r; HR.banks=(r.banks||HR.banks||[]); HR.view=HR.view||'dashboard'; HR.editEmp=null; HR_COMPANY=hrCompanyName(); HR_EMPLOYER=(HR.data&&HR.data.employer)||null; hrRender();
   }catch(e){ el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+'</div></div></div>'; }
 }
-function hrNav(v){ HR.view=v; HR.editEmp=null; hrRender(); }
+function hrNav(v){ if(location.hash!=='#tab='+v) location.hash='tab='+v; HR.view=v; HR.editEmp=null; hrRender(); }
 var HR_NAV=[
   ['dashboard','dashboard','Dashboard','Insights','Company-wide people, payroll, attendance & cost analytics'],
   ['employees','employees','Employees','People','Your workforce master — profiles, pay & statutory setup'],
@@ -1726,6 +1487,25 @@ var HR_EMP_NAV=[
 ];
 // hrNeedsClock = payroll auto-fills basic from clocked hours (hourly/daily/part-time) AND drives the default
 // landing view. Every employee can still open Time Clock to punch attendance — the nav shows it for all.
+// ── URL-addressable views (v213) ─────────────────────────────────────────────────────────────────
+// Same scheme as app.html: the fragment carries the view as `hros.html#tab=payroll`, so a link can open
+// one screen and Back/Forward step between screens instead of leaving the app.
+//
+// It has to COEXIST with the fragments that were already load-bearing here, which is why it is
+// `tab=<id>` and not a bare `#payroll`: `#clock` and `#claims` are what sw.js navigates a push
+// notification to, `#expenses` is read below by the employee-mode boot, and `#sso_token=` carries the
+// session handoff. A bare scheme could not tell those apart from a view name; a key=value one ignores
+// them, and they still mean exactly what they meant.
+//
+// Employee mode is deliberately NOT covered: hrEmpBoot() decides that landing view from the employee's
+// own pay type (and from `#expenses`), and overriding it from the address bar would put a part-timer
+// somewhere they were never meant to start.
+function hrTabFromHash(){ var m=/[#&]tab=([A-Za-z0-9_]+)/.exec(location.hash||''); return m?m[1]:''; }
+(function(){ var v=hrTabFromHash(); if(v && HR_NAV.some(function(t){ return t[0]===v; })) HR.view=v; })();
+window.addEventListener('hashchange', function(){
+  var v=hrTabFromHash();
+  if(v && v!==HR.view && HR_NAV.some(function(t){ return t[0]===v; })) hrNav(v);
+});
 function hrNeedsClock(e){ e=e||{}; return e.employment_type==='Part-time' || e.pay_type==='hourly' || e.pay_type==='daily'; }
 function hrEmpNav(){ return HR_EMP_NAV; }
 function hrSidebar(){
@@ -1950,7 +1730,7 @@ function hrDashAttendance(d){ var a=d.attendance; var aD=hrTrendDelta(a.trend,'v
 function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; var cD=hrTrendDelta(c.trend,'value',false); return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),hrDCard('Salary Cost',M(c.salary_cost),{icon:'💵'}),hrDCard('Employer EPF',M(c.epf_er),{icon:'🏦'}),hrDCard('Employer SOCSO',M(c.socso_er),{icon:'🛡️'}),hrDCard('Employer EIS',M(c.eis_er),{icon:'🧯'}),hrDCard('Claim Cost',M(c.claim_cost),{icon:'🧾'}),hrDCard('OT Cost',M(c.ot_cost),{icon:'⏱️'}),hrDCard('Cost / Employee',M(c.cost_per_employee),{color:'var(--sky-soft)',icon:'👤'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(c.variance.delta)})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly cost trend',hrDashLine(c.trend,[{k:'value',color:'var(--coral)',name:'Employer cost'}]))+hrPanel('Cost by department',hrDashBars(c.by_dept,{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Cost by employee',hrDashValTable(c.by_employee,'Employer cost'))+hrDashInsights(d.insights); }
 function hrDashboard(){
-  if(!HR_DASH.year){ var dd=new Date(); HR_DASH.month=dd.getMonth()+1; HR_DASH.year=dd.getFullYear(); }
+  if(!HR_DASH.year){ var dd=mytYMD(); HR_DASH.month=dd.month; HR_DASH.year=dd.year; }
   if((!HR_DASH.data || HR_DASH.tenant!==HR.tenant) && !HR_DASH.loading){ HR_DASH.tenant=HR.tenant; HR_DASH.steps=0; HR_DASH.loading=true; setTimeout(function(){ hrDashLoad(true); },0); }
   var d=HR_DASH.data;
   var subnav=[['overview','📋 Overview'],['headcount','👥 Headcount'],['payroll','💰 Payroll'],['attendance','🕐 Attendance'],['cost','💵 Cost']];
@@ -2063,7 +1843,7 @@ function hrRCList(){
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-function hrToday(){ return todayLocalISO(); } // local (MYT) — toISOString() is UTC and dated claims "yesterday" before 8am
+function hrToday(){ return todayLocalISO(); } // MYT — toISOString() is UTC and dated claims "yesterday" before 8am
 function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
 function hrRCSelToggle(id,on){ RC.sel=RC.sel||{}; if(on)RC.sel[id]=true; else delete RC.sel[id]; hrRender(); }
 function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.sel[c.id]=true;}); hrRender(); }
@@ -2456,419 +2236,6 @@ function hrLoadJsQR(cb){
   s.onload=function(){ cb(); }; s.onerror=function(){ toast('Could not load the QR reader (jsqr.min.js).',true); cb(); };
   document.head.appendChild(s);
 }
-/* ═══ 📷 DocScanner (HR OS copy — also returns rawCanvases for QR reading) — CamScanner-style capture → auto edge-detect → perspective
-   correct → enhance → multi-page PDF. Self-contained; only jsPDF lazy-loaded.
-   Public: DocScanner.open({ multi, title, onDone })
-     onDone({ pageCount, jpegDataUrl, jpegB64, pdfBlob }) ═══ */
-const DocScanner = (function () {
-  'use strict';
-  let stream = null, pages = [], pagesRaw = [], srcCanvas = null, corners = null, warpedRaw = null,
-      mode = 'bw', onDoneCb = null, wantMulti = false, dragIdx = -1, dispScale = 1;
-
-  // ---- geometry helpers ----
-  function orderCorners(pts) {
-    let tl = pts[0], br = pts[0], tr = pts[0], bl = pts[0];
-    let sMin = Infinity, sMax = -Infinity, dMin = Infinity, dMax = -Infinity;
-    for (const p of pts) { const s = p.x + p.y, d = p.y - p.x;
-      if (s < sMin) { sMin = s; tl = p; } if (s > sMax) { sMax = s; br = p; }
-      if (d < dMin) { dMin = d; tr = p; } if (d > dMax) { dMax = d; bl = p; } }
-    return [tl, tr, br, bl];
-  }
-  function fullFrame(W, H, m) { m = m || 0.015;
-    return [{ x: W * m, y: H * m }, { x: W * (1 - m), y: H * m }, { x: W * (1 - m), y: H * (1 - m) }, { x: W * m, y: H * (1 - m) }]; }
-
-  // ---- auto page-corner detection (background-difference + Otsu) ----
-  function detectCorners(cv) { return detectCornersEx(cv).corners; }
-  // Returns { corners, found } — `found` is false when we fell back to the full
-  // frame (no confident document boundary). The live auto-shutter only fires on found.
-  function detectCornersEx(cv) {
-    const W = cv.width, H = cv.height, scale = 340 / Math.max(W, H);
-    const w = Math.max(8, Math.round(W * scale)), h = Math.max(8, Math.round(H * scale));
-    const c = document.createElement('canvas'); c.width = w; c.height = h;
-    c.getContext('2d').drawImage(cv, 0, 0, w, h);
-    const d = c.getContext('2d').getImageData(0, 0, w, h).data;
-    const ring = Math.max(2, Math.round(Math.min(w, h) * 0.05)), rs = [[], [], []];
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < ring || y < ring || x >= w - ring || y >= h - ring) {
-      const i = (y * w + x) * 4; rs[0].push(d[i]); rs[1].push(d[i + 1]); rs[2].push(d[i + 2]); }
-    const med = (a) => { a.sort((p, q) => p - q); return a[a.length >> 1] || 0; };
-    const bg = [med(rs[0]), med(rs[1]), med(rs[2])];
-    const raw = new Float32Array(w * h); let dmax = 1;
-    for (let i = 0; i < w * h; i++) { const r = d[i * 4] - bg[0], gg = d[i * 4 + 1] - bg[1], bb = d[i * 4 + 2] - bg[2];
-      const v = Math.sqrt(r * r + gg * gg + bb * bb); raw[i] = v; if (v > dmax) dmax = v; }
-    const dist = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) dist[i] = Math.min(255, (raw[i] / dmax) * 255) | 0;
-    const hist = new Int32Array(256); for (let i = 0; i < dist.length; i++) hist[dist[i]]++;
-    const N = dist.length; let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
-    let sumB = 0, wB = 0, best = 0, thr = 0;
-    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = N - wB; if (!wF) break;
-      sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF; const bt = wB * wF * (mB - mF) * (mB - mF);
-      if (bt > best) { best = bt; thr = t; } }
-    const mask = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) mask[i] = dist[i] > thr ? 1 : 0;
-    const fg = new Uint8Array(w * h); let fgCount = 0;
-    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (!mask[i]) continue;
-      let n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) n += mask[i + dy * w + dx];
-      if (n >= 6) { fg[i] = 1; fgCount++; } }
-    if (fgCount < w * h * 0.03 || fgCount > w * h * 0.92) return { corners: fullFrame(W, H), found: false };
-    const pts = []; for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) if (fg[y * w + x]) pts.push({ x, y });
-    const [tl, tr, br, bl] = orderCorners(pts), up = (p) => ({ x: p.x / scale, y: p.y / scale });
-    const cxp = (tl.x + tr.x + br.x + bl.x) / 4, cyp = (tl.y + tr.y + br.y + bl.y) / 4;
-    const pad = (p) => ({ x: p.x + (p.x - cxp) * 0.015, y: p.y + (p.y - cyp) * 0.015 });
-    const out = [tl, tr, br, bl].map(pad).map(up).map((p) => ({ x: Math.max(0, Math.min(W, p.x)), y: Math.max(0, Math.min(H, p.y)) }));
-    // sanity: a real page is a convex-ish quad covering a sensible slice of frame
-    const area = Math.abs((out[0].x*out[1].y-out[1].x*out[0].y)+(out[1].x*out[2].y-out[2].x*out[1].y)+
-                          (out[2].x*out[3].y-out[3].x*out[2].y)+(out[3].x*out[0].y-out[0].x*out[3].y))/2;
-    const frac = area / (W * H);
-    return { corners: out, found: frac > 0.10 && frac < 0.97 };
-  }
-
-  // ---- perspective warp (Heckbert unit-square → quad) ----
-  function warp(cv, cor, maxSide) {
-    const [tl, tr, br, bl] = cor, dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-    let Wout = Math.max(16, Math.round(Math.max(dist(tl, tr), dist(bl, br))));
-    let Hout = Math.max(16, Math.round(Math.max(dist(tl, bl), dist(tr, br))));
-    const cap = maxSide || 1700, lng = Math.max(Wout, Hout);
-    if (lng > cap) { const s = cap / lng; Wout = Math.round(Wout * s); Hout = Math.round(Hout * s); }
-    const x0 = tl.x, y0 = tl.y, x1 = tr.x, y1 = tr.y, x2 = br.x, y2 = br.y, x3 = bl.x, y3 = bl.y;
-    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
-    let a, b, cc, dd, e, f, gg, hh; const den = dx1 * dy2 - dy1 * dx2;
-    if (Math.abs(den) < 1e-9) { a = x1 - x0; b = x3 - x0; cc = x0; dd = y1 - y0; e = y3 - y0; f = y0; gg = 0; hh = 0; }
-    else { gg = (dx3 * dy2 - dx2 * dy3) / den; hh = (dx1 * dy3 - dy1 * dx3) / den;
-      a = x1 - x0 + gg * x1; b = x3 - x0 + hh * x3; cc = x0; dd = y1 - y0 + gg * y1; e = y3 - y0 + hh * y3; f = y0; }
-    const sc = document.createElement('canvas'); sc.width = cv.width; sc.height = cv.height; sc.getContext('2d').drawImage(cv, 0, 0);
-    const sd = sc.getContext('2d').getImageData(0, 0, sc.width, sc.height).data, SW = sc.width, SH = sc.height;
-    const out = document.createElement('canvas'); out.width = Wout; out.height = Hout;
-    const octx = out.getContext('2d'), oimg = octx.createImageData(Wout, Hout), od = oimg.data;
-    for (let oy = 0; oy < Hout; oy++) { const v = (oy + 0.5) / Hout;
-      for (let ox = 0; ox < Wout; ox++) { const u = (ox + 0.5) / Wout, wsum = gg * u + hh * v + 1;
-        const sx = (a * u + b * v + cc) / wsum, sy = (dd * u + e * v + f) / wsum, oi = (oy * Wout + ox) * 4;
-        if (sx < 0 || sy < 0 || sx > SW - 1 || sy > SH - 1) { od[oi] = od[oi + 1] = od[oi + 2] = 255; od[oi + 3] = 255; continue; }
-        const x1i = sx | 0, y1i = sy | 0, x2i = Math.min(SW - 1, x1i + 1), y2i = Math.min(SH - 1, y1i + 1), fx = sx - x1i, fy = sy - y1i;
-        const i00 = (y1i * SW + x1i) * 4, i10 = (y1i * SW + x2i) * 4, i01 = (y2i * SW + x1i) * 4, i11 = (y2i * SW + x2i) * 4;
-        for (let k = 0; k < 3; k++) { const tp = sd[i00 + k] * (1 - fx) + sd[i10 + k] * fx, bt = sd[i01 + k] * (1 - fx) + sd[i11 + k] * fx;
-          od[oi + k] = (tp * (1 - fy) + bt * fy) | 0; } od[oi + 3] = 255; } }
-    octx.putImageData(oimg, 0, 0); return out;
-  }
-
-  // ---- enhancement ----
-  function enhance(canvas, m) {
-    const w = canvas.width, h = canvas.height, ctx = canvas.getContext('2d'), img = ctx.getImageData(0, 0, w, h), d = img.data;
-    if (m === 'original') return canvas;
-    if (m === 'gray' || m === 'bw') {
-      const gray = new Float32Array(w * h);
-      for (let i = 0; i < w * h; i++) gray[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
-      if (m === 'gray') { for (let i = 0; i < w * h; i++) { const v = gray[i] | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; } }
-      else {
-        const integ = new Float64Array((w + 1) * (h + 1));
-        for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += gray[y * w + x]; integ[(y + 1) * (w + 1) + (x + 1)] = integ[y * (w + 1) + (x + 1)] + row; } }
-        const rad = Math.max(8, Math.round(Math.min(w, h) / 22)), C = 10;
-        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-          const x1 = Math.max(0, x - rad), y1 = Math.max(0, y - rad), x2 = Math.min(w - 1, x + rad), y2 = Math.min(h - 1, y + rad);
-          const cnt = (x2 - x1 + 1) * (y2 - y1 + 1);
-          const sum = integ[(y2 + 1) * (w + 1) + (x2 + 1)] - integ[(y1) * (w + 1) + (x2 + 1)] - integ[(y2 + 1) * (w + 1) + (x1)] + integ[(y1) * (w + 1) + (x1)];
-          const v = gray[y * w + x] > (sum / cnt - C) ? 255 : 0, i = (y * w + x) * 4; d[i] = d[i + 1] = d[i + 2] = v;
-        }
-      }
-    } else if (m === 'color') {
-      for (let k = 0; k < 3; k++) {
-        const hist = new Int32Array(256); for (let i = 0; i < w * h; i++) hist[d[i * 4 + k]]++;
-        const tot = w * h, loT = tot * 0.02, hiT = tot * 0.98; let acc = 0, lo = 0, hi = 255;
-        for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= loT) { lo = v; break; } }
-        acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= hiT) { hi = v; break; } }
-        const rng = Math.max(1, hi - lo);
-        for (let i = 0; i < w * h; i++) { let v = (d[i * 4 + k] - lo) * 255 / rng; d[i * 4 + k] = v < 0 ? 0 : v > 255 ? 255 : v | 0; }
-      }
-    }
-    ctx.putImageData(img, 0, 0); return canvas;
-  }
-
-  // ---- PDF (lazy jsPDF) ----
-  let jspdfLoading = null;
-  function loadJsPDF() {
-    if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
-    if (jspdfLoading) return jspdfLoading;
-    jspdfLoading = new Promise((res, rej) => { const s = document.createElement('script');
-      s.src = './jspdf.umd.min.js';   // vendored in the repo — no CDN, works offline
-      s.onload = res; s.onerror = () => rej(new Error('Could not load PDF library')); document.head.appendChild(s); });
-    return jspdfLoading;
-  }
-  async function buildPdf(pageCanvases, q) {
-    await loadJsPDF(); const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
-    const PW = pdf.internal.pageSize.getWidth(), PH = pdf.internal.pageSize.getHeight(), M = 18;
-    pageCanvases.forEach((cv, i) => { if (i > 0) pdf.addPage();
-      const maxW = PW - M * 2, maxH = PH - M * 2; let dw = maxW, dh = dw * cv.height / cv.width;
-      if (dh > maxH) { dh = maxH; dw = dh * cv.width / cv.height; }
-      pdf.addImage(cv.toDataURL('image/jpeg', q || 0.82), 'JPEG', (PW - dw) / 2, (PH - dh) / 2, dw, dh); });
-    return pdf.output('blob');
-  }
-
-  // ═══════════════════════ UI ═══════════════════════
-  function injectCss() {
-    if (document.getElementById('ds-css')) return;
-    const s = document.createElement('style'); s.id = 'ds-css'; s.textContent =
-      '.ds-ov{position:fixed;inset:0;z-index:99999;background:#0d0f12;display:flex;flex-direction:column;color:#fff;font-family:inherit;overscroll-behavior:contain}' +
-      '.ds-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#14171c;border-bottom:1px solid #232830;flex:none}' +
-      '.ds-top h4{margin:0;font-size:15px;font-weight:700;letter-spacing:.2px}' +
-      '.ds-x{background:none;border:none;color:#9aa4af;font-size:26px;line-height:1;cursor:pointer;padding:0 4px}' +
-      '.ds-stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}' +
-      '.ds-stage video{max-width:100%;max-height:100%;object-fit:contain;background:#000}' +
-      '.ds-guide{position:absolute;inset:7%;border:2px dashed rgba(255,255,255,.35);border-radius:14px;pointer-events:none}' +
-      '.ds-camwrap{position:relative;line-height:0;max-width:100%;max-height:100%}' +
-      '.ds-liveov{position:absolute;left:0;top:0;pointer-events:none}' +
-      '.ds-status{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;background:rgba(0,0,0,.62);color:#fff;font-size:12.5px;font-weight:600;padding:7px 15px;border-radius:20px;white-space:nowrap;line-height:1.3;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}' +
-      '.ds-status.near{background:rgba(255,214,10,.95);color:#1a1a1a}' +
-      '.ds-status.ok{background:#22c55e;color:#fff}' +
-      '.ds-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}' +
-      '.ds-flash.go{animation:dsflash .26s ease-out}' +
-      '@keyframes dsflash{0%{opacity:.85}100%{opacity:0}}' +
-      '.ds-ico.on{background:#e2604b;color:#fff}' +
-      '.ds-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:12.5px;color:#c7ced6;text-shadow:0 1px 3px #000;pointer-events:none;padding:0 20px}' +
-      '.ds-editwrap{position:relative;touch-action:none;line-height:0}' +
-      '.ds-editwrap canvas{display:block;max-width:100%;height:auto}' +
-      '.ds-svg{position:absolute;inset:0;width:100%;height:100%;touch-action:none}' +
-      '.ds-poly{fill:rgba(226,96,75,.14);stroke:#f0785f;stroke-width:2.5;vector-effect:non-scaling-stroke}' +
-      '.ds-h{fill:#fff;stroke:#e2604b;stroke-width:3;vector-effect:non-scaling-stroke;cursor:grab}' +
-      '.ds-bot{flex:none;background:#14171c;border-top:1px solid #232830;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}' +
-      '.ds-modes{display:flex;gap:8px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}' +
-      '.ds-mode{background:#1d222a;border:1px solid #2b323c;color:#c7ced6;border-radius:20px;padding:7px 15px;font-size:13px;cursor:pointer;font-weight:600}' +
-      '.ds-mode.on{background:#e2604b;border-color:#e2604b;color:#fff}' +
-      '.ds-row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}' +
-      '.ds-btn{border:none;border-radius:11px;padding:13px 20px;font-size:14.5px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px}' +
-      '.ds-btn.p{background:#e2604b;color:#fff}.ds-btn.g{background:#232830;color:#e6ebf1}.ds-btn:disabled{opacity:.5;cursor:default}' +
-      '.ds-shutter{width:70px;height:70px;border-radius:50%;background:#fff;border:5px solid #e2604b;cursor:pointer;flex:none;box-shadow:0 3px 14px rgba(0,0,0,.5)}' +
-      '.ds-ico{background:#232830;color:#e6ebf1;border:none;width:52px;height:52px;border-radius:14px;font-size:22px;cursor:pointer;flex:none}' +
-      '.ds-thumbs{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px}' +
-      '.ds-thumb{position:relative;flex:none;height:56px;border-radius:6px;border:1px solid #2b323c}' +
-      '.ds-thumb img{height:100%;border-radius:5px;display:block}' +
-      '.ds-thumb b{position:absolute;top:-6px;right:-6px;background:#e2604b;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:grid;place-items:center;cursor:pointer}' +
-      '.ds-spin{width:34px;height:34px;border:3px solid #2b323c;border-top-color:#e2604b;border-radius:50%;animation:dsspin .8s linear infinite}' +
-      '@keyframes dsspin{to{transform:rotate(360deg)}}' +
-      '.ds-center{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;color:#c7ced6;font-size:13.5px;text-align:center;padding:24px}';
-    document.head.appendChild(s);
-  }
-  let ov = null;
-  function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
-  function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
-  function close() { stopLoop(); stopCam(); if (ov) { ov.remove(); ov = null; } pages = []; pagesRaw = []; srcCanvas = corners = warpedRaw = null; }
-
-  function shell(title) {
-    stopLoop();                       // never leave a rAF pointing at a removed <video>
-    injectCss(); if (ov) ov.remove();
-    ov = el('div', 'ds-ov');
-    const top = el('div', 'ds-top');
-    top.appendChild(el('h4', null, title || '📷 Scan document'));
-    const x = el('button', 'ds-x', '&times;'); x.onclick = close; top.appendChild(x);
-    const stage = el('div', 'ds-stage'); stage.id = 'ds-stage';
-    const bot = el('div', 'ds-bot'); bot.id = 'ds-bot';
-    ov.appendChild(top); ov.appendChild(stage); ov.appendChild(bot);
-    document.body.appendChild(ov);
-    return { stage, bot };
-  }
-
-  // ---- CAPTURE stage — Apple-Notes-style live edge tracking + auto shutter ----
-  let rafId = null, liveHist = [], capturing = false, autoOn = true;
-  // setInterval (not rAF): rAF is paused/throttled whenever the tab isn't the
-  // foreground one, which silently kills live detection. 10 fps is plenty here.
-  function stopLoop() { if (rafId) clearInterval(rafId); rafId = null; liveHist = []; capturing = false; }
-  function drawQuad(octx, ovc, pts, found) {
-    octx.clearRect(0, 0, ovc.width, ovc.height);
-    octx.save();
-    octx.fillStyle = 'rgba(0,0,0,.42)'; octx.fillRect(0, 0, ovc.width, ovc.height);
-    if (pts) {   // punch a spotlight through the mask
-      octx.globalCompositeOperation = 'destination-out';
-      octx.beginPath(); octx.moveTo(pts[0].x, pts[0].y); pts.forEach(p => octx.lineTo(p.x, p.y)); octx.closePath(); octx.fill();
-      octx.globalCompositeOperation = 'source-over';
-      octx.beginPath(); octx.moveTo(pts[0].x, pts[0].y); pts.forEach(p => octx.lineTo(p.x, p.y)); octx.closePath();
-      octx.strokeStyle = found ? '#ffd60a' : 'rgba(255,255,255,.5)';
-      octx.lineWidth = found ? 3.5 : 2; octx.setLineDash(found ? [] : [8, 7]); octx.stroke();
-      if (found) { octx.fillStyle = '#ffd60a'; pts.forEach(p => { octx.beginPath(); octx.arc(p.x, p.y, 5.5, 0, 7); octx.fill(); }); }
-    }
-    octx.restore();
-  }
-  async function showCapture() {
-    stopLoop();
-    const { stage, bot } = shell(wantMulti && pages.length ? '📷 Scan · page ' + (pages.length + 1) : '📷 Scan document');
-    stage.innerHTML = ''; bot.innerHTML = '';
-    let usingCam = false;
-    try {
-      if (!stream || !stream.active) {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
-      }
-      const wrap = el('div', 'ds-camwrap');
-      const video = el('video'); video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
-      const ovc = el('canvas', 'ds-liveov');
-      const flash = el('div', 'ds-flash');
-      wrap.append(video, ovc, flash); stage.appendChild(wrap);
-      await video.play(); usingCam = true;
-      const fit = () => {
-        const aw = stage.clientWidth || ov.clientWidth || window.innerWidth || 360;
-        const ah = stage.clientHeight || Math.round((window.innerHeight || 640) * .6);
-        const vw = video.videoWidth || 4, vh = video.videoHeight || 3;
-        const s = Math.min(aw / vw, ah / vh) || 1;
-        const w = Math.max(1, Math.round(vw * s)), h = Math.max(1, Math.round(vh * s));
-        wrap.style.width = w + 'px'; wrap.style.height = h + 'px';
-        video.style.width = w + 'px'; video.style.height = h + 'px';
-        ovc.width = w; ovc.height = h; ovc.style.width = w + 'px'; ovc.style.height = h + 'px'; };
-      if (video.readyState >= 1) fit(); else video.onloadedmetadata = fit;
-      video.addEventListener('loadedmetadata', fit);
-      window.addEventListener('resize', fit);                        // rotation / keyboard
-      const status = el('div', 'ds-status', 'Point the camera at the document');
-      wrap.appendChild(status);
-      // bottom controls
-      const gal = el('button', 'ds-ico', '🖼'); gal.title = 'Choose from gallery'; gal.onclick = () => pickFile();
-      const shutter = el('button', 'ds-shutter'); shutter.setAttribute('aria-label', 'Capture');
-      shutter.onclick = () => { if (!capturing) { capturing = true; doCapture(video, flash); } };
-      const autoBtn = el('button', 'ds-ico' + (autoOn ? ' on' : ''), 'A'); autoBtn.title = 'Auto-capture';
-      autoBtn.onclick = () => { autoOn = !autoOn; autoBtn.classList.toggle('on', autoOn); liveHist = []; };
-      const row = el('div', 'ds-row'); row.append(gal, shutter, autoBtn); bot.appendChild(row);
-      if (pages.length) {
-        const save = el('button', 'ds-btn p', '✓ Save (' + pages.length + ')'); save.style.marginTop = '10px';
-        save.onclick = () => { stopLoop(); finish(); };
-        const r2 = el('div', 'ds-row'); r2.appendChild(save); bot.appendChild(r2);
-        bot.appendChild(thumbStrip());
-      }
-      // ---- live detection loop ----
-      const work = el('canvas'), octx = ovc.getContext('2d');
-      const tick = () => {
-        const ts = performance.now();
-        if (capturing || !video.videoWidth) return;
-        // Detection runs purely off the video frame. Overlay drawing is best-effort:
-        // if layout hasn't settled (0-size canvas) we still detect and auto-capture.
-        const PW = 300, s = PW / video.videoWidth;
-        work.width = PW; work.height = Math.max(4, Math.round(video.videoHeight * s));
-        work.getContext('2d').drawImage(video, 0, 0, work.width, work.height);
-        let r; try { r = detectCornersEx(work); } catch (_e) { return; }
-        if (ovc.width && ovc.height) {
-          const sx = ovc.width / work.width, sy = ovc.height / work.height;
-          drawQuad(octx, ovc, r.found ? r.corners.map(p => ({ x: p.x * sx, y: p.y * sy })) : null, r.found);
-        } else { fit(); }
-        const pts = r.corners;                                    // stability judged in work space
-        if (!autoOn) { status.textContent = r.found ? 'Document detected — tap the shutter' : 'Point the camera at the document'; status.className = 'ds-status' + (r.found ? ' near' : ''); return; }
-        if (!r.found) { liveHist = []; status.textContent = 'Looking for the document…'; status.className = 'ds-status'; return; }
-        // Steadiness is judged on sample COUNT + elapsed SPAN — never on an assumed
-        // tick rate. Background tabs and low-power mode stretch timers to ~1 Hz, and
-        // a fixed-age window would then discard every sample and never fire.
-        if (liveHist.length && ts - liveHist[liveHist.length - 1].t > 2500) liveHist = [];   // long gap → restart
-        liveHist.push({ t: ts, pts });
-        if (liveHist.length > 12) liveHist.shift();
-        const span = ts - liveHist[0].t;
-        if (liveHist.length < 3 || span < 600) { status.textContent = 'Hold steady…'; status.className = 'ds-status near'; return; }
-        const diag = Math.hypot(work.width, work.height); let maxd = 0;
-        for (const hst of liveHist) for (let i = 0; i < 4; i++) maxd = Math.max(maxd, Math.hypot(pts[i].x - hst.pts[i].x, pts[i].y - hst.pts[i].y));
-        if (maxd < diag * 0.035) {
-          capturing = true; status.textContent = '✓ Captured'; status.className = 'ds-status ok';
-          doCapture(video, flash);
-        } else { status.textContent = 'Hold steady…'; status.className = 'ds-status near'; }
-      };
-      rafId = setInterval(tick, 100);
-    } catch (e) { /* no camera → file fallback */ }
-    if (!usingCam) {
-      stage.appendChild(el('div', 'ds-center', '<div style="font-size:34px">📷</div><div>Camera not available here.<br>Choose a photo of the document instead.</div>'));
-      const b = el('button', 'ds-btn p', '🖼 Choose photo'); b.onclick = () => pickFile();
-      const row = el('div', 'ds-row'); row.appendChild(b); bot.appendChild(row);
-      if (pages.length) { const save = el('button', 'ds-btn p', '✓ Save (' + pages.length + ')'); save.onclick = () => finish(); row.appendChild(save); }
-    }
-  }
-  function doCapture(video, flash) {
-    if (flash) { flash.classList.add('go'); setTimeout(() => flash.classList.remove('go'), 260); }
-    const cv = el('canvas'); cv.width = video.videoWidth; cv.height = video.videoHeight;
-    cv.getContext('2d').drawImage(video, 0, 0);
-    stopLoop();
-    loadSource(cv);
-  }
-  function thumbStrip() {
-    const th = el('div', 'ds-thumbs');
-    pages.forEach((p, i) => { const t = el('div', 'ds-thumb'); const im = el('img'); im.src = p.toDataURL('image/jpeg', 0.5); t.appendChild(im);
-      const del = el('b', null, '×'); del.onclick = () => { pages.splice(i, 1); pagesRaw.splice(i, 1); showCapture(); }; t.appendChild(del); th.appendChild(t); });
-    return th;
-  }
-  function pickFile() {
-    const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
-    inp.onchange = () => { const f = inp.files[0]; if (!f) return;
-      const img = new Image(); img.onload = () => { let W = img.naturalWidth, H = img.naturalHeight; const cap = 2600, l = Math.max(W, H);
-        if (l > cap) { const s = cap / l; W = Math.round(W * s); H = Math.round(H * s); }
-        const cv = el('canvas'); cv.width = W; cv.height = H; cv.getContext('2d').drawImage(img, 0, 0, W, H); URL.revokeObjectURL(img.src); loadSource(cv); };
-      img.onerror = () => toast('Could not read that image', true); img.src = URL.createObjectURL(f); };
-    inp.click();
-  }
-  function loadSource(cv) { srcCanvas = cv; corners = detectCorners(cv); warpedRaw = warp(srcCanvas, corners, 1700); showReview(); }
-
-  // ---- EDIT (crop) stage ----
-  function showEdit() {
-    const { stage, bot } = shell('Adjust edges'); stage.innerHTML = ''; bot.innerHTML = '';
-    const availW = stage.clientWidth || window.innerWidth, availH = stage.clientHeight || (window.innerHeight * 0.6);
-    dispScale = Math.min(availW / srcCanvas.width, availH / srcCanvas.height, 1);
-    const dw = Math.round(srcCanvas.width * dispScale), dh = Math.round(srcCanvas.height * dispScale);
-    const wrap = el('div', 'ds-editwrap'); wrap.style.width = dw + 'px'; wrap.style.height = dh + 'px';
-    const disp = el('canvas'); disp.width = dw; disp.height = dh; disp.getContext('2d').drawImage(srcCanvas, 0, 0, dw, dh); wrap.appendChild(disp);
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'ds-svg'); svg.setAttribute('viewBox', '0 0 ' + dw + ' ' + dh);
-    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon'); poly.setAttribute('class', 'ds-poly'); svg.appendChild(poly);
-    const handles = corners.map((_, i) => { const h = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); h.setAttribute('class', 'ds-h'); h.setAttribute('r', 11); h.dataset.i = i; svg.appendChild(h); return h; });
-    wrap.appendChild(svg); stage.appendChild(wrap);
-    function redraw() { poly.setAttribute('points', corners.map(p => (p.x * dispScale) + ',' + (p.y * dispScale)).join(' '));
-      handles.forEach((h, i) => { h.setAttribute('cx', corners[i].x * dispScale); h.setAttribute('cy', corners[i].y * dispScale); }); }
-    redraw();
-    function pt(ev) { const r = svg.getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev;
-      return { x: Math.max(0, Math.min(srcCanvas.width, (t.clientX - r.left) / dispScale)), y: Math.max(0, Math.min(srcCanvas.height, (t.clientY - r.top) / dispScale)) }; }
-    svg.addEventListener('pointerdown', (ev) => { const i = ev.target.dataset && ev.target.dataset.i; if (i == null) return; dragIdx = +i; ev.target.setPointerCapture(ev.pointerId); ev.preventDefault(); });
-    svg.addEventListener('pointermove', (ev) => { if (dragIdx < 0) return; corners[dragIdx] = pt(ev); redraw(); ev.preventDefault(); });
-    svg.addEventListener('pointerup', () => { dragIdx = -1; });
-    svg.addEventListener('pointercancel', () => { dragIdx = -1; });
-    // buttons
-    const retake = el('button', 'ds-btn g', '↻ Retake'); retake.onclick = () => showCapture();
-    const rot = el('button', 'ds-btn g', '⟳ Rotate'); rot.onclick = () => { const r = el('canvas'); r.width = srcCanvas.height; r.height = srcCanvas.width;
-      const rc = r.getContext('2d'); rc.translate(r.width, 0); rc.rotate(Math.PI / 2); rc.drawImage(srcCanvas, 0, 0); srcCanvas = r; corners = detectCorners(srcCanvas); showEdit(); };
-    const auto = el('button', 'ds-btn g', '✨ Auto'); auto.onclick = () => { corners = detectCorners(srcCanvas); redraw(); };
-    const next = el('button', 'ds-btn p', 'Done ▸'); next.onclick = () => { warpedRaw = warp(srcCanvas, corners, 1700); showReview(); };
-    const r1 = el('div', 'ds-row'); r1.append(retake, rot, auto);
-    const r2 = el('div', 'ds-row'); r2.style.marginTop = '10px'; r2.appendChild(next);
-    bot.append(r1, r2);
-  }
-
-  // ---- REVIEW stage — "Keep Scan / Retake", like Apple Notes ----
-  function showReview() {
-    stopLoop();
-    const { stage, bot } = shell('Scan ' + (pages.length + 1)); stage.innerHTML = ''; bot.innerHTML = '';
-    const preview = el('canvas'); const availW = stage.clientWidth || window.innerWidth, availH = stage.clientHeight || (window.innerHeight * 0.6);
-    const applyPreview = () => { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode);
-      const sc = Math.min(availW / work.width, availH / work.height, 1); preview.width = Math.round(work.width * sc); preview.height = Math.round(work.height * sc);
-      preview.getContext('2d').drawImage(work, 0, 0, preview.width, preview.height); };
-    preview.style.maxWidth = '100%'; preview.style.maxHeight = '100%'; stage.appendChild(preview); applyPreview();
-    const modes = [['bw', '📄 B&W'], ['color', '✨ Color'], ['gray', 'Gray'], ['original', 'Original']];
-    const mrow = el('div', 'ds-modes'); modes.forEach(([k, lbl]) => { const b = el('button', 'ds-mode' + (mode === k ? ' on' : ''), lbl);
-      b.onclick = () => { mode = k; mrow.querySelectorAll('.ds-mode').forEach(x => x.classList.remove('on')); b.classList.add('on'); applyPreview(); }; mrow.appendChild(b); });
-    bot.appendChild(mrow);
-    const retake = el('button', 'ds-btn g', '↻ Retake'); retake.onclick = () => showCapture();
-    const edges = el('button', 'ds-btn g', '✎ Edges'); edges.onclick = () => showEdit();
-    const keep = el('button', 'ds-btn p', wantMulti ? '✓ Keep Scan' : '✓ Use this scan');
-    keep.onclick = () => { commitPage(); if (wantMulti) showCapture(); else finish(); };
-    const row = el('div', 'ds-row'); row.append(retake, edges, keep); bot.appendChild(row);
-    if (wantMulti && pages.length) {
-      const save = el('button', 'ds-btn g', '✓ Save now (' + pages.length + ')'); save.style.marginTop = '10px';
-      save.onclick = () => finish();
-      const r2 = el('div', 'ds-row'); r2.appendChild(save); bot.appendChild(r2);
-      bot.appendChild(thumbStrip());
-    }
-  }
-  function commitPage() { const work = el('canvas'); work.width = warpedRaw.width; work.height = warpedRaw.height; work.getContext('2d').drawImage(warpedRaw, 0, 0); enhance(work, mode); pages.push(work); pagesRaw.push(warpedRaw); }
-
-  async function finish() {
-    const { stage, bot } = shell('Processing'); stage.innerHTML = '<div class="ds-center"><div class="ds-spin"></div><div>Building your document…</div></div>'; bot.innerHTML = '';
-    try {
-      const first = pages[0], jpegDataUrl = first.toDataURL('image/jpeg', 0.9), jpegB64 = jpegDataUrl.split(',').pop();
-      const pdfBlob = await buildPdf(pages, 0.82);
-      const res = { pageCount: pages.length, jpegDataUrl, jpegB64, pdfBlob,
-        pageCanvases: pages.slice(), rawCanvases: pagesRaw.slice() };
-      const cb = onDoneCb; close(); if (cb) cb(res);
-    } catch (e) { toast(e.message || 'Failed to build document', true); close(); }
-  }
-
-  return {
-    open: function (opts) { opts = opts || {}; wantMulti = opts.multi !== false; onDoneCb = opts.onDone || null;
-      stopLoop(); autoOn = true; pages = []; pagesRaw = []; srcCanvas = corners = warpedRaw = null; mode = 'bw';
-      if (!navigator.mediaDevices && !window.FileReader) { toast('Scanning not supported on this device', true); return; }
-      showCapture(); }
-  };
-})();
 
 // 📷 Live scanner (auto edge-detect + auto shutter + perspective correct + multi-page).
 // Falls back to the old camera-roll / PDF picker when DocScanner can't run.
@@ -3409,7 +2776,7 @@ async function hrEnableLoginBulk(){
   } else toast((r&&r.error)||'Failed',true);
 }
 function hrShowCreds(created, skipped){
-  var url='https://sscctgfinance-cmd.github.io/ctg-finance-portal/hros.html';
+  var url=SITE_URL+'/hros.html';
   var rows=created.map(function(c){ return '<tr><td>'+esc(c.name||'')+'</td><td>'+esc(c.email||'')+'</td><td style="font-family:monospace"><b>'+esc(c.temp_password||'')+'</b></td></tr>'; }).join('');
   var skipHtml=(skipped&&skipped.length)?'<div class="muted" style="font-size:11px;margin-top:8px">Skipped ('+skipped.length+'): '+skipped.map(function(s){return esc(s.name)+' — '+esc(s.reason);}).join('; ')+'</div>':'';
   var txt='HR OS login: '+url+'\n\n'+created.map(function(c){return (c.name||'')+'\t'+(c.email||'')+'\t'+(c.temp_password||'');}).join('\n');
@@ -3508,8 +2875,8 @@ function hrEmpForm(){
       g('&nbsp;','<div></div>')+
     '</div>'+
     '<div style="margin-bottom:8px"><label class="muted" style="font-size:11px;display:block;margin-bottom:5px">Work days (for the reminder)</label><div style="display:flex;gap:14px;flex-wrap:wrap">'+wdHtml+'</div></div>'+
-    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">'+ck('clockReminder','🔔 Send a phone reminder to clock in at the shift start time',x.reminders_on!==false)+'</div>'+
-    '<div class="muted" style="font-size:11px;margin-bottom:12px">Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. The clock-in reminder pushes at <b>Shift start</b> on the ticked <b>Work days</b>, only if they haven’t clocked in yet, and only to phones where they’ve enabled reminders (Time Clock → Enable). One push per day.</div>'+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">'+ck('clockReminder','🔔 Email a reminder to clock in at the shift start time',x.reminders_on!==false)+'</div>'+
+    '<div class="muted" style="font-size:11px;margin-bottom:12px">Hourly/Daily = part-timer: payroll auto-fills their Basic from clocked hours × rate that month. The clock-in reminder emails them at <b>Shift start</b> on the ticked <b>Work days</b>, only if they haven’t clocked in yet. One email per day. (v224: the phone push that used to accompany it is retired.)</div>'+
     '<button class="btn p sm" onclick="hrSaveEmp()">'+(x.id?'Save changes':'Add employee')+'</button></div>';
 }
 async function hrSaveEmp(){
@@ -3550,8 +2917,6 @@ function hrClkTick(){ var el=document.getElementById('clk_elapsed'); if(!el||!CL
 function hrGetGeo(){ return new Promise(function(res){ if(!navigator.geolocation){res({});return;} var done=false,t=setTimeout(function(){if(!done){done=true;res({});}},4000); try{ navigator.geolocation.getCurrentPosition(function(pos){if(done)return;done=true;clearTimeout(t);res({lat:pos.coords.latitude,lng:pos.coords.longitude});},function(){if(done)return;done=true;clearTimeout(t);res({});},{enableHighAccuracy:false,timeout:3500,maximumAge:60000}); }catch(_e){ if(!done){done=true;clearTimeout(t);res({});} } }); }
 function hrClock(){
   if(!HR._clkTimer){ HR._clkTimer=setInterval(hrClkTick,1000); }
-  // Register the notifier once and learn whether this device is already subscribed, then repaint the card.
-  if(PUSH.supported && !PUSH._init){ PUSH._init=true; pushInitSW().then(function(){ if(HR.view==='clock') hrRender(); }); }
   if(!CLK.data && !CLK.loading && !CLK.err){ CLK.loading=true; setTimeout(hrClockLoad,0); }
   if(CLK.loading && !CLK.data) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
   return hrClockRender();
@@ -3588,7 +2953,7 @@ function hrClockRender(){
   var todayCard='<div class="panel"><div class="panel-hd"><h3>Today</h3><span class="muted" style="font-size:11.5px">This week: <b>'+Number(d.week_hours||0).toFixed(2)+' h</b>'+wkPay+'</span></div>'+(today.length?('<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>In</th><th>Out</th><th class="amt">Hours</th></tr></thead><tbody>'+rows+'</tbody></table></div>'):'<div class="muted" style="padding:12px">No punches today yet.</div>')+'</div>';
   var tip='<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.</div>';
   setTimeout(hrClkTick,30);
-  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+hrSchedCard(emp)+hrPushCard()+tip+'</div>';
+  return '<div style="max-width:520px">'+statusCard+'<div style="height:14px"></div>'+todayCard+hrSchedCard(emp)+tip+'</div>';
 }
 // ===== 🗓️ My work schedule (part-timer self-service) — drives the clock-in/out reminders =====
 function hrSchedCard(emp){
@@ -3614,54 +2979,6 @@ async function hrSchedSave(){
   if(r&&r.ok){ toast('Schedule saved ✓'); if(RC.me&&RC.me.employee){ RC.me.employee.shift_start=v('sch_start')||null; RC.me.employee.shift_end=v('sch_end')||null; RC.me.employee.work_days=wd; RC.me.employee.reminders_on=true; } hrRender(); }
   else toast((r&&r.error)||'Could not save schedule',true);
 }
-// ===== 🔔 Web Push: clock-in reminders (employee self-service, per device) =====
-var PUSH={ supported:('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window), reg:null, sub:null, busy:false };
-function pushB64ToU8(base64){ var pad='='.repeat((4-base64.length%4)%4); var b=(base64+pad).replace(/-/g,'+').replace(/_/g,'/'); var raw=atob(b); var arr=new Uint8Array(raw.length); for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i); return arr; }
-function pushIsIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent); }
-function pushStandalone(){ return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone===true; }
-async function pushInitSW(){
-  if(!PUSH.supported) return null;
-  try{ PUSH.reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready; PUSH.sub = await PUSH.reg.pushManager.getSubscription(); return PUSH.reg; }
-  catch(_e){ return null; }
-}
-async function pushEnable(){
-  if(PUSH.busy) return;
-  if(!PUSH.supported){ toast('This browser can’t show notifications',true); return; }
-  if(pushIsIOS() && !pushStandalone()){ toast('On iPhone: Share → Add to Home Screen, open it from there, then enable.',true); hrRender(); return; }
-  PUSH.busy=true; hrRender();
-  try{
-    var perm = await Notification.requestPermission();
-    if(perm!=='granted'){ toast('Notifications not allowed — turn them on in your phone/browser settings.',true); PUSH.busy=false; hrRender(); return; }
-    if(!PUSH.reg) await pushInitSW();
-    if(!PUSH.reg){ toast('Couldn’t start the notifier',true); PUSH.busy=false; hrRender(); return; }
-    var pk = await call({api:'push_pubkey'}); if(!pk||!pk.ok||!pk.publicKey){ toast('Push isn’t set up yet — tell HR.',true); PUSH.busy=false; hrRender(); return; }
-    PUSH.sub = await PUSH.reg.pushManager.getSubscription();
-    if(!PUSH.sub) PUSH.sub = await PUSH.reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: pushB64ToU8(pk.publicKey) });
-    var r = await call({api:'push_subscribe', subscription:PUSH.sub.toJSON(), ua:navigator.userAgent.slice(0,200)});
-    if(r&&r.ok){ toast('Reminders on ✓ — sending a test…'); PUSH.busy=false; hrRender(); setTimeout(pushTest,600); }
-    else { toast((r&&r.error)||'Could not turn on reminders',true); PUSH.busy=false; hrRender(); }
-  }catch(e){ toast('Setup failed: '+((e&&e.message)||e),true); PUSH.busy=false; hrRender(); }
-}
-async function pushDisable(){
-  try{ if(PUSH.sub){ var ep=PUSH.sub.endpoint; try{ await PUSH.sub.unsubscribe(); }catch(_e){} await call({api:'push_unsubscribe', endpoint:ep}); PUSH.sub=null; } toast('Reminders off for this device'); }catch(_e){}
-  hrRender();
-}
-async function pushTest(){ var r=await call({api:'push_test'}); if(r&&r.ok) toast('Test sent — check your notifications'); else toast((r&&r.error)||'Test failed',true); }
-function hrPushCard(){
-  if(!PUSH.supported) return '';
-  var on=!!PUSH.sub, iosNeedsInstall=(pushIsIOS() && !pushStandalone());
-  var body;
-  if(on){
-    body='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="pill pill-ok" style="font-size:11px">🔔 On for this device</span>'+
-      '<button class="btn sm" onclick="pushTest()">Send test</button><button class="btn sm d" onclick="pushDisable()">Turn off</button></div>';
-  } else if(iosNeedsInstall){
-    body='<div class="muted" style="font-size:12px;line-height:1.5">📱 <b>On iPhone</b>, first tap <b>Share → Add to Home Screen</b>, then open HR OS from that new icon and turn reminders on here.</div>';
-  } else {
-    body='<button class="btn p sm"'+(PUSH.busy?' disabled':'')+' onclick="pushEnable()">'+(PUSH.busy?'Enabling…':'🔔 Enable clock-in reminders')+'</button>';
-  }
-  return '<div class="panel" style="margin-top:12px"><div class="panel-hd"><h3>🔔 Clock-in reminders</h3></div>'+
-    '<div class="muted" style="font-size:12px;margin-bottom:10px">Get a notification on this phone when it’s time to clock in. Set it up once on each phone you use.</div>'+body+'</div>';
-}
 async function hrClockAction(dir){
   if(CLK.acting) return; CLK.acting=true; if(HR.view==='clock')hrRender();
   var geo=await hrGetGeo();
@@ -3674,7 +2991,11 @@ async function hrClockAction(dir){
 }
 // ── Admin attendance: view/correct punches, hours summary, CSV ──
 var ATT={ month:'', tenant:'', data:null, loading:false, editRow:null };
-function hrDtLocal(iso){ if(!iso) return ''; var d=new Date(iso); if(isNaN(d)) return ''; var p=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+// v224: was the MACHINE's wall clock. A <input type="datetime-local"> carries no zone, so an admin
+// outside Malaysia opened a punch showing an hour it was never at — and hrAttSave() read that box back
+// through `new Date(value)`, i.e. the same wrong zone, so correcting the NOTE re-posted a MOVED punch.
+// That is someone's paid hours. mytDtLocal/mytFromDtLocal are an exact pair; see myt.js.
+function hrDtLocal(iso){ return mytDtLocal(iso); }
 function hrAttendance(){
   var mo=ATT.month||todayLocalISO().slice(0,7);
   if(ATT.month!==mo || ATT.tenant!==HR.tenant){ ATT.month=mo; ATT.tenant=HR.tenant; ATT.data=null; }
@@ -3721,7 +3042,7 @@ async function hrAttSave(){
   var emp=document.getElementById('att_emp').value; if(!emp){ toast('Select an employee',true); return; }
   var ci=document.getElementById('att_in').value; if(!ci){ toast('Clock-in time is required',true); return; }
   var co=document.getElementById('att_out').value;
-  var punch={ id:(ATT.editRow&&ATT.editRow.id)||undefined, employee_id:emp, clock_in:new Date(ci).toISOString(), clock_out:co?new Date(co).toISOString():null,
+  var punch={ id:(ATT.editRow&&ATT.editRow.id)||undefined, employee_id:emp, clock_in:(mytFromDtLocal(ci)||new Date(ci)).toISOString(), clock_out:co?(mytFromDtLocal(co)||new Date(co)).toISOString():null,   // v224: the box is Malaysian wall time (hrDtLocal), so read it back as Malaysian
     break_minutes:Number(document.getElementById('att_break').value)||0, note:document.getElementById('att_note').value||null };
   var r=await call({api:'attendance_save',punch:punch});
   if(r&&r.ok){ toast('Saved ✓'); ATT.editRow=null; ATT.data=null; hrRender(); } else toast((r&&r.error)||'Save failed',true);
@@ -4467,7 +3788,7 @@ function hrHubGet(){ try{ return JSON.parse(storageGet(hrHubKey())||'{}')||{}; }
 function hrHubTick(k,on){ var s=hrHubGet(); s[k]=!!on; storageSet(hrHubKey(), JSON.stringify(s)); hrRender(); }
 function hrUobCfg(){ try{ return JSON.parse(storageGet('hr_uob_'+HR.tenant)||'{}')||{}; }catch(_e){ return {}; } }
 function hrUobCfgSave(){ var a=(document.getElementById('hr_uob_acct')||{}).value||''; var c=(document.getElementById('hr_uob_cd')||{}).value||''; storageSet('hr_uob_'+HR.tenant, JSON.stringify({acct:String(a).replace(/[^0-9]/g,''), cd:c})); toast('UOB Infinity settings saved'); }
-function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate()); var days=Math.round((due-t)/86400000);
+function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var ty=mytYMD(); var t=new Date(ty.year, ty.month-1, ty.day); var days=Math.round((due-t)/86400000);   // v224: "today" is now MYT, not the machine's — the EPF/SOCSO deadline is a Malaysian date
   var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
   var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
   return { txt:'due 15 '+HR_MONTHS[nm]+' '+ny+(days<0?(' · OVERDUE '+(-days)+'d'):(' · '+days+' day'+(days===1?'':'s')+' left')), col:col }; }
@@ -4694,7 +4015,7 @@ function hrPayHub(tot,finalised,p){
   '</div>';
 }
 function hrPayroll(){
-  var p=HR.pay; if(!p.month){ var d=new Date(); p.month=d.getMonth()+1; p.year=d.getFullYear(); }
+  var p=HR.pay; if(!p.month){ var d=mytYMD(); p.month=d.month; p.year=d.year; }
   var picker='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'+
     '<select id="hr_pm" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+HR_MONTHS.slice(1).map(function(m,i){return '<option value="'+(i+1)+'"'+((i+1)===p.month?' selected':'')+'>'+m+'</option>';}).join('')+'</select>'+
     '<select id="hr_py" style="padding:7px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text)">'+[p.year-1,p.year,p.year+1].map(function(y){return '<option value="'+y+'"'+(y===p.year?' selected':'')+'>'+y+'</option>';}).join('')+'</select>'+
@@ -5077,75 +4398,13 @@ function hrLoadJsPDF(cb){
   s.onerror=function(){ var q=HR._pdfLoading; HR._pdfLoading=null; toast('Could not load the PDF engine (jspdf.umd.min.js).',true); (q||[]).forEach(function(f){try{f();}catch(_e){}}); };   // fire callbacks so awaiting code fails, not hangs
   document.head.appendChild(s);
 }
-function hrEmpView(e){ return { empNo:e.emp_no, name:e.name, ic:e.ic_no, position:e.position, dept:e.dept, basic:Number(e.basic_salary||0), allowance:Number(e.fixed_allowance||0), bankName:e.bank_name, bankCode:e.bank_code, bankHolder:e.bank_holder, bankAccount:e.bank_account, bank:e.bank_name?(e.bank_name+' •'+(e.bank_account||'')):'', epfNo:e.epf_no, socsoNo:e.socso_no, taxNo:e.tax_no, email:e.email, maritalStatus:e.marital_status, spouseWorking:e.spouse_working, numChildren:e.num_children, resignDate:e.resign_date }; }
 function hrCurRows(){ var lb=(HR.pay.data&&HR.pay.data.leaveBalances)||{}; return (HR.pay._rows||[]).map(function(r){ var ev=hrEmpView(r.e); ev.leaveBal=lb[r.e.id]||[]; return { e:ev, p:r.p, d:r.d }; }); }
 function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MONTHS[HR.pay.month]+' '+HR.pay.year }; }
-var HR_money2=function(n){ return Number(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
 var HR_EMPLOYER=null;   // { name, reg_no, employer_no, address, phone, email, logo(dataURI) } — printed on payslips/forms
 function hrCompanyName(){ var e=HR.data&&HR.data.employer; if(e&&e.name) return e.name; var c=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); return c?c.tenant_name:'I PROCARE MALAYSIA SDN BHD'; }
-var HR_INK=[18,33,27],HR_GREEN=[11,107,79],HR_MUTED=[94,110,103],HR_LINE=[227,232,228],HR_RED=[176,69,59],HR_NETBG=[231,241,236],HR_GREEN2=[77,191,148];
-function hrDrawPayslip(doc,e,p,period,d){
-  d=d||{}; var W=210,m=18;
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,32,'F');
-  var _emp=HR_EMPLOYER||{}; var tx=m;
-  if(_emp.logo){ try{ var ip=doc.getImageProperties(_emp.logo); var lh=15, lw=lh*(ip.width/ip.height); if(lw>34){ lw=34; lh=lw*(ip.height/ip.width); } var ly=(32-lh)/2; doc.setFillColor(255,255,255); doc.roundedRect(m-2,ly-2,lw+4,lh+4,1.8,1.8,'F'); doc.addImage(_emp.logo, /jpe?g/i.test(ip.fileType||'')?'JPEG':'PNG', m, ly, lw, lh); tx=m+lw+7; }catch(_e){} }
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(_emp.logo?13:15); doc.text(HR_COMPANY,tx,13);
-  doc.setFont('helvetica','normal'); doc.setTextColor(184,204,194); doc.setFontSize(7.4);
-  var _meta=[]; if(_emp.reg_no)_meta.push('Reg '+_emp.reg_no); if(_emp.employer_no)_meta.push('E '+_emp.employer_no);
-  var _yy=17.5; if(_meta.length){ doc.text(_meta.join('    '),tx,_yy); _yy+=3.6; }
-  if(_emp.address){ doc.text((doc.splitTextToSize(String(_emp.address).replace(/\s*\n\s*/g,', '),115)[0]||''),tx,_yy); _yy+=3.6; }
-  doc.setFontSize(8); doc.text('Payslip · Confidential',tx,Math.min(_yy+0.5,28));
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(period.label,W-m,15,{align:'right'});
-  var lastDay=new Date(period.year, period.month, 0).getDate(); // real month end — "31 February" was printed on short months
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text('Pay date: '+lastDay+' '+period.label,W-m,21,{align:'right'});
-  var y=44;
-  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(e.name,m,y);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  y+=5.5; doc.text((e.empNo||'')+'  ·  '+(e.position||'—')+'  ·  '+(e.dept||'—'),m,y);
-  y+=5; doc.text('IC: '+(e.ic||'—')+'    Bank: '+(e.bank||'—'),m,y); y+=9;
-  var section=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.setLineWidth(0.3); doc.line(m,y+2,W-m,y+2); y+=7; };
-  var row=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(o.bold?9.5:9); var c1=o.color||(o.bold?HR_INK:HR_MUTED); doc.setTextColor(c1[0],c1[1],c1[2]); doc.text(label,m,y); var c2=o.color||HR_INK; doc.setTextColor(c2[0],c2[1],c2[2]); doc.text((o.neg?'-':'')+'RM '+HR_money2(val),W-m,y,{align:'right'}); y+=6; };
-  var mt=p._meta||{};
-  var pctLbl=function(base,r){ return base+((r!=null)?(' '+(Math.round(r*1000)/10)+'%'):''); };
-  section('Earnings');
-  row('Basic salary',e.basic);
-  if(e.allowance) row('Fixed allowance',e.allowance);
-  if(d.bonus) row('Bonus',d.bonus);
-  if(d.ot) row('Overtime',d.ot);
-  if(d.allowance) row('Additional allowance',d.allowance);
-  if(d.unpaid) row('Unpaid leave',d.unpaid,{neg:true,color:HR_RED});
-  row('Gross pay',p.gross,{bold:true}); y+=3;
-  section('Deductions (employee)');
-  row(pctLbl('EPF (KWSP)',mt.epfEeRate),p.epfEe,{neg:true,color:HR_RED});
-  row('SOCSO (PERKESO)'+(mt.socsoCat?(' · Cat '+mt.socsoCat):''),p.socsoEe,{neg:true,color:HR_RED});
-  // v196: LINDUNG 24 Jam was deducted from net but never printed, so the listed deductions did not add up
-  // to the net pay shown right below them — an unexplained gap on every payslip since 1 Jun 2026.
-  if(Number(p.lindung)) row('LINDUNG 24 Jam (SKBBK)',p.lindung,{neg:true,color:HR_RED});
-  row('EIS (SIP)',p.eisEe,{neg:true,color:HR_RED});
-  row('PCB / MTD (estimate)'+(mt.pcbCat===0?' · non-resident':''),p.pcb,{neg:true,color:HR_RED});
-  if(d.deductions&&d.deductions.length){ d.deductions.forEach(function(x){ if(Number(x.amount)) row(x.label||'Other deduction',x.amount,{neg:true,color:HR_RED}); }); }
-  else if(d.deduction) row('Other deductions',d.deduction,{neg:true,color:HR_RED});
-  y+=2;
-  doc.setFillColor(HR_NETBG[0],HR_NETBG[1],HR_NETBG[2]); doc.roundedRect(m,y-5,W-2*m,11,2,2,'F');
-  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('NET PAY',m+4,y+1.5); doc.setFontSize(14); doc.text('RM '+HR_money2(p.net),W-m-4,y+2,{align:'right'}); y+=16;
-  section('Employer contributions'); row(pctLbl('EPF (KWSP)',mt.epfErRate),p.epfEr); row('SOCSO (PERKESO)',p.socsoEr); row('EIS (SIP)',p.eisEr); row('Total employer cost',p.employerCost,{bold:true});
-  // Leave balances (remaining) — shown in days, not RM.
-  if(e.leaveBal && e.leaveBal.length && y<250){ y+=3; section('Leave balances '+period.year);
-    var textRow=function(label,val){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(label,m,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(val,W-m,y,{align:'right'}); y+=5.6; };
-    e.leaveBal.forEach(function(b){ textRow(b.type, (Math.round(b.remaining*10)/10)+' of '+(Math.round(b.entitled*10)/10)+' days left  ·  taken '+(Math.round(b.taken*10)/10)); });
-  }
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,275,W-m,275);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
-  doc.text('This is a computer-generated payslip and does not require a signature.',m,280);
-  doc.text('PCB shown is an estimate - verify against the LHDN MTD schedule before filing.',m,284);
-}
 function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var per=hrPeriod(); rows.forEach(function(r,i){ if(i>0)doc.addPage(); hrDrawPayslip(doc,r.e,r.p,per,r.d); }); doc.save('Payslips_'+per.label.replace(' ','')+'.pdf'); toast('Payslips PDF generated'); }); }
 function hrDownload(name,text,mime){ var blob=new Blob([text],{type:mime||'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},1500); }
-// v159: CRLF + a terminating newline. KWSP/CP39 already use CRLF deliberately, but every CSV (PERKESO
-// ASSIST and both bank files) went out with bare LF and no EOF newline — several Malaysian bank and
-// government uploaders drop or reject the final record without one. Also quote a bare CR.
-function hrCsv(arr){ return arr.map(function(r){ return r.map(function(c){ return /[",\r\n]/.test(String(c))?('"'+String(c).replace(/"/g,'""')+'"'):c; }).join(','); }).join('\r\n')+'\r\n'; }
 function hrExpStatutory(kind){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var head,body=[],totals,name;
@@ -5160,35 +4419,6 @@ function hrExpStatutory(kind){
   hrDownload(name,hrCsv([head].concat(body,[totals]))); toast(kind.toUpperCase()+' CSV downloaded');
 }
 // ── Statutory PORTAL upload files (documented layouts — do ONE test upload per portal to confirm; specs change) ──
-// v157: these files are FIXED-WIDTH and written as UTF-8, but padding counted UTF-16 code units. One
-// accented/curly/CJK character made the emitted record longer in BYTES than the layout, so the portal's
-// positional parser read every following field off by that many bytes. Fold to ASCII before padding.
-function hrAscii(s){ return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[‘’]/g,"'").replace(/[“”]/g,'"').replace(/[‐-―]/g,'-').replace(/[^\x20-\x7E]/g,''); }
-// v157: a required statutory identifier that is blank must BLOCK the file, not be padded into a
-// plausible-looking zero. hrPadL('',12) emitted 000000000000 as an EPF/SOCSO member number and blanks as a
-// TIN — a syntactically valid record that can never be allocated to the member, discovered as a rejected
-// filing or a penalty weeks later. Returns a human list of who is missing what, or ''.
-function hrMissingIds(rows, need){
-  var bad=[];
-  rows.forEach(function(x){ var e=x.e, miss=[];
-    need.forEach(function(f){ if(!String((e[f.k]==null?'':e[f.k])).trim()) miss.push(f.label); });
-    if(miss.length) bad.push((e.name||e.empNo||'?')+' — '+miss.join(', '));
-  });
-  if(!bad.length) return '';
-  return bad.slice(0,6).join(' · ')+(bad.length>6?(' · +'+(bad.length-6)+' more'):'');
-}
-// A name legitimately gets clipped to the layout width — that is normal and harmless. An identifier is not:
-// pass `what` for those and the file is blocked instead. See hrPadL (v199).
-function hrPadR(s,n,what){ s=String(s==null?'':s); if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(0,n); } return s+new Array(n-s.length+1).join(' '); }
-// v199: a fixed-width statutory record must never be silently trimmed to fit. hrPadR truncated with
-// slice(0,n) and hrPadL with slice(-n), so an over-long value produced a syntactically perfect record
-// carrying a number that belongs to nobody — the CP39 file was shipping every employee's TIN two
-// characters short. Overflows are now recorded and the builders refuse to emit the file.
-var HR_FIT_ERR=[];
-function hrFitReset(){ HR_FIT_ERR=[]; }
-function hrFitNote(what,val,n){ HR_FIT_ERR.push(what+' "'+val+'" is '+String(val).length+' chars, the layout allows '+n); }
-function hrPadL(s,n,c,what){ s=String(s==null?'':s); c=c||'0'; if(s.length>n){ if(what) hrFitNote(what,s,n); return s.slice(-n); } return new Array(n-s.length+1).join(c)+s; }
-function hrCents(n){ return String(Math.round((Number(n)||0)*100)); }
 // EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
 function hrExpKwsp(ret){
   var rows=hrCurRows().filter(function(x){ return x.p.epfEe||x.p.epfEr; });
@@ -5270,7 +4500,6 @@ function hrExpCp39(ret){
   hrDownload(out.name, out.text, out.mime);
   toast('LHDN CP39 file — '+lines.length+' staff. Do one test upload on e-PCB to confirm.');
 }
-var HR_BANK_CODE={'maybank islamic':'MBISMYKL','ambank islamic':'AISLMYKL','cimb islamic':'CTBBMYKL','rhb islamic':'RHBAMYKL','hong leong islamic':'HLIBMYKL','public islamic':'PIBEMYKL',maybank:'MBBEMYKL','malayan banking':'MBBEMYKL',cimb:'CIBBMYKL','public bank':'PBBEMYKL',pbb:'PBBEMYKL',rhb:'RHBBMYKL','hong leong':'HLBBMYKL',ambank:'ARBKMYKL','bank islam':'BIMBMYKL','bank rakyat':'BKRMMYKL',ocbc:'OCBCMYKL',hsbc:'HBMBMYKL','standard chartered':'SCBLMYKX',uob:'UOVBMYKL',affin:'PHBMMYKL',alliance:'MFBBMYKL','bank muamalat':'BMMBMYKL',agrobank:'BPMBMYKL','bank simpanan nasional':'BSNAMYK1',bsn:'BSNAMYK1','kuwait finance house':'KFHOMYKL','al rajhi':'RJHIMYKL','bank of china':'BKCHMYKL',citibank:'CITIMYKL','united overseas':'UOVBMYKL'};
 // ── Employee bank picker: searchable dropdown backed by the hr_banks master list (HR.banks). Stores the bank CODE, shows the name. ──
 function hrBanksSorted(){ return (HR.banks||[]).filter(function(b){return b.active;}).slice().sort(function(a,b){return String(a.name).localeCompare(String(b.name));}); }
 function hrBankPicker(x){
@@ -5303,15 +4532,6 @@ function hrBankPick(code){ var b=hrBanksSorted().find(function(x){return x.code=
   var box=document.getElementById('hr_bankList'); if(box) box.style.display='none';
 }
 function hrBankBlur(){ setTimeout(function(){ var b=document.getElementById('hr_bankList'); if(b) b.style.display='none'; },160); }
-function hrBankCode(name){ var k=String(name||'').toLowerCase().trim(); for(var key in HR_BANK_CODE){ if(k.indexOf(key)>=0) return HR_BANK_CODE[key]; } return ''; }
-// v199: the salary files wrote `e.bankCode || hrBankCode(e.bankName)` into a column labelled SWIFT/BIC.
-// Since the bank master list landed, bank_code is ALWAYS set — to HR OS's own code ("MAYBANK",
-// "HONG_LEONG_BANK") — so the fallback never ran and every file carried an identifier no bank recognises.
-// Resolve the real BIC from the bank name, then from the code read as words, and leave it BLANK rather
-// than emit something wrong: a blank field gets rejected at upload, a plausible wrong one gets routed.
-function hrSwift(e){
-  return hrBankCode(e&&e.bankName) || hrBankCode(String((e&&e.bankCode)||'').replace(/_/g,' ')) || '';
-}
 function hrExpGiro(){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(), tag=per.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
   var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
@@ -5634,8 +4854,8 @@ function hrCalcPayslip(){
     var e={ empNo:emp?emp.emp_no:'CALC', name:emp?emp.name:'Payroll Calculation', ic:emp?emp.ic_no:'', position:emp?emp.position:'', dept:emp?emp.dept:'', basic:hrCalcNum(C.inp.basic), allowance:hrCalcNum(C.inp.allowance), bank:'', resident:C.settings.resident };
     var p={ gross:hrRound2(res.gross+res.claim), epfEe:res.epfEe, epfEr:res.epfEr, socsoEe:res.socsoEe, socsoEr:res.socsoEr, eisEe:res.eisEe, eisEr:res.eisEr, lindung:res.lindung, pcb:res.pcb, net:res.net, employerCost:res.employerCost, _meta:{epfEeRate:res._eeRate,epfErRate:res._erRate,socsoCat:res._scat,pcbCat:(C.settings.resident===false?0:1),senior:C.settings.senior} };
     var d={ bonus:hrCalcNum(C.inp.bonus), ot:0, allowance:hrCalcNum(C.inp.claim), deductions:(hrCalcNum(C.inp.deduction)?[{label:'Deduction',amount:hrCalcNum(C.inp.deduction)}]:[]), unpaid:0 };
-    var now=new Date(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
-    hrDrawPayslip(doc,e,p,{month:now.getMonth()+1,year:now.getFullYear(),label:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear()},d);
+    var now=mytYMD(); var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
+    hrDrawPayslip(doc,e,p,{month:now.month,year:now.year,label:HR_MONTHS[now.month]+' '+now.year},d);
     doc.save('Payroll_Calc_'+(emp?emp.emp_no:'adhoc')+'.pdf'); toast('Payslip generated');
   });
 }
@@ -5643,8 +4863,8 @@ async function hrCalcSave(){
   var res=hrCalcCompute(); if(!res){ toast('Enter figures first',true); return; }
   var C=HR_CALC, e=C.empId?(HR.data.employees||[]).find(function(x){return x.id===C.empId;}):null;
   if(res.overridden && !String(C.ov.reason||'').trim()){ toast('A reason is required to save an override',true); return; }
-  var now=new Date();
-  var r=await call(Object.assign({api:'hr_calc_log',tenant:HR.tenant,employeeId:C.empId||null,employeeName:e?e.name:'Ad-hoc',period:HR_MONTHS[now.getMonth()+1]+' '+now.getFullYear(),inputs:C.inp,flags:C.flags,settings:C.settings,result:res,overridden:res.overridden,override:(res.overridden?C.ov:null),reason:(res.overridden?C.ov.reason:null)}));
+  var now=mytYMD();
+  var r=await call(Object.assign({api:'hr_calc_log',tenant:HR.tenant,employeeId:C.empId||null,employeeName:e?e.name:'Ad-hoc',period:HR_MONTHS[now.month]+' '+now.year,inputs:C.inp,flags:C.flags,settings:C.settings,result:res,overridden:res.overridden,override:(res.overridden?C.ov:null),reason:(res.overridden?C.ov.reason:null)}));
   if(r&&r.ok){ toast('Calculation saved to audit log ✓'); hrCalcHistory(); } else toast((r&&r.error)||'Save failed',true);
 }
 async function hrCalcHistory(){
@@ -5666,7 +4886,7 @@ function hrYearend(){
     '<button class="btn sm" onclick="hrYePick()">Load</button></div>';
   if(ye.annual===null){ if(!ye.loading) hrYeLoad(); return picker+'<div class="panel"><div class="muted" style="padding:24px;text-align:center"><span class="spin"></span> Aggregating finalised payslips for '+ye.year+'…</div></div>'; }
   var emps=(HR.data.employees||[]); var ann=ye.annual||{};
-  var withPay=emps.filter(function(e){ return ann[e.id]&&ann[e.id].months>0; });
+  var withPay=hrYePaid(emps,ann);   // hr-docs.js — the same predicate the EA and CP8D populations use
   var tg=0,tp=0,subj=0; withPay.forEach(function(e){ var t=ann[e.id]; tg+=t.gross; tp+=t.pcb; if(t.pcb>0)subj++; });
   var empNo=(ye.employer&&ye.employer.employer_no)||'';
   var warn = empNo? '' : '<div class="panel" style="border-color:var(--amber);background:rgba(240,180,40,.06);padding:10px 14px;margin-bottom:12px;font-size:12.5px">⚠️ Employer E-number is not set in <b>hr_employer_info</b>. EA / Form E / CP8D will print a placeholder — set it before filing with LHDN.</div>';
@@ -5688,131 +4908,34 @@ async function hrYeLoad(){
   try{ var r=await call({api:'hr_annual',year:HR_YE.year,tenant:HR.tenant}); HR_YE.loading=false; if(r&&r.ok){ HR_YE.annual=r.annual||{}; HR_YE.employer=r.employer||null; hrRender(); } else { HR_YE.annual={}; toast((r&&r.error)||'Load failed',true); hrRender(); } }
   catch(e){ HR_YE.loading=false; HR_YE.annual={}; toast(e.message||e,true); hrRender(); }
 }
-var HR_EA_ZERO={ gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,months:0 };
-function hrDrawEA(doc,e,t,year,emp){
-  var W=210,H=297,m=16; var amt=function(n){return 'RM '+HR_money2(n);};
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG EA',m,12);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8A - Pin. 2023  ·  Income Tax Act 1967',m,17.5);
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Statement of Remuneration from Employment',W-m,17.5,{align:'right'});
-  var y=33;
-  doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('FOR THE YEAR ENDED 31 DECEMBER '+year,m,y); y+=6;
-  var head=function(t2){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t2.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=6; };
-  var kv=function(k,v,x,w){ x=x||m; doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,x,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v||'—'),x+34,y); };
-  var money2=function(label,val,o){ o=o||{}; doc.setFont('helvetica',o.bold?'bold':'normal'); doc.setFontSize(8.5); var c=o.bold?HR_INK:HR_MUTED; doc.setTextColor(c[0],c[1],c[2]); doc.text(label,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(amt(val),W-m,y,{align:'right'}); y+=5.5; };
-  head("Employer's particulars");
-  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(emp.name||'',m,y); y+=5;
-  kv("Employer's No.",emp.employer_no||'(to be filled — LHDN E number)'); y+=5;
-  if(emp.address){ doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(String(emp.address),m,y); y+=5; }
-  y+=1;
-  head('A.  Particulars of employee'); var col2=m+95;
-  kv('Name',e.name); kv('Staff No.',e.empNo,col2); y+=5;
-  kv('Designation',e.position); kv('IC / Passport',e.ic,col2); y+=5;
-  kv('Income Tax No.',e.taxNo||''); kv('EPF No.',e.epfNo||'',col2); y+=5;
-  kv('SOCSO No.',e.socsoNo||''); kv('Months paid',t.months||0,col2); y+=6;
-  head('B.  Gross income from employment');
-  money2('1(a)  Gross salary, wages, leave pay, overtime, allowances',t.gross);
-  money2("1(b)  Fees, commissions, bonus, director's fees, ESOS",0);
-  money2('2.     Benefits-in-kind (BIK)',0);
-  money2('3.     Value of living accommodation (VOLA)',0);
-  money2('Total gross remuneration (B)',t.gross,{bold:true}); y+=2;
-  head('C.  Total tax-exempt allowances / perquisites / gifts / benefits');
-  money2('Total exempt (see note)',0); y+=2;
-  head('D.  Deductions');
-  money2('1.  Monthly Tax Deduction (MTD / PCB)',t.pcb);
-  money2('2.  Deduction under CP38',0);
-  money2('3.  Zakat paid via salary deduction',0); y+=2;
-  head('E.  Contributions to approved fund & SOCSO');
-  money2("EPF (KWSP) — employee's contribution",t.epfEe);
-  money2("SOCSO (PERKESO) — employee's contribution",(Number(t.socsoEe)||0)+(Number(t.lindung)||0));   // v196: includes LINDUNG 24 Jam — same employee, same PERKESO account, and it counts toward the RM350 relief
-  money2('EIS (SIP) — employee\'s contribution',t.eisEe); y+=3;
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-28,W-m,H-28);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.text('This statement must be rendered to the employee on or before 28 February '+(year+1)+' (Income Tax Act 1967, s.83(1A)).',m,H-23);
-  doc.text('PCB shown is an estimate. BIK / VOLA / gratuity / bonus must be added manually where applicable.',m,H-19.5);
-  doc.text('Verify against the current C.P.8A on hasil.gov.my before issuing.',m,H-16);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text('Authorised signature: ______________________________',m,H-8);
-  doc.text('Date: ____________',W-m-42,H-8);
-}
+// HR_EA_ZERO, hrYePaid, hrFormEStats and hrCp8dFile are in hr-docs.js (v222) — the figures LHDN
+// receives are the filing, not the button, and hrDrawEA/hrDrawFormE were already there.
 function hrExpEA(empId){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:'',address:''}, year=HR_YE.year;
     var list;
     if(empId){ var one=(HR.data.employees||[]).find(function(x){return x.id===empId;}); if(!one){toast('Employee not found',true);return;} list=[one]; }
-    else { list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }); if(!list.length){toast('No paid employees for '+year,true);return;} }
+    else { list=hrYePaid(HR.data.employees||[],ann); if(!list.length){toast('No paid employees for '+year,true);return;} }
     var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
     list.forEach(function(e,i){ if(i>0)doc.addPage(); hrDrawEA(doc,hrEmpView(e),ann[e.id]||HR_EA_ZERO,year,emp); });
     doc.save(empId?('EA_'+list[0].emp_no+'_YA'+year+'.pdf'):('EA_forms_YA'+year+'.pdf'));
     toast('EA form(s) generated');
   });
 }
-function hrDrawFormE(doc,employer,stats,year){
-  var W=210,H=297,m=16;
-  doc.setFillColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.rect(0,0,W,26,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('BORANG E',m,12);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(184,204,194); doc.text('C.P.8 - Return Form of Employer  ·  Income Tax Act 1967',m,17.5);
-  doc.setTextColor(HR_GREEN2[0],HR_GREEN2[1],HR_GREEN2[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Y/A '+year,W-m,12,{align:'right'});
-  doc.setTextColor(184,204,194); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.text('Submit via e-E on MyTax by 31 March',W-m,17.5,{align:'right'});
-  var y=34;
-  var head=function(t){ doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.text(t.toUpperCase(),m,y); doc.setDrawColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setLineWidth(0.4); doc.line(m,y+1.5,W-m,y+1.5); y+=7; };
-  var kv=function(k,v){ doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text(k,m+2,y); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.setFont('helvetica','bold'); doc.text(String(v),W-m,y,{align:'right'}); y+=6.5; };
-  var mn=function(n){ return 'RM '+HR_money2(n); };
-  head("Employer's particulars");
-  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]); doc.text(employer.name||'',m,y); y+=6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.text("Employer's No. (E)",m+2,y); doc.setFont('helvetica','bold'); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text(employer.employer_no||'(to be filled)',W-m,y,{align:'right'}); y+=10;
-  head('Number of employees for the year '+year);
-  kv('1.  Total employees as at 31 December',stats.total);
-  kv('2.  New employees during the year',stats.newHires);
-  kv('3.  Employees who ceased employment',stats.ceased);
-  kv('4.  Employees subject to MTD/PCB',stats.subjectPcb); y+=4;
-  head('Remuneration & tax deducted');
-  kv('Total gross remuneration paid',mn(stats.totalGross));
-  kv('Total Monthly Tax Deduction (MTD/PCB)',mn(stats.totalPcb));
-  kv('Total CP38 deductions',mn(0)); y+=8;
-  doc.setFillColor(231,241,236); doc.roundedRect(m,y-4,W-2*m,20,3,3,'F');
-  doc.setTextColor(HR_GREEN[0],HR_GREEN[1],HR_GREEN[2]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('C.P.8D ATTACHED',m+4,y+2);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Per-employee detail for all '+stats.total+' employees is provided in the C.P.8D file (P{E-no}_'+year+'.txt).',m+4,y+8);
-  doc.text('EA and CP8D figures must reconcile. Employers who filed via e-Data Praisi/e-CP8D need not re-furnish CP8D.',m+4,y+13); y+=26;
-  doc.setDrawColor(HR_LINE[0],HR_LINE[1],HR_LINE[2]); doc.line(m,H-34,W-m,H-34);
-  doc.setTextColor(HR_MUTED[0],HR_MUTED[1],HR_MUTED[2]); doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.text('Failure to furnish Form e-E by 31 March is an offence under s.120(1)(b), Income Tax Act 1967.',m,H-29);
-  doc.text('This is a working summary — file the official Form e-E on https://mytax.hasil.gov.my.',m,H-25.5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(HR_INK[0],HR_INK[1],HR_INK[2]);
-  doc.text('Declaration by employer — Name: __________________________  Signature: __________________  Date: __________',m,H-12);
-}
 function hrExpFormE(){
   hrLoadJsPDF(function(){
     var ann=HR_YE.annual||{}, emp=HR_YE.employer||{name:HR_COMPANY,employer_no:''}, year=HR_YE.year, emps=(HR.data.employees||[]);
-    var totalGross=0,totalPcb=0,subjectPcb=0; emps.forEach(function(e){ var t=ann[e.id]; if(t){ totalGross+=t.gross; totalPcb+=t.pcb; if(t.pcb>0)subjectPcb++; } });
-    var newHires=emps.filter(function(e){ return e.join_date&&new Date(e.join_date).getFullYear()===year; }).length;
-    var ceased=emps.filter(function(e){ return e.resign_date&&new Date(e.resign_date).getFullYear()===year; }).length;
     var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
-    hrDrawFormE(doc,emp,{ total:emps.length, newHires:newHires, ceased:ceased, subjectPcb:subjectPcb, totalGross:totalGross, totalPcb:totalPcb },year);
+    hrDrawFormE(doc,emp,hrFormEStats(emps,ann,year),year);
     doc.save('FormE_YA'+year+'.pdf'); toast('Form E generated');
   });
 }
-function hrCp8dCategory(e){ var ms=String(e.maritalStatus||'single').toLowerCase(); if(ms==='married') return e.spouseWorking?3:2; if(ms==='divorced'||ms==='widowed') return 3; return (e.numChildren||0)>0?3:1; }
-function hrIntNoSen(n){ return String(Math.trunc(Number(n)||0)); }
-function hrDec2(n){ return (Number(n)||0).toFixed(2); }
-function hrFmtDMY(d){ if(!d)return ''; var x=new Date(d); if(isNaN(x))return ''; var p=function(v){return ('0'+v).slice(-2);}; return p(x.getDate())+'-'+p(x.getMonth()+1)+'-'+x.getFullYear(); }
 function hrExpCp8d(fmt){
   var ann=HR_YE.annual||{}, emp=HR_YE.employer||{employer_no:''}, year=HR_YE.year;
-  var list=(HR.data.employees||[]).filter(function(e){ return ann[e.id]&&ann[e.id].months>0; }).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });
+  var list=hrYePaid(HR.data.employees||[],ann).map(function(e){ return { emp:hrEmpView(e), tot:ann[e.id] }; });
   if(!list.length){ toast('No paid employees for '+year,true); return; }
-  if(fmt==='txt'){
-    var eno=(String(emp.employer_no||'').replace(/\D/g,''))||'0000000000';
-    var lines=list.map(function(o){ var e=o.emp,t=o.tot; var ic=(String(e.ic||'').replace(/[\s-]/g,''))||'000000000000'; var children=e.numChildren||0;
-      return [ String(e.name||'').slice(0,60), e.taxNo?String(e.taxNo).replace(/\D/g,''):'', ic.slice(0,12), hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, children, hrIntNoSen(children*2000), hrIntNoSen(t.gross), 0, 0, 0, 0, 0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ].join('|'); });   // v196: SOCSO field now includes LINDUNG 24
-    hrDownload('P'+eno+'_'+year+'.txt',lines.join('\r\n')+'\r\n'); toast('CP8D TXT generated');
-  } else {
-    var head=['No','Name','TIN','IC/Passport','Category','Status','End date','Tax borne','Children','Child relief','Gross remuneration','BIK','VOLA','ESOS','Exempt','TP1','Zakat (TP1)','EPF','Zakat (salary)','MTD','CP38','Medical ins.','SOCSO'];
-    var body=list.map(function(o,i){ var e=o.emp,t=o.tot; return [ i+1, e.name, e.taxNo||'', (String(e.ic||'').replace(/[\s-]/g,''))||'000000000000', hrCp8dCategory(e), 2, e.resignDate?hrFmtDMY(e.resignDate):'', 2, e.numChildren||0, hrIntNoSen((e.numChildren||0)*2000), hrIntNoSen(t.gross), 0,0,0,0,0, hrDec2(0), hrIntNoSen(t.epfEe), hrDec2(0), hrDec2(t.pcb), '', 0, hrIntNoSen((Number(t.socsoEe)||0)+(Number(t.lindung)||0)) ]; });   // v196: SOCSO field now includes LINDUNG 24
-    hrDownload('CP8D_YA'+year+'.csv',hrCsv([head].concat(body))); toast('CP8D CSV generated');
-  }
+  var out=hrCp8dFile(list, emp.employer_no, year, fmt);
+  hrDownload(out.name,out.text); toast(fmt==='txt'?'CP8D TXT generated':'CP8D CSV generated');
 }
 
 

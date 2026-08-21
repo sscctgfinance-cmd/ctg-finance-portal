@@ -1,0 +1,108 @@
+<!-- #gateway -->
+<div style="margin-bottom:14px">
+<h2 style="margin:0;font-size:19px">🔁 Gateway → Xero</h2>
+<div class="muted" style="font-size:12px">Convert Payex / Atome / HitPay / NTT Data Transaction &amp; Settlement exports into a Xero bank-statement CSV. Everything runs in your browser — no data leaves this page.</div>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:14px">
+<button class="btn sm" id="gw-pt-payex" onclick="gwSetProv('payex')">Payex</button>
+<button class="btn sm" id="gw-pt-atome" onclick="gwSetProv('atome')">Atome</button>
+<button class="btn sm" id="gw-pt-hitpay" onclick="gwSetProv('hitpay')">HitPay</button>
+<button class="btn sm" id="gw-pt-nttdata" onclick="gwSetProv('nttdata')">NTT Data</button>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3 id="gw-drop-title">1 · Drop Payex files</h3>
+<button class="btn sm" onclick="gwReset()">Clear</button>
+</div>
+<div id="gw-drop" style="border:1.5px dashed var(--border);border-radius:12px;padding:22px;text-align:center;cursor:pointer;background:var(--panel-2)" onclick="document.getElementById('gw_fi').click()">Drop the <b style="color:var(--coral-soft)">Transaction</b> and <b style="color:var(--coral-soft)">Settlement / Payout</b> files (.xlsx / .csv) here, or click to choose.<br>
+<span class="muted" style="font-size:12px">The tool auto-detects which file is which.</span>
+<input type="file" id="gw_fi" multiple accept=".xlsx,.xls,.csv" style="display:none">
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+<div class="fchip" id="gw-chip-a" style="display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+<div style="font-size:16px">↑</div>
+<div>
+<div style="font-weight:600;font-size:13px" id="gw-chip-a-t">Transactions (money in)</div>
+<div class="muted" style="font-size:11.5px;word-break:break-all" id="gw-chip-a-s">not loaded</div>
+</div>
+</div>
+<div class="fchip" id="gw-chip-b" style="display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+<div style="font-size:16px">↓</div>
+<div>
+<div style="font-weight:600;font-size:13px" id="gw-chip-b-t">Settlements (payout + fees)</div>
+<div class="muted" style="font-size:11.5px;word-break:break-all" id="gw-chip-b-s">not loaded</div>
+</div>
+</div>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>2 · Options</h3>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+<div>
+<label class="muted" style="font-size:11px">Date format</label>
+<select id="gw-datefmt" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)">
+<option value="ymd" selected>YYYY-MM-DD (recommended for Xero import)</option>
+<option value="dmy">DD/MM/YYYY</option>
+</select>
+</div>
+<div>
+<label class="muted" style="font-size:11px">Money-in Reference</label>
+<select id="gw-ref" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)">
+</select>
+</div>
+<div>
+<label class="muted" style="font-size:11px">Settlement / payout lines</label>
+<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0">
+<input type="checkbox" id="gw-payout" checked style="accent-color:var(--coral)">
+<span>Payout to bank (−net)</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:13px">
+<input type="checkbox" id="gw-fee" checked style="accent-color:var(--coral)">
+<span>Merchant fees (MDR / Atome)</span>
+</div>
+</div>
+</div>
+<button class="btn p" id="gw-convert" style="margin-top:14px" onclick="gwConvert()" disabled>Convert →</button>
+<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Clearing-account model: each transaction = one money-in line (gross); each settlement/payout = one payout line (net, reconcile in Xero as a <b>Transfer</b> to your real bank) + one fee line (code to bank/merchant-fee expense). The account balance is the unsettled float — that is normal.</div>
+</div>
+<div class="panel hide" id="gw-result">
+<div class="panel-hd">
+<h3>3 · Result <span class="muted" id="gw-result-prov" style="font-size:12px">
+</span>
+</h3>
+<div style="display:flex;gap:8px">
+<button class="btn sm" onclick="gwDownload('all')">⬇ Xero CSV (combined)</button>
+<button class="btn sm" onclick="gwDownload('in')">money-in only</button>
+<button class="btn sm" onclick="gwDownload('out')">settlements only</button>
+</div>
+</div>
+<div class="cards" id="gw-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
+</div>
+<div id="gw-balbox">
+</div>
+<div class="tbl-wrap" style="max-height:420px;overflow:auto">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Date</th>
+<th>Type</th>
+<th>Payee</th>
+<th>Description</th>
+<th>Reference</th>
+<th class="amt" style="text-align:right">Amount</th>
+</tr>
+</thead>
+<tbody id="gw-tbody">
+</tbody>
+</table>
+</div>
+<div class="muted" style="font-size:11px;margin-top:10px" id="gw-prevnote">
+</div>
+</div>
+<!-- #gw-ref -->
+<option value="TransactionId" selected>TransactionId (unique per sale)</option>
+<option value="ReferenceNumber">ReferenceNumber</option>
+<option value="CollectionReferenceNumber">CollectionReferenceNumber</option>
+<option value="CollectionId">CollectionId</option>

@@ -1,0 +1,126 @@
+<!-- #calendar -->
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+<button class="btn" style="padding:6px 12px;font-size:12px" onclick="CAL_DAYS=30;renderCalendar()">Next 30d</button>
+<button class="btn" style="padding:6px 12px;font-size:12px" onclick="CAL_DAYS=90;renderCalendar()">Next 90d</button>
+<button class="btn p" style="padding:6px 12px;font-size:12px" onclick="CAL_DAYS=365;renderCalendar()">Next 365d</button>
+<button class="btn" style="padding:6px 12px;font-size:12px" onclick="CAL_DAYS=9999;renderCalendar()">All</button>
+<span class="muted" style="font-size:12px;margin-left:auto">Source: each company's <b>🏢 Company Info</b> → Compliance dates + licences + leases + insurance expiries.</span>
+</div>
+<div class="cards" style="margin-bottom:18px">
+<div class="card">
+<div class="n" style="color:var(--red-soft)">1</div>
+<div class="l">⚠ Overdue</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--amber)">1</div>
+<div class="l">⏰ ≤ 14 days</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--coral-soft)">1</div>
+<div class="l">≤ 30 days</div>
+</div>
+<div class="card">
+<div class="n" style="color:var(--sky-soft)">1</div>
+<div class="l">≤ 90 days</div>
+</div>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th style="width:40px">
+</th>
+<th>Company</th>
+<th>Item</th>
+<th>Due</th>
+<th>Urgency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td colspan="5" style="background:rgba(239,68,68,.06);font-size:10.5px;color:var(--red-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">⚠ OVERDUE</td>
+</tr>
+<tr>
+<td>
+<span style="font-size:16px">⚖</span>
+</td>
+<td>
+<b>I PROCARE MALAYSIA SDN BHD</b>
+</td>
+<td>Annual Return (SSM)<div class="muted" style="font-size:11px;margin-top:2px">lodge via MBRS</div>
+</td>
+<td class="muted" style="font-size:12px;white-space:nowrap">30 Jul 2026</td>
+<td>
+<span class="pill" style="background:rgba(239,68,68,.18);color:var(--red-soft);font-size:10px">⚠ 19d overdue</span>
+</td>
+</tr>
+<tr>
+<td colspan="5" style="background:rgba(245,158,11,.06);font-size:10.5px;color:var(--amber);font-weight:700;letter-spacing:.08em;padding:7px 14px">⏰ ≤ 14 DAYS</td>
+</tr>
+<tr>
+<td>
+<span style="font-size:16px">📜</span>
+</td>
+<td>
+<b>SKINDAE SDN BHD</b>
+</td>
+<td>Wholesale licence<div class="muted" style="font-size:11px;margin-top:2px">KPDN — renew before expiry</div>
+</td>
+<td class="muted" style="font-size:12px;white-space:nowrap">27 Aug 2026</td>
+<td>
+<span class="pill" style="background:rgba(245,158,11,.18);color:var(--amber);font-size:10px">⏰ 9d</span>
+</td>
+</tr>
+<tr>
+<td colspan="5" style="background:rgba(255,165,89,.05);font-size:10.5px;color:var(--coral-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 30 DAYS</td>
+</tr>
+<tr>
+<td>
+<span style="font-size:16px">⚖</span>
+</td>
+<td>
+<b>SKINDAE SDN BHD</b>
+</td>
+<td>CP204 instalment</td>
+<td class="muted" style="font-size:12px;white-space:nowrap">10 Sep 2026</td>
+<td>
+<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px">23d</span>
+</td>
+</tr>
+<tr>
+<td colspan="5" style="background:rgba(91,155,213,.05);font-size:10.5px;color:var(--sky-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 90 DAYS</td>
+</tr>
+<tr>
+<td>
+<span style="font-size:16px">🔑</span>
+</td>
+<td>
+<b>I PROCARE MALAYSIA SDN BHD</b>
+</td>
+<td>Office lease — Menara UOA<div class="muted" style="font-size:11px;margin-top:2px">3-year term</div>
+</td>
+<td class="muted" style="font-size:12px;white-space:nowrap">31 Oct 2026</td>
+<td>
+<span class="pill" style="background:rgba(91,155,213,.14);color:var(--sky-soft);font-size:10px">74d</span>
+</td>
+</tr>
+<tr>
+<td colspan="5" style="background:rgba(255,255,255,.02);font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.08em;padding:7px 14px">LATER</td>
+</tr>
+<tr>
+<td>
+<span style="font-size:16px">🛡</span>
+</td>
+<td>
+<b>SKINDAE SDN BHD</b>
+</td>
+<td>Public liability policy<div class="muted" style="font-size:11px;margin-top:2px">Allianz General</div>
+</td>
+<td class="muted" style="font-size:12px;white-space:nowrap">31 Mar 2027</td>
+<td>
+<span class="muted" style="font-size:10.5px">225d</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>

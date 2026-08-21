@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CTG Portal has moved</title>
+<meta name="robots" content="noindex">
+<!--
+  THE FORWARDING PAGE FOR THE OLD ADDRESS (https://sscctgfinance-cmd.github.io/ctg-finance-portal/).
+
+  This file is NOT part of the app. It is deployed BY HAND to the `publish` repo, as three copies —
+  index.html, app.html and hros.html — replacing those files there and nothing else. See README.md
+  next to this file for the commands. It must be live BEFORE the domain moves: a device that enables
+  reminders on the new origin before it ever hits this page keeps a second, permanent subscription
+  that nothing in hr_push_subscriptions can identify as stale (there is no origin column).
+
+  It does three things, and the second is the reason it exists:
+
+  1. Forwards to os.ctg4u.com, keeping the file AND the #tab= fragment, so the months of approval,
+     credential and reminder emails that link into a specific screen still land on that screen.
+  2. Unregisters the old service worker and unsubscribes push. sw.js has no `fetch` handler, so it
+     never intercepts this navigation and this page loads normally — but `install` calls
+     skipWaiting() and `activate` calls clients.claim() (sw.js:6-7), so the worker stays alive and
+     stays subscribed on every device that ever opened the Time Clock screen, whether or not anyone
+     visits again. Left alone, those devices keep buzzing for a retired system.
+  3. Says so in one sentence, for whoever lands here with the page open instead of being carried
+     through the redirect.
+
+  Self-contained on purpose: it is deployed into a different repository, alone, with no build step,
+  so it loads no common.js and no shared script. That is why the API URL and the token key are
+  spelled here rather than imported — they are the values app.html:1220 / hros.html:1146 and
+  common.js's storageGet('ctg_portal_token') use today.
+-->
+<style>
+  html{color-scheme:dark}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+       background:#0f1216;font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#9aa4b2}
+  main{max-width:34rem;text-align:center}
+  h1{font-size:17px;color:#e6edf3;margin:0 0 10px}
+  a{color:#f08a7a}
+</style>
+</head>
+<body>
+<main>
+  <h1>CTG Portal has moved</h1>
+  <p>This address has been replaced by <b>os.ctg4u.com</b> &mdash; we are taking you there now, and
+     switching off the notifications this old address was still sending to your device.</p>
+  <p><a id="go" href="https://os.ctg4u.com/">Continue to os.ctg4u.com</a></p>
+</main>
+<noscript><meta http-equiv="refresh" content="0;url=https://os.ctg4u.com/"></noscript>
+<script>
+'use strict';
+var CTG_NEW_ORIGIN = 'https://os.ctg4u.com';
+var CTG_API   = 'https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal';
+var CTG_TOKEN = 'ctg_portal_token';
+
+// The three URLs the old origin actually serves as pages, and the only three this file is deployed
+// as. Anything else — a stale asset link, a path with no trailing slash — goes to the site root
+// rather than to a made-up file name on the new origin.
+var CTG_PAGES = { 'index.html':1, 'app.html':1, 'hros.html':1 };
+
+/** Where an old URL becomes on the new origin: same file, same query, same #tab= fragment. */
+function ctgTarget(loc, origin){
+  var file = String((loc && loc.pathname) || '').replace(/^.*\//, '');
+  if (!CTG_PAGES[file]) file = '';
+  return origin + '/' + file + ((loc && loc.search) || '') + ((loc && loc.hash) || '');
+}
+
+function ctgToken(win){
+  try { return (win.localStorage && win.localStorage.getItem(CTG_TOKEN)) || null; } catch (_e){ return null; }
+}
+
+/**
+ * Delete the server's row for an endpoint. sendBeacon rather than fetch because this page is about
+ * to navigate away — a beacon is queued by the browser and outlives the unload; a plain fetch is
+ * cancelled. Returns false when there is no session token: push_unsubscribe (hr.ts:1831) needs one,
+ * so posting without it only earns a 401. That is not a failure — sub.unsubscribe() below has
+ * already killed the endpoint, so the next send gets a 410 and lib.ts:230 deletes the row anyway.
+ */
+function ctgReport(nav, token){
+  return function(endpoint){
+    if (!token || !nav || !nav.sendBeacon) return false;
+    try {
+      var body = JSON.stringify({ api:'push_unsubscribe', token: token, endpoint: endpoint });
+      return !!nav.sendBeacon(CTG_API, new Blob([body], { type:'application/json' }));
+    } catch (_e){ return false; }
+  };
+}
+
+/**
+ * Unsubscribe push and unregister every worker on this origin. hros.html's pushDisable() (:3007) for
+ * the subscription half, plus getRegistrations() for the half a user cannot reach from a UI.
+ *
+ * Every step is wrapped individually and the loop never returns early: a device with two
+ * registrations, or one whose unsubscribe() rejects, must still have the rest unregistered. An
+ * unregister that is skipped here is unobservable afterwards — the device never reports back.
+ */
+function ctgCleanup(nav, report){
+  var out = { registrations:0, unsubscribed:0, reported:0, unregistered:0 };
+  var sw = nav && nav.serviceWorker;
+  if (!sw || !sw.getRegistrations) return Promise.resolve(out);
+  return Promise.resolve().then(function(){ return sw.getRegistrations(); }).then(function(regs){
+    return (regs || []).reduce(function(chain, reg){
+      return chain.then(function(){
+        out.registrations++;
+        return Promise.resolve()
+          .then(function(){ return reg.pushManager && reg.pushManager.getSubscription(); })
+          .then(function(sub){
+            if (!sub) return;
+            var ep = sub.endpoint;
+            // Same order as pushDisable(): kill the endpoint first, then tell the server. If the
+            // report fails the row still dies by 410; if the unsubscribe failed there would be
+            // nothing to report.
+            return Promise.resolve(sub.unsubscribe()).then(function(ok){
+              if (ok !== false) out.unsubscribed++;
+              if (report(ep)) out.reported++;
+            });
+          })
+          .catch(function(){})
+          .then(function(){ return reg.unregister(); })
+          .then(function(ok){ if (ok !== false) out.unregistered++; })
+          .catch(function(){});
+      });
+    }, Promise.resolve());
+  }).catch(function(){}).then(function(){ return out; });
+}
+
+/** Clean up first, THEN forward. Redirecting before the cleanup settles cancels it silently. */
+function ctgGo(win){
+  var dest = ctgTarget(win.location, CTG_NEW_ORIGIN);
+  var link = win.document && win.document.getElementById('go');
+  if (link) link.href = dest;
+  var jumped = false;
+  var jump = function(){ if (!jumped){ jumped = true; win.location.replace(dest); } };
+  // A browser API that never settles must not strand anyone on a dead address. Nothing in the
+  // cleanup waits on the network (sendBeacon is fire-and-forget), so this should never fire.
+  win.setTimeout(jump, 4000);
+  return ctgCleanup(win.navigator, ctgReport(win.navigator, ctgToken(win))).then(jump, jump);
+}
+
+// Boot. Guarded on `document` so the same file can be evaluated by tests/forwarding_page_test.ts,
+// which drives ctgGo() with a fake window; Deno has no document, so nothing runs on import.
+if (typeof document !== 'undefined') ctgGo(window);
+</script>
+</body>
+</html>

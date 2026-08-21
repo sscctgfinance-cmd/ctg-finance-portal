@@ -1,0 +1,383 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Insights</div>
+<h2 class="page-title">Dashboard</h2>
+<div class="page-sub">Company-wide people, payroll, attendance &amp; cost analytics</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn xs" onclick="hrDashStep(-1)">‹</button>
+<span style="font-weight:700;font-size:14px;min-width:130px;text-align:center">August 2026</span>
+<button class="btn xs" onclick="hrDashStep(1)">›</button>
+</div>
+<div style="display:flex;gap:6px">
+<button class="btn xs" onclick="hrDashRefresh()">🔄 Refresh</button>
+<button class="btn xs" onclick="hrDashExportCsv()">⬇ Export CSV</button>
+<button class="btn xs" onclick="window.print()">🖨 PDF</button>
+</div>
+</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+<button class="btn sm" onclick="hrDashSetPage('overview')">📋 Overview</button>
+<button class="btn sm" onclick="hrDashSetPage('headcount')">👥 Headcount</button>
+<button class="btn p sm" onclick="hrDashSetPage('payroll')">💰 Payroll</button>
+<button class="btn sm" onclick="hrDashSetPage('attendance')">🕐 Attendance</button>
+<button class="btn sm" onclick="hrDashSetPage('cost')">💵 Cost</button>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:15px">
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Gross</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">💵</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--sky-soft)">RM 16,050.00</span>
+<span style="font-size:10.5px;font-weight:700;color:var(--text-soft);white-space:nowrap">▼ 4.2%</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Net</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">💰</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--green-soft)">RM 13,884.15</span>
+<span style="font-size:10.5px;font-weight:700;color:var(--text-soft);white-space:nowrap">▼ 3%</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Basic</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🧾</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 14,806.25</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Allowance</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">➕</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 650.00</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Claim</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🧾</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 216.40</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">Bonus / Comm</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🎁</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 500.00</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">EPF EE</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🏦</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 946.00</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">EPF ER</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🏦</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 1,117.30</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">SOCSO EE</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🛡️</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 80.25</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">SOCSO ER</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🛡️</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 280.88</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">EIS EE</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🧯</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 32.10</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">EIS ER</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🧯</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 32.10</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">PCB</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">🧮</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--text)">RM 305.50</span>
+</div>
+</div>
+<div class="panel" style="padding:13px 14px;margin:0">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+<div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;line-height:1.35;padding-top:4px">vs Last Month</div>
+<span style="font-size:13.5px;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">📈</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:7px;margin-top:5px;flex-wrap:wrap">
+<span style="font-size:19px;font-weight:700;color:var(--green-soft)">-4.2%</span>
+</div>
+<div class="muted" style="font-size:10px;margin-top:2px">Δ RM -703.10</div>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+<div class="panel">
+<div class="panel-hd">
+<h3>Payroll trend (Gross vs Net)</h3>
+</div>
+<svg viewBox="0 0 560 168" style="width:100%;height:auto;display:block">
+<line x1="42" y1="14.0" x2="546" y2="14.0" style="stroke:var(--border);stroke-width:1"/>
+<text x="37" y="17.0" text-anchor="end" style="fill:var(--muted);font-size:9px">17k</text>
+<line x1="42" y1="57.3" x2="546" y2="57.3" style="stroke:var(--border);stroke-width:1"/>
+<text x="37" y="60.3" text-anchor="end" style="fill:var(--muted);font-size:9px">12k</text>
+<line x1="42" y1="100.7" x2="546" y2="100.7" style="stroke:var(--border);stroke-width:1"/>
+<text x="37" y="103.7" text-anchor="end" style="fill:var(--muted);font-size:9px">6k</text>
+<line x1="42" y1="144.0" x2="546" y2="144.0" style="stroke:var(--border);stroke-width:1"/>
+<text x="37" y="147.0" text-anchor="end" style="fill:var(--muted);font-size:9px">0</text>
+<path d="M42.0 144.0 L42.0 15.5 L142.8 15.5 L243.6 14.0 L344.4 14.0 L445.2 18.8 L546.0 24.1 L546.0 144.0 Z" style="fill:var(--sky-soft);opacity:.10"/>
+<path d="M42.0 15.5 L142.8 15.5 L243.6 14.0 L344.4 14.0 L445.2 18.8 L546.0 24.1" style="fill:none;stroke:var(--sky-soft);stroke-width:2"/>
+<circle cx="42.0" cy="15.5" r="2.6" style="fill:var(--sky-soft)"/>
+<circle cx="142.8" cy="15.5" r="2.6" style="fill:var(--sky-soft)"/>
+<circle cx="243.6" cy="14.0" r="2.6" style="fill:var(--sky-soft)"/>
+<circle cx="344.4" cy="14.0" r="2.6" style="fill:var(--sky-soft)"/>
+<circle cx="445.2" cy="18.8" r="2.6" style="fill:var(--sky-soft)"/>
+<circle cx="546.0" cy="24.1" r="2.6" style="fill:var(--sky-soft)"/>
+<path d="M42.0 144.0 L42.0 34.8 L142.8 34.8 L243.6 33.6 L344.4 33.6 L445.2 37.1 L546.0 40.3 L546.0 144.0 Z" style="fill:var(--green-soft);opacity:.10"/>
+<path d="M42.0 34.8 L142.8 34.8 L243.6 33.6 L344.4 33.6 L445.2 37.1 L546.0 40.3" style="fill:none;stroke:var(--green-soft);stroke-width:2"/>
+<circle cx="42.0" cy="34.8" r="2.6" style="fill:var(--green-soft)"/>
+<circle cx="142.8" cy="34.8" r="2.6" style="fill:var(--green-soft)"/>
+<circle cx="243.6" cy="33.6" r="2.6" style="fill:var(--green-soft)"/>
+<circle cx="344.4" cy="33.6" r="2.6" style="fill:var(--green-soft)"/>
+<circle cx="445.2" cy="37.1" r="2.6" style="fill:var(--green-soft)"/>
+<circle cx="546.0" cy="40.3" r="2.6" style="fill:var(--green-soft)"/>
+<text x="42.0" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">Mar</text>
+<text x="142.8" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">Apr</text>
+<text x="243.6" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">May</text>
+<text x="344.4" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">Jun</text>
+<text x="445.2" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">Jul</text>
+<text x="546.0" y="161" text-anchor="middle" style="fill:var(--muted);font-size:9px">Aug</text>
+</svg>
+<div style="display:flex;gap:14px;justify-content:center;margin-top:2px;font-size:11px">
+<span class="muted">
+<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--sky-soft);vertical-align:middle;margin-right:4px">
+</span>Gross</span>
+<span class="muted">
+<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green-soft);vertical-align:middle;margin-right:4px">
+</span>Net</span>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Payroll cost by department</h3>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px;padding:2px 0">
+<div style="display:flex;align-items:center;gap:8px;font-size:12px">
+<div style="width:96px;text-align:right;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Sales">Sales</div>
+<div style="flex:1;background:var(--panel-2);border-radius:5px;height:15px">
+<div style="width:100%;height:100%;background:var(--coral);border-radius:5px;opacity:.85">
+</div>
+</div>
+<div style="width:80px;text-align:right;font-weight:600">RM 9,420.55</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:12px">
+<div style="width:96px;text-align:right;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Operations">Operations</div>
+<div style="flex:1;background:var(--panel-2);border-radius:5px;height:15px">
+<div style="width:70.4852689068048%;height:100%;background:var(--coral);border-radius:5px;opacity:.85">
+</div>
+</div>
+<div style="width:80px;text-align:right;font-weight:600">RM 6,640.10</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:12px">
+<div style="width:96px;text-align:right;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Warehouse">Warehouse</div>
+<div style="flex:1;background:var(--panel-2);border-radius:5px;height:15px">
+<div style="width:23.761351513446666%;height:100%;background:var(--coral);border-radius:5px;opacity:.85">
+</div>
+</div>
+<div style="width:80px;text-align:right;font-weight:600">RM 2,238.45</div>
+</div>
+</div>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Payroll by employee</h3>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Employee</th>
+<th class="amt">Gross</th>
+<th class="amt">Net</th>
+<th class="amt">Employer cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AHMAD BIN ISMAIL</td>
+<td class="amt">RM 5,600.00</td>
+<td class="amt">RM 4,820.10</td>
+<td class="amt">RM 6,412.30</td>
+</tr>
+<tr>
+<td>SITI NURHALIZA BINTI OMAR</td>
+<td class="amt">RM 4,150.00</td>
+<td class="amt">RM 3,701.55</td>
+<td class="amt">RM 4,740.20</td>
+</tr>
+<tr>
+<td>RAJESH A/L KUMAR</td>
+<td class="amt">RM 1,206.25</td>
+<td class="amt">RM 1,180.50</td>
+<td class="amt">RM 1,274.40</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>💡 Insights (2)</h3>
+</div>
+<div style="border-left:3px solid var(--amber);background:var(--panel-2);border-radius:0 8px 8px 0;padding:9px 12px;margin-bottom:8px">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+<span style="font-weight:700;font-size:13px">Warehouse attendance below 91%</span>
+<span class="pill" style="font-size:9px;color:var(--amber);text-transform:uppercase">medium</span>
+</div>
+<div style="font-size:12px;margin-top:3px">Warehouse ran at 90.1% against a 94.2% company average this month.</div>
+<div class="muted" style="font-size:11px;margin-top:4px">→ Check the two missing clock records before finalising payroll.</div>
+</div>
+<div style="border-left:3px solid var(--sky-soft);background:var(--panel-2);border-radius:0 8px 8px 0;padding:9px 12px;margin-bottom:8px">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+<span style="font-weight:700;font-size:13px">Headcount down one</span>
+<span class="pill" style="font-size:9px;color:var(--sky-soft);text-transform:uppercase">low</span>
+</div>
+<div style="font-size:12px;margin-top:3px">LEE MEI FONG resigned on 31 July 2026 and has not been replaced.</div>
+<div class="muted" style="font-size:11px;margin-top:4px">→ Confirm whether the Sales headcount is being backfilled.</div>
+</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link on" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

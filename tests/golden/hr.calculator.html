@@ -1,0 +1,344 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Payroll</div>
+<h2 class="page-title">Calculator</h2>
+<div class="page-sub">Quick Malaysia salary &amp; statutory calculator</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:16px;align-items:start">
+<div>
+<div class="panel">
+<div class="panel-hd">
+<h3>🧮 Payroll inputs</h3>
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Prefill from employee (optional)</label>
+<select onchange="hrCalcPickEmp(this.value)" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px">
+<option value="">— Ad-hoc / manual —</option>
+<option value="e1">E001 · AHMAD BIN ISMAIL</option>
+<option value="e2">E002 · SITI NURHALIZA BINTI OMAR</option>
+<option value="e3">E003 · RAJESH A/L KUMAR</option>
+<option value="e4">E004 · LEE MEI FONG</option>
+</select>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Basic salary (RM) *</label>
+<input type="number" step="0.01" value="" oninput="hrCI('basic',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Allowance (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('allowance',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Bonus / Commission (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('bonus',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Claim / reimbursement (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('claim',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+<div class="muted" style="font-size:10px;margin-top:2px">Excluded from statutory by default</div>
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Deduction (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('deduction',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+<div class="muted" style="font-size:10px;margin-top:2px">Reduces net only</div>
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Muslim zakat (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('zakat',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+<div class="muted" style="font-size:10px;margin-top:2px">Reduces PCB ringgit-for-ringgit</div>
+</div>
+<div style="margin-bottom:10px">
+<label class="muted" style="font-size:11px">Allowable deduction / TP1 (RM)</label>
+<input type="number" step="0.01" value="" oninput="hrCI('relief',this.value)" onfocus="this.select()" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;text-align:right">
+<div class="muted" style="font-size:10px;margin-top:2px">Annual declared relief</div>
+</div>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>⚙️ Statutory flags per item</h3>
+</div>
+<table style="width:100%;border-collapse:collapse">
+<thead>
+<tr>
+<th style="text-align:left;padding:4px 8px;font-size:10.5px" class="muted">ITEM</th>
+<th class="muted" style="font-size:10.5px">Taxable</th>
+<th class="muted" style="font-size:10.5px">EPF</th>
+<th class="muted" style="font-size:10.5px">SOCSO</th>
+<th class="muted" style="font-size:10.5px">EIS</th>
+<th class="muted" style="font-size:10.5px">PCB</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:5px 8px;font-size:12px">Allowance</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('allowance','taxable',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('allowance','epf',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('allowance','socso',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('allowance','eis',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('allowance','pcb',this.checked)" style="accent-color:var(--coral)">
+</td>
+</tr>
+<tr>
+<td style="padding:5px 8px;font-size:12px">Bonus / Commission</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('bonus','taxable',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('bonus','epf',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('bonus','socso',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('bonus','eis',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" checked onchange="hrCF('bonus','pcb',this.checked)" style="accent-color:var(--coral)">
+</td>
+</tr>
+<tr>
+<td style="padding:5px 8px;font-size:12px">Claim / reimbursement</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('claim','taxable',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('claim','epf',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('claim','socso',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('claim','eis',this.checked)" style="accent-color:var(--coral)">
+</td>
+<td style="text-align:center;padding:3px">
+<input type="checkbox" onchange="hrCF('claim','pcb',this.checked)" style="accent-color:var(--coral)">
+</td>
+</tr>
+</tbody>
+</table>
+<div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5">Basic salary is always fully statutory. Deduction reduces net only. Toggle a box to include/exclude that item from a statutory base — e.g. a travel claim can be excluded from EPF/SOCSO/EIS/PCB.</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>🧾 Statutory settings</h3>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;margin-bottom:8px">
+<span class="muted">EPF EE</span>
+<select onchange="hrCS('epfEeRate',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">
+<option value="" selected>Default</option>
+<option value="0.11">11%</option>
+<option value="0.09">9%</option>
+<option value="0.08">8%</option>
+<option value="0.07">7%</option>
+<option value="0.055">5.5%</option>
+<option value="0">0%</option>
+</select>
+<span class="muted">EPF ER</span>
+<select onchange="hrCS('epfErRate',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">
+<option value="" selected>Default</option>
+<option value="0.13">13%</option>
+<option value="0.12">12%</option>
+<option value="0.14">14%</option>
+<option value="0.15">15%</option>
+<option value="0.16">16%</option>
+<option value="0.17">17%</option>
+<option value="0.18">18%</option>
+<option value="0.19">19%</option>
+<option value="0.20">20%</option>
+<option value="0.04">4%</option>
+<option value="0">0%</option>
+</select>
+<span class="muted">SOCSO cat</span>
+<select onchange="hrCS('socsoCat',this.value)" style="padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">
+<option value="" selected>Auto</option>
+<option value="1">Cat 1</option>
+<option value="2">Cat 2</option>
+</select>
+<span class="muted">Children</span>
+<input type="number" min="0" value="0" oninput="hrCS('children',this.value)" style="width:54px;padding:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px">
+</div>
+<div>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" checked onchange="hrCS('resident',this.checked)" style="accent-color:var(--coral)">Tax resident</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" onchange="hrCS('married',this.checked)" style="accent-color:var(--coral)">Married</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" onchange="hrCS('spouseWorking',this.checked)" style="accent-color:var(--coral)">Spouse working</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" onchange="hrCS('senior',this.checked)" style="accent-color:var(--coral)">Age 60+</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" checked onchange="hrCS('epfOn',this.checked)" style="accent-color:var(--coral)">EPF</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" checked onchange="hrCS('socsoOn',this.checked)" style="accent-color:var(--coral)">SOCSO</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" checked onchange="hrCS('eisOn',this.checked)" style="accent-color:var(--coral)">EIS</label>
+<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin:0 14px 6px 0">
+<input type="checkbox" checked onchange="hrCS('lindungOn',this.checked)" style="accent-color:var(--coral)">LINDUNG 24</label>
+</div>
+</div>
+</div>
+<div>
+<div class="panel">
+<div class="panel-hd">
+<h3>💵 Result</h3>
+<span style="display:flex;gap:6px">
+<button class="btn xs" onclick="hrCalcOvToggle()">✏️ Override</button>
+<button class="btn xs" onclick="hrCalcPayslip()">📄 Payslip</button>
+<button class="btn xs p" onclick="hrCalcSave()">💾 Save</button>
+</span>
+</div>
+<div id="hrcalc_out">
+<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--coral);font-weight:700;margin-bottom:2px">Employee deductions</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">EPF (KWSP) 11%</span>
+<span style="font-size:13px" style="color:var(--coral-soft);font-size:13px">-RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">SOCSO (PERKESO) · Cat 1</span>
+<span style="font-size:13px" style="color:var(--coral-soft);font-size:13px">-RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">EIS (SIP)</span>
+<span style="font-size:13px" style="color:var(--coral-soft);font-size:13px">-RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">PCB / MTD (estimate)</span>
+<span style="font-size:13px" style="color:var(--coral-soft);font-size:13px">-RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:8px">
+<span style="font-size:13.5px">Gross salary</span>
+<span style="font-size:15px">RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:8px">
+<span style="font-size:13.5px">NET PAY</span>
+<span style="font-size:15px" style="color:var(--green-soft);font-size:15px">RM 0.00</span>
+</div>
+<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--sky-soft);font-weight:700;margin:14px 0 2px">Employer contributions</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">EPF (KWSP) 13%</span>
+<span style="font-size:13px">RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">SOCSO (PERKESO)</span>
+<span style="font-size:13px">RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;">
+<span style="font-size:12.5px">EIS (SIP)</span>
+<span style="font-size:13px">RM 0.00</span>
+</div>
+<div style="display:flex;justify-content:space-between;padding:5px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px;padding-top:8px">
+<span style="font-size:13.5px">Employer total cost</span>
+<span style="font-size:15px">RM 0.00</span>
+</div>
+<div class="muted" style="font-size:10px;margin-top:10px;line-height:1.5">Statutory bases → EPF RM 0.00 · SOCSO RM 0.00 · EIS RM 0.00 · Taxable(PCB) RM 0.00. PCB is an LHDN MTD estimate — verify before filing.</div>
+</div>
+</div>
+<div style="margin-top:12px">
+<button class="btn sm" onclick="hrCalcHistory()">🕓 Calculation audit log</button>
+<div id="hrcalc_hist" style="margin-top:10px">
+</div>
+</div>
+</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link on" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

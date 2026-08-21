@@ -17,6 +17,7 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { fnSource, inlineScript } from "../tools/extract.ts";
+import { loadApp } from "./render_harness.ts";
 
 const src = inlineScript(await Deno.readTextFile(new URL("../app.html", import.meta.url)));
 
@@ -141,38 +142,36 @@ Deno.test("the remittance deadline is one month after the LAST payment", () => {
 Deno.test("the Withholding Tax screen renders", () => {
   // The v206 lesson: an undeclared identifier in a renderer is a runtime ReferenceError that lint cannot
   // see and the parse gate passes. Render it here or find out from the operator.
-  // deno-lint-ignore no-explicit-any
-  const g: any = {};
-  g.document = { getElementById: () => null, createElement: () => ({ style: {} }) };
-  const parts = ["whtMoney", "whtRound2", "whtLineSst", "whtLineTotal", "whtCompute", "whtDueDate", "whtTypeLabel", "whtCoName",
-    "whtHead", "whtListHtml", "whtPayeesHtml", "whtPayeeForm", "whtDocHtml"].map((f) => fnSource(src, f));
-  // new Function() evaluates plain JavaScript, so the prelude carries no type annotations — app.html is
-  // plain JS too, which is why the extracted functions drop straight in.
-  const pre = `
-    const esc=(x)=>(x==null?'':String(x)).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const COMPANIES=[{tenant_id:'t1',tenant_name:'SKINDAE SDN BHD'}];
-    const WHT_TYPES=[['royalty','Royalty'],['s4a_special','s.4A'],['interest','Interest'],['contract','Contract'],['other','Other']];
-    const WHT={ cfg:{ payees:[{id:1,name:'OPENAI OPCO, LLC',tin:'C57831485010',country:'UNITED STATES',wht_rate:0.10,statutory_rate:0.10,wht_type:'royalty',treaty_relief:false,has_cor:false},
-                                  {id:2,name:'META PLATFORMS IRELAND LIMITED',tin:'C29806901060',country:'IRELAND',wht_rate:0.08,statutory_rate:0.10,wht_type:'royalty',treaty_relief:true,has_cor:false}],
-                          entities:[{tenant_id:'t1',name:'SKINDAE SDN BHD',tax_no:'C58427907080'}] },
-                   list:[{id:1,doc_no:'WHT-202608-0001',payee_name:'OPENAI OPCO, LLC',payee_country:'UNITED STATES',wht_rate:0.10,basis:'gross',period_label:'July 2026',fee_total:1000,status:'draft',sst_rate:0.08,penalty_pct:0.10}],
-                   page:'list', doc:null, lines:[], payees:false, editPayee:null };
-  `;
-  const build = (page: string, extra = "") =>
-    new Function(pre + extra + parts.join("\n") + `;WHT.page='${page}';return ${page === "doc" ? "whtDocHtml()" : "whtListHtml()"};`);
+  //
+  // This used to hand-roll a `document` stub and a prelude re-declaring esc/COMPANIES/WHT_TYPES so the
+  // lifted functions had something to close over. It now boots the whole of app.html under the shared
+  // stub DOM (render_harness.ts), which means the real esc, the real COMPANIES and the real WHT_TYPES —
+  // a prelude that drifts from the app is a test that passes while the screen is broken.
+  const app = loadApp("app.html");
+  try {
+    app.exec("COMPANIES=[{tenant_id:'t1',tenant_name:'SKINDAE SDN BHD'}]");
+    app.exec(`WHT.cfg={ payees:[{id:1,name:'OPENAI OPCO, LLC',tin:'C57831485010',country:'UNITED STATES',wht_rate:0.10,statutory_rate:0.10,wht_type:'royalty',treaty_relief:false,has_cor:false},
+                                 {id:2,name:'META PLATFORMS IRELAND LIMITED',tin:'C29806901060',country:'IRELAND',wht_rate:0.08,statutory_rate:0.10,wht_type:'royalty',treaty_relief:true,has_cor:false}],
+                        entities:[{tenant_id:'t1',name:'SKINDAE SDN BHD',tax_no:'C58427907080'}] };
+              WHT.list=[{id:1,doc_no:'WHT-202608-0001',payee_name:'OPENAI OPCO, LLC',payee_country:'UNITED STATES',wht_rate:0.10,basis:'gross',period_label:'July 2026',fee_total:1000,status:'draft',sst_rate:0.08,penalty_pct:0.10}];
+              WHT.page='list'; WHT.doc=null; WHT.lines=[]; WHT.payees=false; WHT.editPayee=null;`);
 
-  const list = build("list")();
-  assertEquals(typeof list === "string" && list.length > 400, true, "the list view rendered nothing");
-  assertEquals(list.indexOf("OPENAI OPCO") >= 0, true, "computations are missing from the list");
+    const list = app.exec("whtListHtml()") as string;
+    assertEquals(typeof list === "string" && list.length > 400, true, "the list view rendered nothing");
+    assertEquals(list.indexOf("OPENAI OPCO") >= 0, true, "computations are missing from the list");
 
-  const withPayees = build("list", "WHT.payees=true;")();
-  assertEquals(/Certificate of Residence/.test(withPayees), true,
-    "a treaty rate with no COR on file must be flagged — that is the difference between 8% and 10% plus a penalty");
+    const withPayees = app.exec("WHT.payees=true; whtListHtml()") as string;
+    assertEquals(/Certificate of Residence/.test(withPayees), true,
+      "a treaty rate with no COR on file must be flagged — that is the difference between 8% and 10% plus a penalty");
 
-  const docHtml = build("doc",
-    "WHT.doc={tenant_id:'t1',payee_id:2,payee_name:'META PLATFORMS IRELAND LIMITED',payee_tin:'C29806901060',payee_country:'IRELAND',wht_rate:0.08,wht_type:'royalty',basis:'net',sst_rate:0.08,penalty_pct:0.10,penalty_on:true,status:'draft'};" +
-    "WHT.lines=[{payment_date:'2026-07-10',receipt_no:'R-1',amount:920}];")();
-  assertEquals(typeof docHtml === "string" && docHtml.length > 1000, true, "the computation view rendered nothing");
-  assertEquals(/Grossed-up/.test(docHtml), true, "a net-basis computation must show the gross-up line");
-  assertEquals(/2026-08-10/.test(docHtml), true, "the remittance due date is missing");
+    const docHtml = app.exec(`WHT.payees=false; WHT.page='doc';
+      WHT.doc={tenant_id:'t1',payee_id:2,payee_name:'META PLATFORMS IRELAND LIMITED',payee_tin:'C29806901060',payee_country:'IRELAND',wht_rate:0.08,wht_type:'royalty',basis:'net',sst_rate:0.08,penalty_pct:0.10,penalty_on:true,status:'draft'};
+      WHT.lines=[{payment_date:'2026-07-10',receipt_no:'R-1',amount:920}];
+      whtDocHtml()`) as string;
+    assertEquals(typeof docHtml === "string" && docHtml.length > 1000, true, "the computation view rendered nothing");
+    assertEquals(/Grossed-up/.test(docHtml), true, "a net-basis computation must show the gross-up line");
+    assertEquals(/2026-08-10/.test(docHtml), true, "the remittance due date is missing");
+  } finally {
+    app.restore();
+  }
 });

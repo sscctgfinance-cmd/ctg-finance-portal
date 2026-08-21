@@ -22,7 +22,7 @@ import {
 
 const html = await Deno.readTextFile(new URL("../hros.html", import.meta.url));
 const feSrc = inlineScript(html);
-const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 
 const fe = await loadEngine(inlineScript(html), FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);
 const be = await loadEngine(ts, BACKEND_ENGINE, BACKEND_TABLES, ["computePayrollMY"]);

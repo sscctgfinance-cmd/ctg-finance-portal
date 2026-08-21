@@ -1,0 +1,26 @@
+{
+  "name": "ctg-finance-portal-web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "predev": "node scripts/sync-legacy-css.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/sync-legacy-css.mjs",
+    "build": "next build",
+    "start": "next start",
+    "test": "node scripts/sync-legacy-css.mjs && vitest run"
+  },
+  "dependencies": {
+    "next": "^16.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9",
+    "vitest": "^4.1.10"
+  }
+}

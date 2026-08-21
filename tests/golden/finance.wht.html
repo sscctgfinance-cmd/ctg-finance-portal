@@ -1,0 +1,62 @@
+<!-- #wht -->
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+<div>
+<h2 style="margin:0;font-size:19px">🌏 Withholding Tax</h2>
+<div class="muted" style="font-size:12px">Compute and document WHT on payments to non-resident suppliers. Replaces the Excel summary.</div>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<button class="btn sm" onclick="WHT.payees=!WHT.payees;renderWht()">🏷 Payees &amp; rates</button>
+<button class="btn p sm" onclick="whtNew()">+ New computation</button>
+</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Computations</h3>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Doc no</th>
+<th>Payee</th>
+<th>Period</th>
+<th class="amt" style="text-align:right">Fee (excl. SST)</th>
+<th class="amt" style="text-align:right">WHT</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr style="cursor:pointer" onclick="whtOpen(1)">
+<td>
+<b>WHT-202607-0001</b>
+</td>
+<td>OPENAI OPCO, LLC<div class="muted" style="font-size:10.5px">UNITED STATES · 10%</div>
+</td>
+<td>July 2026</td>
+<td class="amt" style="text-align:right">3,726.82</td>
+<td class="amt" style="text-align:right">
+<b>372.68</b>
+</td>
+<td>
+<span class="pill" style="background:rgba(45,180,120,.15);color:#2db478">Filed</span>
+</td>
+</tr>
+<tr style="cursor:pointer" onclick="whtOpen(2)">
+<td>
+<b>WHT-202608-0002</b>
+</td>
+<td>META PLATFORMS IRELAND LIMITED<div class="muted" style="font-size:10.5px">IRELAND · 8% · net basis</div>
+</td>
+<td>August 2026</td>
+<td class="amt" style="text-align:right">920.00</td>
+<td class="amt" style="text-align:right">
+<b>80.00</b>
+</td>
+<td>
+<span class="pill">Draft</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>

@@ -1,0 +1,159 @@
+<!-- #emp-mobnav -->
+<button class="mob-tab on" onclick="hrNav('clock')" aria-label="Time Clock">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+</span>Clock</button>
+<button class="mob-tab" onclick="hrNav('leave')" aria-label="Leave">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+</span>Leave</button>
+<button class="mob-tab" onclick="hrNav('expenses')" aria-label="Reimbursement">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+</span>Claims</button>
+<button class="mob-tab" onclick="hrNav('payslip')" aria-label="Payslip">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+<path d="M14 2v6h6M9 13h6M9 17h4"/>
+</svg>
+</span>Payslip</button>
+<button class="mob-tab" onclick="hrNav('profile')" aria-label="My Profile">
+<span class="mt-ic">
+<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+<circle cx="12" cy="7" r="4"/>
+</svg>
+</span>Profile</button>
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">Me</div>
+<h2 class="page-title">Time Clock</h2>
+<div class="page-sub">Clock in / out and see your hours</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div style="max-width:520px">
+<div class="panel" style="text-align:center;padding:30px 20px">
+<div class="muted" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em">Currently clocked in</div>
+<div id="clk_elapsed" style="font-size:42px;font-weight:800;letter-spacing:-.02em;margin:8px 0;color:var(--green-soft)">00:00:00</div>
+<div class="muted" style="font-size:12.5px">since 01:10</div>
+<button class="btn p" style="margin-top:20px;font-size:16px;padding:14px 42px;background:linear-gradient(135deg,#DC2626,#B23C1F)" onclick="hrClockAction('out')">⏹ Clock Out</button>
+</div>
+<div style="height:14px">
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Today</h3>
+<span class="muted" style="font-size:11.5px">This week: <b>27.11 h</b> · ≈ RM 338.88</span>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>In</th>
+<th>Out</th>
+<th class="amt">Hours</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01:10</td>
+<td>
+<span class="pill pill-amber" style="font-size:9px">OPEN</span>
+</td>
+<td class="amt">—</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="panel" style="margin-top:12px">
+<div class="panel-hd">
+<h3>🗓️ My work schedule</h3>
+</div>
+<div class="muted" style="font-size:12px;margin-bottom:10px">Set the days &amp; times you usually work. Reminders fire at your <b>Start time</b> (to clock in) and your <b>End time</b> (to clock out) on the ticked days — only if you haven’t already.</div>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+<div>
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Start time (clock in)</label>
+<input type="time" id="sch_start" value="09:00" style="padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+</div>
+<div>
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">End time (clock out)</label>
+<input type="time" id="sch_end" value="18:00" style="padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+</div>
+</div>
+<div style="margin-bottom:12px">
+<label class="muted" style="font-size:11px;display:block;margin-bottom:5px">Work days</label>
+<div style="display:flex;gap:14px;flex-wrap:wrap">
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd1" checked style="accent-color:var(--coral)"> Mon</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd2" checked style="accent-color:var(--coral)"> Tue</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd3" checked style="accent-color:var(--coral)"> Wed</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd4" checked style="accent-color:var(--coral)"> Thu</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd5" checked style="accent-color:var(--coral)"> Fri</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd6" style="accent-color:var(--coral)"> Sat</label>
+<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+<input type="checkbox" id="sch_wd7" style="accent-color:var(--coral)"> Sun</label>
+</div>
+</div>
+<button class="btn p sm" onclick="hrSchedSave()">Save my schedule</button>
+</div>
+<div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">📲 <b>Tip:</b> add HR OS to your phone home screen (browser menu → <i>Add to Home Screen</i>) and bookmark <b>…/hros.html#clock</b> — then clocking in is one tap.</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Me</div>
+<button class="side-link on" onclick="hrNav('clock')" title="Time Clock">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Time Clock</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<button class="side-link" onclick="hrNav('payslip')" title="Payslip">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+<path d="M14 2v6h6M9 13h6M9 17h4"/>
+</svg>
+<span class="lbl">Payslip</span>
+</button>
+<button class="side-link" onclick="hrNav('profile')" title="My Profile">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+<circle cx="12" cy="7" r="4"/>
+</svg>
+<span class="lbl">My Profile</span>
+</button>

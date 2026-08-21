@@ -1,0 +1,83 @@
+<!-- #salesrecon -->
+<div style="margin-bottom:14px">
+<h2 style="margin:0;font-size:19px">📊 Sales Reconciliation → Xero</h2>
+<div class="muted" style="font-size:12px">Match each collected payment to its order (via SO in PIC Name / Databees Order ID), tag Channel + Package, and build a Xero Sales Invoice import. Runs in your browser.</div>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>1 · Drop the two files</h3>
+<button class="btn sm" onclick="srReset()">Clear</button>
+</div>
+<div id="sr-drop" style="border:1.5px dashed var(--border);border-radius:12px;padding:22px;text-align:center;cursor:pointer;background:var(--panel-2)" onclick="document.getElementById('sr-fi').click()">Drop the <b style="color:var(--coral-soft)">Order Form</b> and the <b style="color:var(--coral-soft)">Sales (all gateways)</b> .xlsx here, or click.<br>
+<span class="muted" style="font-size:12px">Auto-detects which is which.</span>
+<input type="file" id="sr-fi" multiple accept=".xlsx,.xls" style="display:none">
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+<div class="fchip" id="sr-chip-of" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+<div style="font-size:16px">📋</div>
+<div>
+<div style="font-weight:600;font-size:13px">Order Form</div>
+<div class="muted" style="font-size:11.5px" id="sr-chip-of-s">not loaded</div>
+</div>
+</div>
+<div class="fchip" id="sr-chip-sf" style="display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+<div style="font-size:16px">💰</div>
+<div>
+<div style="font-weight:600;font-size:13px">Sales (gateways)</div>
+<div class="muted" style="font-size:11.5px" id="sr-chip-sf-s">not loaded</div>
+</div>
+</div>
+</div>
+<button class="btn p" id="sr-build" style="margin-top:14px" onclick="srBuild()" disabled>Reconcile → Build Xero Import</button>
+<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">Recognition is <b>content-based</b>: SO numbers, date & amount columns are detected from the data itself (any sheet/column naming works; known layouts are just a fast path; unrecognisable sheets are reported, never silently skipped). Basis = actual cash received. Matched → real SO no. + Channel account + Package — repeat payments on the same SO are suffixed <b>SO-XXXXX_1, _2 …</b> (checked against Xero so numbers never collide). After building: <b>🚀 Create in Xero</b> makes the DRAFT Sales Invoices directly (no CSV import needed — you approve them in Xero), or download the CSV as before. Unmatched (no SO) → auto <b>YRDZ_MM'YYYY_####</b> — numbering <b>continues from the highest YRDZ number already in Xero</b> for that month (checked live on build, no duplicates), Package <b>YRDZ_Package_&lt;amount&gt;</b>, account 500-1000. ContactName = DATABEES · TaxType = Tax Exempt · <b>InvoiceDate = payment-gateway transaction date (DD-MM-YYYY)</b> · DueDate = InvoiceDate. Swapped-date files are auto-detected per sheet and corrected — correct files are left untouched.</div>
+</div>
+<div class="panel hide" id="sr-result">
+<div class="panel-hd">
+<h3>2 · Result</h3>
+<div style="display:flex;gap:8px">
+<button class="btn p sm" id="sr-post-btn" onclick="srPostXero()">🚀 Create in Xero (DRAFT)</button>
+<button class="btn sm" onclick="srDownloadCSV()">⬇ Xero Sales CSV</button>
+<button class="btn sm" onclick="srDownloadXlsx()">⬇ Full report (xlsx)</button>
+</div>
+</div>
+<div class="cards" id="sr-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
+</div>
+<div style="font-size:12px;font-weight:600;margin:6px 0">Revenue by Account (Xero)</div>
+<div class="tbl-wrap" style="margin-bottom:14px">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Account</th>
+<th>Name</th>
+<th>Channels</th>
+<th class="amt" style="text-align:right">Lines</th>
+<th class="amt" style="text-align:right">Amount (MYR)</th>
+</tr>
+</thead>
+<tbody id="sr-acctbody">
+</tbody>
+</table>
+</div>
+<div id="sr-tally" style="margin-bottom:14px">
+</div>
+<div style="font-size:12px;font-weight:600;margin:6px 0">Sales Import preview (first 150)</div>
+<div class="tbl-wrap" style="max-height:360px;overflow:auto">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Contact</th>
+<th>Invoice No</th>
+<th>Date</th>
+<th>Description</th>
+<th class="amt" style="text-align:right">Amount</th>
+<th>Acct</th>
+<th>Gateway</th>
+</tr>
+</thead>
+<tbody id="sr-tbody">
+</tbody>
+</table>
+</div>
+<div class="muted" style="font-size:11px;margin-top:10px" id="sr-note">
+</div>
+</div>

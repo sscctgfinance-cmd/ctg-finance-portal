@@ -19,7 +19,7 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 
-const ts = await Deno.readTextFile(new URL("../portal_current.ts", import.meta.url));
+const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 
 function empSaveBlock(): string {
   const at = ts.indexOf('api === "hr_emp_save"');

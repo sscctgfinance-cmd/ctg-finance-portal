@@ -13,51 +13,16 @@
 // If it throws, the test fails — which is the only signal that would have caught this.
 
 import { assertEquals } from "jsr:@std/assert@1";
-import { inlineScript } from "../tools/extract.ts";
+import { loadApp } from "./render_harness.ts";
 
-const src = inlineScript(await Deno.readTextFile(new URL("../hros.html", import.meta.url)));
-
-// ── the smallest DOM that lets a 500 KB single-file app finish evaluating ──
-// deno-lint-ignore no-explicit-any
-function stubDom(): any {
-  // deno-lint-ignore no-explicit-any
-  const el = (): any => ({
-    value: "", checked: false, style: {}, textContent: "", innerHTML: "", outerHTML: "",
-    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
-    appendChild() {}, remove() {}, addEventListener() {}, removeEventListener() {},
-    setAttribute() {}, getAttribute() { return null; }, querySelector() { return null; },
-    querySelectorAll() { return []; }, scrollIntoView() {}, focus() {}, click() {},
-    insertAdjacentHTML() {},
-    getContext() { return { drawImage() {}, fillRect() {}, getImageData() { return { data: [] }; } }; },
-  });
-  // deno-lint-ignore no-explicit-any
-  const g: any = {};
-  g.document = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
-    createElement: () => el(), body: el(), documentElement: el(), head: el(), addEventListener() {},
-    cookie: "", activeElement: null, readyState: "complete" };
-  g.location = { href: "https://x/hros.html", hash: "", search: "", pathname: "/hros.html", reload() {} };
-  const store: Record<string, string> = {};
-  g.localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; },
-    removeItem: (k: string) => { delete store[k]; } };
-  g.sessionStorage = g.localStorage;
-  g.navigator = { userAgent: "test", serviceWorker: { register: () => Promise.resolve() },
-    clipboard: { writeText: () => Promise.resolve() } };
-  g.alert = () => {}; g.confirm = () => true; g.prompt = () => null;
-  g.matchMedia = () => ({ matches: false, addEventListener() {}, addListener() {} });
-  g.requestAnimationFrame = (f: () => void) => setTimeout(f, 0);
-  g.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }), text: () => Promise.resolve("{}") });
-  return g;
-}
+// The stub DOM and the script-lifting that used to live here now live in render_harness.ts, so
+// wht_test.ts and render_golden_test.ts run the same one instead of a third hand-rolled copy. What this
+// file does with it is unchanged: hand a real renderer a realistic payload and call it.
 
 // deno-lint-ignore no-explicit-any
-function loadApp(): any {
-  const g = stubDom();
-  const prev: Record<string, unknown> = {};
-  for (const k of Object.keys(g)) { prev[k] = (globalThis as never)[k as never]; (globalThis as never as Record<string, unknown>)[k] = g[k]; }
-  (globalThis as never as Record<string, unknown>).window = globalThis;
-  const mod = new Function(src + "\n;return { HR:(typeof HR!=='undefined'?HR:null), hrPayroll:(typeof hrPayroll!=='undefined'?hrPayroll:null)," +
-    " HRA:(typeof HRA!=='undefined'?HRA:null), hrAccessRender:(typeof hrAccessRender!=='undefined'?hrAccessRender:null) };");
-  return mod();
+function withApp<T>(fn: (exec: (code: string) => any) => T): T {
+  const app = loadApp("hros.html");
+  try { return fn(app.exec); } finally { app.restore(); }
 }
 
 const RATES = {
@@ -76,13 +41,15 @@ const emp = (n: number, over: Record<string, unknown> = {}) => ({
 
 // deno-lint-ignore no-explicit-any
 function render(payload: any, tweak?: (HR: any) => void): string {
-  const app = loadApp();
-  assertEquals(!!app.HR && !!app.hrPayroll, true, "hros.html did not expose HR / hrPayroll");
-  app.HR.tenant = "t1";
-  app.HR.pay = app.HR.pay || {};
-  app.HR.pay.month = 8; app.HR.pay.year = 2026; app.HR.pay.grid = null; app.HR.pay.data = payload;
-  if (tweak) tweak(app.HR);
-  return app.hrPayroll();
+  return withApp((exec) => {
+    const HR = exec("typeof HR!=='undefined' ? HR : null");
+    assertEquals(!!HR && !!exec("typeof hrPayroll!=='undefined'"), true, "hros.html did not expose HR / hrPayroll");
+    HR.tenant = "t1";
+    HR.pay = HR.pay || {};
+    HR.pay.month = 8; HR.pay.year = 2026; HR.pay.grid = null; HR.pay.data = payload;
+    if (tweak) tweak(HR);
+    return exec("hrPayroll()") as string;
+  });
 }
 
 const BASE = {
@@ -133,11 +100,13 @@ Deno.test("it renders with no employees at all", () => {
 // ── Access & Roles ────────────────────────────────────────────────────────────────────────────────
 // deno-lint-ignore no-explicit-any
 function renderAccess(data: any, role?: string): string {
-  const app = loadApp();
-  assertEquals(!!app.HRA && !!app.hrAccessRender, true, "hros.html did not expose HRA / hrAccessRender");
-  app.HRA.data = data;
-  if (role) app.HRA.role = role;
-  return app.hrAccessRender();
+  return withApp((exec) => {
+    const HRA = exec("typeof HRA!=='undefined' ? HRA : null");
+    assertEquals(!!HRA && !!exec("typeof hrAccessRender!=='undefined'"), true, "hros.html did not expose HRA / hrAccessRender");
+    HRA.data = data;
+    if (role) HRA.role = role;
+    return exec("hrAccessRender()") as string;
+  });
 }
 const ACCESS = {
   ok: true, me_id: "u1", admin_count: 2, scoped_tenant: "t1",
