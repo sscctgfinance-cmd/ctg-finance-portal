@@ -304,7 +304,9 @@ describe('Roles & permissions — rolesLoad() / roleForm()', () => {
       .toBe('Delete role "Billing Clerk"? Users must be reassigned first.');
     expect(roleDeleteConfirm({ name: 'x' })).toBe('Delete role "x"? Users must be reassigned first.');
     // And the route actually asks. R1 sees nothing here; a dropped confirm() is one mis-click.
-    expect(ROUTE).toContain('if (!window.confirm(roleDeleteConfirm(ro))) return;');
+    // The control is the shell's ported dialog (src/confirm.tsx) rather than the browser's own — the
+    // WORDS are still `roleDeleteConfirm()`'s, which is what this pins.
+    expect(ROUTE).toContain("if (!await showConfirm('Delete role', roleDeleteConfirm(ro), 'Delete')) return;");
   });
 
   it('the role form\'s DOM contract is every id and class roleSave() reads back', () => {
@@ -448,7 +450,8 @@ describe('Active sessions — sessionsLoad() / sessionRevoke()', () => {
     expect(() => revokeBody('')).toThrow();
     expect(fn).toContain("confirm('Revoke session for '+who+'? They will be signed out immediately.')");
     expect(revokeConfirm('AZLINA')).toBe('Revoke session for AZLINA? They will be signed out immediately.');
-    expect(ROUTE).toContain('if (!window.confirm(revokeConfirm(whoSafe(s)))) return;');
+    // Ported dialog, legacy words — see the role-delete case above.
+    expect(ROUTE).toContain("if (!await showConfirm('Revoke session', revokeConfirm(whoSafe(s)), 'Revoke')) return;");
   });
 
   it('colours the role pill from the role, and shows the token fingerprint not the token', () => {

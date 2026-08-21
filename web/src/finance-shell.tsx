@@ -11,12 +11,14 @@
 // rather than build a mechanism for sharing it, and that is right: the ONE thing the two shells share is
 // src/nav.ts, the list of screens, because that is the thing that must not fall out of step.
 //
-// ── THE FOUR CONTROLS THAT HAND OFF ────────────────────────────────────────────────────────────────
-// Alerts (`toggleNotif`), Security (`openSecurityModal`), Change Password (`openPwModal`) and Export
-// (`exportCurrent`) are legacy modals and a legacy XLSX writer. None has a React equivalent and building
-// one is not this task, so each keeps its label and its position and links into app.html — the same
-// treatment the 21 unmigrated tabs get. Dropping them would be the bigger lie: an operator looking for
-// where they turn on 2FA would find nothing at all.
+// ── THE CONTROLS THAT STILL HAND OFF ───────────────────────────────────────────────────────────────
+// Alerts (`toggleNotif`), Security (`openSecurityModal`) and Export (`exportCurrent`) are legacy modals
+// and a legacy XLSX writer with no React equivalent, so each keeps its label and its position and links
+// into app.html — the same treatment an unmigrated tab gets. Dropping them would be the bigger lie: an
+// operator looking for where they turn on 2FA would find nothing at all.
+//
+// Change Password is NO LONGER one of them: `openPwModal()` is ported (src/password-modal.tsx), so that
+// button opens the dialog here instead of sending the operator into the app this one replaces.
 
 import type { ReactNode } from 'react';
 
@@ -49,6 +51,8 @@ export interface FinanceShellProps {
   onPickCompany: (tenantId: string) => void;
   onToggleTheme: () => void;
   onRefresh: () => void;
+  /** `openPwModal()` — app.html:2608. Opens the ported credentials modal. */
+  onChangePassword: () => void;
   onSignOut: () => void;
   children: ReactNode;
 }
@@ -105,7 +109,7 @@ export default function FinanceShell(p: FinanceShellProps) {
           <a className="btn bell" id="notif-btn" href={`${BASE_PATH}/app.html`} aria-label="Notifications"
             title="Alerts — opens Finance OS, which has the notifications panel">🔔<span className="bell-badge" id="notif-badge"></span></a>
           <a className="btn" href={`${BASE_PATH}/app.html`} title="Two-factor authentication — opens Finance OS, which has the security dialog">🔐 Security</a>
-          <a className="btn" href={`${BASE_PATH}/app.html`} title="Change your sign-in password — opens Finance OS, which has the password dialog">Change Password</a>
+          <button className="btn" id="pw-btn" onClick={p.onChangePassword} title="Change your sign-in password">Change Password</button>
           <button className="btn d" onClick={p.onSignOut}>Sign Out</button>
         </div>
       </div>

@@ -25,6 +25,8 @@ import FinanceO2O, {
   type PdfFailure, type Perms, type PharmMaster,
 } from '../../../src/finance-o2o';
 import { o2oApplyMasterRate, o2oGrandTotal, o2oInvoiceNumbers, o2oParseRows } from '../../../../o2o.js';
+import { showConfirm } from '../../../src/confirm';
+import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 interface Xlsx {
@@ -178,21 +180,23 @@ export default function FinanceO2OPage() {
 
   /** `o2oIssue()` — app.html:3299. The body itself is `issueBody()`, in src/, and pinned by the test. */
   const onIssue = useCallback(async () => {
-    if (out.kind !== 'preview') { window.alert('Preview first'); return; }
-    if (!tenant) { window.alert('Pick a company first'); return; }
+    if (out.kind !== 'preview') { toast('Preview first', true); return; }
+    if (!tenant) { toast('Pick a company first', true); return; }
     const data = out.data;
     const dry = (document.getElementById('o2o-test') as HTMLInputElement | null)?.checked ?? true;
     const invDate = val('o2o-invdate') || todayLocal(new Date());
     const dueDate = val('o2o-duedate') || plusDaysLocal(new Date(), 30);
-    if (dueDate && invDate && dueDate < invDate) { window.alert('Due date is before invoice date'); return; }
+    if (dueDate && invDate && dueDate < invDate) { toast('Due date is before invoice date', true); return; }
     // `null` means the operator typed something that is not a digit run. It must NOT collapse into
     // "let Xero number them" — see o2o.js's header.
     const invNums = o2oInvoiceNumbers(data.pharmacy_count, val('o2o-invprefix'), val('o2o-invstart'));
-    if (invNums === null) { window.alert('Invoice Start # must be digits (e.g. 001, 1183)'); return; }
+    if (invNums === null) { toast('Invoice Start # must be digits (e.g. 001, 1183)', true); return; }
     const numsMsg = invNums.length ? (' · numbered ' + invNums[0] + ' → ' + invNums[invNums.length - 1]) : ' · Xero auto-numbering';
     const co = tenantName(companies, tenant);
-    if (!window.confirm((dry ? 'TEST MODE — preview what would be created for ' : 'Create REAL Xero invoices for ')
-      + data.pharmacy_count + ' pharmacies in ' + co + ' (dated ' + invDate + ', due ' + dueDate + numsMsg + ')?')) return;
+    if (!await showConfirm(dry ? 'Preview (test mode)' : 'Create REAL Xero invoices',
+      (dry ? 'TEST MODE — preview what would be created for ' : 'Create REAL Xero invoices for ')
+      + data.pharmacy_count + ' pharmacies in ' + co + ' (dated ' + invDate + ', due ' + dueDate + numsMsg + ')?',
+      dry ? 'Preview' : 'Create invoices', 'p')) return;
     try {
       const r = await call<IssueResponse>(issueBody({
         tenant, data, invoiceDate: invDate, dueDate, dryRun: dry, invNums,
@@ -212,7 +216,7 @@ export default function FinanceO2OPage() {
   const onDownloadPdfs = useCallback(async (retryOnly: boolean) => {
     if (out.kind !== 'issued' || !out.downloadable.length) return;
     const JSZipCtor = await loadScript<new () => Zip>('jszip.min.js', 'JSZip');
-    if (!JSZipCtor) { window.alert('ZIP library not loaded — refresh the page'); return; }
+    if (!JSZipCtor) { toast('ZIP library not loaded — refresh the page', true); return; }
     const byId: Record<string, IssuedInvoice> = {};
     out.downloadable.forEach((iv) => { byId[iv.invoice_id] = iv; });
     const toFetch = retryOnly && out.failures && out.failures.length
@@ -237,7 +241,7 @@ export default function FinanceO2OPage() {
       }
       setOut({ ...out, failures: bad as PdfFailure[], downloaded: ok.length });
     } catch (e) {
-      window.alert('Failed: ' + (e instanceof Error ? e.message : String(e)));
+      toast('Failed: ' + (e instanceof Error ? e.message : String(e)), true);
     }
   }, [out, tenant]);
 
@@ -275,7 +279,7 @@ export default function FinanceO2OPage() {
             onLinkContact={(pharmacy, contactId, contactName, source) => {
               void call({ api: 'o2o_contact_link', tenant, pharmacy, contact_id: contactId, contact_name: contactName, source })
                 .then(() => { if (buf.current) return reparse(buf.current, tenant, companies); })
-                .catch((e) => window.alert(e instanceof Error ? e.message : String(e)));
+                .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
             }}
             onSearchContacts={(pharmacy, q) => {
               // The legacy paints the hits into a `.o2o-sr` div next to the input. Rendering them is
@@ -288,7 +292,7 @@ export default function FinanceO2OPage() {
                     : { ...p, __xero: { ...(p.__xero || {}), status: p.__xero?.status || 'none', suggestions: (r.contacts || []).slice(0, 12) } }) };
                   return { kind: 'preview', data };
                 }))
-                .catch((e) => window.alert(e instanceof Error ? e.message : String(e)));
+                .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
             }}
             onDownloadPdfs={(retry) => void onDownloadPdfs(retry)}
             onDismissPdfPanel={() => setOut((cur) => (cur.kind === 'issued' ? { ...cur, failures: null } : cur))}

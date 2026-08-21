@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrAttendance, { type AttendanceList, type AttEmployee, type AttPunch } from '../../../src/hr-attendance';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -114,7 +115,7 @@ export default function HrAttendancePage() {
   const onDelete = useCallback(async (id: string) => {
     // hros.html:3090 keeps the confirm. A punch is what someone is paid from; deleting one silently
     // is not a thing to improve away.
-    if (!confirm('Delete this punch record?')) return;
+    if (!await showConfirm('Delete punch record', 'Delete this punch record?', 'Delete')) return;
     try {
       await call({ api: 'attendance_delete', id });
       setNotice('Deleted');

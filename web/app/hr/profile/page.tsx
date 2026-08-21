@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrProfile, {
   profileBody, sigFileRefusal, sigStoreRefusal, sigTrimBox, sigUploadSize,
   type Bank, type ProfileEmployee,
@@ -234,7 +235,7 @@ export default function HrProfilePage() {
 
   /** `hrSigClearSaved()` — hros.html:3377. Destructive, so it keeps the legacy confirm. */
   const onSigClearSaved = useCallback(async () => {
-    if (!confirm('Remove your signature? Claim forms will print a blank line for you to sign by hand.')) return;
+    if (!await showConfirm('Remove signature', 'Remove your signature? Claim forms will print a blank line for you to sign by hand.', 'Remove')) return;
     try {
       await call({ api: 'hr_signature_save', signature: null });
       setNote('Signature removed');

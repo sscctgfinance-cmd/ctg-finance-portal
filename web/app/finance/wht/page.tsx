@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import FinanceWht, { payeeBody, whtReachable, type Perms, type WhtPayee, type WhtSummary } from '../../../src/finance-wht';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -90,8 +91,9 @@ export default function FinanceWhtPage() {
 
   /** `whtDelPayee()` — app.html:3491, confirm and all. */
   const onDelPayee = useCallback((id: number) => {
-    if (!confirm('Remove this payee from the list?\n\nPast computations keep their own copy of the name, TIN and rate, so nothing already filed changes.')) return;
     void (async () => {
+      if (!await showConfirm('Remove payee',
+        'Remove this payee from the list?\n\nPast computations keep their own copy of the name, TIN and rate, so nothing already filed changes.', 'Remove')) return;
       try {
         await call({ api: 'wht_payee_delete', id });
         setNotice('Payee removed');

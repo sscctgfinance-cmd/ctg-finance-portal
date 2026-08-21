@@ -12,13 +12,18 @@ import '../../src/shell.css';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
+import ConfirmHost from '../../src/confirm';
 import FinanceShell, { roleLabel, type Company } from '../../src/finance-shell';
 import { financeCatsFor, financeNavFor, type Perms } from '../../src/nav';
+import PasswordHost, { openPasswordModal } from '../../src/password-modal';
 import { BASE_PATH, call, token } from '../../src/portal';
+import { THEME_KEYS, asTheme } from '../../src/theme';
+import ToastHost, { toast } from '../../src/toast';
+import { useSpaNav } from '../../src/use-spa-nav';
 
 const read = (k: string) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
 
-interface Me { user?: { name?: string; email?: string; role?: string }; companies?: Company[] }
+interface Me { user?: { name?: string; email?: string; role?: string; must_change_pw?: boolean }; companies?: Company[] }
 
 export default function FinanceLayout({ children }: { children: ReactNode }) {
   // `/finance/wht/` → 'wht'. The route segment IS the tab's `data-t` — one string, no mapping table.
@@ -30,12 +35,19 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
   const [company, setCompany] = useState('');
   const [online, setOnline] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  // `enterApp()` — app.html:2665. A temporary password must be replaced before the app is shown at all.
+  const [mustChangePw, setMustChangePw] = useState(false);
+
+  // Every anchor in this route tree that points at another Finance screen becomes a client-side route
+  // change instead of a document load; see src/spa-nav.ts for the rule and why it stops at the boundary.
+  useSpaNav();
 
   useEffect(() => {
-    // app.html:1014 — the CTG brand default is light, and it is forced once per browser. Applied on
-    // mount, so a dark-mode operator sees one light frame first; see app/hr/layout.tsx for why the root
-    // layout cannot do it before paint.
-    const t = read('ctg-theme') === 'dark' ? 'dark' : 'light';
+    // app.html:1014 — the CTG brand default is light. The ATTRIBUTE is already correct by now:
+    // app/layout.tsx runs src/theme.ts's blocking <head> script, which reads this same key before the
+    // first paint, exactly as app.html:1012 does. This is React catching up with it, so the theme
+    // button's glyph matches what is on screen.
+    const t = asTheme(read(THEME_KEYS.finance));
     setTheme(t);
     document.documentElement.setAttribute('data-theme', t);
 
@@ -49,7 +61,11 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
     setSignedIn(signed);
     if (signed) {
       // app.html:7698 — `me` returns the user AND the Xero orgs the top-bar picker is built from.
-      void call<Me>({ api: 'me' }).then(setMe).catch(() => setMe({}));
+      void call<Me>({ api: 'me' }).then((m) => {
+        setMe(m);
+        // app.html:2665 — `enterApp()` hides `#app` and forces the dialog. Nothing else is rendered.
+        if (m?.user?.must_change_pw) setMustChangePw(true);
+      }).catch(() => setMe({}));
       // `showApp()` — app.html:1416. The permission set is what decides which of the 22 tabs exist.
       // No fallbackPerms() equivalent: the legacy one keeps a user from being locked out of a page they
       // are already inside, whereas here a failed call would ADVERTISE tabs, which is the wrong
@@ -64,7 +80,7 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
     const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', next);
     setTheme(next);
-    try { localStorage.setItem('ctg-theme', next); } catch { /* private mode */ }
+    try { localStorage.setItem(THEME_KEYS.finance, next); } catch { /* private mode */ }
   }, []);
 
   /**
@@ -84,12 +100,35 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
     location.href = `${BASE_PATH}/index.html`;
   }, []);
 
+  /**
+   * `doChangePw()` — app.html:2622. The POST and the toast; the dialog, its validation ladder and its
+   * forced branch are src/password-modal.tsx.
+   */
+  const onSavePassword = useCallback(async (oldp: string, neu: string) => {
+    await call({ api: 'changepw', old: oldp, neu });
+    toast('✅ Password updated');
+  }, []);
+
+  // The three chrome hosts, outside every early return: see app/hr/layout.tsx for why a screen that is
+  // not signed in still needs a toast, and why a `showConfirm()` with no host mounted resolves false.
+  const hosts = (
+    <>
+      <ToastHost />
+      <ConfirmHost />
+      <PasswordHost onSave={onSavePassword} forcedOnMount={mustChangePw}
+        onForcedDone={() => location.reload()} />
+    </>
+  );
+
+  // app.html:2665 — the whole app is hidden until the temporary password is replaced.
+  if (mustChangePw) return hosts;
+
   // Not signed in (or still finding out): NO chrome — the tab bar names every Finance screen and which
   // ones this login may reach. See app/hr/layout.tsx.
-  if (!signedIn) return <main style={{ padding: '28px 34px 64px' }}>{children}</main>;
+  if (!signedIn) return <><main style={{ padding: '28px 34px 64px' }}>{children}</main>{hosts}</>;
 
   return (
-    <FinanceShell
+    <><FinanceShell
       active={active}
       tabs={financeNavFor(perms)}
       cats={financeCatsFor(perms)}
@@ -102,7 +141,8 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
       onPickCompany={onPickCompany}
       onToggleTheme={onToggleTheme}
       onRefresh={onRefresh}
+      onChangePassword={() => openPasswordModal(false)}
       onSignOut={onSignOut}
-    >{children}</FinanceShell>
+    >{children}</FinanceShell>{hosts}</>
   );
 }

@@ -15,6 +15,10 @@
 // webhook-activity half of Xero sync now render here, and so do the two modals (`userForm()`,
 // `roleForm()`) the list opens. What still hands off is named in one place — `HANDOFF` below — so the
 // banner cannot claim more than is true.
+//
+// The `confirm()`s named above go through the shell's ported dialog (src/confirm.tsx), not the browser's.
+// The `prompt()` does NOT: a text prompt is not one of the two controls that shell ported, and the
+// legacy uses the native one here too.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -22,6 +26,7 @@ import FinanceUsersTable, {
   MIN_PASSWORD, UsersPanel, UsersSubnav, resetBody, usersReachable,
   type Company, type Perms, type User, type UserCompany, type UsersView,
 } from '../../../src/finance-users';
+import { showConfirm } from '../../../src/confirm';
 import AuditTable, { AuditEmpty, AuditPanel, type AuditEvent } from '../../../src/finance-users-audit';
 import { UserModal, ufTenants, userSaveBody, type CompRow, type UserFormUser } from '../../../src/finance-users-form';
 import RolesTable, {
@@ -274,28 +279,32 @@ export default function FinanceUsersPage() {
   const onRoleDelete = useCallback((i: number) => {
     const ro = (roleRows || [])[i];
     if (!ro) return;
-    if (!window.confirm(roleDeleteConfirm(ro))) return;
-    void call<{ ok?: boolean; error?: string }>(roleDeleteBody(ro.name))
-      .then((r) => {
-        if (r && r.ok === false) { setErr(r.error || 'Delete failed'); return; }
-        setErr('Role deleted'); loadRoles();
-      })
-      .catch((e) => setErr(fail(e)));
+    void (async () => {
+      if (!await showConfirm('Delete role', roleDeleteConfirm(ro), 'Delete')) return;
+      void call<{ ok?: boolean; error?: string }>(roleDeleteBody(ro.name))
+        .then((r) => {
+          if (r && r.ok === false) { setErr(r.error || 'Delete failed'); return; }
+          setErr('Role deleted'); loadRoles();
+        })
+        .catch((e) => setErr(fail(e)));
+    })();
   }, [loadRoles, roleRows]);
 
   // ── sessions sub-view actions ───────────────────────────────────────────────────────────────────
 
   /** `sessionRevoke()` — app.html:4717. */
   const onRevoke = useCallback((s: Session) => {
-    if (!window.confirm(revokeConfirm(whoSafe(s)))) return;
-    let body: Record<string, unknown>;
-    try { body = revokeBody(s.sid || ''); } catch (e) { setErr(fail(e)); return; }
-    void call<{ ok?: boolean; error?: string }>(body)
-      .then((r) => {
-        if (r && r.ok === false) { setErr(r.error || 'Failed'); return; }
-        setErr('Session revoked'); loadSessions();
-      })
-      .catch((e) => setErr(fail(e)));
+    void (async () => {
+      if (!await showConfirm('Revoke session', revokeConfirm(whoSafe(s)), 'Revoke')) return;
+      let body: Record<string, unknown>;
+      try { body = revokeBody(s.sid || ''); } catch (e) { setErr(fail(e)); return; }
+      void call<{ ok?: boolean; error?: string }>(body)
+        .then((r) => {
+          if (r && r.ok === false) { setErr(r.error || 'Failed'); return; }
+          setErr('Session revoked'); loadSessions();
+        })
+        .catch((e) => setErr(fail(e)));
+    })();
   }, [loadSessions]);
 
   // ── xero sub-view actions ───────────────────────────────────────────────────────────────────────

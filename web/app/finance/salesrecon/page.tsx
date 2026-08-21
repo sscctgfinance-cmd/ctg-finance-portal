@@ -27,6 +27,7 @@ import {
 import FinanceSalesRecon, {
   salesreconReachable, type Perms, type SrResult,
 } from '../../../src/finance-salesrecon';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 interface Xlsx {
@@ -179,7 +180,9 @@ export default function FinanceSalesReconPage() {
         // The legacy asks before restarting at 0001, and the question is the only thing between a failed
         // lookup and a month imported into Xero twice. Not dropped in the port — same call as Approvals'
         // reject confirm.
-        if (!window.confirm('Could not check Xero for existing YRDZ numbers (' + ((res && res.error) || 'network error') + ').\n\nContinue starting from 0001 anyway?\n⚠ Risk: duplicate invoice numbers if this month was already imported into Xero.')) return;
+        if (!await showConfirm('Xero lookup failed',
+          'Could not check Xero for existing YRDZ numbers (' + ((res && res.error) || 'network error') + ').\n\nContinue starting from 0001 anyway?\n⚠ Risk: duplicate invoice numbers if this month was already imported into Xero.',
+          'Continue anyway')) return;
         base = {};
       }
     }
@@ -215,7 +218,9 @@ export default function FinanceSalesReconPage() {
     // activation — same gap Approvals has — so the guard is the state, not the attribute.
     if (posting) { say('Already posting…'); return; }
     const total = out.reduce((s, l) => s + l.amt, 0);
-    if (!window.confirm('Create ' + out.length + ' Sales Invoices in Xero (I PROCARE) as DRAFT?\nTotal RM ' + total.toFixed(2) + '\n\nThey go in as DRAFT — you review & approve inside Xero.\nInvoice numbers are unique, so already-created ones are skipped automatically.')) return;
+    if (!await showConfirm('Create Sales Invoices in Xero',
+      'Create ' + out.length + ' Sales Invoices in Xero (I PROCARE) as DRAFT?\nTotal RM ' + total.toFixed(2) + '\n\nThey go in as DRAFT — you review & approve inside Xero.\nInvoice numbers are unique, so already-created ones are skipped automatically.',
+      'Create drafts', 'p')) return;
     setPosting(true);
     try {
       let ok = 0, dup = 0, fail = 0, done = 0;

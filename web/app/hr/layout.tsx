@@ -23,9 +23,14 @@ import '../../src/shell.css';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
+import ConfirmHost from '../../src/confirm';
 import HrShell, { type Company } from '../../src/hr-shell';
 import { hrNavFor, hrRole, type HrRole, type NavEntry } from '../../src/nav';
+import PasswordHost, { openPasswordModal } from '../../src/password-modal';
 import { BASE_PATH, call, token } from '../../src/portal';
+import { THEME_KEYS, asTheme } from '../../src/theme';
+import ToastHost, { toast } from '../../src/toast';
+import { useSpaNav } from '../../src/use-spa-nav';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -46,13 +51,19 @@ export default function HrLayout({ children }: { children: ReactNode }) {
   const [companyName, setCompanyName] = useState('');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [collapsed, setCollapsed] = useState(false);
+  // `enterApp()` — hros.html:1356. A temporary password must be replaced before anything else is shown.
+  const [mustChangePw, setMustChangePw] = useState(false);
+
+  // Every anchor in this route tree that points at another HR screen becomes a client-side route change
+  // instead of a document load; see src/spa-nav.ts for the rule and why it stops at the app boundary.
+  useSpaNav();
 
   useEffect(() => {
     // `enterApp()` — hros.html:1359-1360. The saved theme and collapse state are applied to the shell
-    // on entry. They are applied on MOUNT here rather than before paint, so a dark-mode operator sees
-    // one light frame first; the legacy app avoids that with a blocking inline script in <head>, which
-    // the root layout cannot write because it does not know which of the two apps' keys to read.
-    const t = read('hros_theme') === 'dark' ? 'dark' : 'light';
+    // on entry. The ATTRIBUTE is already right by now: app/layout.tsx runs src/theme.ts's blocking
+    // <head> script, which reads this same key before the first paint, exactly as hros.html:2 does. This
+    // is only React catching up with it, so the theme button's glyph matches what is on screen.
+    const t = asTheme(read(THEME_KEYS.hr));
     setTheme(t);
     document.documentElement.setAttribute('data-theme', t);
     setCollapsed(read('hros_nav_collapsed') === '1');
@@ -63,9 +74,11 @@ export default function HrLayout({ children }: { children: ReactNode }) {
 
     void (async () => {
       // `enterApp()` — hros.html:1361-1368. One role string decides the whole nav.
-      const me = await call<{ user?: { role?: string } }>({ api: 'me' }).catch(() => null);
+      const me = await call<{ user?: { role?: string; must_change_pw?: boolean } }>({ api: 'me' }).catch(() => null);
       const r = hrRole(me?.user?.role);
       setRole(r);
+      // hros.html:1356 — the app is not shown at all until the temporary password is replaced.
+      if (me?.user?.must_change_pw) { setMustChangePw(true); return; }
 
       // `hrEmpBoot()` (hros.html:1377) vs `hrBootCompanies()` (hros.html:1409): an employee works in one
       // company and never sees the picker, so only the admin path asks for the list.
@@ -108,7 +121,7 @@ export default function HrLayout({ children }: { children: ReactNode }) {
   const onToggleTheme = useCallback(() => {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
-    write('hros_theme', next);
+    write(THEME_KEYS.hr, next);
     document.documentElement.setAttribute('data-theme', next);
   }, [theme]);
 
@@ -136,14 +149,40 @@ export default function HrLayout({ children }: { children: ReactNode }) {
     location.href = `${BASE_PATH}/index.html`;
   }, []);
 
+  /**
+   * `hrPwSave()` — hros.html:1342. The POST and the toast; the dialog, its validation ladder and its
+   * forced branch are src/password-modal.tsx.
+   */
+  const onSavePassword = useCallback(async (oldp: string, neu: string) => {
+    await call({ api: 'changepw', old: oldp, neu });
+    toast('Password updated ✓');
+  }, []);
+
+  // The three chrome hosts. They are outside every early return below on purpose: a screen that renders
+  // its own "sign in on this origin" panel can still need to report a failure, and a `showConfirm()`
+  // with no host mounted resolves FALSE, which would silently turn a confirmed action into a no-op.
+  const hosts = (
+    <>
+      <ToastHost />
+      <ConfirmHost />
+      <PasswordHost onSave={onSavePassword} forcedOnMount={mustChangePw}
+        onForcedDone={() => location.reload()} />
+    </>
+  );
+
+  // hros.html:1356 — `must_change_pw` hides `#app` entirely and opens the dialog with no way out. The
+  // React shell had no equivalent at all, so an operator handed a one-time password could use every
+  // migrated screen without ever being asked to replace it.
+  if (mustChangePw) return hosts;
+
   // Not signed in (or still finding out): NO chrome. The nav names every screen in the app and which
   // ones an operator may reach, so it is not something to paint for a visitor who has not proved who
   // they are — each screen already renders its own "sign in on this origin" panel underneath.
-  if (!signedIn) return <main style={{ padding: '28px 34px 64px' }}>{children}</main>;
+  if (!signedIn) return <><main style={{ padding: '28px 34px 64px' }}>{children}</main>{hosts}</>;
 
   const entries: NavEntry[] = role ? hrNavFor(role, hasEmployee) : [];
   return (
-    <HrShell
+    <><HrShell
       view={view}
       entries={entries}
       empMode={!!role?.empMode}
@@ -157,7 +196,8 @@ export default function HrLayout({ children }: { children: ReactNode }) {
       onPickCompany={onPickCompany}
       onToggleTheme={onToggleTheme}
       onToggleNav={onToggleNav}
+      onChangePassword={() => openPasswordModal(false)}
       onSignOut={onSignOut}
-    >{children}</HrShell>
+    >{children}</HrShell>{hosts}</>
   );
 }

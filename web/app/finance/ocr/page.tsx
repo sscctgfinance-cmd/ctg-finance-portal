@@ -20,6 +20,7 @@ import FinanceOcr, {
   billBody, collectLines, confirmText, extractBody, ocrReachable,
   type Company, type OcrExtract, type OcrLine, type OcrOut, type Perms,
 } from '../../../src/finance-ocr';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `UP_MAX_MB` — app.html:4546. */
@@ -176,11 +177,11 @@ export default function FinanceOcrPage() {
     });
     bill.line_items = collectLines(Object.keys(rows).map((k) => rows[k]));
 
-    // Last-chance confirm before a document exists in Xero — app.html:7227, wording and all.
-    if (!confirm(confirmText(bill))) return;
     if (busy) return;
-    setBusy(true);
     void (async () => {
+      // Last-chance confirm before a document exists in Xero — app.html:7227, wording and all.
+      if (!await showConfirm('Create draft bill in Xero', confirmText(bill), 'Create', 'p')) return;
+      setBusy(true);
       try {
         const r = await call<{ number?: string; invoice_id?: string; total?: number; contact?: string }>(billBody(tenant, bill));
         setOut({ kind: 'posted', number: r.number || r.invoice_id || '', total: r.total || 0, contact: r.contact || '' });

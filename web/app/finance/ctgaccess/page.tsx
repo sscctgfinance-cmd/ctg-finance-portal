@@ -10,8 +10,8 @@
 // mirrored here by the screen's `rows={null}` state rather than by a second component.
 //
 // BOTH CONFIRMATIONS ARE KEPT. `ctgaGrant()` asks before handing out the ADMIN role and `ctgaRevoke()`
-// asks before every revoke, naming the person; the legacy uses the browser's own `confirm()` for both
-// (app.html:5087, :5101), not `showConfirm()`, so there is nothing to migrate and nothing to drop.
+// asks before every revoke, naming the person. The legacy uses the browser's own `confirm()` for both
+// (app.html:5087, :5101); both now go through the ported dialog, with their wording unchanged.
 
 import { useCallback, useEffect, useState } from 'react';
 
@@ -19,6 +19,7 @@ import FinanceCtgAccess, {
   ctgAccessReachable, grantBody, pickedRole, revokeBody,
   type Counts, type CtgRow, type Filter, type Orphan, type Perms,
 } from '../../../src/finance-ctgaccess';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 interface ListResponse { ok?: boolean; error?: string; rows?: CtgRow[]; orphans?: Orphan[]; counts?: Counts }
@@ -66,26 +67,30 @@ export default function FinanceCtgAccessPage() {
     if (busy) return;                                        // no double-submit — app.html:5084
     const r = role || pickedRole(sub, document as never);
     const who = (rows || []).filter((x) => x.sub === sub)[0];
-    if (r === 'admin' && !window.confirm(
-      'Give ' + ((who && (who.name || who.email)) || sub) + ' the ADMIN role?\n\n' +
-      'Admins can manage users, post to Xero and see every company.')) return;
-    setBusy(true);
-    void call<{ email?: string }>(grantBody(sub, r))
-      .then(() => load())
-      .catch((e) => setErr(e instanceof Error ? e.message : 'Could not grant access'))
-      .finally(() => setBusy(false));
+    void (async () => {
+      if (r === 'admin' && !await showConfirm('Grant the ADMIN role',
+        'Give ' + ((who && (who.name || who.email)) || sub) + ' the ADMIN role?\n\n' +
+        'Admins can manage users, post to Xero and see every company.', 'Grant admin')) return;
+      setBusy(true);
+      await call<{ email?: string }>(grantBody(sub, r))
+        .then(() => load())
+        .catch((e) => setErr(e instanceof Error ? e.message : 'Could not grant access'))
+        .finally(() => setBusy(false));
+    })();
   }, [busy, rows, load]);
 
   /** `ctgaRevoke(sub, email)` — app.html:5099. The email is what the confirmation names. */
   const onRevoke = useCallback((sub: string, email: string) => {
     if (busy) return;
-    if (!window.confirm('Remove ' + email + ' access to this portal?\n\n' +
-      'Any session they have open right now ends immediately.')) return;
-    setBusy(true);
-    void call({ ...revokeBody(sub) })
-      .then(() => load())
-      .catch((e) => setErr(e instanceof Error ? e.message : 'Could not revoke'))
-      .finally(() => setBusy(false));
+    void (async () => {
+      if (!await showConfirm('Revoke portal access', 'Remove ' + email + ' access to this portal?\n\n' +
+        'Any session they have open right now ends immediately.', 'Revoke')) return;
+      setBusy(true);
+      await call({ ...revokeBody(sub) })
+        .then(() => load())
+        .catch((e) => setErr(e instanceof Error ? e.message : 'Could not revoke'))
+        .finally(() => setBusy(false));
+    })();
   }, [busy, load]);
 
   return (

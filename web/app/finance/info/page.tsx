@@ -19,10 +19,11 @@
 // which is the safe direction — it can only over-state a refusal, never render one as an empty screen.
 //
 // ── WHAT IS MIRRORED RATHER THAN "IMPROVED" ───────────────────────────────────────────────────────
-// The two `confirm()`s (discarding unsaved edits, deleting a folder or a document) and the `prompt()`
-// for a new folder name are the browser's own, exactly as app.html uses them: `showConfirm()` is one of
-// the four legacy modals that were not migrated, and silently dropping the only thing between a
-// mis-click and a deleted folder is not a migration detail. Same call `finance.approvals` made.
+// The confirmations (discarding unsaved edits, deleting a folder or a document) now go through the
+// PORTED `showConfirm()` — src/confirm.tsx — rather than the browser's own, which is what app.html uses
+// here. The `prompt()` for a new folder name is still the browser's: a text prompt is not one of the two
+// controls the shell ported, and hros.html:2676 uses the native one too. Nothing was dropped: silently
+// removing the only thing between a mis-click and a deleted folder is not a migration detail.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -30,6 +31,8 @@ import FinanceInfo, {
   infoFolderById, infoFolderPath, infoReachable, printDocHtml, saveBody, savePatch,
   type FolderId, type InfoCompany, type InfoDoc, type InfoFolder,
 } from '../../../src/finance-info';
+import { showConfirm } from '../../../src/confirm';
+import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `renderInfo()` groups both lists by tenant before rendering — app.html:5532-5533. */
@@ -100,19 +103,19 @@ export default function FinanceInfoPage() {
   }, []);
 
   /** `infoSetMode()` — app.html:5896, including the discard confirmation. */
-  const onSetMode = useCallback((m: 'view' | 'edit') => {
+  const onSetMode = useCallback(async (m: 'view' | 'edit') => {
     if (!editable && m === 'edit') return;
     if (mode === 'edit' && dirty && m === 'view') {
-      if (!confirm('You have unsaved changes. Discard?')) return;
+      if (!await showConfirm('Unsaved changes', 'You have unsaved changes. Discard?', 'Discard')) return;
       setDirty(false);
     }
     setMode(m);
   }, [editable, mode, dirty]);
 
   /** `infoSwitch()` — app.html:6089. */
-  const onSwitch = useCallback((tid: string) => {
+  const onSwitch = useCallback(async (tid: string) => {
     if (mode === 'edit' && dirty) {
-      if (!confirm('You have unsaved changes on this company. Switch and discard?')) return;
+      if (!await showConfirm('Unsaved changes', 'You have unsaved changes on this company. Switch and discard?', 'Switch and discard')) return;
       setDirty(false);
     }
     setActive(tid);
@@ -153,7 +156,7 @@ export default function FinanceInfoPage() {
     const c = companies?.find((x) => x.tenant_id === active);
     if (!c) return;
     const w = window.open('', '_blank', 'width=900,height=1000');
-    if (!w) { alert('Pop-up blocked'); return; }
+    if (!w) { toast('Pop-up blocked', true); return; }
     // `new Date().toISOString().slice(0,10)` — UTC, exactly as app.html:5914. NOT todayLocalISO().
     w.document.write(printDocHtml(c, docs, new Date().toISOString().slice(0, 10)));
     w.document.close();
@@ -168,20 +171,20 @@ export default function FinanceInfoPage() {
 
   /** `infoFolderCreate()` — app.html:5694. */
   const onFolderCreate = useCallback((parentId: FolderId | null) => {
-    if (!editable || !active) { alert('Admins only'); return; }
+    if (!editable || !active) { toast('Admins only', true); return; }
     const all = folders[active] || [];
     const name = prompt(parentId
       ? 'New folder name (inside "' + infoFolderPath(all, parentId).replace(/^\/ /, '') + '"):'
       : 'New top-level folder name:');
     if (name === null) return;
     const trimmed = String(name || '').trim();
-    if (!trimmed) { alert('Name required'); return; }
+    if (!trimmed) { toast('Name required', true); return; }
     void call<{ id?: FolderId }>({ api: 'company_folder_create', tenant: active, parent_id: parentId || undefined, name: trimmed })
       .then(async (r) => {
         await loadDocs();
         if (r.id != null) setFolderActive((m) => ({ ...m, [active]: r.id as FolderId }));
       })
-      .catch((e) => alert(e instanceof Error ? e.message : String(e)));
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
   }, [editable, active, folders, loadDocs]);
 
   /**
@@ -211,14 +214,16 @@ export default function FinanceInfoPage() {
       const filesInside = ds.filter((d) => d.folder_id === fid).length;
       let cascade = false;
       if (subfolders > 0 || filesInside > 0) {
-        if (!confirm('Folder "' + folder.name + '" contains ' + filesInside + ' file(s) and ' + subfolders + ' subfolder(s). Delete it AND everything inside? This cannot be undone.')) return;
+        if (!await showConfirm('Delete folder and its contents',
+          'Folder "' + folder.name + '" contains ' + filesInside + ' file(s) and ' + subfolders + ' subfolder(s). Delete it AND everything inside? This cannot be undone.',
+          'Delete everything')) return;
         cascade = true;
-      } else if (!confirm('Delete folder "' + folder.name + '"?')) return;
+      } else if (!await showConfirm('Delete folder', 'Delete folder "' + folder.name + '"?', 'Delete')) return;
       try {
         await call({ api: 'company_folder_delete', folder_id: fid, cascade });
         setFolderActive((m) => (m[active] === fid ? { ...m, [active]: folder.parent_id || null } : m));
         await loadDocs();
-      } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+      } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
     })();
   }, [editable, active, folders, docs, loadDocs]);
 
@@ -228,22 +233,24 @@ export default function FinanceInfoPage() {
     const folderId = folderIdStr ? Number(folderIdStr) : null;
     void call({ api: 'company_doc_move', doc_id: docId, folder_id: folderId })
       .then(() => loadDocs())
-      .catch((e) => alert(e instanceof Error ? e.message : String(e)));
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
   }, [editable, loadDocs]);
 
   /** `infoDocDownload()` — app.html:5806. The server hands back a signed URL. */
   const onDocDownload = useCallback((docId: FolderId) => {
     void call<{ url?: string }>({ api: 'company_doc_download', doc_id: docId })
-      .then((r) => { if (r.url) window.open(r.url, '_blank'); else alert('Could not download'); })
-      .catch((e) => alert(e instanceof Error ? e.message : String(e)));
+      .then((r) => { if (r.url) window.open(r.url, '_blank'); else toast('Could not download', true); })
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
   }, []);
 
   /** `infoDocDelete()` — app.html:5818. */
   const onDocDelete = useCallback((docId: FolderId) => {
-    if (!confirm('Delete this document? This cannot be undone.')) return;
-    void call({ api: 'company_doc_delete', doc_id: docId })
-      .then(() => loadDocs())
-      .catch((e) => alert(e instanceof Error ? e.message : String(e)));
+    void (async () => {
+      if (!await showConfirm('Delete document', 'Delete this document? This cannot be undone.', 'Delete')) return;
+      void call({ api: 'company_doc_delete', doc_id: docId })
+        .then(() => loadDocs())
+        .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
+    })();
   }, [loadDocs]);
 
   /**

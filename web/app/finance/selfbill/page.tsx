@@ -15,9 +15,10 @@
 // visibility rather than the boundary — but the page refuses to LOAD on a false, not merely to render,
 // because the payees list alone is a table of individuals' IC numbers and bank accounts.
 //
-// THE THREE CONFIRMATIONS are `confirm()` in the legacy too (app.html:4418, :4419, :4421) — not
-// `showConfirm()`, so nothing is lost by using the browser's own. Their wording is copied: an operator
-// who has learned "Void this draft?" should not meet a different question here.
+// THE THREE CONFIRMATIONS are the browser's `confirm()` in the legacy (app.html:4418, :4419, :4421),
+// not `showConfirm()`. They go through the ported dialog here anyway — one control for every question
+// the app asks — with their wording copied verbatim: an operator who has learned "Void this draft?"
+// should not meet a different question here.
 //
 // THE FORM IS READ BACK OUT OF THE DOM by the same `sbi_*` and `pf_*` ids the legacy uses, which is why
 // src/ keeps them and keeps the inputs uncontrolled. `sbiPickCompany()` and `sbiPickPayee()` fill blank
@@ -31,6 +32,7 @@ import FinanceSelfbill, {
   type Account, type Company, type Invoice, type InvoiceRow, type Line, type LineKey,
   type Payee, type Perms,
 } from '../../../src/finance-selfbill';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `todayLocalISO()` — app.html:1259. The +8h MYT date, as a pure read of the real clock. */
@@ -274,24 +276,24 @@ export default function FinanceSelfbillPage() {
   }, [reloadPayees]);
 
   const onDeletePayee = useCallback((id: number) => {
-    if (!window.confirm('Delete this payee?')) return;
     void (async () => {
+      if (!await showConfirm('Delete payee', 'Delete this payee?', 'Delete')) return;
       const r = await call<{ ok?: boolean; soft?: boolean; error?: string }>({ api: 'individual_delete', id });
       if (r && r.ok) { setErr(null); await reloadPayees(); } else setErr((r && r.error) || 'Failed');
     })();
   }, [reloadPayees]);
 
   const onApprove = useCallback((id: number) => {
-    if (!window.confirm('Approve this invoice for payment?')) return;
     void (async () => {
+      if (!await showConfirm('Approve for payment', 'Approve this invoice for payment?', 'Approve', 'p')) return;
       const r = await call<{ ok?: boolean; error?: string }>({ api: 'sbi_approve', id });
       if (r && r.ok) { setErr(null); await reload(); } else setErr((r && r.error) || 'Failed');
     })();
   }, [reload]);
 
   const onVoid = useCallback((id: number) => {
-    if (!window.confirm('Void this draft?')) return;
     void (async () => {
+      if (!await showConfirm('Void draft', 'Void this draft?', 'Void')) return;
       const r = await call<{ ok?: boolean; error?: string }>({ api: 'sbi_void', id });
       if (r && r.ok) { setErr(null); await reload(); } else setErr((r && r.error) || 'Failed');
     })();
@@ -302,8 +304,9 @@ export default function FinanceSelfbillPage() {
     const msg = posted
       ? 'Set the Reference and attach the invoice PDF to the existing Xero bill?'
       : 'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
-    if (!window.confirm(msg)) return;
     void (async () => {
+      if (!await showConfirm(posted ? 'Attach PDF to the Xero bill' : 'Post to Xero', msg,
+        posted ? 'Attach' : 'Post', 'p')) return;
       const r = await call<{ ok?: boolean; error?: string }>({ api: 'sbi_post_xero', id });
       if (r && r.ok) { setErr(null); await reload(); } else setErr((r && r.error) || 'Xero post failed');
     })();

@@ -13,9 +13,9 @@
  * hand-copied here would be a second source of truth that starts drifting the day it is written. What
  * belongs here is only what the React port ADDS, which today is this.
  *
- * `.btn` is on the list for the same reason: Finance's top bar has four controls that are legacy modals
- * or a legacy XLSX writer with no React equivalent (Alerts, Security, Change Password, Export), so each
- * keeps its label and its position and links into app.html instead. app.html writes
+ * `.btn` is on the list for the same reason: Finance's top bar has three controls that are legacy modals
+ * or a legacy XLSX writer with no React equivalent (Alerts, Security, Export), so each keeps its label
+ * and its position and links into app.html instead. app.html writes
  * `style="text-decoration:none"` by hand wherever it puts `.btn` on an anchor (app.html:4063) — this is
  * that, once.
  */

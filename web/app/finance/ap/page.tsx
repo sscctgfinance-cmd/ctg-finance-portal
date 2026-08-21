@@ -27,6 +27,7 @@ import FinanceAp, {
   type ApDecision, type ApDetail, type ApItem, type ApLine, type ApPreview, type ApRule, type ApSetting,
   type Company, type Perms,
 } from '../../../src/finance-ap';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 export default function FinanceApPage() {
@@ -132,10 +133,10 @@ export default function FinanceApPage() {
   const doPost = useCallback(() => {
     const bill = collectBill();
     const teach = !!(root.current?.querySelector<HTMLInputElement>('#ap_teach')?.checked);
-    if (!confirm(postConfirmText(bill))) return;
     if (busy) return;
-    setBusy(true);
     void (async () => {
+      if (!await showConfirm('Post bill to Xero', postConfirmText(bill), 'Post', 'p')) return;
+      setBusy(true);
       try {
         await call(postBody(activeId, bill));
         if (teach && detail && detail.tenant_id) {
@@ -179,8 +180,10 @@ export default function FinanceApPage() {
     const body = scope?.querySelector<HTMLTextAreaElement>('#ap_reply_body')?.value || '';
     let req: Record<string, unknown>;
     try { req = replyBody(activeId, subject, body); } catch (e) { setErr(msg(e)); return; }
-    if (!confirm(replyConfirmText(detail && detail.from_email))) return;
-    void run(async () => { await call(req); await load(); if (activeId) onOpen(activeId); });
+    void (async () => {
+      if (!await showConfirm('Send reply', replyConfirmText(detail && detail.from_email), 'Send', 'p')) return;
+      void run(async () => { await call(req); await load(); if (activeId) onOpen(activeId); });
+    })();
   }, [activeId, detail, load, onOpen]);
 
   /** `apRerun()` — app.html:7034. */
@@ -233,8 +236,10 @@ export default function FinanceApPage() {
 
   /** `apDeleteRule(id)` — app.html:7178. */
   const onDeleteRule = useCallback((id: number) => {
-    if (!confirm('Delete this coding rule?')) return;
-    void run(async () => { await call({ api: 'ap_rule_delete', id }); await load(); });
+    void (async () => {
+      if (!await showConfirm('Delete coding rule', 'Delete this coding rule?', 'Delete')) return;
+      void run(async () => { await call({ api: 'ap_rule_delete', id }); await load(); });
+    })();
   }, [load]);
 
   /** One in-flight write at a time — the React equivalent of `runOnce()` (app.html:1290). */

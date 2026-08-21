@@ -15,16 +15,15 @@
 // exactly as app/finance/recon/page.tsx reads `rc_co` — and listens for its change event to re-filter.
 //
 // REJECT VOIDS THE BILL IN XERO and cannot be undone; the legacy screen asks first, via `showConfirm()`
-// (app.html:2395), a modal that has not been migrated (CLAUDE.md: "no toast, no confirm/credentials
-// modal"). Dropping the question rather than the modal would be a silent removal of the only thing
-// standing between a mis-click and a voided supplier bill, so the browser's own confirm carries the
-// same two sentences until that modal exists.
+// (app.html:2395). That modal IS migrated now — src/confirm.tsx — so this asks with the app's own
+// dialog carrying the legacy's title, sentence and button word, rather than with the browser's.
 
 import { useCallback, useEffect, useState } from 'react';
 
 import FinanceApprovals, {
   approvalsReachable, decideBody, type Bill, type Decision, type Perms,
 } from '../../../src/finance-approvals';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 export default function FinanceApprovalsPage() {
@@ -75,9 +74,12 @@ export default function FinanceApprovalsPage() {
     // app.html:2411 sets `pointer-events:none` on the row, which does NOT stop a keyboard activation.
     // A second post would apply or void the same bill twice, so the in-flight row is refused here too.
     if (busy.indexOf(i) >= 0) return;
-    if (action === 'reject' && !window.confirm('Reject Bill\n\nReject and void this bill? This action cannot be undone.')) return;
-    setBusy((b) => b.concat(i));
     void (async () => {
+      // `showConfirm('Reject Bill', …, 'Reject', 'd')` — app.html:2413, now the ported dialog rather
+      // than the browser's. Same title, same sentence, same button word.
+      if (action === 'reject' && !await showConfirm('Reject Bill',
+        'Reject and void this bill? This action cannot be undone.', 'Reject', 'd')) return;
+      setBusy((b) => b.concat(i));
       try {
         const r = await call<{ ok?: boolean; error?: string }>(decideBody(tenant, invoice, action));
         if (r && r.ok) {

@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrApprovals, { type ApvEmployee, type ApvStep } from '../../../src/hr-approvals';
 import HrApprovalsRc, {
   rcStepFromValue, rcWfEditFrom, rcWfNew, rcWfSaveBody,
@@ -189,8 +190,10 @@ export default function HrApprovalsPage() {
                     setWfGen((g) => g + 1);
                   }}
                   onWfOff={(id) => {
-                    if (!confirm('Turn this workflow off? Claims already in flight keep their chain; new claims use another matching workflow (or Finance).')) return;
                     void (async () => {
+                      if (!await showConfirm('Turn workflow off',
+                        'Turn this workflow off? Claims already in flight keep their chain; new claims use another matching workflow (or Finance).',
+                        'Turn off')) return;
                       try {
                         await call({ api: 'hr_rc_admin_save', kind: 'workflow_del', row: { id } });
                         setNotice('Workflow turned off');

@@ -19,6 +19,7 @@ import FinanceQinv, {
   collect, invoiceBody, qinvReachable, todayLocalISO,
   type Company, type Perms, type QinvMeta, type QinvOut, type RawLine,
 } from '../../../src/finance-qinv';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `QINV_META_CACHE` / `QINV_META_TTL` — app.html:4661. Per tenant, because Xero's Items call is slow. */
@@ -127,12 +128,13 @@ export default function FinanceQinvPage() {
     const d = readForm();
     if (d.errors.length) { setOut({ kind: 'errors', errors: d.errors }); return; }
     const test = !!el<HTMLInputElement>('qi_test')?.checked;
-    // Last-chance confirm before posting a LIVE invoice — protects against accidental clicks.
-    if (!test && !confirm('Create a LIVE invoice in Xero for ' + d.customer + '? This cannot be undone via this app.')) return;
     if (busy) return;
-    setBusy(true);
-    setOut({ kind: 'loading', text: 'Working…' });
     void (async () => {
+      // Last-chance confirm before posting a LIVE invoice — protects against accidental clicks.
+      if (!test && !await showConfirm('Create a live invoice',
+        'Create a LIVE invoice in Xero for ' + d.customer + '? This cannot be undone via this app.', 'Create', 'p')) return;
+      setBusy(true);
+      setOut({ kind: 'loading', text: 'Working…' });
       try {
         const r = await call<{ dry_run?: boolean; total?: number; number?: string; contact?: string }>(
           invoiceBody({

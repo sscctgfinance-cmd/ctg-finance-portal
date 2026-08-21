@@ -1336,17 +1336,95 @@ which is why the href is asserted separately, for all 36 screens.
 `text-decoration: none`, because the nav became anchors and neither legacy stylesheet ever had an anchor
 to reset. Legacy CSS still comes only from `scripts/sync-legacy-css.mjs`.
 
-**Four things could not be ported and hand off rather than lie:** Change password (HR and Finance),
-Security/2FA, Alerts and Export are legacy modals and a legacy XLSX writer. Each keeps its label and its
-position and links into the legacy app — with every screen and the three sibling PAGES migrated (see
-"SIBLING PAGES are not screens" above), they and the six advanced Xero tools inside `finance.users` are
-the only handoffs the nav still makes. `web/public/ctg-logo.png`
-is app.html's inlined base64 brand mark, decoded once.
+**Three things could not be ported and hand off rather than lie:** Security/2FA, Alerts and Export are
+legacy modals and a legacy XLSX writer. Each keeps its label and its position and links into the legacy
+app — with every screen and the three sibling PAGES migrated (see "SIBLING PAGES are not screens" above),
+they and the six advanced Xero tools inside `finance.users` are the only handoffs the nav still makes.
+(Change password WAS a fourth; it is ported — see "The shell's own chrome" below.)
+`web/public/ctg-logo.png` is app.html's inlined base64 brand mark, decoded once.
 
-**Still not done:** no toast, no confirm/credentials modal, and the saved theme is applied on mount rather
-than before paint (the legacy apps use a blocking inline script in `<head>`, and the root layout cannot —
-it does not know which of the two apps' keys, `hros_theme` or `ctg-theme`, to read), so a dark-mode
-operator sees one light frame. Navigation is plain anchors, so every nav click is a full page load.
+### The shell's own chrome — five files, and the rules they carry
+
+The list that used to sit here ("no toast, no confirm/credentials modal, one light frame, every nav click
+a full page load") is closed. What replaced it, and what each one is NOT:
+
+| file | what it is |
+|---|---|
+| `web/src/toast.tsx` | `toast(msg,isErr)` — common.js:29's signature and its 2400/240ms queue, plus the pure `#toast` div |
+| `web/src/confirm.tsx` | `showConfirm(title,msg,okTxt,okCls)` — app.html:2402's Promise, and `#cf-overlay` |
+| `web/src/password-modal.tsx` | the credentials modal — app.html:1186 + `openPwModal()`, INCLUDING the forced branch |
+| `web/src/icons.tsx` | `ICONS` + `ic(n,s)` — hros.html:1219-1241, in one place |
+| `web/src/theme.ts` + `web/src/spa-nav.ts` | the before-paint theme decision, and which clicks are client-side |
+
+**`toast()` and `showConfirm()` are module-level functions, not hooks or context.** The legacy signatures
+are called from ~200 places across both apps, most of them halfway down an async save, so keeping them
+means a route swaps one call for one call. One host per app layout, which is what the legacy `#toast` and
+`#cf-overlay` divs already are. **`showConfirm()` with no host mounted resolves FALSE** — every caller
+reads it as "may I do the irreversible thing".
+
+**No route may call the browser's `alert()` or `confirm()` any more**, and
+`web/tests/shell-chrome.test.tsx` WALKS `web/app/**` for both — at any depth. It read one level deep at
+first, and the three sibling PAGES then landed with four `confirm()`s between them that the scan could
+not see. The same walk now derives the client-side-nav check, so a route added at a depth `spaTarget()`
+does not reach fails there rather than quietly degrading to a full page load. `prompt()` IS still the browser's, in
+seven places, deliberately: a text prompt is not one of the two controls that were ported, and the legacy
+uses the native one too (hros.html:2676, app.html:7063). That count is asserted, so an eighth is a
+decision someone has to make on purpose.
+
+**The credentials modal is ONE component for both apps, and the forced branch is the security-carrying
+half.** `enterApp()` hides the entire app and opens it with no Cancel and no × when the server says
+`must_change_pw` (app.html:2665, hros.html:1356). React had no equivalent at all, so an operator handed a
+one-time password could use every migrated screen and never be asked to replace it. Both layouts now
+refuse to render anything else on that flag. The two legacy dialogs post the same `changepw` and enforce
+the same `pwValid`; they differ only in trim, so they are one port (Finance's, the richer one).
+
+**Client-side navigation is a delegated listener, and it STOPS at the app boundary.** `spaTarget()`
+(`web/src/spa-nav.ts`) is the pure rule; `useSpaNav()` in each layout is the wiring. It matches a screen
+(`/finance/wht/`) and ONE segment below it — a SIBLING PAGE, `/finance/wht/doc/` and
+`/finance/pharm/detail/`. It routes `/hr/…` → `/hr/…` and `/finance/…` → `/finance/…` and NOTHING else — every legacy handoff, the landing page and the
+cross-app jump stay real document loads. That is not a limitation: `app/hr/layout.tsx` and
+`app/finance/layout.tsx` import DIFFERENT generated stylesheets that disagree on 38 selectors, so a
+client-side hop between them would have both alive at once and would silently restyle one app with the
+other's `:root` — the exact failure that file scoping exists to prevent. It is also what the legacy jump
+between two HTML files has always been. The nav stays PURE ANCHORS with no handler props, so
+`web/tests/shell.test.tsx`'s "the nav is anchors" assertion is untouched.
+
+**The theme is decided in `<head>`, and `web/src/theme.ts` owns both key names.** The old comment here
+said the root layout could not know which of `hros_theme` / `ctg-theme` to read. It can: the URL says
+which app the page is, and `/hr/…` vs `/finance/…` is the same mapping the two layouts apply by being
+where they are. **A FLASH IS INVISIBLE TO AN OUTPUT ASSERTION** — the end state is identical either way,
+only the timing differs — so the test pins the IMPLEMENTATION (the script is rendered from the root
+layout's `<head>`, and never writes the key back). Same finding as `finance.calendar`'s `dueLabel()`, in
+its fifth form.
+
+**`ic()` was duplicated FOUR times in `web/src/` and had six of its twenty keys.** It is now one file,
+holding hros.html's own path STRINGS rendered through `dangerouslySetInnerHTML` — hand-converting twenty
+`<path>` strings to JSX is twenty chances to drop a digit off a coordinate, and a wrong coordinate is a
+wrong glyph no reviewer catches. The test parses hros.html's `ICONS` at run time and diffs every key at
+every size the chrome uses. **Seam left named, not taken:** `hr-access.tsx`, `hr-payslip.tsx` and
+`hr-employees.tsx` still carry their own two-key copies; folding them in is a one-line import each with
+byte-identical output, and they belong to other owners.
+
+**Two legacy findings, both mirrored rather than fixed, both pinned.** (1) `hros.html:1139` is
+`<div id="toast">` with NO `class="toast"` — app.html:1184 has it — and neither stylesheet carries a
+`#toast` selector, so in HR OS today a toast is unstyled body text at the bottom of the document and the
+`.show` transition never runs. The React port renders the class in both apps, i.e. the toast hros.html's
+own stylesheet describes; the legacy markup is asserted so a fix there surfaces here. (2) `.btn.d` is
+`color: var(--red-soft)` (app.html:88) but the light theme's `.btn` rule wins, so the destructive button
+in the confirm dialog is grey in both apps.
+
+**One guard was missing and was found by breaking the code, which is the only way.** `pwError()`'s ladder
+order (app.html:2628-2632) survived having its last two rules SWAPPED with every assertion still passing:
+"must be different from the current one" and "do not match" are both TRUE for a reused-and-mistyped
+password, so only an input satisfying both — old === new AND new !== confirm — can see which rule the
+ladder reaches first. Ask of every ordered rule set which input distinguishes the order, not just which
+inputs reach each branch.
+
+**Still not done:** Alerts, Security/2FA and Export remain legacy handoffs from the Finance top bar, and
+the session-expired and idle-timeout modals (app.html:1376, :2685) have no React equivalent — a React-only
+operator's session dies silently. `prompt()` is still native. The toast QUEUE's timing and the confirm's
+Escape listener are not covered by a test: vitest runs `environment: 'node'` and all 36 parity tests
+depend on that, so adding jsdom for two behaviours was not worth it.
 
 ## Publishing to the live site is a separate step
 

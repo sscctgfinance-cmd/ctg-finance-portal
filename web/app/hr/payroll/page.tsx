@@ -18,6 +18,7 @@ import HrPayroll, {
   type CellField, type GridRow, type HubKey, type LegacyPanel, type PayData, type PayEmployee,
   type StatFile, type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -87,8 +88,9 @@ export default function HrPayrollPage() {
   }, [load]);
 
   /** `hrPickPeriod()` — reads the two selects by id, exactly as the legacy handler does. */
-  const onPickPeriod = useCallback(() => {
-    if (dirty && !confirm(`You have unsaved payroll entries for ${HR_MONTHS[month]} ${year}.\n\nLeave without saving? The figures you typed will be lost.`)) return;
+  const onPickPeriod = useCallback(async () => {
+    if (dirty && !await showConfirm('Unsaved payroll entries',
+      `You have unsaved payroll entries for ${HR_MONTHS[month]} ${year}.\n\nLeave without saving? The figures you typed will be lost.`, 'Discard')) return;
     const m = Number((document.getElementById('hr_pm') as HTMLSelectElement | null)?.value) || month;
     const y = Number((document.getElementById('hr_py') as HTMLSelectElement | null)?.value) || year;
     setMonth(m); setYear(y);
@@ -123,9 +125,10 @@ export default function HrPayrollPage() {
   }, [mutate]);
 
   /** v205: skip leaves somebody out of THIS month without touching their record. */
-  const onSkip = useCallback((id: string, on: boolean) => {
+  const onSkip = useCallback(async (id: string, on: boolean) => {
     const e = (data?.employees || []).find((x) => x.id === id);
-    if (on && !confirm(`Leave ${e?.name || 'this employee'} out of ${HR_MONTHS[month]} ${year}?\n\nThey get no payslip and drop out of the bank file and every statutory total for this month. Their profile and history are untouched, and you can put them back any time.`)) return;
+    if (on && !await showConfirm('Skip this employee',
+      `Leave ${e?.name || 'this employee'} out of ${HR_MONTHS[month]} ${year}?\n\nThey get no payslip and drop out of the bank file and every statutory total for this month. Their profile and history are untouched, and you can put them back any time.`, 'Skip')) return;
     mutate(id, (g) => ({ ...g, skip: !!on }));
     setRowMenu(null);
   }, [data, month, year, mutate]);
@@ -143,7 +146,8 @@ export default function HrPayrollPage() {
   }, [post, month, year, entries]);
 
   const onFinalise = useCallback(async () => {
-    if (!confirm(`Finalise ${HR_MONTHS[month]} ${year}? Payslips are written for every employee in the run.`)) return;
+    if (!await showConfirm('Finalise payroll',
+      `Finalise ${HR_MONTHS[month]} ${year}? Payslips are written for every employee in the run.`, 'Finalise', 'p')) return;
     await post({ api: 'hr_payroll_finalise', month, year, entries: entries() }, 'Payroll finalised ✓');
     void load(month, year);
   }, [post, month, year, entries, load]);
@@ -152,7 +156,7 @@ export default function HrPayrollPage() {
     const e = (data?.employees || []).find((x) => x.id === id);
     const d = (document.getElementById('hr_rm_resign') as HTMLInputElement | null)?.value || '';
     if (!d) { setNotice('Pick their last working day'); return; }
-    if (!confirm(`Mark ${e?.name || 'this employee'} as resigned on ${d}?`)) return;
+    if (!await showConfirm('Mark as resigned', `Mark ${e?.name || 'this employee'} as resigned on ${d}?`, 'Mark resigned')) return;
     // Send only status + resign date: hr_emp_save leaves every field it was not given alone (v197).
     await post({ api: 'hr_emp_save', emp: { id, name: e?.name, status: 'resigned', resignDate: d } }, 'Marked resigned');
     setRowMenu(null);
@@ -160,7 +164,8 @@ export default function HrPayrollPage() {
   }, [data, post, load, month, year]);
 
   const onEmpDelete = useCallback(async (id: string) => {
-    if (!confirm('Delete this employee permanently? Their leave, claim and attendance records go too.')) return;
+    if (!await showConfirm('Delete employee',
+      'Delete this employee permanently? Their leave, claim and attendance records go too.', 'Delete')) return;
     await post({ api: 'hr_emp_delete', id }, 'Employee deleted');
     setRowMenu(null);
     void load(month, year);

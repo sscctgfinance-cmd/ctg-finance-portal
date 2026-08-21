@@ -10,6 +10,7 @@ import HrLeave, {
   type LeaveApplyForm, type LeaveBalances, type LeaveEmployee, type LeaveFlowStep,
   type LeaveRequest, type LeaveType,
 } from '../../../src/hr-leave';
+import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -136,11 +137,11 @@ export default function HrLeavePage() {
   }, [company, flow, run]);
 
   /**
-   * hros.html:3533 — a rejection is confirmed, because it is not reversible from this screen. The
-   * legacy uses `confirm()`; the shell that owns a nicer modal is still the legacy one (report.md §3.5).
+   * hros.html:3533 — a rejection is confirmed, because it is not reversible from this screen. The legacy
+   * uses the browser's `confirm()`; this now asks with the app's own dialog (src/confirm.tsx).
    */
-  const onDecide = useCallback((id: string, decision: 'approve' | 'reject') => {
-    if (decision === 'reject' && !window.confirm('Reject this leave request?')) return;
+  const onDecide = useCallback(async (id: string, decision: 'approve' | 'reject') => {
+    if (decision === 'reject' && !await showConfirm('Reject leave request', 'Reject this leave request?', 'Reject')) return;
     void run({ api: 'hr_leave_decide', id, decision }, `Leave ${decision}${decision === 'reject' ? 'ed' : 'd'} ✓`);
   }, [run]);
 
@@ -184,12 +185,13 @@ export default function HrLeavePage() {
    * deduction and the approval email all carry that person's name. Confirmed by name whenever it is not
    * the admin themselves, exactly as the legacy does.
    */
-  const onApplySubmit = useCallback(() => {
+  const onApplySubmit = useCallback(async () => {
     const employees = (data && data.employees) || [];
     const emp = apply.employee_id;
     if (!emp) { setErr('Pick an employee'); return; }
     const name = (employees.find((e) => e.id === emp) || {}).name || 'this employee';
-    if (emp !== myEmpId && !window.confirm(`Submit this leave for ${name}?\n\nThis is NOT your own leave — it will be recorded against them and their balance.`)) return;
+    if (emp !== myEmpId && !await showConfirm('Submit leave for someone else',
+      `Submit this leave for ${name}?\n\nThis is NOT your own leave — it will be recorded against them and their balance.`, 'Submit', 'p')) return;
     if (!apply.leave_type_id) { setErr('Pick a leave type'); return; }
     const from = apply.date_from || today, to = apply.date_to || today;
     if (to < from) { setErr('End date can’t be before start'); return; }

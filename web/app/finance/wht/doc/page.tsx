@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../../src/confirm';
 import { whtReachable, type Perms, type WhtPayee } from '../../../../src/finance-wht';
 import FinanceWhtDoc, {
   printDocHtml, saveBody,
@@ -163,8 +164,8 @@ export default function FinanceWhtDocPage() {
   /** `whtDelete()` — app.html:3476, confirm and all. */
   const onDelete = useCallback(() => {
     if (!doc || !doc.id) return;
-    if (!confirm('Delete this computation?')) return;
     void (async () => {
+      if (!await showConfirm('Delete computation', 'Delete this computation?', 'Delete')) return;
       try {
         await call({ api: 'wht_delete', id: doc.id });
         location.href = `${BASE}/finance/wht/`;

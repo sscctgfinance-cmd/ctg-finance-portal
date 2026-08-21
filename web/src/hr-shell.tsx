@@ -22,37 +22,9 @@
 
 import { Fragment, type ReactNode } from 'react';
 
+import { Ic } from './icons';
 import { href, type NavEntry } from './nav';
 import { BASE_PATH } from './portal';
-
-/** `ICONS` — hros.html:1219. Only the keys this chrome draws; the path data is verbatim. */
-const ICONS: Record<string, ReactNode> = {
-  dashboard: <path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z" />,
-  employees: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-  leave: <><path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z" /><path d="M12 6v6" /></>,
-  claims: <><path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></>,
-  expenses: <><rect x="2" y="7" width="20" height="13" rx="1.5" /><path d="M2 11h20M6 3h12" /></>,
-  payroll: <><path d="M12 1v22" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></>,
-  payslip: <><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" /><path d="M14 2v6h6M9 13h6M9 17h4" /></>,
-  user: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
-  flow: <><circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="12" r="2.4" /><path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14" /></>,
-  calculator: <><rect x="4" y="2" width="16" height="20" rx="2" /><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4" /></>,
-  yearend: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18M8 2v4M16 2v4" /></>,
-  shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12l2 2 4-4" /></>,
-  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
-  moon: <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />,
-};
-
-/** `ic(n,s)` — hros.html:1241. Returns nothing for an unknown key, exactly as the legacy one does. */
-function Ic({ n, s = 18 }: { n?: string; s?: number }) {
-  const d = n ? ICONS[n] : undefined;
-  if (!d) return null;
-  return (
-    <svg className="ic" width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
-  );
-}
 
 /**
  * `hrSidebar()`'s inner HTML — hros.html:1508. A group heading is emitted when the group CHANGES, not
@@ -116,6 +88,8 @@ export interface HrShellProps {
   onPickCompany: (tenantId: string) => void;
   onToggleTheme: () => void;
   onToggleNav: () => void;
+  /** `hrPwModal()` — hros.html:1317. Opens the ported credentials modal; see src/password-modal.tsx. */
+  onChangePassword: () => void;
   onSignOut: () => void;
   children: ReactNode;
 }
@@ -123,11 +97,10 @@ export interface HrShellProps {
 /**
  * The whole HR shell — hros.html:1105-1137.
  *
- * ── WHAT COULD NOT BE PORTED, and why it is a link rather than a button that lies ──────────────────
- * "Change password" opens `hrPwModal()`, which is legacy-only; there is no React password modal and
- * building one is not this task. It keeps its label and its position and hands off to hros.html, the
- * same treatment the 21 unmigrated nav entries get. Removing it would be the bigger lie: an operator
- * looking for where they change their password would find nothing.
+ * "Change password" used to hand off to hros.html, because there was no React password dialog. There is
+ * one now (src/password-modal.tsx), so it is a button that opens it — the same control the legacy foot
+ * has, in the same place. Security / 2FA has no equivalent yet and is still a handoff on the Finance
+ * side; HR OS's foot never had one.
  */
 export default function HrShell(p: HrShellProps) {
   return (
@@ -162,7 +135,7 @@ export default function HrShell(p: HrShellProps) {
           {p.master ? (
             <a className="side-foot-btn accent" href={`${BASE_PATH}/app.html`} title="Back to Finance OS (same login)">← <span className="lbl">Finance OS</span></a>
           ) : null}
-          <a className="side-foot-btn" href={`${BASE_PATH}/hros.html`} title="Change your sign-in password — opens HR OS, which has the password dialog">🔑 <span className="lbl">Change password</span></a>
+          <button className="side-foot-btn" id="hr_pw_btn" onClick={p.onChangePassword} title="Change your sign-in password">🔑 <span className="lbl">Change password</span></button>
           <button className="side-foot-btn" onClick={p.onSignOut}><span className="lbl">Sign out</span></button>
         </div>
       </aside>

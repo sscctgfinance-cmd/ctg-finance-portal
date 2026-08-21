@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrExpenses, { bankFile, listCsv, selectedIds, type RcClaim, type RcMe, type RcScope } from '../../../src/hr-expenses';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -161,11 +162,15 @@ export default function HrExpensesPage() {
                 if (msg && msg.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'request_info', comment: msg }, 'Sent back');
               }}
               onBulkPay={() => {
+                // The two `prompt()`s stay native — so are hros.html:1848's, and a text prompt is not one
+                // of the two controls this shell ported. The CONFIRM is the app's own dialog now.
                 const method = window.prompt('Payment method (applies to all):', 'Bank Transfer');
                 if (method === null) return;
                 const ref = window.prompt('Payment reference (optional, same for all):', '') ?? '';
-                if (!window.confirm(`Mark ${selectedIds(sel).length} claim(s) as PAID?`)) return;
-                void bulk({ api: 'hr_rc_mark_paid_bulk', payment_method: method || 'Bank Transfer', payment_reference: ref }, 'Marked paid');
+                void (async () => {
+                  if (!await showConfirm('Mark claims paid', `Mark ${selectedIds(sel).length} claim(s) as PAID?`, 'Mark paid', 'p')) return;
+                  void bulk({ api: 'hr_rc_mark_paid_bulk', payment_method: method || 'Bank Transfer', payment_reference: ref }, 'Marked paid');
+                })();
               }}
             />
           </>

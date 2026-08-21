@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { showConfirm } from '../../../../src/confirm';
 import { pharmReachable } from '../../../../src/finance-pharm';
 import FinancePharmDetail, {
   PharmLinkModal, pharmPatch, saveBody,
@@ -108,8 +109,10 @@ export default function FinancePharmDetailPage() {
   /** `pharmDelete()` — app.html:6443. */
   const onDelete = useCallback(() => {
     if (!editable || id == null || !pharmacy) return;
-    if (!confirm('Delete pharmacy "' + (pharmacy.name || '') + '"? Any past O2O invoices in Xero are unaffected, but this pharmacy will no longer appear in the master list.')) return;
     void (async () => {
+      if (!await showConfirm('Delete pharmacy',
+        'Delete pharmacy "' + (pharmacy.name || '') + '"? Any past O2O invoices in Xero are unaffected, but this pharmacy will no longer appear in the master list.',
+        'Delete')) return;
       try {
         await call({ api: 'pharmacy_delete', id });
         location.href = `${BASE}/finance/pharm/`;
@@ -120,10 +123,10 @@ export default function FinancePharmDetailPage() {
   }, [editable, id, pharmacy]);
 
   /** `pharmSetMode(mode)` — app.html:6674, including the discard confirm. */
-  const onSetMode = useCallback((m: 'view' | 'edit') => {
+  const onSetMode = useCallback(async (m: 'view' | 'edit') => {
     if (!editable && m === 'edit') return;
     if (mode === 'edit' && dirty && m === 'view') {
-      if (!confirm('You have unsaved changes. Discard?')) return;
+      if (!await showConfirm('Unsaved changes', 'You have unsaved changes. Discard?', 'Discard')) return;
       setDirty(false);
     }
     setMode(m);
@@ -131,8 +134,8 @@ export default function FinancePharmDetailPage() {
   }, [editable, mode, dirty]);
 
   /** `pharmCloseDetail()` — app.html:6669. */
-  const onBack = useCallback(() => {
-    if (dirty && !confirm('Discard unsaved changes?')) return;
+  const onBack = useCallback(async () => {
+    if (dirty && !await showConfirm('Unsaved changes', 'Discard unsaved changes?', 'Discard')) return;
     location.href = `${BASE}/finance/pharm/`;
   }, [dirty]);
 

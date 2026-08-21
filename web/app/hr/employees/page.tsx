@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrEmployees, { EMP_UI_DEFAULT, type Bank, type EmpUI, type Employee } from '../../../src/hr-employees';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -115,12 +116,14 @@ export default function HrEmployeesPage() {
   /** `hrEmpDelete()` — hros.html:2792. Resigned-only, then confirmed, then confirmed again for payslips. */
   const onDeleteEmp = useCallback((id: string) => {
     const e = (employees || []).find((x) => x.id === id) || {} as Employee;
-    if (!window.confirm(`Delete ${e.name || 'this employee'} permanently?\n\nRemoves their profile plus leave / claim / attendance records. This cannot be undone.`)) return;
     void (async () => {
+      if (!await showConfirm('Delete employee',
+        `Delete ${e.name || 'this employee'} permanently?\n\nRemoves their profile plus leave / claim / attendance records. This cannot be undone.`, 'Delete')) return;
       try {
         const r = await call<{ payslips?: number; needs_confirm?: boolean; error?: string }>({ api: 'hr_emp_delete', id, tenant: company?.tenant_id });
         if (r.needs_confirm) {
-          if (!window.confirm(`⚠️ ${r.error || ''}\n\nDelete anyway and permanently erase ${r.payslips} payslip record(s)? Payroll history / EA source data will be lost.`)) return;
+          if (!await showConfirm('Delete payroll history too',
+            `⚠️ ${r.error || ''}\n\nDelete anyway and permanently erase ${r.payslips} payslip record(s)? Payroll history / EA source data will be lost.`, 'Delete anyway')) return;
           await call({ api: 'hr_emp_delete', id, tenant: company?.tenant_id, force: true });
           setNotice('Employee + payroll history deleted');
         } else {
@@ -137,8 +140,9 @@ export default function HrEmployeesPage() {
   const onEnableLogin = useCallback((id: string) => {
     const e = (employees || []).find((x) => x.id === id) || {} as Employee;
     if (!e.email) { setErr('Add an email on this employee first'); return; }
-    if (!window.confirm(`Create an HR OS login for ${e.name || 'this employee'} (${e.email})?\n\nThey’ll use it to apply leave, submit claims & clock in. You’ll get a one-time temporary password to share with them.`)) return;
     void (async () => {
+      if (!await showConfirm('Create HR OS login',
+        `Create an HR OS login for ${e.name || 'this employee'} (${e.email})?\n\nThey’ll use it to apply leave, submit claims & clock in. You’ll get a one-time temporary password to share with them.`, 'Create', 'p')) return;
       try {
         const r = await call<{ already?: boolean; name?: string; email?: string; temp_password?: string }>({ api: 'hr_rc_enable_login', employee_id: id });
         if (r.already) setNotice(`${e.name || 'Employee'} already has a login`);
@@ -152,8 +156,9 @@ export default function HrEmployeesPage() {
 
   /** `hrEnableLoginBulk()` — hros.html:2762. */
   const onEnableLoginBulk = useCallback(() => {
-    if (!window.confirm('Create HR OS logins for ALL active employees who have an email but no login yet?\n\nEmployees without an email are skipped. You’ll get a list of one-time temporary passwords to share.')) return;
     void (async () => {
+      if (!await showConfirm('Create HR OS logins in bulk',
+        'Create HR OS logins for ALL active employees who have an email but no login yet?\n\nEmployees without an email are skipped. You’ll get a list of one-time temporary passwords to share.', 'Create logins', 'p')) return;
       try {
         const r = await call<{ created?: Cred[]; skipped?: { name?: string; reason?: string }[] }>({ api: 'hr_rc_enable_login_bulk', tenant: company?.tenant_id });
         if (!(r.created && r.created.length)) setNotice('No new logins created' + (r.skipped?.length ? ` · ${r.skipped.length} skipped` : ''));

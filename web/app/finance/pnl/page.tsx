@@ -25,6 +25,7 @@ import FinancePnl, {
   PnlFailure, PnlLoading, pnlReachable,
   type Perms, type PnlData,
 } from '../../../src/finance-pnl';
+import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `curCo()` — app.html:1539. The shell's picker is the one source of the selection. */
@@ -116,7 +117,7 @@ export default function FinancePnlPage() {
 
   /** `pnlExportCsv()` — app.html:4517. The lines and the name are pnl.js's; only the download is here. */
   const onExport = useCallback(() => {
-    if (!data) { window.alert('Nothing to export yet'); return; }
+    if (!data) { toast('Nothing to export yet', true); return; }
     try {
       const mdl = pnlBuild(data, months, showZero);
       const lines = pnlCsvLines(mdl, data.totals);
@@ -129,7 +130,7 @@ export default function FinancePnlPage() {
       setTimeout(() => URL.revokeObjectURL(url), 800);
       void call({ api: 'export_log', what: 'pnl', tab: 'pnl', rows: Math.max(0, lines.length - 1), filename: fn }).catch(() => {});
     } catch (e) {
-      window.alert('Export failed: ' + (e instanceof Error ? e.message : String(e)));
+      toast('Export failed: ' + (e instanceof Error ? e.message : String(e)), true);
     }
   }, [data, months, showZero]);
 

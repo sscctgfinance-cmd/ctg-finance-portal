@@ -273,7 +273,8 @@ describe('the permission rules, in the direction that matters', () => {
     }
     const html = renderToStaticMarkup(
       <FinanceShell active="" tabs={financeNavFor(staff)} cats={financeCatsFor(staff)} who="A" role="Viewer"
-        companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop} onSignOut={noop}>x</FinanceShell>);
+        companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop}
+        onChangePassword={noop} onSignOut={noop}>x</FinanceShell>);
     for (const id of ['selfbill', 'wht', 'gateway', 'bankfeed', 'salesrecon', 'ctgaccess']) {
       expect(html, `Finance shell advertises ${id} to a non-manager`).not.toContain(`data-t="${id}"`);
     }
@@ -339,7 +340,8 @@ describe('the shell wraps the screen without becoming one', () => {
     const html = renderToStaticMarkup(
       <FinanceShell active="wht" tabs={financeNavFor(perms)} cats={financeCatsFor(perms)} who="BOSS" role="Admin"
         companies={[{ tenant_id: 't1', tenant_name: 'CTG SDN BHD' }]} company="t1" online theme="light"
-        onPickCompany={noop} onToggleTheme={noop} onRefresh={noop} onSignOut={noop}><p id="screen">the screen</p></FinanceShell>);
+        onPickCompany={noop} onToggleTheme={noop} onRefresh={noop} onChangePassword={noop}
+        onSignOut={noop}><p id="screen">the screen</p></FinanceShell>);
     expect(html).toContain('<p id="screen">the screen</p>');
     expect(html.match(/id="app"/g)?.length).toBe(1);
     expect(html).toContain('class="tab active" data-t="wht"');
@@ -353,7 +355,8 @@ describe('the shell wraps the screen without becoming one', () => {
     const perms: Perms = { manage_users: true, features: FINANCE_NAV.map((e) => e.id) };
     const html = renderToStaticMarkup(
       <FinanceShell active="wht" tabs={financeNavFor(perms)} cats={financeCatsFor(perms)} who="B" role="Admin"
-        companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop} onSignOut={noop}>x</FinanceShell>);
+        companies={[]} company="" online theme="light" onPickCompany={noop} onToggleTheme={noop} onRefresh={noop}
+        onChangePassword={noop} onSignOut={noop}>x</FinanceShell>);
     // The active tab's own category is on screen; the others are `cat-hide`, which app.html:618 hides.
     expect(html).toMatch(/class="tab active" data-t="wht" data-cat="operations"/);
     expect(html).toMatch(/class="tab cat-hide" data-t="overview"/);
@@ -370,5 +373,5 @@ function shell(role: ReturnType<typeof hrRole>, children: React.ReactNode = 'x')
     <HrShell view="" entries={entries} empMode={role.empMode} viewer={role.viewer} master={role.master}
       companies={[{ tenant_id: 't1', tenant_name: 'CTG SDN BHD' }]} tenant="t1" companyName="CTG SDN BHD"
       theme="light" collapsed={false} onPickCompany={noop} onToggleTheme={noop} onToggleNav={noop}
-      onSignOut={noop}>{children}</HrShell>);
+      onChangePassword={noop} onSignOut={noop}>{children}</HrShell>);
 }

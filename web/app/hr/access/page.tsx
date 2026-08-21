@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { showConfirm } from '../../../src/confirm';
 import HrAccess, { type HrUsersList, type InviteState } from '../../../src/hr-access';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -56,7 +57,7 @@ export default function HrAccessPage() {
 
   const onRoleChange = useCallback(async (userId: string, role: string) => {
     // hros.html:1625 keeps the confirm. Changing someone's access silently is not a thing to improve away.
-    if (!confirm(`Change this user to ${role}?`)) return;
+    if (!await showConfirm('Change access role', `Change this user to ${role}?`, 'Change', 'p')) return;
     try {
       await call({ api: 'hr_user_role_set', user_id: userId, role });
       setNotice('Access role updated');
