@@ -460,22 +460,30 @@ export function searchOpen(search: string): boolean {
  * this component writes, exactly as `qiCollect()`'s does. What IS split out is the part that decides
  * what reaches `portal_company_info_save`, because no golden sees a request body:
  *
- *   • a BLANK capital field is DELETED from the patch, not sent as 0 — sending 0 would overwrite a real
- *     paid-up capital with zero on a record an operator never touched;
- *   • a non-blank one is sent as a NUMBER, not the input's string;
- *   • a blank `incorporation_date` is DELETED, not sent as '' — an empty string is not a date and the
- *     column would reject or blank it.
+ *   • a blank date or number is sent as NULL, not as '' — Postgres rejects ''::date outright, and the
+ *     legacy form proved it: one untouched Compliance date failed the WHOLE save with
+ *     `invalid input syntax for type date: ""`, naming no field.
+ *   • a non-blank number is sent as a NUMBER, not the input's string.
  *
- * Everything else is passed through verbatim, which is the legacy's behaviour and the reason the field
- * set is pinned against app.html rather than retyped.
+ * The fields are read from INFO_SECTIONS rather than named here, and that is the whole point. The legacy
+ * guarded a hand-written list of one date (`incorporation_date`); the four Compliance dates were added to
+ * the schema later and the second list was never updated. Two sources of truth, and the newer fields fell
+ * through the gap. Deriving from the schema means a date added tomorrow is covered the day it is added.
+ *
+ * NULL rather than deleting the key: a deleted key cannot express "clear this", so a date entered by
+ * mistake could never be removed. Everything else is passed through verbatim — a blanked TEXT field must
+ * still reach the server as '' so that clearing it is a clear and not a silent no-op.
  */
 export function savePatch(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
-  ['authorised_capital', 'paid_up_capital'].forEach((k) => {
-    if (out[k] === '') delete out[k];
-    else if (out[k] != null) out[k] = Number(out[k]);
+  INFO_SECTIONS.forEach((sec) => {
+    (sec.fields || []).forEach((f) => {
+      if (!(f.k in out)) return;
+      const blank = String(out[f.k] == null ? '' : out[f.k]).trim() === '';
+      if (f.type === 'date') { if (blank) out[f.k] = null; }
+      else if (f.type === 'number') out[f.k] = blank ? null : Number(out[f.k]);
+    });
   });
-  if (out.incorporation_date === '') delete out.incorporation_date;
   return out;
 }
 
