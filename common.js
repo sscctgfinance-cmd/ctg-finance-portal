@@ -63,8 +63,23 @@ async function call(body){
     const tm=setTimeout(()=>ctrl.abort(),30000);
     try{
       const r=await fetch(API,{method:'POST',body:JSON.stringify(Object.assign({token:TOKEN},body)),signal:ctrl.signal});
-      // Retry once on transient 5xx
-      if((r.status===502||r.status===503||r.status===504) && attempt===0){
+      // Retry once on 503 ONLY — and the two statuses NOT in this list are the point.
+      //
+      //   503 Service Unavailable  the request was refused before it ran. Nothing happened, so a retry
+      //                            repeats nothing.
+      //   502 Bad Gateway          the function answered with something the gateway could not use. It
+      //                            may already have run.
+      //   504 Gateway Timeout      the function did not answer in time. It is most likely STILL RUNNING.
+      //
+      // Retrying either of the last two repeats a POST that may have completed — and the actions most
+      // likely to hit a gateway timeout are exactly the slow ones, because they are waiting on Xero:
+      // o2o_issue, sr_post_invoices, sbi_post_xero, ap_post, hr_payroll_finalise, hr_rc_mark_paid. A
+      // duplicated invoice or a twice-posted payroll is far worse than an error message, and the
+      // message this falls through to already says "please retry".
+      //
+      // web/src/portal.ts has never retried at all and nothing has been reported against it, so this
+      // moves the legacy client toward the behaviour the React one already ships.
+      if(r.status===503 && attempt===0){
         clearTimeout(tm);
         await new Promise(rs=>setTimeout(rs, 1000));
         continue;
