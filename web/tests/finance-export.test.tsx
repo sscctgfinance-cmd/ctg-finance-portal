@@ -7,7 +7,7 @@
 // by SOURCE where they have no output to assert.
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -152,7 +152,9 @@ describe('the P&L dispatch — app.html:5277', () => {
     const walk = (dir: string) => {
       for (const d of readdirSync(dir, { withFileTypes: true })) {
         if (d.isDirectory()) walk(join(dir, d.name));
-        else if (d.name === 'page.tsx') routes.push(join(dir, d.name));
+        // POSIX separators — the filter below slices on '/app/', which never matches a Windows path,
+        // so this guard threw rather than asserting anything on every Windows clone.
+        else if (d.name === 'page.tsx') routes.push(join(dir, d.name).split(sep).join('/'));
       }
     };
     walk(join(import.meta.dirname, '..', 'app'));

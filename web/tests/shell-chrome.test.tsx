@@ -20,7 +20,7 @@
 // scheduling is not.
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -83,7 +83,11 @@ function buttons(node: ReactNode): { text: string; onClick?: (e: unknown) => voi
 function walkRoutes(dir: string, out: string[] = []): string[] {
   for (const d of readdirSync(dir, { withFileTypes: true })) {
     if (d.isDirectory()) walkRoutes(join(dir, d.name), out);
-    else if (d.name === 'page.tsx') out.push(join(dir, d.name));
+    // POSIX separators, because these paths are then SLICED as strings (`split('/app/')`). On Windows
+    // `join` produces backslashes, `split('/app/')` returns [whole, undefined], and this whole guard
+    // threw before it could assert anything — i.e. the check that a route added at a depth spaTarget()
+    // does not reach must fail HERE was silently absent on every Windows clone.
+    else if (d.name === 'page.tsx') out.push(join(dir, d.name).split(sep).join('/'));
   }
   return out;
 }
@@ -343,6 +347,11 @@ describe('spaTarget() — which clicks the app handles itself', () => {
     // would otherwise be a silent full page load, which is exactly what #73's two sibling pages were
     // before this test walked. A three-deep route fails here rather than degrading quietly.
     expect(ROUTE_FILES.length).toBeGreaterThan(36);
+    // Guard the guard, on the axis that actually broke it: these paths are sliced as strings, so a
+    // Windows separator makes routeUrl() throw and this whole check assert nothing. It failed LOUDLY
+    // rather than silently — and was ignored for exactly that reason, as one of "the two known
+    // failures", which is the same outcome.
+    for (const f of ROUTE_FILES) expect(f, 'route paths must be POSIX').not.toContain('\\');
     for (const f of ROUTE_FILES) {
       const url = routeUrl(f);
       const app = url.startsWith('/hr/') ? 'hr' : 'finance';
