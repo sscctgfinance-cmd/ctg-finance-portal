@@ -4245,7 +4245,13 @@ function qiPreview(){
   var due =document.getElementById('qi_due').value;
   var ref =document.getElementById('qi_ref').value;
   var test=document.getElementById('qi_test').checked;
-  var subtotal=d.lines.reduce(function(s,l){return s+l.quantity*l.unit_amount;},0);
+  // Xero totals a document LINE BY LINE — LineAmount is qty x unitAmount rounded to the sen, and the
+  // invoice total is the sum of those. Summing the RAW products instead printed three lines of 50.00
+  // over a TOTAL of 149.98 (1.5 x 33.33, three times): a customer-facing invoice that does not add up
+  // on its own page, and that disagrees with the invoice Xero actually issues. One helper, used for
+  // both the row and the subtotal, so the two cannot diverge again.
+  var qiLineAmt=function(l){ return Math.round((Number(l.quantity)||0)*(Number(l.unit_amount)||0)*100)/100; };
+  var subtotal=d.lines.reduce(function(s,l){return s+qiLineAmt(l);},0);
   var currency = 'MYR';
 
   // Format "31 May 2026" — matches Xero PDF date style
@@ -4255,7 +4261,7 @@ function qiPreview(){
   var lineRows=d.lines.map(function(l){
     // Resolve a SKU code from QINV_META.items if any item matches this description (best-effort)
     var sku=''; (QINV_META.items||[]).forEach(function(it){ if(it.name===l.description||it.description===l.description) sku=it.code||''; });
-    var amt = l.quantity * l.unit_amount;
+    var amt = qiLineAmt(l);
     return '<tr>'+
       '<td style="padding:14px 8px 14px 0;border-top:1px solid #d9dde2;vertical-align:top;color:#7c8694;font-size:11px;letter-spacing:.02em">'+(sku?esc(sku):'&nbsp;')+'</td>'+
       '<td style="padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;color:#202632;font-size:13px;line-height:1.45">'+esc(l.description)+'</td>'+

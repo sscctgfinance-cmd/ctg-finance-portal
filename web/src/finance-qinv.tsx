@@ -300,7 +300,13 @@ function LineRow({ meta, onFillProduct, onRemove }: { meta: QinvMeta; onFillProd
  */
 function Preview({ meta, d }: { meta: QinvMeta; d: PreviewData }) {
   const currency = 'MYR';
-  const subtotal = d.lines.reduce((s, l) => s + l.quantity * l.unit_amount, 0);
+  // Xero totals a document LINE BY LINE — LineAmount is qty x unitAmount rounded to the sen, and the
+  // invoice total is the sum of those. Summing the RAW products instead printed three lines of 50.00
+  // over a TOTAL of 149.98 (1.5 x 33.33, three times): a customer-facing invoice that does not add up
+  // on its own page, and that disagrees with the invoice Xero actually issues. One helper, used for
+  // both the row and the subtotal, so the two cannot diverge again. Mirrors app.html's qiLineAmt.
+  const qiLineAmt = (l: QinvLine) => Math.round((Number(l.quantity) || 0) * (Number(l.unit_amount) || 0) * 100) / 100;
+  const subtotal = d.lines.reduce((s, l) => s + qiLineAmt(l), 0);
   const th = 'padding:8px;text-align:right;font-size:10px;color:#7c8694;text-transform:uppercase;letter-spacing:.1em;font-weight:600';
   const td = 'padding:14px 8px;border-top:1px solid #d9dde2;vertical-align:top;';
 
@@ -322,7 +328,7 @@ function Preview({ meta, d }: { meta: QinvMeta; d: PreviewData }) {
         <td style={st(td + 'text-align:right;color:#202632;font-size:13px')}>{String(l.quantity)}</td>
         <td style={st(td + 'text-align:right;color:#202632;font-size:13px')}>{pdfAmt(l.unit_amount)}</td>
         <td style={st(td + 'text-align:right;color:#7c8694;font-size:11px')}>{acctLabel(l.account_code)}</td>
-        <td style={st('padding:14px 0 14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#202632;font-size:13px')}>{pdfAmt(l.quantity * l.unit_amount)}</td>
+        <td style={st('padding:14px 0 14px 8px;border-top:1px solid #d9dde2;vertical-align:top;text-align:right;color:#202632;font-size:13px')}>{pdfAmt(qiLineAmt(l))}</td>
       </tr>
     );
   });

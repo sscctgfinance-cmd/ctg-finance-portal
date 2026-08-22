@@ -172,3 +172,32 @@ Deno.test("the P&L export carries the numbers the screen shows, not their float 
     }
   }
 });
+
+/* ── Quick Invoice's PDF ─────────────────────────────────────────────────────────────────────────── */
+
+Deno.test("the invoice PDF adds up, and agrees with the invoice Xero issues", async () => {
+  // Xero totals a document LINE BY LINE: LineAmount is qty x unitAmount rounded to the sen, and the
+  // total is the sum of those. Summing the RAW products instead put three lines of 50.00 over a TOTAL
+  // of 149.98 on a customer-facing invoice — 1.5 x 33.33, three times. The quantity box is a bare
+  // <input type="number"> with no step, so a fractional quantity is one keystroke away.
+  const app = await Deno.readTextFile(new URL("../app.html", import.meta.url));
+  const at = app.indexOf("var qiLineAmt=");
+  assertEquals(at > -1, true, "app.html no longer derives a per-line invoice amount");
+  const block = app.slice(at, at + 2500);
+  assertEquals(block.includes("s+qiLineAmt(l)"), true, "the subtotal is not the sum of the ROUNDED lines");
+  assertEquals(block.includes("var amt = qiLineAmt(l);"), true, "the printed row and the subtotal use different arithmetic");
+
+  // The arithmetic itself, driven rather than described.
+  const lineAmt = (q: number, u: number) => Math.round(q * u * 100) / 100;
+  const lines = [[1.5, 33.33], [1.5, 33.33], [1.5, 33.33]] as [number, number][];
+  const total = lines.reduce((s, [q, u]) => s + lineAmt(q, u), 0);
+  assertEquals(lines.map(([q, u]) => lineAmt(q, u)), [50, 50, 50]);
+  assertEquals(Math.round(total * 100) / 100, 150, "the lines shown do not add to the total shown");
+  // …and it is NOT what summing the raw products gives, or the fixture proves nothing.
+  assertEquals(Math.round(lines.reduce((s, [q, u]) => s + q * u, 0) * 100) / 100, 149.98);
+
+  // The React port must not have kept the old arithmetic — the two render the same document.
+  const tsx = await Deno.readTextFile(new URL("../web/src/finance-qinv.tsx", import.meta.url));
+  assertEquals(tsx.includes("s + qiLineAmt(l)"), true, "the React invoice sums raw products");
+  assertEquals(tsx.includes("pdfAmt(qiLineAmt(l))"), true, "the React invoice row uses different arithmetic");
+});
