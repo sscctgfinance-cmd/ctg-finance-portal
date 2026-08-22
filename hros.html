@@ -1991,7 +1991,11 @@ function hrRCFormAndReceipts(){
 var RC_TD='padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px';
 function hrRCDefRate(){ var r=(RC.cfg&&RC.cfg.mileage_rates||[]).find(function(x){return x.is_default;}); return r?r.rate:''; }
 function hrRCCcOpts(sel){ var cfg=RC.cfg||{}; return '<option value="">— cost center —</option>'+(cfg.cost_centers||[]).filter(function(c){return c.active;}).map(function(c){return '<option value="'+esc(c.code)+'"'+(String(sel||'')===String(c.code)?' selected':'')+'>'+esc(c.code+' — '+c.name)+'</option>';}).join(''); }
-function hrRCItemAmt(it,mile){ return mile ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100 : (Number(it.amount)||0); }
+// Both branches to the sen — must stay identical to hr_rc_save's own `amt` (hr.ts), which is the same
+// line on the other side of the wire. A typed amount carrying a third decimal was stored raw on the
+// item, printed through toFixed(2), and rolled into a header total that rounds the SUM: three roundings
+// of one figure, and the header is what the bank file pays.
+function hrRCItemAmt(it,mile){ return mile ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100 : Math.round((Number(it.amount)||0)*100)/100; }
 function hrRCItemMore(i){ hrRCSyncItems(); RC.form.items[i]._open=!RC.form.items[i]._open; hrRender(); }
 function hrRCForm(){
   var f=RC.form||{}; var cfg=RC.cfg||{};

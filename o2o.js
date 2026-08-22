@@ -232,7 +232,20 @@ function o2oParseRows(sheets, useSkuMode) {
  */
 function o2oApplyMasterRate(p, rawRate) {
   var mRate = (rawRate != null && rawRate !== '') ? Number(rawRate) : NaN;
-  if (!(isFinite(mRate) && mRate > 0 && mRate != O2O_DISCOUNT_RATE)) return false;
+  // Bounded ABOVE as well as below, and 100 is excluded, not merely capped.
+  //
+  //   · a commission of 100% or more bills the pharmacy nothing or less than nothing. `19.2` typed as
+  //     `192` — a decimal point away — produced a line of MINUS RM18,200 on a RM1,000 sale, and
+  //     `o2o_issue` (finance.ts:626) forwards UnitAmount into Xero without recomputing it, so that is
+  //     the invoice.
+  //   · exactly 100 also sets `l.discount_rate = 100`, and the gross recovery below divides by
+  //     `1 - discount_rate/100`. A second call on the same lines then divides by zero and every amount
+  //     becomes NaN — a line item written into a bill as the literal text "NaN".
+  //
+  // An out-of-range master rate falls back to the default 19.2%, exactly as a blank or non-numeric one
+  // already does. That is silent, and it is the safe direction: a normal invoice rather than a negative
+  // one. The caller does not read the return value (app.html:2975, web/app/finance/o2o/page.tsx:126).
+  if (!(isFinite(mRate) && mRate > 0 && mRate < 100 && mRate != O2O_DISCOUNT_RATE)) return false;
   p.commission = Math.round((p.total_sales * mRate / 100) * 100) / 100;
   p.total = Math.round((p.total_sales - p.commission) * 100) / 100;
   p.lines.forEach(function (l) {

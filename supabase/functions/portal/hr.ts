@@ -1988,9 +1988,14 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         for(const it of items){
           const t=typeMap[it.claim_type_id]||{};
           // Mileage line (spec §4): final = km × rate + parking + toll. Other lines: entered amount.
+          // Both branches to the sen. A mileage line always was; a typed line was not, so an amount
+          // entered with a third decimal was STORED raw on the item, printed on the approval document
+          // through toFixed(2), and rolled into a header total that Math.round()s the sum — three
+          // roundings of one figure, and the header is what the bank file pays. Must stay identical to
+          // hrRCItemAmt() in hros.html, which is the same line on the other side of the wire.
           const amt = t.is_mileage
             ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100
-            : (Number(it.amount)||0);
+            : Math.round((Number(it.amount)||0)*100)/100;
           amount+=amt; if(t.taxable) anyTaxable=true;
           normItems.push({ claim_type_id:it.claim_type_id||null, item_date:it.item_date||c.claim_date||null, amount:amt, description:it.description||"",
             vendor_name:it.vendor_name||null, receipt_no:(String(it.receipt_no||"").trim()||null), invoice_no:(String(it.invoice_no||"").trim()||null),
@@ -2006,7 +2011,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         headerType = distinct.length===1 ? distinct[0] : null;
       } else {
         const t=typeMap[c.claim_type_id]||{}; headerType=c.claim_type_id||null; anyTaxable=!!t.taxable;
-        amount = (t.is_mileage && c.mileage) ? Math.round(((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)+(Number(c.mileage.parking_amount)||0)+(Number(c.mileage.toll_amount)||0))*100)/100 : (Number(c.amount)||0);
+        amount = (t.is_mileage && c.mileage) ? Math.round(((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)+(Number(c.mileage.parking_amount)||0)+(Number(c.mileage.toll_amount)||0))*100)/100 : Math.round((Number(c.amount)||0)*100)/100;
       }
       const row:any = { tenant_id:tenant, employee_id:empId, claim_type_id:headerType, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:anyTaxable, payroll_applicable:false,
         claim_month:(String(c.claim_month||"").trim() || String(c.claim_date||"").slice(0,7) || null), cost_center:(String(c.cost_center||"").trim()||null), updated_at:new Date().toISOString() };
