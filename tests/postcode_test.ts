@@ -18,20 +18,22 @@ import { assertEquals } from "jsr:@std/assert@1";
 import { arrSource, fnSource, inlineScript } from "../tools/extract.ts";
 
 const pcSrc = await Deno.readTextFile(new URL("../postcode.js", import.meta.url));
-const appSrc = inlineScript(await Deno.readTextFile(new URL("../app.html", import.meta.url)));
+const appRaw = await Deno.readTextFile(new URL("../app.html", import.meta.url));
+const appSrc = inlineScript(appRaw);
 
 const mod = await import("data:application/typescript," + encodeURIComponent(
-  [pcSrc.replace(/if \(typeof module[\s\S]*$/, ""), "export { MY_POSTCODES, myPostcodeFind };"].join("\n"),
+  [pcSrc.replace(/if \(typeof module[\s\S]*$/, ""),
+   "export { MY_POSTCODES, myPostcodeFind, MY_STATES, MY_STATE_CODE, myStateName };"].join("\n"),
 ));
 // deno-lint-ignore no-explicit-any
-const { MY_POSTCODES, myPostcodeFind } = mod as any;
+const { MY_POSTCODES, myPostcodeFind, MY_STATES, MY_STATE_CODE, myStateName } = mod as any;
 
 /** The generator's own list. Duplicated here ON PURPOSE: this file must fail if the generator's copy
  *  is weakened, and a test that imports the thing it checks proves nothing. */
 const ANCHORS: [string, string, string][] = [
   ["01000", "Perlis", "Kangar"],
   ["05000", "Kedah", "Alor Setar"],
-  ["10300", "Pinang", "Pulau Pinang"],
+  ["10300", "Pulau Pinang", "Pulau Pinang"],
   ["15000", "Kelantan", "Kota Bharu"],
   ["20000", "Terengganu", "Kuala Terengganu"],
   ["25000", "Pahang", "Kuantan"],
@@ -39,15 +41,15 @@ const ANCHORS: [string, string, string][] = [
   ["39000", "Pahang", "Tanah Rata"],
   ["47301", "Selangor", "Petaling Jaya"],
   ["49000", "Pahang", "Bukit Fraser"],
-  ["50000", "Kuala Lumpur", "Kuala Lumpur"],
-  ["62000", "Putrajaya", "Putrajaya"],
+  ["50000", "Wilayah Persekutuan Kuala Lumpur", "Kuala Lumpur"],
+  ["62000", "Wilayah Persekutuan Putrajaya", "Putrajaya"],
   ["63000", "Selangor", "Cyberjaya"],
   ["68100", "Selangor", "Batu Caves"],
   ["69000", "Pahang", "Genting Highlands"],
   ["70000", "Negeri Sembilan", "Seremban"],
   ["75000", "Melaka", "Melaka"],
   ["80000", "Johor", "Johor Bahru"],
-  ["87000", "Labuan", "Labuan"],
+  ["87000", "Wilayah Persekutuan Labuan", "Labuan"],
   ["88000", "Sabah", "Kota Kinabalu"],
   ["93000", "Sarawak", "Kuching"],
 ];
@@ -76,17 +78,71 @@ Deno.test("a partial or malformed postcode resolves to NOTHING", () => {
     assertEquals(myPostcodeFind(bad), null, `${JSON.stringify(bad)} must not resolve`);
   }
   // Surrounding whitespace on a complete code is the operator's, not an error.
-  assertEquals(myPostcodeFind(" 10300 ")?.state, "Pinang");
+  assertEquals(myPostcodeFind(" 10300 ")?.state, "Pulau Pinang");
   // A code that is simply not allocated resolves to nothing rather than the nearest thing.
   assertEquals(myPostcodeFind("00000"), null);
   assertEquals(myPostcodeFind("99999"), null);
+});
+
+Deno.test("the dropdown is LHDN's state list, verbatim and complete", () => {
+  // The IRBM e-Invoice state-code table (sdk.myinvois.hasil.gov.my/codes/state-codes). Typed out here
+  // rather than imported from the thing under test, so a rename in postcode.js fails HERE rather than
+  // agreeing with itself. Code 17 "Not Applicable" is for a foreign address and is deliberately absent.
+  const OFFICIAL: [string, string][] = [
+    ["01", "Johor"], ["02", "Kedah"], ["03", "Kelantan"], ["04", "Melaka"], ["05", "Negeri Sembilan"],
+    ["06", "Pahang"], ["07", "Pulau Pinang"], ["08", "Perak"], ["09", "Perlis"], ["10", "Selangor"],
+    ["11", "Terengganu"], ["12", "Sabah"], ["13", "Sarawak"],
+    ["14", "Wilayah Persekutuan Kuala Lumpur"], ["15", "Wilayah Persekutuan Labuan"],
+    ["16", "Wilayah Persekutuan Putrajaya"],
+  ];
+  assertEquals(MY_STATES, OFFICIAL.map(([, n]) => n));
+  for (const [code, name] of OFFICIAL) assertEquals(MY_STATE_CODE[name], code, name);
+  // The names the portal used before, which are NOT Malaysian state names, must be gone as options.
+  for (const wrong of ["Pinang", "Kuala Lumpur", "Labuan", "Putrajaya", "Penang", "Malacca"]) {
+    assertEquals(MY_STATES.includes(wrong), false, `"${wrong}" is not a state name and must not be offered`);
+  }
+});
+
+Deno.test("a record stored under the OLD names still resolves — renaming an option renames nothing", () => {
+  // This is the whole migration. `Pinang` is what SKINDAE's registered office is stored under, and a
+  // stored value matching no <option> selects NOTHING — the field would read as never filled in.
+  assertEquals(myStateName("Pinang"), "Pulau Pinang");
+  assertEquals(myStateName("Kuala Lumpur"), "Wilayah Persekutuan Kuala Lumpur");
+  assertEquals(myStateName("Labuan"), "Wilayah Persekutuan Labuan");
+  assertEquals(myStateName("Putrajaya"), "Wilayah Persekutuan Putrajaya");
+  // Colloquial and punctuation variants, since matching ignores everything but letters and digits.
+  for (const s of ["Penang", "PULAU PINANG", "p. pinang", "  Pulau  Pinang "]) {
+    assertEquals(myStateName(s), "Pulau Pinang", s);
+  }
+  for (const s of ["W.P. Kuala Lumpur", "WP KUALA LUMPUR", "KL", "wilayah persekutuan kuala lumpur"]) {
+    assertEquals(myStateName(s), "Wilayah Persekutuan Kuala Lumpur", s);
+  }
+  assertEquals(myStateName("Malacca"), "Melaka");
+  assertEquals(myStateName("Negri Sembilan"), "Negeri Sembilan");
+  // Every official name resolves to itself — an alias must never redirect a correct value.
+  for (const s of MY_STATES) assertEquals(myStateName(s), s, s);
+});
+
+Deno.test("an unrecognised state resolves to '' — never to itself", () => {
+  // '' rather than the input: the caller is choosing a <select> option, and handing back an unknown
+  // string sets the field to a value no option matches, which selects nothing and reads as unfilled.
+  for (const s of ["Singapore", "Bangkok", "zzz", "", null, undefined, 42]) {
+    assertEquals(myStateName(s), "", JSON.stringify(s));
+  }
 });
 
 Deno.test("EVERY state in the table is one the form's own dropdown offers", () => {
   // MY_STATES is what <select> renders. A state the table names and the dropdown does not would set the
   // field to no option at all — the form would read as "state not filled in", which is worse than wrong
   // because it looks like the operator's omission.
-  const states = new Function(arrSource(appSrc, "MY_STATES") + "\nreturn MY_STATES;")() as string[];
+  const states = MY_STATES as string[];
+  // …and app.html must NOT declare its own. postcode.js is a classic script sharing the same global
+  // lexical environment, so a second top-level declaration is a SyntaxError — a white screen for every
+  // user, which the parse gate catches but which is worth naming where the cause lives.
+  // Read the FILE, not inlineScript() — that concatenates the <script src> files too, postcode.js
+  // among them, so it contains the one legitimate declaration by construction.
+  assertEquals(/(?:const|let|var)\s+MY_STATES\s*=/.test(appRaw), false,
+    "app.html declares MY_STATES again — that is a duplicate top-level declaration");
   const inTable = Object.keys(MY_POSTCODES).sort();
   assertEquals(inTable.length, 16);
   for (const s of inTable) {
@@ -159,7 +215,7 @@ Deno.test("a city the operator already has is never overwritten", () => {
   // better answer and is not ours to replace.
   const dom = mkForm({ reg_postcode: "10300", reg_city: "George Town", reg_state: "" });
   dom.run(true);
-  assertEquals(dom.value("reg_state"), "Pinang", "the state is still derived");
+  assertEquals(dom.value("reg_state"), "Pulau Pinang", "the state is still derived");
   assertEquals(dom.value("reg_city"), "George Town", "the typed city was replaced by the postal locality");
 });
 

@@ -456,11 +456,36 @@ describe('the section schema, read out of app.html at run time', () => {
     expect(INFO_SUMMARY_KEYS.map((k) => ({ k: k.k, l: k.l, copy: !!k.copy }))).toEqual(legacy);
   });
 
-  it('has the same document categories and the same Malaysian states', () => {
+  it('has the same document categories, and ONE state list shared with app.html', () => {
     const cats = /const INFO_DOC_CATEGORIES = \[([^\]]*)\]/.exec(APP)!;
     expect(INFO_DOC_CATEGORIES).toEqual(cats[1].split(',').map((s) => s.trim().slice(1, -1)));
-    const states = /const MY_STATES=\[([^\]]*)\]/.exec(APP)!;
-    expect(MY_STATES).toEqual(states[1].split(',').map((s) => s.trim().slice(1, -1)));
+    // MY_STATES is no longer transcribed on either side — both import postcode.js, which carries the
+    // LHDN e-Invoice state-code table verbatim. So the parity to check is that app.html does NOT
+    // declare its own (a duplicate top-level declaration is a SyntaxError that white-screens the app),
+    // and that what we export really is the official list.
+    expect(/(?:const|let|var)\s+MY_STATES\s*=/.test(APP)).toBe(false);
+    expect(MY_STATES).toEqual([
+      'Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan', 'Pahang', 'Pulau Pinang', 'Perak',
+      'Perlis', 'Selangor', 'Terengganu', 'Sabah', 'Sarawak',
+      'Wilayah Persekutuan Kuala Lumpur', 'Wilayah Persekutuan Labuan', 'Wilayah Persekutuan Putrajaya',
+    ]);
+    // The spellings the portal used before are not Malaysian state names and must not be offered.
+    for (const wrong of ['Pinang', 'Kuala Lumpur', 'Labuan', 'Putrajaya']) {
+      expect(MY_STATES).not.toContain(wrong);
+    }
+  });
+
+  it('a record stored under an OLD state name still selects — and renders official', () => {
+    // Renaming an option renames nothing in the database. A stored value matching no <option> selects
+    // NOTHING, so SKINDAE's "Pinang" would read as a state nobody had filled in.
+    const html = renderToStaticMarkup(screen({ mode: 'edit' }));
+    expect(html).toContain('data-k="reg_state"');
+    const legacy = { ...COMPANIES[0], reg_state: 'Pinang' };
+    const edit = renderToStaticMarkup(screen({ mode: 'edit', companies: [legacy], active: legacy.tenant_id }));
+    expect(edit).toMatch(/<option selected="" value="Pulau Pinang">|value="Pulau Pinang" selected/);
+    const view = renderToStaticMarkup(screen({ companies: [legacy], active: legacy.tenant_id }));
+    expect(view).toContain('Pulau Pinang');
+    expect(view).not.toMatch(/>Pinang</);
   });
 
   it('rewrites exactly the eight list keys infoCollect() does', () => {
@@ -1277,7 +1302,7 @@ describe('the postcode fills the address — app.html:6047', () => {
 
   it('never replaces a city the operator already has', () => {
     const r = postcodeFill('10300', true, 'George Town');
-    expect(r.state).toBe('Pinang');
+    expect(r.state).toBe('Pulau Pinang');
     expect(r.city).toBeNull();
   });
 
