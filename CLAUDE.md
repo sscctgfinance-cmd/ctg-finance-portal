@@ -1717,6 +1717,18 @@ git switch main && git pull origin main && git push publish main
 
 That push is what rebuilds Pages and triggers the edge-function deploy.
 
+**A merge is not a deploy, and a green CI is not one either — check the DEPLOY workflow.** Both repos
+run `deploy-supabase-portal.yml`, so the function deploys twice per change and a failure in one can be
+masked by the other. It has a source guard, and one of its checks is a **baseline** on the number of
+`api === "..."` branches (`EXPECTED_ACTIONS` in that file): **update it in the same commit that adds or
+removes a handler.** It was left at 209 when v224 retired the six Web Push actions, the real count went
+to 204, and every deploy from that commit refused — in both repos, for two days, while merges kept
+landing and the site kept serving the older function. Nothing said so; the workflow just went red where
+nobody was looking. What is actually live is best confirmed by BEHAVIOUR, not by the `hint` string,
+which is stale: `{"api":"hr_dashboard","tenant":{"a":1}}` answers `bad tenant` 400 only on v210+, and a
+retired action answers `unknown action`. Do not probe `login` / `changepw` / `client_error` — lockout
+counters and row inserts.
+
 ⚠️ `publish` is a **public** repo and unrelated projects sit in this folder — they have been published
 by accident once already. Never `git add -A` here; stage named files only.
 
@@ -1734,6 +1746,29 @@ live for every user today, and it must not start needing npm to be reachable in 
 CI additionally parses `hros.html`, `app.html` and `index.html` fail-closed (a syntax error in one of
 those single-file apps is a white screen for every user), lints every module in
 `supabase/functions/portal/`, and holds the `no-redeclare` baseline at 6.
+
+### Money: round where it is STORED, not where it is printed
+
+Seven modules carried the same defect and it is the one the operator finds, because it is the one that
+shows: a figure rounded at the printer while another exit rounds differently, or not at all. `wht.js`
+(subtotal vs rows), `gateway.js` (CSV vs summary cards), `salesrecon.js` (**three** answers — CSV, API
+body, screen), `pnl.js` (CSV float residue), Quick Invoice's PDF (lines 50.00 ×3 over a total of
+149.98), `sbi_save` (`gross − wht ≠ net` on a document carrying an LHDN declaration) and `hr_rc_save`
+(mileage rounded, typed raw). Three rules came out of it:
+
+- **`toFixed(2)` and `Math.round(x*100)/100` disagree at the half sen** — `(100.005).toFixed(2)` is
+  `"100.00"`, `Math.round(100.005*100)/100` is `100.01`. Both idioms are in this codebase. Round ONCE,
+  at the store; half-up, which is what the statutory payroll engine already uses.
+- **Xero totals a document LINE BY LINE** — `LineAmount = round2(qty × unitAmount)`, total = Σ those. A
+  preview that sums raw products disagrees with the invoice Xero issues.
+- **`isNaN` is not a number check.** `isNaN(Infinity)` is false and `Number(Infinity)||0` is Infinity, so
+  a spreadsheet cell of `1e400` walked through every coercion into a CSV bound for a ledger. Use
+  `isFinite`.
+
+`tests/money_rounding_test.ts`, `tests/hostile_input_test.ts` and `tests/payroll_properties_test.ts` are
+the guards. The payroll engine itself **passed** a ~3,200-wage property sweep; its three apparent cliffs
+are Malaysian law (the RM10 MTD floor, ITA s.6A's RM400 rebate at RM35,000, KWSP's 13%→12% step at
+RM5,000) and are pinned as deliberate so nobody smooths a statutory rule out of it.
 
 ### If a `tests/golden/` test fails
 
