@@ -87,19 +87,31 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       if (b.fix === true) {
         // Top up to the statutory floor only — never reduce anyone who has been granted more.
         if(!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"topping up leave entitlements needs a full-scope admin" }, 403);
-        let n = 0;
+        // n counts what was WRITTEN, not what was attempted. It used to increment either way, so a
+        // failed write was reported to the operator — and recorded in the audit log — as an entitlement
+        // that had been topped up to the statutory floor when it had not. Failures are collected and
+        // returned rather than thrown: a partial repair is worth keeping, and the operator needs to see
+        // which employees still need one.
+        let n = 0; const failed: string[] = [];
         for(const r of short){
           for(const [code, want] of [["AL", r.annual && r.annual.required], ["ML", r.sick && r.sick.required]] as any[]){
             if(!want) continue;
             const tid = typeBy[code]; if(!tid) continue;
             const { data: ex } = await sb.from("hr_leave_balances")
               .select("id,entitled").eq("employee_id",r.employee_id).eq("leave_type_id",tid).eq("year",yr).maybeSingle();
-            if(ex){ if(Number(ex.entitled) < want){ await sb.from("hr_leave_balances").update({ entitled: want }).eq("id",ex.id); n++; } }
-            else  { await sb.from("hr_leave_balances").insert({ employee_id:r.employee_id, leave_type_id:tid, year:yr, entitled:want, taken:0 }); n++; }
+            if(ex){
+              if(Number(ex.entitled) < want){
+                const { error } = await sb.from("hr_leave_balances").update({ entitled: want }).eq("id",ex.id);
+                if(error) failed.push(String(r.employee_id)+"/"+code+": "+error.message); else n++;
+              }
+            } else {
+              const { error } = await sb.from("hr_leave_balances").insert({ employee_id:r.employee_id, leave_type_id:tid, year:yr, entitled:want, taken:0 });
+              if(error) failed.push(String(r.employee_id)+"/"+code+": "+error.message); else n++;
+            }
           }
         }
-        await logAudit(me,"hr_leave_compliance_fix",tenant,{ year:yr, adjusted:n, employees:short.length });
-        return j({ ok:true, fixed:n, employees:short.length, year:yr });
+        await logAudit(me,"hr_leave_compliance_fix",tenant,{ year:yr, adjusted:n, employees:short.length, failed:failed.length });
+        return j({ ok:true, fixed:n, employees:short.length, year:yr, failed: failed.length, failures: failed.slice(0,20) });
       }
 
       return j({ ok:true, year:yr, checked:(emps||[]).length, short, no_join_date:noJoin,
@@ -301,14 +313,20 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       }).eq("id", target.id);
       if (uerr) return j({ ok:false, error:uerr.message });
 
-      // Kill live sessions immediately — otherwise a revoked person keeps working until their token ages out.
-      await sb.from("portal_sessions").delete().eq("user_id", target.id);
+      // Kill live sessions immediately — otherwise a revoked person keeps working until their token ages
+      // out. That sentence is the reason this delete is now CHECKED: unread, a failure here left the
+      // revoked person working while the caller was told the revoke had succeeded, and nothing anywhere
+      // recorded it. The link removal above already succeeded, so this does not fail the request — it
+      // reports, and it writes the failure into the access log, which is where a question about who
+      // still had access gets answered later.
+      const { error: serr } = await sb.from("portal_sessions").delete().eq("user_id", target.id);
 
       await sb.from("portal_ctg_access_log").insert({
         actor_email: actor, action:"revoke", ctg_sub: sub, ctg_email: target.email,
-        portal_user_id: target.id, ip, detail: { deactivated: ssoOnly },
+        portal_user_id: target.id, ip, detail: { deactivated: ssoOnly, sessions_killed: !serr, session_error: serr ? String(serr.message).slice(0,200) : null },
       });
-      return j({ ok:true, deactivated: ssoOnly, email: target.email });
+      return j({ ok:true, deactivated: ssoOnly, email: target.email, sessions_killed: !serr,
+        warning: serr ? "Access was removed, but live sessions could not be ended — that person may keep working until their token expires. Revoke again." : undefined });
     }
     if (api === "cron_health") {
       // v169: nothing watched the scheduled jobs. poll-gmail returned 500 every 5 minutes for four weeks
