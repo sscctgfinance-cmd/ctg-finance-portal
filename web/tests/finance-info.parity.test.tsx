@@ -54,10 +54,11 @@ import { FIXTURES } from '../../tests/render_fixtures';
 import FinanceInfo, {
   INFO_DOC_CATEGORIES, INFO_LIST_KEYS, INFO_SECTIONS, INFO_SUMMARY_KEYS, MY_STATES, SearchResults,
   inDaysLocalISO, infoCompanyProgress, infoDocBytes, infoDocIcon, infoFilled, infoFolderPath,
-  infoReachable, infoSearchAll, infoSectionFilled, printDocHtml, progressColour, saveBody, savePatch,
+  infoReachable, infoSearchAll, infoSectionFilled, postcodeFill, printDocHtml, progressColour, saveBody, savePatch,
   searchOpen, todayLocalISO,
   type InfoCompany, type InfoDoc, type InfoFolder,
 } from '../src/finance-info';
+import { MY_POSTCODES } from '../../postcode.js';
 import { goldenSection, relax, REPO } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
 
@@ -1238,6 +1239,79 @@ describe('the save patch — no golden sees a request body', () => {
     // one writes nowhere at best, and over another company's record at worst.
     expect(() => saveBody('', { ssm_new: 'x' })).toThrow();
     expect(saveBody('t1', { ssm_new: 'x' })).toEqual({ api: 'company_info_save', tenant: 't1', patch: { ssm_new: 'x' } });
+  });
+});
+
+describe('the postcode fills the address — app.html:6047', () => {
+  it('declares the SAME postcode/city wiring as app.html, field for field', () => {
+    // The parity that matters here is the SCHEMA, not the markup: both sides derive the behaviour from
+    // INFO_SECTIONS, so a third address block added to one and not the other is the drift to catch.
+    const legacy = APP.slice(APP.indexOf('const INFO_SECTIONS'), APP.indexOf("{ id:'contact'"));
+    for (const pre of ['reg', 'biz']) {
+      expect(legacy).toContain(`{k:'${pre}_postcode',l:'Postcode'`);
+      expect(legacy).toContain(`pc:{city:'${pre}_city',state:'${pre}_state'}`);
+      expect(legacy).toContain(`cityOf:'${pre}_postcode'`);
+      const f = INFO_SECTIONS.flatMap((x) => x.fields || []);
+      expect(f.find((x) => x.k === `${pre}_postcode`)!.pc).toEqual({ city: `${pre}_city`, state: `${pre}_state` });
+      expect(f.find((x) => x.k === `${pre}_city`)!.cityOf).toBe(`${pre}_postcode`);
+    }
+    // Every postcode field names fields that exist, and every named state field really is a <select>.
+    const all = INFO_SECTIONS.flatMap((x) => x.fields || []);
+    for (const f of all.filter((x) => x.pc)) {
+      expect(all.find((x) => x.k === f.pc!.city)?.cityOf).toBe(f.k);
+      expect(all.find((x) => x.k === f.pc!.state)?.state).toBe(true);
+    }
+  });
+
+  it('an OPEN fills the dropdown and changes nothing else', () => {
+    // The dangerous direction: a stored address is what is filed with SSM, and rewriting a field
+    // because a page rendered is a change nobody made and nobody sees.
+    expect(postcodeFill('10300', false, 'George Town'))
+      .toEqual({ cities: ['Pulau Pinang'], state: null, city: null });
+  });
+
+  it('TYPING derives the state and fills an empty city', () => {
+    expect(postcodeFill('47301', true, '')).toEqual({ cities: ['Petaling Jaya'], state: 'Selangor', city: 'Petaling Jaya' });
+    expect(postcodeFill('88000', true, '   ')).toMatchObject({ state: 'Sabah', city: 'Kota Kinabalu' });
+  });
+
+  it('never replaces a city the operator already has', () => {
+    const r = postcodeFill('10300', true, 'George Town');
+    expect(r.state).toBe('Pinang');
+    expect(r.city).toBeNull();
+  });
+
+  it('offers several localities and picks none of them', () => {
+    // Found from the table rather than hardcoded, so the case survives a regeneration.
+    const ix: Record<string, number> = {};
+    for (const cities of Object.values(MY_POSTCODES)) {
+      for (const list of Object.values(cities)) for (const pc of list.split(' ')) ix[pc] = (ix[pc] || 0) + 1;
+    }
+    const many = Object.keys(ix).find((pc) => ix[pc] > 1)!;
+    expect(typeof many).toBe('string');
+    const r = postcodeFill(many, true, '');
+    expect(r.cities.length).toBeGreaterThan(1);
+    expect(r.city).toBeNull();
+  });
+
+  it('an unknown or PARTIAL postcode changes nothing at all', () => {
+    for (const bad of ['', '1', '103', '1030', '00000', '99999', 'abcde', null, undefined]) {
+      expect(postcodeFill(bad, true, '')).toEqual({ cities: [], state: null, city: null });
+    }
+  });
+
+  it('the three blocks inside another range are Pahang, not their neighbour', () => {
+    for (const pc of ['39000', '49000', '69000']) expect(postcodeFill(pc, true, '').state).toBe('Pahang');
+  });
+
+  it('the postcode and city inputs carry the attributes the route reads them by', () => {
+    const html = renderToStaticMarkup(screen({ mode: 'edit' }));
+    expect(html).toContain('data-city="reg_city"');
+    expect(html).toContain('data-state="reg_state"');
+    expect(html).toContain('id="dl_reg_city"');
+    expect(html).toContain('list="dl_reg_city"');
+    // The city must stay free text — a <select> would force the postal locality over "George Town".
+    expect(/<select[^>]*data-k="reg_city"/.test(html)).toBe(false);
   });
 });
 

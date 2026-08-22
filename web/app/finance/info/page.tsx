@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import FinanceInfo, {
-  infoFolderById, infoFolderPath, infoReachable, printDocHtml, saveBody, savePatch,
+  infoFolderById, infoFolderPath, infoReachable, postcodeFill, printDocHtml, saveBody, savePatch,
   type FolderId, type InfoCompany, type InfoDoc, type InfoFolder,
 } from '../../../src/finance-info';
 import { showConfirm } from '../../../src/confirm';
@@ -354,13 +354,49 @@ export default function FinanceInfoPage() {
       });
   }, [editable, active, loadInfo]);
 
+  /**
+   * app.html:6047 — a postcode fills the state and offers the city, applied to the uncontrolled form.
+   *
+   * The DOM writes are here because they ARE the DOM; the DECISION is `postcodeFill()` in `src/`, where
+   * the test can drive every branch. `typed` is the caller's, and it is what stops an open rewriting a
+   * stored state — see that function's header.
+   */
+  const applyPostcode = useCallback((el: HTMLInputElement, typed: boolean) => {
+    const cityKey = el.dataset.city, stateKey = el.dataset.state;
+    if (!cityKey || !stateKey) return;
+    const root = form.current;
+    if (!root) return;
+    const city = root.querySelector<HTMLInputElement>('#info-form [data-k="' + cityKey + '"]');
+    const r = postcodeFill(el.value, typed, city ? city.value : '');
+    const dl = root.querySelector<HTMLDataListElement>('#dl_' + cityKey);
+    if (dl) dl.innerHTML = r.cities.map((c) => '<option value="' + c.replace(/"/g, '&quot;') + '"></option>').join('');
+    if (r.state) {
+      const sel = root.querySelector<HTMLSelectElement>('#info-form [data-k="' + stateKey + '"]');
+      // Only if the <select> offers it — a value with no matching <option> selects NOTHING, which
+      // would blank the state instead of setting it.
+      if (sel && Array.prototype.some.call(sel.options, (o: HTMLOptionElement) => o.value === r.state)) sel.value = r.state;
+    }
+    if (r.city && city) city.value = r.city;
+  }, []);
+
   /** app.html:6021 — the first keystroke anywhere in the form arms the unsaved-changes warning. */
-  const onInput = useCallback(() => {
+  const onInput = useCallback((e?: { target?: unknown }) => {
+    const t = e && e.target as HTMLInputElement | undefined;
+    if (t && t.dataset && t.dataset.city) applyPostcode(t, true);
     if (dirty) return;
     setDirty(true);
     const status = document.getElementById('info-save-status');
     if (status) status.textContent = '⚠ unsaved changes';
-  }, [dirty]);
+  }, [dirty, applyPostcode]);
+
+  /** A record that ALREADY has a postcode gets its city list on open, not only after a keystroke —
+   *  otherwise the dropdown is empty on exactly the addresses that are already filled in. */
+  useEffect(() => {
+    const root = form.current;
+    if (!root || mode !== 'edit') return;
+    root.querySelectorAll<HTMLInputElement>('#info-form [data-city][data-state]')
+      .forEach((el) => applyPostcode(el, false));
+  }, [mode, active, applyPostcode, companies]);
 
   if (signedIn === false) {
     return (

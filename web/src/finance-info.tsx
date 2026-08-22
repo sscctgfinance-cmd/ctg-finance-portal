@@ -46,6 +46,7 @@
 import { Fragment, type ReactNode } from 'react';
 
 import { mytISO } from '../../myt.js';
+import { myPostcodeFind } from '../../postcode.js';
 
 /* ══ Types ═════════════════════════════════════════════════════════════════════════════════════════ */
 
@@ -94,6 +95,10 @@ export interface InfoField {
   copy?: boolean;
   wide?: boolean;
   state?: boolean;
+  /** This field is a postcode; it fills the named city and state fields. app.html:5401. */
+  pc?: { city: string; state: string };
+  /** This field is the city filled by the named postcode field — it gets the <datalist>. */
+  cityOf?: string;
   money?: boolean;
   link?: string;
   textarea?: boolean;
@@ -144,15 +149,15 @@ export const INFO_SECTIONS: InfoSection[] = [
   { id: 'reg', icon: '🏠', title: 'Registered office address',
     fields: [
       { k: 'reg_address', l: 'Address (street)', ph: 'No. 12, Jalan ...', wide: true },
-      { k: 'reg_postcode', l: 'Postcode', ph: '47301' },
-      { k: 'reg_city', l: 'City', ph: 'Petaling Jaya' },
+      { k: 'reg_postcode', l: 'Postcode', ph: '47301', pc: { city: 'reg_city', state: 'reg_state' } },
+      { k: 'reg_city', l: 'City', ph: 'Petaling Jaya', cityOf: 'reg_postcode' },
       { k: 'reg_state', l: 'State', state: true },
     ] },
   { id: 'biz', icon: '🏪', title: 'Principal place of business',
     fields: [
       { k: 'biz_address', l: 'Address (street)', wide: true },
-      { k: 'biz_postcode', l: 'Postcode' },
-      { k: 'biz_city', l: 'City' },
+      { k: 'biz_postcode', l: 'Postcode', pc: { city: 'biz_city', state: 'biz_state' } },
+      { k: 'biz_city', l: 'City', cityOf: 'biz_postcode' },
       { k: 'biz_state', l: 'State', state: true },
     ] },
   { id: 'contact', icon: '📞', title: 'Contact',
@@ -474,6 +479,38 @@ export function searchOpen(search: string): boolean {
  * mistake could never be removed. Everything else is passed through verbatim — a blanked TEXT field must
  * still reach the server as '' so that clearing it is a clear and not a silent no-op.
  */
+/**
+ * What a postcode should change — app.html's `infoPostcode()`, as a pure function.
+ *
+ * `null` means LEAVE IT ALONE, and both nulls carry the whole safety argument of the feature:
+ *
+ *  • `typed === false` is the form OPENING. Nothing has been asked, and the record's own state is what
+ *    is filed with SSM — rewriting a stored field because a page rendered is a change nobody made and
+ *    nobody sees. An open therefore only fills the city dropdown.
+ *  • `city` is never returned over a city the operator already has. Pos Malaysia's locality for 10300
+ *    is "Pulau Pinang"; SKINDAE's registered office says "George Town", which is the better answer and
+ *    is not ours to replace. It is also not returned when the postcode serves SEVERAL localities —
+ *    picking one for them would be a guess presented as a fact.
+ *
+ * An unknown or partial postcode changes nothing at all, dropdown included: typing "103" on the way to
+ * "10300" must not flip the state to whatever matched, and then flip again.
+ */
+export function postcodeFill(pc: unknown, typed: boolean, currentCity: unknown): {
+  cities: string[];
+  state: string | null;
+  city: string | null;
+} {
+  const hit = myPostcodeFind(pc);
+  if (!hit) return { cities: [], state: null, city: null };
+  if (!typed) return { cities: hit.cities, state: null, city: null };
+  const has = String(currentCity == null ? '' : currentCity).trim() !== '';
+  return {
+    cities: hit.cities,
+    state: hit.state,
+    city: (!has && hit.cities.length === 1) ? hit.cities[0] : null,
+  };
+}
+
 export function savePatch(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
   INFO_SECTIONS.forEach((sec) => {
@@ -970,6 +1007,25 @@ function EditInput({ f, val }: { f: InfoField; val: unknown }) {
         <option value="">—</option>
         {MY_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>
+    );
+  }
+  if (f.pc) {
+    // Uncontrolled like every other box here; the route listens for input on the form and applies
+    // postcodeFill() below. `data-city` / `data-state` name the two fields this one fills, so the
+    // handler needs no map and the two address blocks cannot drift.
+    return <input type="text" inputMode="numeric" maxLength={5} data-k={f.k} data-city={f.pc.city} data-state={f.pc.state}
+                  defaultValue={val == null ? '' : String(val)} placeholder={f.ph || ''} style={st(EDIT_BOX)} />;
+  }
+  if (f.cityOf) {
+    // Free text WITH a datalist, never a <select>. Pos Malaysia's locality for 10300 is "Pulau Pinang",
+    // but SKINDAE's registered office says "George Town" — a dropdown would force the operator to
+    // replace a correct answer with a postal one.
+    return (
+      <>
+        <input type="text" data-k={f.k} defaultValue={val == null ? '' : String(val)} placeholder={f.ph || ''}
+               list={'dl_' + f.k} style={st(EDIT_BOX)} />
+        <datalist id={'dl_' + f.k} />
+      </>
     );
   }
   return <input type={f.type || 'text'} data-k={f.k} defaultValue={val == null ? '' : String(val)} placeholder={f.ph || ''} style={st(EDIT_BOX)} />;
