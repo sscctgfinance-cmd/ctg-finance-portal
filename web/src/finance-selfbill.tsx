@@ -205,11 +205,10 @@ export interface Totals { gross: number; wht: number; net: number; rate: number 
  *    changing it is a behaviour change, not a migration detail.
  */
 export function recalc(lines: Line[], whtType: string, customRate: unknown): Totals {
+  // Each line to the sen, then the sum of the ROUNDED lines — mirrors sbiRecalc() and sbi_save.
   let gross = 0;
-  for (const l of lines) {
-    const amt = l.manual ? (Number(l.amount) || 0) : (Number(l.qty) || 0) * (Number(l.unit_price) || 0);
-    gross += amt;
-  }
+  for (const l of lines) gross += lineAmount(l);
+  gross = Math.round(gross * 100) / 100;
   const rate = whtType === 'custom'
     ? (parseFloat(String(customRate)) || 0)
     : ((SBI_WHT.find((w) => w.v === whtType) || {}).rate || 0);
@@ -220,7 +219,7 @@ export function recalc(lines: Line[], whtType: string, customRate: unknown): Tot
 
 /** `sbiRecalc()`'s per-line write-back — app.html:4373. The amount the POST carries for each line. */
 export function lineAmount(l: Line): number {
-  return l.manual ? (Number(l.amount) || 0) : (Number(l.qty) || 0) * (Number(l.unit_price) || 0);
+  return Math.round((l.manual ? (Number(l.amount) || 0) : (Number(l.qty) || 0) * (Number(l.unit_price) || 0)) * 100) / 100;
 }
 
 // ── THE REQUESTS ──────────────────────────────────────────────────────────────────────────────────

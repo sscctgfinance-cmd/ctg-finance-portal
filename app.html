@@ -4039,7 +4039,12 @@ function sbiWhtChange(){
   sbiRecalc();
 }
 function sbiRecalc(){
-  var gross=0; SBI.lines.forEach(function(l){var amt=l.manual?(Number(l.amount)||0):((Number(l.qty)||0)*(Number(l.unit_price)||0)); l.amount=amt; gross+=amt;});
+  // Each line to the sen, then sum the ROUNDED lines. `l.amount` is written back here and is what the
+  // POST carries, so an unrounded one was stored raw as gross_amount, printed through toFixed on the
+  // self-billed invoice, and left that document — which carries an LHDN declaration and goes to the
+  // payee — unable to cast: gross - wht did not equal net. Must mirror sbi_save (finance.ts) exactly.
+  var gross=0; SBI.lines.forEach(function(l){var amt=Math.round((l.manual?(Number(l.amount)||0):((Number(l.qty)||0)*(Number(l.unit_price)||0)))*100)/100; l.amount=amt; gross+=amt;});
+  gross=Math.round(gross*100)/100;
   var t=document.getElementById('sbi_wht'); if(!t)return; var wt=t.value;
   var rate= wt==='custom'? (parseFloat((document.getElementById('sbi_wht_rate')||{}).value)||0) : (SBI_WHT.find(function(w){return w.v===wt;})||{}).rate||0;
   var wht=Math.round(gross*rate/100*100)/100; var net=Math.round((gross-wht)*100)/100;

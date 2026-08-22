@@ -499,10 +499,31 @@ describe('recalc() — the box an operator reads before pressing the button', ()
     // derives all three itself, so nothing was lifted into a shared `.js`.
     const fin = readFileSync(join(REPO, 'supabase', 'functions', 'portal', 'finance.ts'), 'utf8');
     const h = fin.slice(fin.indexOf('if (api === "sbi_save")'), fin.indexOf('if (api === "sbi_approve")'));
-    expect(h).toContain('const gross = items.reduce(');
+    expect(h).toContain('const gross = Math.round(items.reduce(');
     expect(h).toContain('const whtAmount = Math.round(gross * whtRate/100 * 100)/100;');
     expect(h).toContain('gross_amount: gross');
     expect(h).toContain('net_payable: net');
+    // …and BOTH sides round each line to the sen before summing. `gross_amount` is stored raw from
+    // this reduce and printed on the self-billed invoice through toFixed, so an unrounded line left a
+    // document carrying an LHDN declaration unable to cast: gross − wht did not equal net.
+    expect(h).toContain('const sbiLine = (it: any)=> Math.round(');
+    expect(h).toContain('s + sbiLine(it)');
+    const app = readFileSync(join(REPO, 'app.html'), 'utf8');
+    const rc = app.slice(app.indexOf('function sbiRecalc()'), app.indexOf('function sbiRecalc()') + 1400);
+    expect(rc).toContain('gross=Math.round(gross*100)/100;');
+    expect(rc).toMatch(/var amt=Math\.round\(/);
+  });
+
+  it('every line, and the gross, is a sen figure — the invoice has to cast', () => {
+    // A fractional quantity is one keystroke away on a bare <input type="number">.
+    const lines = [{ qty: 1.5, unit_price: 33.33 }, { qty: 1.5, unit_price: 33.33 }, { qty: 1.5, unit_price: 33.33 }];
+    for (const l of lines) expect(lineAmount(l)).toBe(50);
+    const t = recalc(lines, 'none', '');
+    expect(t.gross).toBe(150);
+    expect(Math.round(t.gross * 100) / 100).toBe(t.gross);
+    // gross − wht IS net, exactly, at a rate that does not divide evenly.
+    const w = recalc(lines, 'custom', '3.5');
+    expect(Math.round((w.gross - w.wht) * 100) / 100).toBe(w.net);
   });
 
   it('sums qty × unit price and withholds at the type\'s statutory rate', () => {

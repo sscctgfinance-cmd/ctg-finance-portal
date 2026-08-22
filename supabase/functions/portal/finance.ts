@@ -1357,8 +1357,12 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", inv.tenant_id).maybeSingle();
       const buyerAddr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
       const items = Array.isArray(inv.line_items) ? inv.line_items : [];
-      const gross = items.reduce((s: number, it: any)=> s + (Number(it.amount) || (Number(it.qty||1)*Number(it.unit_price||0))), 0);
-      const sst = Number(inv.sst_amount||0);
+      // Each line to the sen, then the sum of the ROUNDED lines — so gross - wht + sst == net exactly,
+      // and the self-billed invoice (which carries an LHDN declaration and goes to the payee) casts.
+      // Must mirror sbiRecalc() in app.html and recalc() in web/src/finance-selfbill.tsx.
+      const sbiLine = (it: any)=> Math.round((Number(it.amount) || (Number(it.qty||1)*Number(it.unit_price||0)))*100)/100;
+      const gross = Math.round(items.reduce((s: number, it: any)=> s + sbiLine(it), 0)*100)/100;
+      const sst = Math.round((Number(inv.sst_amount||0))*100)/100;
       const whtType = String(inv.wht_type||"none");
       const whtRate = whtType==="none" ? 0 : Number(inv.wht_rate||0);
       const whtAmount = Math.round(gross * whtRate/100 * 100)/100;
