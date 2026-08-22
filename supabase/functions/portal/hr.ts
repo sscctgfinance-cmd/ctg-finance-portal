@@ -774,7 +774,17 @@ export async function payBuildYtd(tenant:string, mo:number, yr:number, emps:any[
   const { data: runs } = await sb.from("hr_payroll_runs").select("id").eq("tenant_id",tenant).eq("period_year",yr).lt("period_month",mo);
   const runIds = (runs||[]).map((r:any)=>r.id);
   if(runIds.length){
-    const { data: ps } = await sb.from("hr_payslips").select("employee_id,gross,epf_ee,pcb,run_id").in("run_id", runIds);
+    // Paginated: a single select caps at 1000 rows, and this is every payslip of every earlier run in
+    // the year. At 19 employees that is ~200 rows, but the ceiling arrives at about 91 — and what gets
+    // truncated is the YEAR-TO-DATE gross, EPF and PCB that the MTD calculation subtracts, so the
+    // month's PCB would come out too LOW for everyone, on a figure that is remitted to LHDN.
+    const ps:any[] = [];
+    for(let off=0; off<100000; off+=1000){
+      const { data: pg } = await sb.from("hr_payslips").select("employee_id,gross,epf_ee,pcb,run_id")
+        .in("run_id", runIds).order("id").range(off, off+999);
+      for(const r of (pg||[])) ps.push(r);
+      if(!pg || pg.length < 1000) break;
+    }
     const monthsSeen:any = {};
     for(const p of (ps||[])){ const id=String(p.employee_id); if(!out[id]) continue;
       out[id].gross += Number(p.gross)||0; out[id].epf += Number(p.epf_ee)||0; out[id].pcb += Number(p.pcb)||0;

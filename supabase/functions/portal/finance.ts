@@ -1230,9 +1230,15 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       const { data } = await q;
       const ids = (data||[]).map((r:any)=>r.id);
       const sums:any = {};
-      if (ids.length){
-        const { data: lines } = await sb.from("portal_wht_lines").select("summary_id,amount").in("summary_id", ids);
+      // Paginated: a single select caps at 1000 rows, and this asks for the lines of up to 500
+      // computations at once. Past that ceiling the fee totals in the list quietly come back SHORT —
+      // the same silent truncation that froze the AR drift check at 1000 and produced permanent false
+      // alarms. A wrong total that looks like a total is worse than an error.
+      for (let off=0; ids.length && off<200000; off+=1000){
+        const { data: lines } = await sb.from("portal_wht_lines").select("summary_id,amount")
+          .in("summary_id", ids).order("id").range(off, off+999);
         (lines||[]).forEach((l:any)=>{ sums[l.summary_id]=(sums[l.summary_id]||0)+Number(l.amount||0); });
+        if (!lines || lines.length < 1000) break;
       }
       return j({ ok:true, summaries: (data||[]).map((r:any)=>({ ...r, fee_total: Math.round((sums[r.id]||0)*100)/100 })) });
     }
