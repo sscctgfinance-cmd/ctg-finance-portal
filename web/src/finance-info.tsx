@@ -46,7 +46,7 @@
 import { Fragment, type ReactNode } from 'react';
 
 import { mytISO } from '../../myt.js';
-import { myPostcodeFind } from '../../postcode.js';
+import { MY_STATES, myPostcodeFind, myStateName } from '../../postcode.js';
 
 /* ══ Types ═════════════════════════════════════════════════════════════════════════════════════════ */
 
@@ -122,9 +122,11 @@ export interface InfoSection {
 /* ══ The schema ════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * `MY_STATES` — app.html:5397. The state dropdown in edit mode.
+ * `MY_STATES` — re-exported from postcode.js, which is the same file app.html loads. The 16 official
+ * state names are LHDN's e-Invoice state-code table (sdk.myinvois.hasil.gov.my/codes/state-codes),
+ * verbatim: one list, so the two renderers cannot offer different spellings of a filed address.
  */
-export const MY_STATES = ['Johor', 'Kedah', 'Kelantan', 'Kuala Lumpur', 'Labuan', 'Melaka', 'Negeri Sembilan', 'Pahang', 'Perak', 'Perlis', 'Pinang', 'Putrajaya', 'Sabah', 'Sarawak', 'Selangor', 'Terengganu'];
+export { MY_STATES };
 
 /**
  * `INFO_SECTIONS` — app.html:5399, section for section and field for field.
@@ -519,6 +521,8 @@ export function savePatch(raw: Record<string, unknown>): Record<string, unknown>
       const blank = String(out[f.k] == null ? '' : out[f.k]).trim() === '';
       if (f.type === 'date') { if (blank) out[f.k] = null; }
       else if (f.type === 'number') out[f.k] = blank ? null : Number(out[f.k]);
+      // Write the OFFICIAL state name back — the migration, one save at a time, with no database script.
+      else if (f.state && !blank) out[f.k] = myStateName(out[f.k]) || out[f.k];
     });
   });
   return out;
@@ -927,7 +931,11 @@ function ViewBody({ sec, c, docs, onCopy }: BodyProps) {
     return (
       <div style={st('display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px')}>
         {sec.fields.map((f) => {
-          const v = c[f.k];
+          // A state field displays its OFFICIAL name, not whatever spelling the row holds — otherwise
+          // the same record reads "Pinang" here and "Pulau Pinang" in the edit form, and the printed
+          // report an auditor gets carries a name that is not a Malaysian state. Unrecognised text is
+          // shown as typed rather than blanked; myStateName() returns '' for it.
+          const v = f.state ? (myStateName(c[f.k]) || c[f.k]) : c[f.k];
           const filled = infoFilled(v);
           const display = !filled
             ? <span style={st('color:var(--muted);opacity:.5')}>—</span>
@@ -1002,8 +1010,11 @@ function EditInput({ f, val }: { f: InfoField; val: unknown }) {
                      style={st(EDIT_BOX + ';resize:vertical;font-family:inherit')} />;
   }
   if (f.state) {
+    // Resolve what is STORED to an official name first. A record written before the LHDN names landed
+    // holds "Pinang" or "Kuala Lumpur", neither of which is an option any more — and a value matching
+    // no <option> selects NOTHING, so the field would read as one the operator never filled in.
     return (
-      <select data-k={f.k} defaultValue={val == null ? '' : String(val)} style={st(EDIT_BOX)}>
+      <select data-k={f.k} defaultValue={myStateName(val)} style={st(EDIT_BOX)}>
         <option value="">—</option>
         {MY_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>

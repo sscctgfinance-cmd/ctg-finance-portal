@@ -21,3 +21,17 @@ export function myPostcodeFind(pc: unknown): PostcodeHit | null;
 
 /** state -> locality -> space-separated postcodes. The table itself; prefer myPostcodeFind(). */
 export const MY_POSTCODES: Record<string, Record<string, string>>;
+
+/** The 16 official state names — LHDN's e-Invoice state-code table, in its code order. The dropdown. */
+export const MY_STATES: string[];
+
+/** Official name -> IRBM e-Invoice state code ("07" for Pulau Pinang). */
+export const MY_STATE_CODE: Record<string, string>;
+
+/**
+ * The official state name for any spelling a record or an operator might hold, or '' if unrecognised.
+ *
+ * '' rather than the input: the caller is choosing a <select> option, and an unknown string sets the
+ * field to a value no option matches — which selects nothing and reads on screen as never filled in.
+ */
+export function myStateName(s: unknown): string;

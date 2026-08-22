@@ -5412,7 +5412,9 @@ let INFO_DATA=null, INFO_ACTIVE=null, INFO_EDITABLE=false;
 let INFO_MODE='view';        // 'view' | 'edit'
 let INFO_SEARCH='';          // global search query
 let INFO_DIRTY=false;        // any unsaved edits in current company?
-const MY_STATES=['Johor','Kedah','Kelantan','Kuala Lumpur','Labuan','Melaka','Negeri Sembilan','Pahang','Perak','Perlis','Pinang','Putrajaya','Sabah','Sarawak','Selangor','Terengganu'];
+// MY_STATES / myStateName() live in postcode.js — the LHDN e-Invoice state-code table, verbatim.
+// Declaring them again here would be a duplicate top-level declaration, i.e. a SyntaxError that
+// white-screens the app: postcode.js is a classic script and shares this global lexical environment.
 
 // Section schema — single source of truth used for: nav, filling-progress, view rendering, search.
 const INFO_SECTIONS = [
@@ -6057,7 +6059,11 @@ function infoSecViewBody(sec, c){
   if(sec.fields){
     return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 18px">'+
       sec.fields.map(f=>{
-        const v=c[f.k]; const filled=infoFilled(v);
+        // A state field displays its OFFICIAL name, not whatever spelling the row happens to hold —
+        // otherwise the same record reads "Pinang" here and "Pulau Pinang" in the edit form, and the
+        // printed report an auditor gets carries a name that is not a Malaysian state. Unrecognised
+        // text is shown as typed rather than blanked; myStateName() returns '' for it.
+        const v=(f.state ? (myStateName(c[f.k]) || c[f.k]) : c[f.k]); const filled=infoFilled(v);
         const display = !filled ? '<span style="color:var(--muted);opacity:.5">—</span>'
           : f.money ? esc(M(v))
           : f.link==='web' ? '<a href="'+esc(String(v).indexOf('http')===0?v:'https://'+v)+'" target="_blank" style="color:var(--coral-soft);text-decoration:none">'+esc(v)+' ↗</a>'
@@ -6090,7 +6096,12 @@ function infoSecEditBody(sec, c){
   function input(f, val){
     if(f.textarea) return '<textarea data-k="'+esc(f.k)+'" rows="'+(f.rows||3)+'" placeholder="'+esc(f.ph||'')+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px;resize:vertical;font-family:inherit">'+esc(val||'')+'</textarea>';
     if(f.state){
-      const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(val===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
+      // Resolve what is STORED to an official name first. A record written before the LHDN names
+      // landed holds "Pinang" or "Kuala Lumpur", neither of which is an option any more — and a value
+      // matching no <option> selects NOTHING, so the field would read as one the operator never filled
+      // in. Saving then writes the official spelling back.
+      const cur=myStateName(val);
+      const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(cur===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
       return '<select data-k="'+esc(f.k)+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select>';
     }
     var S='width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px';
@@ -6183,6 +6194,10 @@ function infoCollect(){
     const blank = String(out[f.k]==null?'':out[f.k]).trim()==='';
     if(f.type==='date'){ if(blank) out[f.k]=null; }
     else if(f.type==='number'){ out[f.k] = blank ? null : Number(out[f.k]); }
+    // Write the OFFICIAL state name back. The <select> can only produce one, but a record loaded with
+    // a legacy spelling and saved without touching this field would otherwise keep it forever — this
+    // is the migration, done one save at a time, without a script that needs database access.
+    else if(f.state && !blank){ out[f.k] = myStateName(out[f.k]) || out[f.k]; }
   }); });
   return out;
 }
