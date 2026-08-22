@@ -59,7 +59,13 @@ export async function probeRoutes(moduleUrl: string, names: string[]): Promise<s
       : undefined) as typeof Deno.env.get;
     g.fetch = (input: any) => {
       const url = String(typeof input === "string" ? input : (input && input.url) || input);
-      return Promise.resolve(new Response(url.includes("/rpc/") ? "null" : "[]", {
+      // portal_me is answered the way PRODUCTION answers it for a bad token — `{ok:false}`, an OBJECT.
+      // Returning `null` here (as every other RPC still does) made a whole class of broken auth gate
+      // invisible: `if (!me)` passes on `{ok:false}` and fails on `null`, so a handler missing its
+      // `.ok` test looked correct in this harness and let every anonymous caller through in production.
+      // pnl_analysis was exactly that, and this probe replayed all 203 actions without seeing it.
+      const body = url.includes("/rpc/portal_me") ? '{"ok":false}' : url.includes("/rpc/") ? "null" : "[]";
+      return Promise.resolve(new Response(body, {
         status: 200, headers: { "content-type": "application/json", "content-range": "*/0" },
       }));
     };

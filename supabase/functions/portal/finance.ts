@@ -1999,7 +1999,12 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "pnl_analysis") {
       // v141: account-level P&L grid (months across, accounts down) for the P&L Analysis tab.
       // The RPC re-validates the token and pins p_tenant to the caller's allowed set.
-      const me = await meFromToken(b.token); if (!me) return j({ ok:false, error:"unauthorized" }, 401);
+      // `!me` alone is not a gate: portal_me answers an invalid token with `{ok:false}`, which is an
+      // OBJECT and therefore truthy, so every anonymous caller walked through this line and reached the
+      // RPC. The RPC's own token check held (it returned an empty P&L, not somebody's figures), but this
+      // was the only handler of the 100+ here written that way — the rest test `.ok`, directly or through
+      // superAdmin/isAdmin/hrManage. Verified against production before and after.
+      const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const { data, error } = await sb.rpc("portal_pnl_analysis", { p_token: b.token, p_tenant: b.tenant||null, p_months: Number(b.months)||6 });
       if (error) return j({ ok:false, error: String(error.message).slice(0,200) });   // never swallow: an empty {ok:true} renders as zeros
       return j(data || { ok:false, error:"no data" });
