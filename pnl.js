@@ -143,7 +143,7 @@ function pnlBuild(data,monthsN,showZero){
  * reads it). Band and block rows are a bare label line, exactly as the legacy wrote them.
  */
 /** To the sen, for the file only — the model keeps full precision so nothing downstream shifts. */
-function pnlSen(n){ return Math.round((Number(n)||0)*100)/100; }
+function pnlSen(n){ n=Number(n); return isFinite(n)?Math.round(n*100)/100:0; }
 function pnlCsvLines(mdl,totals){
   var months=mdl.months;
   var q=function(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?('"'+s.replace(/"/g,'""')+'"'):s; };

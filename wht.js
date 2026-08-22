@@ -41,14 +41,22 @@
 //   due date       one month after the LAST payment date on the computation.
 
 function whtMoney(n){ n=Number(n)||0; return n.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function whtRound2(n){ return Math.round((Number(n)||0)*100)/100; }
+// isFinite, not `||0`: `Number(Infinity)||0` is Infinity, and every figure below is derived from this
+// one. A rate or an amount that arrives non-finite must land on 0, not carry through to the printed
+// computation and the LHDN remittance figure.
+function whtRound2(n){ n=Number(n); return isFinite(n)?Math.round(n*100)/100:0; }
 /* The two derived cells on a payment line. Defined once so the row casts across, the column casts
    down, and the on-screen table, the printable form and the subtotal can never disagree. */
 function whtLineSst(a, rate){ return whtRound2((Number(a)||0)*(Number(rate)||0)); }
 function whtLineTotal(a, rate){ return whtRound2((Number(a)||0)+whtLineSst(a, rate)); }
 /* The whole calculation in one place, so the screen, the printable form and any test all agree. */
 function whtCompute(doc, lines){
-  var rate=Number(doc.wht_rate)||0, sst=Number(doc.sst_rate)||0, pen=Number(doc.penalty_pct)||0;
+  // Clamped to the range both SAVE paths already enforce (wht_payee_save and wht_save each require
+  // 0 <= rate < 1, and the DB carries the same CHECK), so the calculator cannot render a computation the
+  // database would refuse to store — a negative rate produced a negative service tax and a negative
+  // amount payable to the payee, and a rate of 1 or more withholds the whole fee or more.
+  var fin=function(x,max){ x=Number(x); if(!isFinite(x)||x<0) return 0; return (max!=null&&x>max)?max:x; };
+  var rate=fin(doc.wht_rate,0.999999), sst=fin(doc.sst_rate), pen=fin(doc.penalty_pct);
   // Total each column the way the column is PRINTED — line by line, each already rounded to the sen.
   // Applying the rate to the aggregate instead leaves a subtotal the visible rows do not add up to:
   // 11 ManyChat lines footed to 4,024.95 on screen under a printed total of 4,024.97. A tax document

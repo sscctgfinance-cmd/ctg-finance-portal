@@ -110,7 +110,8 @@ function srClean(s){
   var out=''; for(var j=0;j<s.length;j++){ out += (s.charCodeAt(j)<128 ? s.charAt(j) : ' '); }
   return out.replace(/\s+/g,' ').trim().replace(/\s+,/g,',').replace(/,\s*,/g,', ');
 }
-function srNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
+// isFinite, not !isNaN — `isNaN(Infinity)` is false, and these amounts become invoices in Xero.
+function srNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isFinite(n)?n:0; }
 function srAnyDate(v){ // clean sources (ISO string or JS Date)
   if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
   var s=String(v==null?'':v).split(/[ T]/)[0].trim(); if(!s)return null;

@@ -45,7 +45,10 @@ var GW_REFOPTS={
   nttdata:[['gateway_tx_id','Gateway Txn ID (unique per sale)'],['mah_ref','Merchant Ref (mah_ref)']]
 };
 function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
+// isFinite, not !isNaN: `isNaN(Infinity)` is FALSE, so a cell holding 1e400 — which a spreadsheet can
+// carry and Number() turns into Infinity — walked straight through the old guard and into a CSV that
+// is imported into a ledger. Same class as o2o's 100% rate, which reached an invoice line as "NaN".
+function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isFinite(n)?n:0; }
 /**
  * To the sen. Every AMOUNT on every row goes through this before it is stored on the row.
  *
@@ -55,7 +58,7 @@ function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/
  * where it bites hardest (it charges in SGD and settles in MYR, so "Converted Amount in MYR" genuinely
  * carries sub-sen digits), but a plain `Amount − RefundAmount` in binary floating point is enough.
  */
-function gwRnd(n){ return Math.round((Number(n)||0)*100)/100; }
+function gwRnd(n){ n=Number(n); return isFinite(n)?Math.round(n*100)/100:0; }
 function gwPick(row,name){ if(row[name]!=null&&row[name]!=='')return row[name]; var t=name.toLowerCase(); for(var k in row){ if(k.toLowerCase()===t) return row[k]; } return ''; }
 function gwParseDate(v){
   if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
