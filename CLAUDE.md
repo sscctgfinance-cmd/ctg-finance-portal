@@ -783,11 +783,17 @@ four handlers the golden does not carry. The screen has ONE mode, no sub-views, 
 What the golden does not reach is `#sr-result`'s BODY — it is captured `hide` with every div empty — so
 the cards, the account table, the tally and the 150-row preview are pinned by assertion.
 
-**One sub-flow hands off rather than lie.** The "add this pharmacy to the master" link goes to
-`app.html#tab=pharm` — the honest strangler edge, still worth reading even though the Pharmacies detail
-form itself has since been migrated (see "SIBLING PAGES are not screens" below). Everything else, including the Xero-contact search/link and the JSZip PDF batch, is ported: an
-operator who posts live from React would otherwise lose the invoice PDFs, and the batch only exists in
-that page's memory.
+**A strangler edge goes STALE when its target is migrated, and nothing fails when it does.** The "add
+this pharmacy to the master" link was an honest handoff to `app.html#tab=pharm` when O2O shipped; the
+Pharmacies detail form was migrated afterwards and nobody came back, so for several versions the link
+threw the operator out of the React app mid-invoice on a comment that said Pharmacies was unmigrated.
+It now goes to `app/finance/pharm/detail/?new=1&name=` — and the fix was not just the URL: the legacy's
+delegated listener (app.html:3129-3142) also PREFILLS the name and focuses it, which is the whole point
+of the link (the operator clicked because that pharmacy is missing). A handoff that drops what the
+legacy did on the other side is worse than the handoff. **When you migrate a screen, grep `legacyUrl(`
+for links INTO it.** Everything else here, including the Xero-contact search/link and the JSZip PDF
+batch, is ported: an operator who posts live from React would otherwise lose the invoice PDFs, and the
+batch only exists in that page's memory.
 
 **A gate can be "always visible, gated SERVER-SIDE" — `finance.pharm` is the first, and the interesting
 direction is the REFUSAL.** app.html:1425 is `el.classList.remove('hide')`: no role, no feature flag, and

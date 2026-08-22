@@ -29,6 +29,9 @@ import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
 
+/** The one place a base path is read in this route — src/portal.ts is the one place it is defined. */
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
 interface Xlsx {
   read: (data: unknown, opts: Record<string, unknown>) => { SheetNames: string[]; Sheets: Record<string, unknown> };
   utils: { sheet_to_json: (ws: unknown, opts: Record<string, unknown>) => unknown[][] };
@@ -296,10 +299,13 @@ export default function FinanceO2OPage() {
             }}
             onDownloadPdfs={(retry) => void onDownloadPdfs(retry)}
             onDismissPdfPanel={() => setOut((cur) => (cur.kind === 'issued' ? { ...cur, failures: null } : cur))}
-            // The legacy prefills the Pharmacies tab through a delegated click listener (app.html:3288).
-            // That tab is not migrated, so this hands off to it — the same honest strangler edge
-            // `whtDocHtml()` uses. Same origin, same session.
-            onAddPharmacy={() => { window.location.href = `${legacyUrl('app.html')}#tab=pharm`; }}
+            // The legacy prefills the Pharmacies tab through a delegated click listener
+            // (app.html:3129-3142): switch tab, start a new record, write the name into the field and
+            // focus it. Pharmacies IS migrated, so this stays in the React app — `?new=1&name=` is the
+            // detail route's spelling of exactly those three steps.
+            onAddPharmacy={(name) => {
+              window.location.href = `${BASE}/finance/pharm/detail/?new=1&name=${encodeURIComponent(name)}`;
+            }}
           />}
     </>
   );
