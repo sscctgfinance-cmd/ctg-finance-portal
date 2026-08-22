@@ -133,7 +133,7 @@
 {"api":"invoice_resync","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"login","status":200,"body":"null"}
 {"api":"login_2fa","status":200,"body":"{\"ok\":false,\"error\":\"invalid or expired login session\"}"}
-{"api":"me","status":200,"body":"null"}
+{"api":"me","status":200,"body":"{\"ok\":false}"}
 {"api":"my_perms","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"o2o_contact_link","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"o2o_contacts_resolve","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
