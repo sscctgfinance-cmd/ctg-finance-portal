@@ -6,7 +6,8 @@
 //
 // NESTED under the tab's own directory, like app/finance/wht/doc/: a sibling page is not a nav entry,
 // and `web/tests/shell.test.tsx` checks `app/finance/`'s TOP-LEVEL directories against nav.ts's 22 tab
-// ids. `?id=` opens a record; `?new=1` is `pharmNewStart()`.
+// ids. `?id=` opens a record; `?new=1` is `pharmNewStart()`, and `&name=` is the O2O preview's
+// "add this pharmacy to the master" prefill (app.html:3134-3141).
 //
 // ── THE REFUSAL ───────────────────────────────────────────────────────────────────────────────────
 // This page loads `pharmacy_list` itself — the legacy could rely on `PHARM_DATA` already being in
@@ -47,6 +48,9 @@ export default function FinancePharmDetailPage() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkSearch, setLinkSearch] = useState('');
   const [gen, setGen] = useState(0);
+  /** `?name=` — the pharmacy the O2O preview could not find in the master list. */
+  const [prefillName, setPrefillName] = useState('');
+  const done = useRef(false);
   const linkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadList = useCallback(async () => {
@@ -66,11 +70,29 @@ export default function FinancePharmDetailPage() {
     setId(raw ? Number(raw) : null);
     // `pharmNewStart()` opens straight into edit mode — app.html:6668.
     if (q.get('new') === '1' || !raw) setMode('edit');
+    setPrefillName(q.get('name') || '');
     void loadList().catch((e) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (e instanceof TypeError) setFailed(msg); else setRefused(msg || 'Failed to load');
     });
   }, [loadList]);
+
+  // app.html:3134-3141 — the delegated `data-add-pharm` listener starts a new record and then writes
+  // the name straight into the field and focuses it. The form is UNCONTROLLED and read back by
+  // `data-k`, so seeding it the same way is what keeps `pharmCollect()` the only reader.
+  //
+  // `editable` is the load-bearing half of the gate: it is false until `pharmacy_list` returns, and
+  // until then `isEdit` is false and the field is DISABLED — `.value` would stick (uncontrolled) but
+  // `.focus()` silently no-ops on a disabled element, losing the legacy's focus step with nothing to
+  // show for it. `done` runs it once, so a later render cannot overwrite what the operator has typed.
+  useEffect(() => {
+    if (!isNew || !prefillName || !editable || done.current) return;
+    const n = document.querySelector<HTMLInputElement>('#pharm-form [data-k=name]');
+    if (!n) return;
+    done.current = true;
+    n.value = prefillName;
+    n.focus();
+  }, [isNew, prefillName, editable]);
 
   const pharmacy = all && id != null ? (all.find((x) => x.id === id) || null) : null;
   const notFound = !!all && id != null && !pharmacy;

@@ -110,7 +110,7 @@ Deno.test("no FOURTH copy of the host is hardcoded anywhere in the shipped sourc
   // into the `publish` repo, so it cannot import this constant from anywhere and must name both hosts
   // literally. tests/forwarding_page_test.ts is what pins that file.
   const files = [
-    "common.js", "hros.html", "app.html", "index.html", "sw.js", "manifest.json",
+    "common.js", "hros.html", "app.html", "index.html", "sw.js", "manifest.json", "vercel.json",
     "payroll.js", "hr-docs.js", "wht.js", "o2o.js", "salesrecon.js", "gateway.js", "pnl.js", "ap.js",
     "supabase/functions/portal/index.ts", "supabase/functions/portal/lib.ts",
     "supabase/functions/portal/hr.ts", "supabase/functions/portal/finance.ts",

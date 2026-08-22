@@ -1011,6 +1011,7 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="gateway.js"></script>
 <script src="pnl.js"></script>
 <script src="ap.js"></script>
+<script src="postcode.js"></script>
 <script src="jszip.min.js"></script>
 <script>
 /* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
@@ -5428,15 +5429,17 @@ const INFO_SECTIONS = [
   { id:'reg', icon:'🏠', title:'Registered office address',
     fields:[
       {k:'reg_address',l:'Address (street)',ph:'No. 12, Jalan ...',wide:true},
-      {k:'reg_postcode',l:'Postcode',ph:'47301'},
-      {k:'reg_city',l:'City',ph:'Petaling Jaya'},
+      // `pc` names the two fields this postcode fills in. Declared here rather than wired by hand so the
+      // two address blocks cannot drift, exactly as the date/number typing in infoCollect() is.
+      {k:'reg_postcode',l:'Postcode',ph:'47301',pc:{city:'reg_city',state:'reg_state'}},
+      {k:'reg_city',l:'City',ph:'Petaling Jaya',cityOf:'reg_postcode'},
       {k:'reg_state',l:'State',state:true}
     ]},
   { id:'biz', icon:'🏪', title:'Principal place of business',
     fields:[
       {k:'biz_address',l:'Address (street)',wide:true},
-      {k:'biz_postcode',l:'Postcode'},
-      {k:'biz_city',l:'City'},
+      {k:'biz_postcode',l:'Postcode',pc:{city:'biz_city',state:'biz_state'}},
+      {k:'biz_city',l:'City',cityOf:'biz_postcode'},
       {k:'biz_state',l:'State',state:true}
     ]},
   { id:'contact', icon:'📞', title:'Contact',
@@ -6038,6 +6041,10 @@ function infoRender(){
   if(isEdit){
     const form=document.getElementById('info-form');
     form.addEventListener('input', ()=>{ if(!INFO_DIRTY){ INFO_DIRTY=true; setDirty('info', true); const st=document.getElementById('info-save-status'); if(st) st.textContent='⚠ unsaved changes'; }});
+    // A record that ALREADY has a postcode gets its city list on open, not only after a keystroke —
+    // otherwise the dropdown is empty on exactly the addresses that are already filled in. `false`
+    // because nothing was typed: an existing city must not be overwritten by the postal locality.
+    form.querySelectorAll('[data-city][data-state]').forEach(el=>infoPostcode(el, false));
   } else {
     setDirty('info', false);
   }
@@ -6086,7 +6093,15 @@ function infoSecEditBody(sec, c){
       const opts=['<option value="">—</option>'].concat(MY_STATES.map(s=>'<option'+(val===s?' selected':'')+' value="'+esc(s)+'">'+esc(s)+'</option>')).join('');
       return '<select data-k="'+esc(f.k)+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px">'+opts+'</select>';
     }
-    return '<input type="'+(f.type||'text')+'" data-k="'+esc(f.k)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(f.ph||'')+'" style="width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px"/>';
+    var S='width:100%;background:var(--panel-2);border:1px solid var(--panel-border);color:var(--text);padding:8px 10px;border-radius:7px;font-size:13px';
+    // A postcode determines its state and narrows the city to a handful, so typing one fills both rather
+    // than leaving the operator to hunt a 16-item dropdown on a form that is filed with SSM.
+    if(f.pc) return '<input type="text" inputmode="numeric" maxlength="5" data-k="'+esc(f.k)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(f.ph||'')+'" oninput="infoPostcode(this)" data-city="'+esc(f.pc.city)+'" data-state="'+esc(f.pc.state)+'" style="'+S+'"/>';
+    // The city is a free-text input WITH a datalist, never a <select>: Pos Malaysia's locality for 10300
+    // is "Pulau Pinang", but SKINDAE's own record says "George Town", and a dropdown would force the
+    // operator to replace a correct answer with a postal one.
+    if(f.cityOf) return '<input type="text" data-k="'+esc(f.k)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(f.ph||'')+'" list="dl_'+esc(f.k)+'" style="'+S+'"/><datalist id="dl_'+esc(f.k)+'"></datalist>';
+    return '<input type="'+(f.type||'text')+'" data-k="'+esc(f.k)+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(f.ph||'')+'" style="'+S+'"/>';
   }
   if(sec.fields){
     return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">'+
@@ -6110,6 +6125,33 @@ function infoSwitch(tid){
     INFO_DIRTY=false;
   }
   INFO_ACTIVE=tid; infoRender();
+}
+
+/**
+ * A postcode was typed (or the form just opened) — fill in what the postcode already knows.
+ *
+ * `typed` is the whole safety argument. On INPUT the operator is acting, so setting the state is the
+ * answer they asked for. On OPEN nothing has been asked: the record's own state and city are what SSM
+ * has, and quietly rewriting a stored field because a page was rendered is a change nobody made and
+ * nobody sees. So an open only fills the city DROPDOWN.
+ *
+ * The city is never overwritten either way. Pos Malaysia's locality for 10300 is "Pulau Pinang";
+ * SKINDAE's registered office says "George Town", which is the better answer and is not ours to replace.
+ */
+function infoPostcode(el, typed){
+  if(!el) return;
+  const hit = (typeof myPostcodeFind === 'function') ? myPostcodeFind(el.value) : null;
+  const dl = document.getElementById('dl_' + el.getAttribute('data-city'));
+  if(dl) dl.innerHTML = hit ? hit.cities.map(c=>'<option value="'+esc(c)+'"></option>').join('') : '';
+  if(!hit || typed === false) return;
+
+  const st = document.querySelector('#info-form [data-k="' + el.getAttribute('data-state') + '"]');
+  // Only if the <select> actually offers it — a value with no matching <option> selects NOTHING, which
+  // would silently blank the state instead of setting it.
+  if(st && Array.prototype.some.call(st.options, o=>o.value===hit.state)) st.value = hit.state;
+
+  const city = document.querySelector('#info-form [data-k="' + el.getAttribute('data-city') + '"]');
+  if(city && !String(city.value||'').trim() && hit.cities.length === 1) city.value = hit.cities[0];
 }
 
 function infoCollect(){
