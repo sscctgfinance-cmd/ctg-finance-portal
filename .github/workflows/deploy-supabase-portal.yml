@@ -81,13 +81,27 @@ jobs:
           check_marker finance.ts "pnl_report"       # Finance OS handler chain
           check_marker hr.ts      "hr_emp_save"      # HR OS handler chain
 
-          # 4. The handler chains themselves. 209 `api === "..."` comparisons over 203 action names is
-          #    the shape of the real portal; a truncated chain is a silently dead feature per branch.
+          # 4. The handler chains themselves. A truncated chain is a silently dead feature per branch.
+          #
+          #    THIS NUMBER IS A BASELINE, NOT A CONSTANT — update it in the SAME commit that adds or
+          #    removes a handler, the way the test suite holds its no-redeclare baseline. It was left
+          #    at 209 when v224 retired the six Web Push actions, which took the real count to 204 and
+          #    made EVERY deploy from that commit onward refuse. The last function that reached
+          #    production was 185537d (21 Aug); v224's server half and everything after it stayed in
+          #    git while merges kept landing. A guard against a truncated source had become a guard
+          #    against shipping at all, and nothing said so out loud — the workflow simply went red in
+          #    a place nobody was watching, in BOTH repos, since both run this deploy.
+          EXPECTED_ACTIONS=204
           actions=$(grep -ho 'api === "' "$d"/*.ts | wc -l | tr -d " ")
-          echo "action branches: $actions"
-          if [ "$actions" -lt 209 ]; then
-            echo "::error::Refusing to deploy — only $actions 'api === \"...\"' branches found (expected at least 209). The handler chain has been truncated."
+          echo "action branches: $actions (baseline $EXPECTED_ACTIONS)"
+          if [ "$actions" -lt "$EXPECTED_ACTIONS" ]; then
+            echo "::error::Refusing to deploy — $actions 'api === \"...\"' branches found, baseline is $EXPECTED_ACTIONS. Either the handler chain has been truncated, or a handler was removed on purpose and this baseline was not updated in the same commit."
             exit 1
+          fi
+          # Growing is fine and needs no edit; shrinking must be deliberate. Say when it has grown, so
+          # the baseline can be raised while somebody is looking at it.
+          if [ "$actions" -gt "$EXPECTED_ACTIONS" ]; then
+            echo "::notice::$actions handlers, baseline $EXPECTED_ACTIONS — raise EXPECTED_ACTIONS in this workflow."
           fi
 
           # 5. Unchanged from before: never deploy a GitHub-raw bootstrap instead of the real source.
