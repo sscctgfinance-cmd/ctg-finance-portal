@@ -2040,8 +2040,12 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
           if(eItems) return j({ ok:false, error:"Expense lines could not be saved ("+eItems.message+"). Nothing was changed — please retry." }); }
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
       } else if(headerType && typeMap[headerType] && typeMap[headerType].is_mileage && c.mileage){
+        // Same reasoning as the expense lines above: a failed insert after a successful delete leaves
+        // the header carrying a mileage AMOUNT with no km/rate behind it, which hr_rc_validate then
+        // reports as "amount does not equal km x rate + parking + toll" on a claim that was fine.
         await sb.from("hr_mileage_claim_details").delete().eq("claim_id",claimId);
-        await sb.from("hr_mileage_claim_details").insert({ claim_id:claimId, start_location:c.mileage.start_location||"", end_location:c.mileage.end_location||"", total_km:Number(c.mileage.total_km)||0, mileage_rate:Number(c.mileage.mileage_rate)||0, calculated_amount:amount });
+        { const { error:eMile } = await sb.from("hr_mileage_claim_details").insert({ claim_id:claimId, start_location:c.mileage.start_location||"", end_location:c.mileage.end_location||"", total_km:Number(c.mileage.total_km)||0, mileage_rate:Number(c.mileage.mileage_rate)||0, calculated_amount:amount });
+          if(eMile) return j({ ok:false, error:"The mileage detail could not be saved ("+eMile.message+"). Please retry." }); }
       }
       return j({ ok:true, id:claimId, amount });
     }
@@ -2202,8 +2206,19 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       }
       const emp=(await sb.from("hr_employees").select("manager_id").eq("id",claim.employee_id).maybeSingle()).data;
       const { data: inst } = await sb.from("hr_claim_approval_instances").upsert({ claim_id:id, workflow_id:wf?wf.id:null, current_step:1, status:"in_progress" }, {onConflict:"claim_id"}).select("id").single();
-      await sb.from("hr_claim_approval_steps").delete().eq("instance_id",inst.id);
-      await sb.from("hr_claim_approval_steps").insert(steps.map((s:any)=>({ instance_id:inst.id, claim_id:id, step_order:s.step_order, name:s.name, approver_role:s.approver_role, approver_employee_id:(s.approver_type==="manager"?(emp&&emp.manager_id):(s.approver_type==="user"?s.approver_employee_id:null)), status:"Pending" })));
+      // The invariant this protects: SUBMITTED implies there is an approval chain.
+      //
+      // delete-then-insert over two round trips, both unread, could leave a claim marked submitted with
+      // ZERO steps — and hr_rc_decide's step updates are all `if(step)` while the claim/instance
+      // transitions are not, so the next decision would approve it outright, skipping every level of a
+      // workflow that exists for segregation of duties. Same shape v163 already fixed for the expense
+      // lines; here the fix is to refuse rather than to continue, so the claim stays Draft, recoverable,
+      // and the operator is told.
+      if(!inst || !inst.id) return j({ ok:false, error:"Could not open an approval instance for this claim — nothing was submitted. Please retry." });
+      { const { error:eDel } = await sb.from("hr_claim_approval_steps").delete().eq("instance_id",inst.id);
+        if(eDel) return j({ ok:false, error:"Could not rebuild the approval chain ("+eDel.message+"). This claim has NOT been submitted — please retry." }); }
+      { const { error:eIns } = await sb.from("hr_claim_approval_steps").insert(steps.map((s:any)=>({ instance_id:inst.id, claim_id:id, step_order:s.step_order, name:s.name, approver_role:s.approver_role, approver_employee_id:(s.approver_type==="manager"?(emp&&emp.manager_id):(s.approver_type==="user"?s.approver_employee_id:null)), status:"Pending" })));
+        if(eIns) return j({ ok:false, error:"Could not build the approval chain ("+eIns.message+"). This claim has NOT been submitted — please retry." }); }
       const st=rcStatusForRole(steps[0].approver_role);
       await sb.from("hr_claim_requests").update({ status:st, current_step:1, workflow_id:wf?wf.id:null, warnings, submitted_at:new Date().toISOString() }).eq("id",id);
       await rcAuditLog(id,"submit",me,claim.status,st,{ workflow: wf?wf.name:"(fallback Finance)", warnings });

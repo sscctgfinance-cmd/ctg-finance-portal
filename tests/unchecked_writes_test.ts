@@ -47,14 +47,14 @@ function uncheckedWrites(src: string): { line: number; table: string; op: string
 }
 
 Deno.test("the number of writes whose failure nobody reads does not grow", () => {
-  // Baselines as of the 2026-08-23 sweep: 14 + 77 + 29 = 120, set to the EXACT counts so that
+  // Baselines as of the 2026-08-23 sweep: 14 + 74 + 29 = 117, set to the EXACT counts so that
   // slack cannot absorb new ones. LOWER them when you fix some; never raise them. Most of
   // hr.ts's are the claim approval state machine (a multi-write transition where a partial failure
   // leaves the claim between states) — worth a transaction rather than a scatter of error checks, so
   // it is recorded here rather than papered over.
   const fin = uncheckedWrites(FIN), hr = uncheckedWrites(HR), lib = uncheckedWrites(LIB);
   assertEquals(fin.length <= 14, true, `finance.ts: ${fin.length} unchecked writes (baseline 14)\n` + fin.map((x) => `  :${x.line} ${x.op} ${x.table}`).join("\n"));
-  assertEquals(hr.length <= 77, true, `hr.ts: ${hr.length} unchecked writes (baseline 77)\n` + hr.slice(0, 12).map((x) => `  :${x.line} ${x.op} ${x.table}`).join("\n"));
+  assertEquals(hr.length <= 74, true, `hr.ts: ${hr.length} unchecked writes (baseline 74)\n` + hr.slice(0, 12).map((x) => `  :${x.line} ${x.op} ${x.table}`).join("\n"));
   assertEquals(lib.length <= 29, true, `lib.ts: ${lib.length} unchecked writes (baseline 29)`);
 });
 
@@ -82,4 +82,21 @@ Deno.test("the leave-compliance repair counts what it WROTE, not what it tried",
   assertEquals(/failed: failed\.length/.test(block), true, "the operator is not told how many failed");
   // A partial repair is still worth keeping — it must not throw the successful ones away.
   assertEquals(block.includes("ok:true"), true);
+});
+
+Deno.test("SUBMITTED implies there IS an approval chain", () => {
+  // hr_rc_submit rebuilt the chain with an unread delete-then-insert and then marked the claim
+  // submitted regardless. A failed insert therefore left a submitted claim with ZERO steps — and
+  // hr_rc_decide guards every STEP update with `if(step)` while the claim and instance transitions are
+  // unconditional, so the next decision would approve it outright, skipping every level of a workflow
+  // that exists for segregation of duties. Refusing is the fix: the claim stays Draft and recoverable.
+  const at = HR.indexOf('hr_claim_approval_steps").delete()');
+  assertEquals(at > -1, true, "the approval-chain rebuild no longer looks like this");
+  const block = HR.slice(at - 600, at + 1600);
+  assertEquals(block.includes("const { error:eDel }"), true, "the chain delete is unchecked again");
+  assertEquals(block.includes("const { error:eIns }"), true, "the chain insert is unchecked again");
+  assertEquals(block.includes("has NOT been submitted"), true, "a failure no longer tells the operator the claim did not submit");
+  // The refusal must come BEFORE the status update, or the invariant is not protected.
+  assertEquals(block.indexOf("const { error:eIns }") < block.indexOf('status:st'), true,
+    "the claim is marked submitted before the chain is known to exist");
 });
