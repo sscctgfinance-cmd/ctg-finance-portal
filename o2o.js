@@ -262,7 +262,10 @@ function o2oApplyMasterRate(p, rawRate) {
 
 /** Sum of what each pharmacy is billed, to the sen. Recomputed after any master rate applied. */
 function o2oGrandTotal(pharmacies) {
-  return Math.round((pharmacies || []).reduce(function (s, p) { return s + p.total; }, 0) * 100) / 100;
+  // A single NaN or Infinite pharmacy total used to make the whole grand total NaN, which is what the
+  // operator then reads on screen and bills against. Skip what is not a number rather than poison it.
+  var t = (pharmacies || []).reduce(function (s, p) { var v = Number(p && p.total); return s + (isFinite(v) ? v : 0); }, 0);
+  return Math.round(t * 100) / 100;
 }
 
 // v66: generate invoice numbers for the current preview.
