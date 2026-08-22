@@ -1601,6 +1601,54 @@ QUEUE's timing, the confirm's Escape listener and the alert panel's click-away l
 by a test: vitest runs `environment: 'node'` and all 45 test files depend on that, so adding jsdom for
 three behaviours was not worth it.
 
+## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
+
+The session is `localStorage['ctg_portal_token']`, which is scoped per ORIGIN. Two hosts would be two
+logins on two live copies of the same data-entry UI — an employee clocks in on one and the other does not
+reflect it. So the legacy single-file apps and the built React routes are served from one Vercel
+deployment, and that is the only reason this file exists.
+
+**It reproduces `tools/serve_both.ts`, deliberately.** `buildCommand` builds the export and then copies
+the repo-root legacy files OVER `web/out`, so the legacy file wins the same collisions it wins locally:
+`/` is `index.html`'s redirect to `app.html`, not the React landing page. **The copy must stay AFTER the
+build** (the export wipes `web/out`) and **must stay a GLOB** — `*.html *.js *.png`, not a name list.
+The name-list version is `ci.yml`'s `cp common.js`, which CLAUDE.md already calls a gap; nine root `.js`
+files have been added since, and the tenth would 404 in production only. `tests/vercel_config_test.ts`
+pins both, and reads every `src=`/`href=` out of the three legacy HTML files at run time so an asset
+added to a page fails there rather than at cutover.
+
+**Vercel's Root Directory must stay the REPO ROOT, not `web/`.** The Next build reads `../app.html` and
+`../hros.html` (`scripts/sync-legacy-css.mjs`) and imports `../../payroll.js` and `../../hr-docs.js`;
+`turbopack.root` in `next.config.mjs` already points up for that reason. Set the root to `web/` and the
+build fails on the first import.
+
+**Response headers live here because `next.config`'s `headers()` is inert under `output: 'export'`** —
+`web/next.config.mjs`'s header says so. Five headers, and what each is for:
+
+| header | why |
+|---|---|
+| `Content-Security-Policy: frame-ancestors 'none'` | app.html:14 declares this inside a `<meta http-equiv>` CSP, where **the spec says it is IGNORED** — verified in Chrome: a meta-only `app.html` frames fine, the header-served one is refused. hros.html and the React routes declare nothing at all. |
+| `X-Content-Type-Options: nosniff` | the site is served by filename; nosniff stops a mistyped response being sniffed as HTML or script. |
+| `Referrer-Policy: strict-origin-when-cross-origin` | app.html:7 sets it by meta and the other two set nothing. Sibling-page URLs carry `?id=`, which IS sent in `Referer`. |
+| `X-Robots-Tag: noindex, nofollow` | `index.html` and the React root metadata declare noindex; `app.html` and `hros.html` never have. Invite-only, no SEO surface, and this also covers preview deployments. |
+| `Cache-Control` | see below. |
+
+**Deliberately NOT sent, and each absence is a decision.** app.html's FULL meta CSP — it is tuned to
+app.html, and hros.html and the React app have never run under one, so shipping it to all three is a
+cutover-day white screen on two of them. `Permissions-Policy` — the boilerplate copy omits `camera`,
+which would break `DocScanner`. `X-Frame-Options` — superseded by `frame-ancestors`. `Strict-Transport-Security`
+— Vercel sends its own; declaring a shorter `max-age` here would weaken it.
+
+**Caching splits on whether the filename carries a content hash.** `app.html`, `hros.html`, `common.js`
+and the vendored libraries keep their names across every deploy, so they are `max-age=0, must-revalidate`
+— cache one immutably and staff keep running the previous copy with nothing to clear. `/_next/static/*`
+is content-hashed, so a changed file is a changed URL and a year is correct. The two rules overlap on
+`_next/static`; the arrangement is chosen so that if Vercel resolves the overlap the other way the
+failure is **slow, not stale**.
+
+**Do not re-declare the host here.** `SITE_URL` is the one constant (below), and `tests/site_url_test.ts`
+now scans `vercel.json` too.
+
 ## The site's address is `SITE_URL`, declared three times because three runtimes hold it
 
 `https://os.ctg4u.com`. It used to be written out longhand in seven places. It is now `SITE_URL` in
