@@ -46,6 +46,16 @@ var GW_REFOPTS={
 };
 function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function gwNum(v){ if(v==null||v==='')return 0; var n=Number(String(v).replace(/[, ]/g,'')); return isNaN(n)?0:n; }
+/**
+ * To the sen. Every AMOUNT on every row goes through this before it is stored on the row.
+ *
+ * It has to happen here and not at the CSV writer, which is where it used to happen (`toFixed(2)`):
+ * the row objects are ALSO what gwTotals() sums for the four summary cards, so an unrounded row made
+ * the card and the file disagree — RM 256.79 on screen over a CSV that adds to RM 256.78. HitPay is
+ * where it bites hardest (it charges in SGD and settles in MYR, so "Converted Amount in MYR" genuinely
+ * carries sub-sen digits), but a plain `Amount − RefundAmount` in binary floating point is enough.
+ */
+function gwRnd(n){ return Math.round((Number(n)||0)*100)/100; }
 function gwPick(row,name){ if(row[name]!=null&&row[name]!=='')return row[name]; var t=name.toLowerCase(); for(var k in row){ if(k.toLowerCase()===t) return row[k]; } return ''; }
 function gwParseDate(v){
   if(v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(),v.getMonth(),v.getDate());
@@ -90,7 +100,12 @@ function gwConvertHitpay(f,A,fmt,refField,wantPayout,wantFee){
     var d=gwParseDate(gwPick(r,'Completed Date')); if(!d){A.txnNoDate++; return;}
     var gross=gwNum(gwPick(r,'Converted Amount in MYR'))-gwNum(gwPick(r,'Refunded Amount'));
     if(gross===0){A.txnZero++; return;}
+    // The RATE stays on the raw figures — that is what HitPay actually charged on what they actually
+    // processed, and rounding the denominator would put a small error into a rate applied to every
+    // payout. Only the ROW is rounded, and only after the zero test: a row of 0.004 still counts as
+    // converted and still writes a 0.00 line, which is what it has always done.
     grossSum+=gross; feeSum+=gwNum(gwPick(r,'All Inclusive Fee Amount in MYR'));
+    gross=gwRnd(gross);
     A.txnConv++;
     var id=String(gwPick(r,'ID')||'').trim(), oid=String(gwPick(r,'Order ID')||'').trim();
     var method=String(gwPick(r,'Payment Details')||gwPick(r,'Method')||'PayNow').trim();
@@ -123,7 +138,7 @@ function gwConvertPayex(f,A,fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     A.txnRead++;
     var d=gwParseDate(gwPick(r,'Date')); if(!d){A.txnNoDate++; return;}
-    var net=gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount'));
+    var net=gwRnd(gwNum(gwPick(r,'Amount'))-gwNum(gwPick(r,'RefundAmount')));
     if(net===0){A.txnZero++; return;}
     A.txnConv++;
     if(String(gwPick(r,'SettlementDate')||'').trim()) A.pxSettled++; else { A.pxUnsettled++; A.pxUnsettledAmt+=net; }
@@ -159,7 +174,7 @@ function gwConvertAtome(f,A,fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     A.txnRead++;
     var d=gwParseDate(gwPick(r,'Transaction Time')); if(!d){A.txnNoDate++; return;}
-    var amt=gwNum(gwPick(r,'Transaction Amount'));
+    var amt=gwRnd(gwNum(gwPick(r,'Transaction Amount')));
     if(amt===0){A.txnZero++; return;}
     A.txnConv++;
     var ref=String(gwPick(r,refField)||gwPick(r,'Atome Order ID')||gwPick(r,'Transaction ID')||'').trim();
@@ -200,7 +215,7 @@ function gwConvertNttData(f,A,fmt,refField,wantPayout,wantFee){
   if(f.txn) f.txn.rows.forEach(function(r){
     A.txnRead++;
     var d=gwParseDate(gwPick(r,'tx_create_date')); if(!d){A.txnNoDate++; return;}
-    var gross=gwNum(gwPick(r,'tx_amount'));
+    var gross=gwRnd(gwNum(gwPick(r,'tx_amount')));
     if(gross===0){A.txnZero++; return;}
     var mdr=gwNum(gwPick(r,'merchant_mdr_amount'));   // already negative in the export
     var net=gwNum(gwPick(r,'net_amount'));
@@ -240,7 +255,10 @@ function gwConvertRows(provider,f,A,fmt,refField,wantPayout,wantFee){
 function gwTotals(rows){
   var sIn=0,sOut=0,sFee=0,cIn=0,cOut=0;
   rows.forEach(function(r){ if(r.kind==='in'){sIn+=r.amount;cIn++;} else if(r.kind==='fee'){sFee+=r.amount;} else {sOut+=r.amount;cOut++;} });
-  return {sIn:sIn,sOut:sOut,sFee:sFee,cIn:cIn,cOut:cOut,net:sIn+sOut+sFee};
+  // Rounded, because a card is a figure somebody reads and reconciles: summing sen figures in binary
+  // floating point gives 256.78999999999996, and `net` compounds three of those.
+  sIn=gwRnd(sIn); sOut=gwRnd(sOut); sFee=gwRnd(sFee);
+  return {sIn:sIn,sOut:sOut,sFee:sFee,cIn:cIn,cOut:cOut,net:gwRnd(sIn+sOut+sFee)};
 }
 
 /**
@@ -290,5 +308,5 @@ function gwOutName(provider,which,rows){
 if (typeof module !== 'undefined' && module.exports) module.exports = {
   GW_REFOPTS, gwProvLabel, gwMoney, gwNum, gwPick, gwParseDate, gwFmtDate, gwDetect,
   gwConvertPayex, gwConvertAtome, gwConvertHitpay, gwConvertNttData,
-  gwNewAudit, gwConvertRows, gwTotals, gwWarning, gwAuditLines, gwCSV, gwOutName,
+  gwNewAudit, gwConvertRows, gwTotals, gwWarning, gwAuditLines, gwCSV, gwOutName, gwRnd,
 };

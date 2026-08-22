@@ -176,7 +176,17 @@ function srBuildLines(LK, sheets){
     if(swap) swapNote.push(sn);
     var ord=srDetectTextOrder(rows, cols.date);
     rows.forEach(function(o){
-      var amt=srNum(o[cols.amt]); if(!amt)return;
+      // To the sen, HERE, before the figure is stored on the line.
+      //
+      // It used to be rounded only by srXeroRow's `toFixed(2)`, i.e. only on the CSV path — so the SAME
+      // batch of invoices carried three different answers depending on how it left: the CSV import said
+      // RM 350.00, srPostChunks' API body sent RM 350.014 raw, and srSummary/srTally showed RM 350.014
+      // and reported a one-sen "discrepancy" against the order that the CSV would not have created.
+      // Rounding at construction makes the file, the API body, the on-screen total and the tally the
+      // same number by construction. The truthiness guard stays on the RAW value so a sub-half-sen row
+      // is still a line (writing 0.00, as it always has) rather than silently vanishing.
+      var amtRaw=srNum(o[cols.amt]); if(!amtRaw)return;
+      var amt=Math.round(amtRaw*100)/100;
       // SO = keyword pattern, from the id column first, else scanned across the whole row
       var so=cols.id?srCanonSO(o[cols.id]):null;
       if(!so){ for(var kk in o){ if(kk===cols.amt||kk===cols.date)continue; so=srCanonSO(o[kk]); if(so)break; } }

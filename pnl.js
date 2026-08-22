@@ -53,8 +53,12 @@ function pnlSecRows(d,section){ return (((d||{}).rows)||[]).filter(function(r){ 
 function pnlSumAt(rows,m){ var any=false,s=0; (rows||[]).forEach(function(r){ var v=pnlAmt(r,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
 function pnlRowTotal(row,months){ var any=false,s=0; months.forEach(function(m){ var v=pnlAmt(row,m); if(v!==null){ any=true; s+=v; } }); return any?s:null; }
 
-// Builds the display model once — the grid and the CSV both render from it, so the export
-// matches the screen exactly (raw numbers, so Excel can sum the cells).
+// Builds the display model once — the grid and the CSV both render from it, so the export matches the
+// screen exactly. The MODEL keeps full precision (a subtotal is a plain sum, and nothing downstream
+// re-rounds it); the CSV writer rounds to the sen on the way out, because a section total accumulated
+// in binary floating point exports as 1234.5600000000002 against a screen that shows 1,234.56 — the
+// same row, two numbers, in a file somebody reconciles against the screen. Excel still sums the cells:
+// they are numbers, just the ones the operator was shown.
 function pnlBuild(data,monthsN,showZero){
   var d=data||{}, totals=d.totals||{};
   var months=(d.months||[]).slice(0,monthsN);
@@ -138,6 +142,8 @@ function pnlBuild(data,monthsN,showZero){
  * `mdl` is a pnlBuild() result and `totals` is the response's own totals map (only the !hasRows branch
  * reads it). Band and block rows are a bare label line, exactly as the legacy wrote them.
  */
+/** To the sen, for the file only — the model keeps full precision so nothing downstream shifts. */
+function pnlSen(n){ return Math.round((Number(n)||0)*100)/100; }
 function pnlCsvLines(mdl,totals){
   var months=mdl.months;
   var q=function(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?('"'+s.replace(/"/g,'""')+'"'):s; };
@@ -145,12 +151,15 @@ function pnlCsvLines(mdl,totals){
   if(!mdl.hasRows){
     lines=[['Month','Income','Expenses','Net profit'].map(q).join(',')];
     months.forEach(function(m){ var t=(totals||{})[m]||{};
-      lines.push([q(m),(t.income==null?'':t.income),(t.expenses==null?'':t.expenses),(t.net_profit==null?'':t.net_profit)].join(',')); });
+      lines.push([q(m),(t.income==null?'':pnlSen(t.income)),(t.expenses==null?'':pnlSen(t.expenses)),(t.net_profit==null?'':pnlSen(t.net_profit))].join(',')); });
   } else {
     mdl.rows.forEach(function(r){
       if(r.kind==='band'||r.kind==='blk'){ lines.push(q(r.label)); return; }
-      lines.push([q(r.label)].concat(r.vals.map(function(c){ return (c&&c.amt!==null&&c.amt!==undefined)?c.amt:''; }))
-        .concat([(r.total===null||r.total===undefined)?'':r.total]).join(','));
+      // To the sen. Every subtotal here is a sum of 2dp figures accumulated in binary floating point,
+      // so a section total exports as 1234.5600000000002 where the screen (which formats to 2dp) shows
+      // 1,234.56 — the same row, two numbers, in a file somebody reconciles against the screen.
+      lines.push([q(r.label)].concat(r.vals.map(function(c){ return (c&&c.amt!==null&&c.amt!==undefined)?pnlSen(c.amt):''; }))
+        .concat([(r.total===null||r.total===undefined)?'':pnlSen(r.total)]).join(','));
     });
   }
   return lines;
@@ -175,5 +184,5 @@ function pnlCsvName(coName,monthsLen,today){
 // this; a CommonJS-aware bundler reads it and hands the React app the same functions app.html calls.
 if (typeof module !== 'undefined' && module.exports) module.exports = {
   PNL_BLOCK_ORDER, PNL_BLOCK_COLORS,
-  pnlAmt, pnlPct, pnlSecRows, pnlSumAt, pnlRowTotal, pnlBuild, pnlCsvLines, pnlCsvName,
+  pnlAmt, pnlPct, pnlSecRows, pnlSumAt, pnlRowTotal, pnlBuild, pnlSen, pnlCsvLines, pnlCsvName,
 };
