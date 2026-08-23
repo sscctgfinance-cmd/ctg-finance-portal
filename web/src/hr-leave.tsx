@@ -283,8 +283,12 @@ function RequestRow({ x, viewer, onDecide }: { x: LeaveRequest; viewer?: boolean
   );
 }
 
-/** `hrLeaveStepPills()` — hros.html:3159. Shared with the employee view; mirrored, not imported. */
-function StepPills({ x }: { x: LeaveRequest }) {
+/**
+ * `hrLeaveStepPills()` — hros.html:3159. The legacy function is shared by BOTH leave screens, so this
+ * is exported and imported by src/hr-emp-leave.tsx rather than copied: a second copy of the pill maths
+ * is a second answer to "which level is this request waiting on", and only one of them can be right.
+ */
+export function StepPills({ x }: { x: LeaveRequest }) {
   const steps = x.steps || [];
   if (!steps.length) return <span className="muted" style={{ fontSize: '10.5px' }}>—</span>;
   const cur = x.current_step || 1;

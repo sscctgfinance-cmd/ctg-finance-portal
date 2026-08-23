@@ -480,6 +480,43 @@ Object.assign(FIXTURES, {
                    { id: "lt2", code: "MC", name: "Medical leave", paid: true, default_days: 14 },
                    { id: "lt3", code: "UP", name: "Unpaid leave", paid: false, default_days: 0 } ] },
 
+  // `hr_leave_my` (hr.ts:1316) — the EMPLOYEE half of Leave: their types, this year's balances and
+  // their own requests with the approval chain attached. `me` here is AHMAD (e1), the employee
+  // `hr_rc_config` already resolves to, so the two halves agree about whose screen this is.
+  hr_leave_my: { ok: true, year: 2026,
+    types: [ { id: "lt1", code: "AL", name: "Annual leave", paid: true, color: "var(--green-soft)", default_days: 14 },
+             { id: "lt2", code: "MC", name: "Medical leave", paid: true, color: "var(--sky)", default_days: 14 },
+             { id: "lt3", code: "UP", name: "Unpaid leave", paid: false, color: null, default_days: 0 } ],
+    balances: [ { type: "Annual leave", code: "AL", paid: true, color: "var(--green-soft)", entitled: 14, taken: 3, remaining: 11 },
+                { type: "Medical leave", code: "MC", paid: true, color: "var(--sky)", entitled: 14, taken: 1, remaining: 13 },
+                { type: "Unpaid leave", code: "UP", paid: false, color: null, entitled: 0, taken: 0, remaining: 0 } ],
+    requests: [
+      { id: "lv2", employee_id: "e1", leave_type_id: "lt2", leave_type: "Medical leave", date_from: "2026-08-04", date_to: "2026-08-04",
+        days: 1, status: "Approved", reason: "Fever", current_step: 1,
+        steps: [ { id: "s2", step_order: 1, name: "HR", status: "Approved", assignee_name: "BOSS", decided_by_name: "BOSS", decided_at: "2026-08-04T02:00:00.000Z" } ] },
+      { id: "lv3", employee_id: "e1", leave_type_id: "lt1", leave_type: "Annual leave", date_from: "2026-09-01", date_to: "2026-09-03",
+        days: 3, status: "Pending", reason: "Family matters", current_step: 1,
+        steps: [ { id: "s3", step_order: 1, name: "Manager", status: "Pending", assignee_name: "BOSS", decided_by_name: null },
+                 { id: "s4", step_order: 2, name: "HR", status: "Pending", assignee_name: null, decided_by_name: null } ] } ] },
+
+  // The three employee-mode WRITES. No golden reaches them — they exist so `tools/serve_both.ts` can
+  // drive the whole screen end to end without production credentials, which is what that server is for.
+  hr_leave_apply: { ok: true, days: 3 },
+  hr_leave_cancel: { ok: true },
+  hr_leave_decide: { ok: true, advanced: true },
+
+  // `hr_leave_pending` (hr.ts:1505) — the approver queue. A line manager who is NOT HR approves their
+  // team here, which is the half of employee-mode Leave that has no admin equivalent anywhere else.
+  hr_leave_pending: { ok: true, requests: [
+    { id: "lv1", employee_id: "e2", leave_type_id: "lt1", leave_type: "Annual leave", date_from: "2026-08-24", date_to: "2026-08-26",
+      days: 3, status: "Pending", reason: "Family trip", current_step: 1, current_step_name: "Manager",
+      hr_employees: { name: "SITI NURHALIZA BINTI OMAR", emp_no: "E002", dept: "Sales" } },
+    // TWO rows, not one: every Approve/Reject on this screen carries its own request id, and a
+    // single-row queue cannot tell a correctly wired button from one pinned to the first row.
+    { id: "lv4", employee_id: "e3", leave_type_id: "lt2", leave_type: "Medical leave", date_from: "2026-08-20", date_to: "2026-08-21",
+      days: 2, status: "Pending", reason: "Dengue", current_step: 1, current_step_name: "Manager",
+      hr_employees: { name: "RAJESH A/L KUMAR", emp_no: "E003", dept: "Warehouse" } } ] },
+
   hr_rc_config: { ok: true,
     me: { isAdmin: true, roles: ["hr_admin"], is_manager: true, employee: EMPLOYEES[0] },
     claim_types: [ { id: "ct1", code: "TRAVEL", name: "Travel & transport", active: true, sort_order: 1, requires_receipt: true, cap_amount: 500 },

@@ -3,6 +3,16 @@
 // The route. Everything impure lives here — the session, the fetches, the state, the clock — so that
 // src/hr-leave.tsx stays a pure function of its props and can be diffed against the legacy golden.
 // Same split as the pilot: see app/hr/access/page.tsx.
+//
+// TWO SCREENS BEHIND ONE ROUTE, decided by role — hros.html:1553 is
+// `body=(HR_EMP_MODE?hrEmpLeave():hrLeave())`. `app/hr/employees/` is the precedent (CLAUDE.md's
+// "two modes behind one route"); this is the other kind, where the two modes are two different
+// SCREENS with two different data sources rather than a list and its detail form.
+//
+// Getting this wrong is not cosmetic. `hr_leave_admin` requires `hrCanView()` (hr.ts:1541 → lib.ts:131
+// = admin / hr_admin / viewer), which an `employee` is not, so before the employee branch existed every
+// non-admin who tapped Leave in the sidebar or the phone tab bar got the 401 rendered as the whole
+// page. That is the largest population in the product, and it read as a permissions bug.
 
 import { useCallback, useEffect, useState } from 'react';
 
@@ -10,7 +20,10 @@ import HrLeave, {
   type LeaveApplyForm, type LeaveBalances, type LeaveEmployee, type LeaveFlowStep,
   type LeaveRequest, type LeaveType,
 } from '../../../src/hr-leave';
+import HrEmpLeave, { applyBody, type LeaveBalance, type PendingRequest } from '../../../src/hr-emp-leave';
 import { showConfirm } from '../../../src/confirm';
+import { toast } from '../../../src/toast';
+import { hrRole } from '../../../src/nav';
 import { mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -20,6 +33,13 @@ const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
 const HR_PROCARE_TENANT = '99911869-9e91-4572-b7dc-4db51b45b6a9';
 
 interface Company { tenant_id: string; tenant_name: string }
+/** `hr_leave_my` — hr.ts:1316. */
+interface EmpLeave {
+  types?: LeaveType[];
+  balances?: LeaveBalance[];
+  requests?: LeaveRequest[];
+  year?: number;
+}
 interface LeaveAdmin {
   requests?: LeaveRequest[];
   employees?: LeaveEmployee[];
@@ -38,12 +58,36 @@ const BLANK_APPLY: LeaveApplyForm = {
   employee_id: '', leave_type_id: '', date_from: '', date_to: '', reason: '', half_day: false, auto_approve: true,
 };
 
+/**
+ * The role gate — hros.html:1361-1368 (`enterApp()`), mirrored by `hrRole()` in src/nav.ts, which is
+ * where the shell already computes it. One `me` call, then ONE of the two screens is mounted; nothing
+ * loads before the answer, so an employee never fires `hr_leave_admin` and never sees its 401.
+ */
 export default function HrLeavePage() {
+  const [empMode, setEmpMode] = useState<boolean | null>(null);
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const t = !!token();
+    setSignedIn(t);
+    if (!t) return;
+    void call<{ user?: { role?: string } }>({ api: 'me' })
+      .then((r) => setEmpMode(hrRole(r.user && r.user.role).empMode))
+      // hrRole('') is employee mode — the SAFE direction, and the legacy default. An admin who fails
+      // this call sees the personal screen; an employee never sees the admin one.
+      .catch(() => setEmpMode(true));
+  }, []);
+
+  if (signedIn === false) return <><Banner /><NotSignedIn /></>;
+  if (empMode === null) return <><Banner /><Panel><span className="spin"></span> Loading leave…</Panel></>;
+  return empMode ? <EmpLeavePage /> : <AdminLeavePage />;
+}
+
+function AdminLeavePage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [data, setData] = useState<LeaveAdmin | null>(null);
   const [flow, setFlow] = useState<LeaveFlowStep[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [today] = useState(todayLocalISO);
 
@@ -83,9 +127,6 @@ export default function HrLeavePage() {
   }, []);
 
   useEffect(() => {
-    const t = !!token();
-    setSignedIn(t);
-    if (!t) return;
     void load();
     // `hrMyEmpId()` (hros.html:3502) reads RC.me, loaded by hrRCBoot(). Best-effort: the apply form's
     // "whose leave is this" caption degrades to "Pick whose leave this is." without it.
@@ -207,13 +248,7 @@ export default function HrLeavePage() {
   return (
     <>
       <Banner />
-      {signedIn === false
-        ? <Panel>
-            Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
-            the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
-            already be signed in.
-          </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+      {err ? <Panel>⚠️ {err}</Panel>
         : !data || !flow || !company ? <Panel><span className="spin"></span> Loading leave…</Panel>
         : (
           <>
@@ -252,6 +287,142 @@ export default function HrLeavePage() {
           </>
         )}
     </>
+  );
+}
+
+/**
+ * `hrEmpLeave()` — hros.html:3060. The employee's own screen: their balances, their requests, the apply
+ * form, and the approver queue a line manager acts on.
+ *
+ * `hr_leave_pending` is loaded BEST-EFFORT and separately, exactly as hros.html:3067 does inside its own
+ * try/catch: a caller with no approval step gets an empty list, and a failure there must not take the
+ * employee's own leave screen down with it.
+ */
+function EmpLeavePage() {
+  const [d, setD] = useState<EmpLeave | null>(null);
+  const [pending, setPending] = useState<PendingRequest[]>([]);
+  const [companyName, setCompanyName] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [today] = useState(todayLocalISO);
+  // Bumped after a successful apply so the uncontrolled `lv_*` boxes re-mount blank — the legacy gets
+  // that for free by rewriting innerHTML. Typing never bumps it, so the caret never moves.
+  const [formKey, setFormKey] = useState(0);
+
+  const load = useCallback(async () => {
+    setErr(null);
+    try {
+      setD(await call<EmpLeave>({ api: 'hr_leave_my' }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+    try {
+      const p = await call<{ requests?: PendingRequest[] }>({ api: 'hr_leave_pending' });
+      setPending(p.requests || []);
+    } catch { setPending([]); }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    // An employee works in ONE company and never sees the picker (hros.html:1377, `hrEmpBoot()`), so the
+    // page-head chip comes from `hr_rc_config`'s tenant, not from `hr_companies`.
+    void call<{ tenant_name?: string }>({ api: 'hr_rc_config' })
+      .then((r) => setCompanyName(r.tenant_name || ''))
+      .catch(() => {});
+  }, [load]);
+
+  /**
+   * `hrEmpLeaveApply()` — hros.html:3104. The DOM read stays here (the form is uncontrolled and keeps
+   * the legacy `lv_*` ids, which is what `qiCollect()`'s rule asks for); the decision is `applyBody()`.
+   */
+  const onApply = useCallback(async () => {
+    const v = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null)?.value || '';
+    const body = applyBody({
+      leave_type_id: v('lv_type'),
+      date_from: v('lv_from'),
+      date_to: v('lv_to'),
+      half_day: !!(document.getElementById('lv_half') as HTMLInputElement | null)?.checked,
+      reason: v('lv_reason'),
+    });
+    if ('error' in body) { toast(body.error as string, true); return; }
+    const btn = document.getElementById('lv_submit') as HTMLButtonElement | null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    try {
+      const r = await call<{ days?: number }>(body);
+      const days = Number(r.days) || 0;
+      toast(`Leave applied (${days} day${days === 1 ? '' : 's'}) ✓`);
+      setFormKey((k) => k + 1);
+      await load();
+      return;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit application'; }
+  }, [load]);
+
+  /**
+   * hros.html:3117 — confirmed, because the request and its approval chain are gone afterwards.
+   *
+   * The OK label is "Yes, cancel it" and not "Cancel": the dialog's own dismiss button is Cancel
+   * (src/confirm.tsx:53), so a confirm button reading "Cancel" gives this one dialog two buttons that
+   * both say Cancel and mean the opposite things. The legacy's native `confirm()` has the same
+   * ambiguity as OK/Cancel; a ported dialog does not have to keep it.
+   */
+  const onCancel = useCallback(async (id: string) => {
+    if (!await showConfirm('Cancel leave request', 'Cancel this leave request?', 'Yes, cancel it', 'd')) return;
+    try {
+      await call({ api: 'hr_leave_cancel', id });
+      toast('Cancelled');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    }
+  }, [load]);
+
+  /** hros.html:3073 — only a REJECTION is confirmed, and the toast names which of the three outcomes. */
+  const onDecide = useCallback(async (id: string, decision: 'approve' | 'reject') => {
+    if (decision === 'reject' && !await showConfirm('Reject leave request', 'Reject this leave request?', 'Reject', 'd')) return;
+    try {
+      const r = await call<{ final?: boolean; advanced?: boolean }>({ api: 'hr_leave_decide', id, decision });
+      toast(r.final ? 'Approved ✓' : r.advanced ? 'Approved → next level' : 'Done');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    }
+  }, [load]);
+
+  return (
+    <>
+      <Banner />
+      {/* hros.html:3075 — the error panel offers a retry, because the only other thing on the screen is
+          nothing. `hr_leave_my` also answers `need_profile` for a login with no employee record; that
+          arrives here as its message, which is what the legacy renders too. */}
+      {err ? <Panel>⚠️ {err} — <a onClick={() => void load()} style={{ cursor: 'pointer', color: 'var(--sky)' }}>retry</a></Panel>
+        : !d ? <Panel><span className="spin"></span> Loading leave…</Panel>
+        : (
+          <HrEmpLeave
+            companyName={companyName}
+            types={d.types || []}
+            balances={d.balances || []}
+            requests={d.requests || []}
+            pending={pending}
+            today={today}
+            formKey={formKey}
+            onApply={() => void onApply()}
+            onCancel={(id) => void onCancel(id)}
+            onDecide={(id, decision) => void onDecide(id, decision)}
+          />
+        )}
+    </>
+  );
+}
+
+function NotSignedIn() {
+  return (
+    <Panel>
+      Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
+      the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
+      already be signed in.
+    </Panel>
   );
 }
 

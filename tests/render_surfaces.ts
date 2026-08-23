@@ -1,4 +1,4 @@
-// The 40 rendered surfaces of the two apps, how to render each one offline, and how to normalise the
+// The 41 rendered surfaces of the two apps, how to render each one offline, and how to normalise the
 // result so a golden means something.
 //
 // The inventory was taken from the code, not from the migration spec:
@@ -6,7 +6,8 @@
 //   HR OS      — 14 nav views, from `hrRender()` at hros.html:1683. One of them ("dashboard") is itself
 //                a dispatcher over `HR_DASH.page` (hros.html:1879) with 5 sub-pages, so it contributes
 //                5 surfaces rather than 1 → 13 + 5 = 18.
-//   22 + 18 = 40.
+//   22 + 18 = 40, plus `hr.leave.emp` — the second screen behind the `leave` nav id (hros.html:1553
+//   dispatches it by role) — = 41.
 //
 
 import { type AppHandle, loadApp } from "./render_harness.ts";
@@ -77,6 +78,16 @@ export const SURFACES: Surface[] = [
     setup: (extra ?? "") + `HR.view=${JSON.stringify(v)};`,
     render: "hrRender()",
   })),
+  // `leave` is the ONE nav id hros.html:1553 dispatches to two different screens by role —
+  // `HR_EMP_MODE?hrEmpLeave():hrLeave()`. `hr.leave` above is the admin one; this is the other, and it
+  // is the whole of Leave for every non-admin employee. Captured as its own surface because a mode the
+  // goldens never reach is a mode nothing protects: the React port of the employee branch was missing
+  // entirely while `hr.leave` stayed green.
+  {
+    id: "hr.leave.emp", app: "hros.html" as const, title: "Leave (employee)",
+    setup: EMP_MODE + "HR.view='leave';",
+    render: "hrRender()",
+  },
 ];
 
 /** Seed the globals a signed-in operator would have, then hand back the live app. */

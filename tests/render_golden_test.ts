@@ -32,11 +32,12 @@ Deno.test("the surface inventory matches the goldens on disk — no screen silen
     "tests/golden/ and SURFACES disagree — regenerate with: deno run -A tools/render_probe.ts tests/golden");
 });
 
-Deno.test("all 40 rendered surfaces are covered", () => {
-  assertEquals(SURFACES.length, 40);
+Deno.test("all 41 rendered surfaces are covered", () => {
+  assertEquals(SURFACES.length, 41);
   assertEquals(SURFACES.filter((s) => s.app === "app.html").length, 22, "Finance OS tabs");
-  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 18, "HR OS views (13) + dashboard sub-pages (5)");
-  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 40, "duplicate surface id");
+  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 19,
+    "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553)");
+  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 41, "duplicate surface id");
 });
 
 /**
