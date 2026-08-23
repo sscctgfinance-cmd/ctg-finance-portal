@@ -418,6 +418,18 @@ assert no key is or contains one. `web/tests/hr-profile.parity.test.tsx` also pi
 lives half in each half: an ABSENT `bankCode` means "unchanged", an empty one means "clear it", and the
 form paints before `hr_banks_list` resolves.
 
+**A route that reads the company list must keep the `tenant_id`, and EVERY company-scoped call must
+carry it.** `hr.yearend` kept only `tenant_name`, so `hr_annual` and `hr_bootstrap` both went out
+without a tenant and the screen was `⚠️ no company selected` for everyone. The two failure MODES are
+what to learn: `hr_annual` (hr.ts:2876) refuses a blank tenant outright, so it is loud — but
+`hr_bootstrap` (hr.ts:979) answers `ok` with an EMPTY employee list, so the same omission there is a
+blank picker and no error anywhere. **`tools/serve_both.ts`'s fixture server answers by ACTION NAME and
+ignores the tenant**, so neither is reproducible under fixtures and no golden or rendered output sees a
+request body. Pin it by SOURCE, in the screen's own test — that the body carries `tenant:` AND that what
+it carries is a `.tenant_id`, since sending the NAME satisfies the first check and matches no row. The
+layout's picker writes `hr_tenant` and RELOADS (`app/hr/layout.tsx:142`), which is why reading the key
+once on mount is correct.
+
 ### The exports and the drawing surfaces — v222, the gap after all 36 screens
 
 Every screen was migrated before any of the **files** was. These five are what closed that gap on the HR
