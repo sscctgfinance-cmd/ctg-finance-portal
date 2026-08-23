@@ -124,6 +124,17 @@ rules they all share:
 - **One documented exception to "reads no app state":** `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY`,
   which stay in `hros.html`. `hr-docs.js`'s header says what a bundler has to do about it.
 
+**No shared root `.js` may set a page-relative asset `src`.** A relative `src` resolves against the
+DOCUMENT, and the legacy apps are FILES at the root while the React routes are DIRECTORIES
+(`trailingSlash: true`), so `./jspdf.umd.min.js` in `DocScanner`'s lazy PDF loader was correct from
+`/app.html` and a 404 from `/finance/upload/` — and `common.js` swallows the rejection into
+`toast('Failed to build document')`, so every scan on both React scanner screens ended in nothing with
+the page looking fine. Resolve against the SCRIPT's own URL instead (`document.currentScript.src`,
+captured at load time), which also carries `NEXT_PUBLIC_BASE_PATH` for free without the shared file
+knowing a base path exists — React injects these files through `legacyUrl()`, so the prefix is already
+there. `tests/docscanner_pdf_url_test.ts` drives common.js's own loader source from four page depths and
+sweeps every non-vendored root `.js` for the general form.
+
 **`xlsx.full.min.js` is NOT in `app.html`'s head — `gwLoadXlsx()` loads it on demand.** 952 KB raw,
 335 KB gzipped: 54% of everything a Finance page used to transfer, paid by all 22 tabs when six
 functions touch it. That one loader (in app.html's Gateway section, Gateway's by birth) is now the
