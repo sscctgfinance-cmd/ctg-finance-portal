@@ -64,6 +64,9 @@ export default function FinanceO2OPage() {
   const [nums, setNums] = useState(previewNums('', '', [], 0));
   const [err, setErr] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  /** `runOnce('o2o-issue', …)` (app.html:3172). `o2o_issue` has no dedupe, so a second click is a
+   *  second set of REAL Xero invoices — one per pharmacy. Same shape as salesrecon's `posting`. */
+  const [issuing, setIssuing] = useState(false);
 
   // The clock is read ONCE, on mount, and handed to the component — see src/finance-o2o.tsx's header.
   const [now] = useState(() => new Date());
@@ -183,6 +186,7 @@ export default function FinanceO2OPage() {
 
   /** `o2oIssue()` — app.html:3299. The body itself is `issueBody()`, in src/, and pinned by the test. */
   const onIssue = useCallback(async () => {
+    if (issuing) return;
     if (out.kind !== 'preview') { toast('Preview first', true); return; }
     if (!tenant) { toast('Pick a company first', true); return; }
     const data = out.data;
@@ -200,6 +204,9 @@ export default function FinanceO2OPage() {
       (dry ? 'TEST MODE — preview what would be created for ' : 'Create REAL Xero invoices for ')
       + data.pharmacy_count + ' pharmacies in ' + co + ' (dated ' + invDate + ', due ' + dueDate + numsMsg + ')?',
       dry ? 'Preview' : 'Create invoices', 'p')) return;
+    // The lock engages where the legacy's does — after the confirm, around the call — and is released
+    // in `finally`, so a network error leaves the operator able to retry.
+    setIssuing(true);
     try {
       const r = await call<IssueResponse>(issueBody({
         tenant, data, invoiceDate: invDate, dueDate, dryRun: dry, invNums,
@@ -212,8 +219,10 @@ export default function FinanceO2OPage() {
       setOut({ kind: 'issued', res: r, downloadable, failures: null, downloaded: 0 });
     } catch (e) {
       setOut({ kind: 'error', message: 'Failed: ' + (e instanceof Error ? e.message : String(e)) });
+    } finally {
+      setIssuing(false);
     }
-  }, [out, tenant, companies]);
+  }, [out, tenant, companies, issuing]);
 
   /** `o2oDownloadPdfs(retryOnly)` — app.html:3216. */
   const onDownloadPdfs = useCallback(async (retryOnly: boolean) => {
@@ -271,7 +280,7 @@ export default function FinanceO2OPage() {
             due={plusDaysLocal(now, 30)}
             out={out}
             nums={nums}
-            canIssue={out.kind === 'preview'}
+            canIssue={out.kind === 'preview' && !issuing}
             openPharmacy={open}
             onTenantChange={onTenantChange}
             onResetDates={onResetDates}

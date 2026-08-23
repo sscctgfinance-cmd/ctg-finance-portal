@@ -655,6 +655,9 @@ interface DocsProps {
   onDocDownload: (docId: FolderId) => void;
   onDocDelete: (docId: FolderId) => void;
   onDocUpload: () => void;
+  /** `runOnce('info-doc-upload-btn','Uploading…')` — app.html:5812. A second click files the
+   *  document twice. */
+  uploading: boolean;
 }
 
 /** `infoSecDocsBody()`'s tree — app.html:5591, recursive, `depth?16:0` and all. */
@@ -850,7 +853,7 @@ function DocsBody(p: DocsProps) {
       </div>
       <div style={st('display:flex;gap:8px;align-items:center;flex-wrap:wrap')}>
         <input type="file" id="info-doc-file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.xlsx,.xls,.txt" style={st('flex:1;min-width:200px;font-size:12px;color:var(--text-soft)')} />
-        <button className="btn p" id="info-doc-upload-btn" onClick={() => p.onDocUpload()}>⬆ Upload</button>
+        <button className="btn p" id="info-doc-upload-btn" onClick={() => p.onDocUpload()} disabled={p.uploading}>⬆ Upload</button>
       </div>
       <div id="info-doc-status" style={st('font-size:11.5px;margin-top:8px;min-height:14px')}></div>
       <div className="muted" style={st('font-size:11px;margin-top:6px')}>Max 20 MB · PDF / image / Word / Excel / TXT</div>
@@ -1175,6 +1178,7 @@ export interface FinanceInfoProps {
   onDocDownload: (docId: FolderId) => void;
   onDocDelete: (docId: FolderId) => void;
   onDocUpload: () => void;
+  uploading: boolean;
   onRowAdd: (key: string, colKeys: string[]) => void;
   onRowDel: (key: string, idx: number) => void;
   onSave: () => void;
@@ -1212,6 +1216,7 @@ export default function FinanceInfo(p: FinanceInfoProps) {
     onDocDownload: p.onDocDownload,
     onDocDelete: p.onDocDelete,
     onDocUpload: p.onDocUpload,
+    uploading: p.uploading,
   };
 
   return (

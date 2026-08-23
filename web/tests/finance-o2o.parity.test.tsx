@@ -678,3 +678,51 @@ describe('the small pure helpers the route leans on', () => {
     expect(plusDaysLocal(earlyMytFirst, 30)).toBe('2026-10-01');
   });
 });
+
+/* ══ The double-submit guard ═══════════════════════════════════════════════════════════════════════
+ *
+ * `o2o_issue` (finance.ts:609) has no idempotency key and no dedupe, so a second click is a SECOND set
+ * of real Xero invoices, one per pharmacy. The legacy never had the hole: `o2oIssue()` wraps the call in
+ * `runOnce('o2o-issue','Issuing…')` (app.html:3172), which disables the button for the duration and
+ * restores it in `finally`.
+ *
+ * Two halves, and the second is the one a golden cannot see. The component half is drivable — a false
+ * `canIssue` must actually emit `disabled`. The ROUTE half is what decides when `canIssue` is false, and
+ * there is no output to assert it through (the page is a client component and vitest runs `environment:
+ * 'node'`), so it is pinned by SOURCE — `finance.calendar`'s rule, and `hr-emp-leave`'s treatment of a
+ * route. Comments are blanked first: the paragraph above names `runOnce` while explaining the bug, and
+ * a scan of raw source would match the prose and pass on a route that dropped the guard.
+ */
+describe('the Issue button cannot be clicked twice into two batches of real invoices', () => {
+  const ROUTE = readFileSync(join(REPO, 'web/app/finance/o2o/page.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+  it('renders the button disabled whenever canIssue is false', () => {
+    const off = renderToStaticMarkup(screen({ canIssue: false }));
+    expect(off).toMatch(/<button[^>]*id="o2o-issue"[^>]*disabled=""/);
+    // And enabled when it is true, so the assertion above is about the prop and not about the markup
+    // always carrying the attribute.
+    expect(renderToStaticMarkup(screen({ canIssue: true }))).not.toMatch(/id="o2o-issue"[^>]*disabled/);
+  });
+
+  it('the route clears canIssue while the POST is in flight', () => {
+    // Not just "a flag exists" — the flag must be part of what canIssue is, or the button stays live.
+    expect(ROUTE).toMatch(/canIssue=\{[^}]*!issuing[^}]*\}/);
+  });
+
+  it('the route sets the flag before the call and clears it in finally', () => {
+    const at = ROUTE.indexOf('const onIssue');
+    expect(at).toBeGreaterThan(-1);
+    const body = ROUTE.slice(at, ROUTE.indexOf('const onDownloadPdfs', at));
+    const lock = body.indexOf('setIssuing(true)');
+    const post = body.indexOf('issueBody(');
+    expect(lock).toBeGreaterThan(-1);
+    // Locked BEFORE the request goes out, not after it resolves — the window the whole finding is about.
+    expect(lock).toBeLessThan(post);
+    // Released in `finally`, so one network error does not strand the operator on a dead button.
+    expect(body).toMatch(/finally\s*\{[^}]*setIssuing\(false\)/);
+    // And the handler itself refuses a re-entry, belt and braces over the attribute — salesrecon's
+    // `if (posting)` and Quick Invoice's `if (busy)`, the two screens this one is matched to.
+    expect(body).toMatch(/if\s*\(issuing\)\s*return/);
+  });
+});

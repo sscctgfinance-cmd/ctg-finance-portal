@@ -121,6 +121,7 @@ function screen(over: Partial<Props> = {}) {
       onDocDownload={noop}
       onDocDelete={noop}
       onDocUpload={noop}
+      uploading={false}
       onRowAdd={noop}
       onRowDel={noop}
       onSave={noop}
@@ -1448,5 +1449,32 @@ describe('the withheld direction', () => {
     // d4 belongs to CO2; its folder list is empty. Neither may appear on CO1's screen.
     expect(DOC_ROWS.some((d) => d.tenant_id === COMPANIES[1].tenant_id)).toBe(true);
     expect(out).not.toContain('SST exemption letter');
+  });
+});
+
+/* ══ The document-upload double-submit guard ═══════════════════════════════════════════════════════
+ *
+ * `runOnce('info-doc-upload-btn','Uploading…')` (app.html:5812). `company_doc_upload` does not dedupe,
+ * so a double-click files the same document twice. The route half is pinned by SOURCE for the same
+ * reason the O2O Issue guard is — see that file's block.
+ */
+describe('Upload cannot be clicked twice into two filed copies', () => {
+  const ROUTE = readFileSync(join(REPO, 'web/app/finance/info/page.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+  it('renders the button disabled while uploading', () => {
+    expect(renderToStaticMarkup(screen({ uploading: true, mode: 'edit', editable: true })))
+      .toMatch(/<button[^>]*id="info-doc-upload-btn"[^>]*disabled=""/);
+    expect(renderToStaticMarkup(screen({ uploading: false, mode: 'edit', editable: true })))
+      .not.toMatch(/id="info-doc-upload-btn"[^>]*disabled/);
+  });
+
+  it('the route locks before the read and releases in finally', () => {
+    const at = ROUTE.indexOf('const onDocUpload');
+    const body = ROUTE.slice(at, ROUTE.indexOf('const editRows', at));
+    expect(body).toMatch(/if\s*\(uploading\)\s*return/);
+    expect(body.indexOf('setUploading(true)')).toBeLessThan(body.indexOf('company_doc_upload'));
+    expect(body).toMatch(/finally\s*\{[^}]*setUploading\(false\)/);
+    expect(ROUTE).toMatch(/uploading=\{uploading\}/);
   });
 });
