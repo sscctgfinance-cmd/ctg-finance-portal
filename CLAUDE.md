@@ -1712,10 +1712,20 @@ still matched it and the whole suite stayed green on a page that did nothing.
 Merging a PR into `origin/main` does **not** make anything live. After merging:
 
 ```bash
-git switch main && git pull origin main && git push publish main
+git switch main && git fetch origin && git reset --hard origin/main && git push publish main
 ```
 
 That push is what rebuilds Pages and triggers the edge-function deploy.
+
+**`reset --hard`, NOT `git pull` — and that is not a style preference.** PRs are squash-merged, so
+`origin/main` gets ONE new commit while your local branch still holds the originals. `git pull` cannot
+fast-forward past that, so it merges, and every deploy leaves behind an empty `Merge remote-tracking
+branch 'origin/main'` commit that exists nowhere on the remote. Nineteen of them accumulated before
+anyone noticed: GitHub Desktop showed "19 commits to push" and then **"the repository does not seem to
+exist anymore"** — which is what a client reports when it pushes to a private repo the signed-in account
+cannot see (Desktop is `sscctgfinance-cmd`; `origin` is `CTG-Business`). The content was identical the
+whole time; only the shape of the history had diverged. Keep all three tips equal and the message never
+appears.
 
 **A merge is not a deploy, and a green CI is not one either — check the DEPLOY workflow.** Both repos
 run `deploy-supabase-portal.yml`, so the function deploys twice per change and a failure in one can be
