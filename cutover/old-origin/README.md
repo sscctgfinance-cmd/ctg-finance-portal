@@ -27,9 +27,10 @@ A device that enables reminders on the new origin *before* it ever hits this pag
 subscriptions, and the duplicate is permanent and unidentifiable. Order matters and it is free to get
 right.
 
-The old address is served from the **`publish` remote** (`sscctgfinance-cmd/ctg-finance-portal`), which
-is a different repository from this one. So this is a hand step, in a **separate clone of `publish`** —
-not a `git push publish main` from here, which would overwrite it with the app again:
+The old address is served from the **deploy remote** (`sscctgfinance-cmd/ctg-finance-portal`, called
+`origin` here since the remotes were swapped — see CLAUDE.md), which is a different repository from this
+one. So this is a hand step, in a **separate clone of it** — not a `git push origin main` from here,
+which would overwrite it with the app again:
 
 ```bash
 git clone git@github.com:sscctgfinance-cmd/ctg-finance-portal.git /tmp/ctg-publish

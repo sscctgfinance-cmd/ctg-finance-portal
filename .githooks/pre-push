@@ -1,35 +1,67 @@
 #!/bin/sh
-# Enforce the PR-only rule on CTG-Business (origin).
+# Two guards, keyed on the remote's URL rather than its NAME.
 #
-# Direct pushes to main are how this repo has always worked, so the habit is the risk — a convention
-# written in a doc does not survive a hurried fix. This makes the wrong move fail loudly instead.
+# The name is not the thing. This hook used to test `remote_name = "origin"`, which was correct only
+# while `origin` happened to be CTG-Business. The moment the remotes were renamed so that GitHub
+# Desktop could push to the repo its account actually owns, the same hook would have blocked the
+# DEPLOY and waved through a direct push to the source of truth — backwards, and silently. A URL
+# cannot be renamed out from under a guard.
 #
-# `publish` (sscctgfinance-cmd) is deliberately exempt: it is not a development remote, it is the
-# GitHub Pages + edge-function deploy target, and publishing IS a push of main.
+#   CTG-Business (private, source of truth)  →  main/master is PR-ONLY.
+#   sscctgfinance-cmd (PUBLIC, deploy)       →  main ONLY. Nothing else may be pushed there at all.
 #
-# Escape hatch, for when you genuinely mean it:  git push --no-verify origin main
+# The second guard is new and is the one worth reading. That repo is PUBLIC, unrelated projects have
+# been published from this folder by accident before, and once the remotes are renamed a plain
+# `git push -u origin <branch>` — the habit of every PR — would put a work-in-progress branch on the
+# open internet. Refusing every ref except main is the only version of that guard that does not depend
+# on somebody remembering.
+#
+# Escape hatch, when you genuinely mean it:  git push --no-verify <remote> <ref>
 
-remote_name="$1"
+remote_url="$2"
 
-if [ "$remote_name" = "origin" ]; then
-  while read -r _local_ref _local_sha remote_ref _remote_sha; do
-    case "$remote_ref" in
-      refs/heads/main|refs/heads/master)
-        echo "" >&2
-        echo "  ✋ Direct push to origin/$(basename "$remote_ref") is blocked — this repo is PR-only." >&2
-        echo "" >&2
-        echo "  Do this instead:" >&2
-        echo "    git switch -c <branch>          # if you are still on main" >&2
-        echo "    git push -u origin <branch>" >&2
-        echo "    then open the PR link git prints" >&2
-        echo "" >&2
-        echo "  Publishing to the live site is a separate, still-allowed step:" >&2
-        echo "    git push publish main" >&2
-        echo "" >&2
-        exit 1
-        ;;
-    esac
-  done
-fi
+case "$remote_url" in
+  *CTG-Business/ctg-finance-portal*)
+    while read -r _local_ref _local_sha remote_ref _remote_sha; do
+      case "$remote_ref" in
+        refs/heads/main|refs/heads/master)
+          echo "" >&2
+          echo "  Direct push to CTG-Business/$(basename "$remote_ref") is blocked — that repo is PR-only." >&2
+          echo "" >&2
+          echo "  Do this instead:" >&2
+          echo "    git switch -c <branch>" >&2
+          echo "    git push -u ctg <branch>" >&2
+          echo "    then open the PR link git prints" >&2
+          echo "" >&2
+          echo "  Publishing to the live site is a separate, still-allowed step:" >&2
+          echo "    git push origin main" >&2
+          echo "" >&2
+          exit 1
+          ;;
+      esac
+    done
+    ;;
+
+  *sscctgfinance-cmd/ctg-finance-portal*)
+    while read -r _local_ref _local_sha remote_ref _remote_sha; do
+      case "$remote_ref" in
+        refs/heads/main) ;;                    # the deploy — this is what that remote is for
+        "(delete)"|"") ;;                      # a deletion carries no ref to judge
+        *)
+          echo "" >&2
+          echo "  Refusing to push $(basename "$remote_ref") to sscctgfinance-cmd — that repo is PUBLIC." >&2
+          echo "" >&2
+          echo "  It is the GitHub Pages + edge-function deploy target and takes main and nothing else." >&2
+          echo "  A branch pushed there is work-in-progress on the open internet." >&2
+          echo "" >&2
+          echo "  Work happens on the private repo:" >&2
+          echo "    git push -u ctg $(basename "$remote_ref")" >&2
+          echo "" >&2
+          exit 1
+          ;;
+      esac
+    done
+    ;;
+esac
 
 exit 0

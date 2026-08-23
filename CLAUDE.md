@@ -4,15 +4,26 @@
 
 | remote | repo | role |
 |---|---|---|
-| `origin` | `CTG-Business/ctg-finance-portal` (private) | **source of truth.** All work lands here, **via PR only.** |
-| `publish` | `sscctgfinance-cmd/ctg-finance-portal` (**public**) | deploy target only — serves GitHub Pages and runs the Supabase edge-function deploy. Not a development remote. |
+| `ctg` | `CTG-Business/ctg-finance-portal` (private) | **source of truth.** All work lands here, **via PR only.** |
+| `origin` | `sscctgfinance-cmd/ctg-finance-portal` (**public**) | deploy target — GitHub Pages + the Supabase edge-function deploy. Takes `main` and nothing else. |
 
-`publish` still exists because the live site staff use is
+**`origin` is the PUBLIC one, and that is deliberate.** The remotes were swapped so GitHub Desktop —
+which is signed in as `sscctgfinance-cmd` — pushes to the repo that account actually owns. Pointed at
+the private repo it could only ever fail, with *"the repository does not seem to exist anymore"*, which
+is what GitHub returns for a private repo you cannot see. Deploying is now the ordinary
+`git push origin main` the operator already does from Desktop.
+
+⚠️ **The cost of that swap, and what covers it:** `git push -u origin <branch>` — the habit of every PR —
+would now put a work-in-progress branch on a PUBLIC repo. The pre-push hook refuses every ref except
+`main` on that remote, so the wrong move fails loudly instead of quietly publishing. Feature branches go
+to `ctg`.
+
+That deploy remote still exists because the live site staff use is
 `https://sscctgfinance-cmd.github.io/ctg-finance-portal/`. Pages is **not** enabled on CTG-Business, so
-cutting that remote loose would freeze the live site while `origin` kept accepting merges — the failure
+cutting that remote loose would freeze the live site while `ctg` kept accepting merges — the failure
 would be silent and would surface as "why is my fix not live?" days later.
 
-## Never push to `origin/main`
+## Never push to `ctg/main`
 
 A `pre-push` hook refuses it. After a fresh clone, install it:
 
@@ -23,7 +34,12 @@ cp .githooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 It is **copied into `.git/hooks/`, not activated via `core.hooksPath=.githooks`**. That was the first
 attempt and it was wrong: `.githooks/` is version-controlled, so the hook only existed on branches that
 contained it — and `main`, the branch it exists to protect, did not. The guard silently disappeared
-exactly where it mattered, and a test push to `origin/main` sailed straight through.
+exactly where it mattered, and a test push to the source-of-truth main sailed straight through.
+
+**The hook keys on the remote's URL, not its name.** It used to test `remote_name = "origin"`, which was
+correct only while `origin` happened to be CTG-Business; after the swap that same hook would have blocked
+the DEPLOY and waved a direct push through to the source of truth — backwards, and silently. A URL cannot
+be renamed out from under a guard.
 `.git/hooks/` is outside version control, so the hook is active whatever is checked out.
 
 Normal flow:
@@ -31,7 +47,7 @@ Normal flow:
 ```bash
 git switch -c fix/short-description
 # ...work...
-git push -u origin fix/short-description
+git push -u ctg fix/short-description
 ```
 
 Then open the PR from the link git prints. Merge on GitHub.
@@ -1674,7 +1690,7 @@ about, in the one file whose whole job is to be correct on cutover day.
 declarations and requires them to agree, requires every derived URL to be absolute with its separator
 intact, pins each of the five emails to the constant it must use, and **fails if a fourth hardcoded copy
 of the host appears anywhere in the shipped source** — `web/` included. The ONE exception is
-`cutover/old-origin/forward.html`, which is deployed by hand into the `publish` repo and must name both
+`cutover/old-origin/forward.html`, which is deployed by hand into the public deploy repo and must name both
 hosts literally — it is served from the OLD origin and cannot import this constant from anywhere. It is
 not in the scan list, and `tests/forwarding_page_test.ts` is what pins it instead. Adding a link to a new email
 means adding a constant there, not a string.
@@ -1686,7 +1702,7 @@ every SSO sign-in to an address that is not there yet.
 
 At cutover (GitHub Pages → `https://os.ctg4u.com`) the old GitHub Pages address stays alive serving
 `cutover/old-origin/forward.html`. Nothing in either app loads it; it is deployed BY HAND into the
-`publish` repo as three copies — `index.html`, `app.html`, `hros.html`. `cutover/old-origin/README.md`
+public deploy repo as three copies — `index.html`, `app.html`, `hros.html`. `cutover/old-origin/README.md`
 has the commands and the after-checks.
 
 **Its redirect is the least important third of it.** `sw.js`'s `install` calls `skipWaiting()` and its
@@ -1709,21 +1725,21 @@ still matched it and the whole suite stayed green on a page that did nothing.
 
 ## Publishing to the live site is a separate step
 
-Merging a PR into `origin/main` does **not** make anything live. After merging:
+Merging a PR into `ctg/main` does **not** make anything live. After merging:
 
 ```bash
-git switch main && git fetch origin && git reset --hard origin/main && git push publish main
+git switch main && git fetch ctg && git reset --hard ctg/main && git push origin main
 ```
 
 That push is what rebuilds Pages and triggers the edge-function deploy.
 
 **`reset --hard`, NOT `git pull` — and that is not a style preference.** PRs are squash-merged, so
-`origin/main` gets ONE new commit while your local branch still holds the originals. `git pull` cannot
+the source-of-truth main gets ONE new commit while your local branch still holds the originals. `git pull` cannot
 fast-forward past that, so it merges, and every deploy leaves behind an empty `Merge remote-tracking
-branch 'origin/main'` commit that exists nowhere on the remote. Nineteen of them accumulated before
+branch` commit that exists nowhere on the remote. Nineteen of them accumulated before
 anyone noticed: GitHub Desktop showed "19 commits to push" and then **"the repository does not seem to
 exist anymore"** — which is what a client reports when it pushes to a private repo the signed-in account
-cannot see (Desktop is `sscctgfinance-cmd`; `origin` is `CTG-Business`). The content was identical the
+cannot see. That is also why the remotes were swapped — see the table at the top. The content was identical the
 whole time; only the shape of the history had diverged. Keep all three tips equal and the message never
 appears.
 
@@ -1739,7 +1755,7 @@ which is stale: `{"api":"hr_dashboard","tenant":{"a":1}}` answers `bad tenant` 4
 retired action answers `unknown action`. Do not probe `login` / `changepw` / `client_error` — lockout
 counters and row inserts.
 
-⚠️ `publish` is a **public** repo and unrelated projects sit in this folder — they have been published
+⚠️ `origin` is the **public** repo and unrelated projects sit in this folder — they have been published
 by accident once already. Never `git add -A` here; stage named files only.
 
 ## Before you push
