@@ -1182,6 +1182,8 @@ export interface FinanceInfoProps {
   onRowAdd: (key: string, colKeys: string[]) => void;
   onRowDel: (key: string, idx: number) => void;
   onSave: () => void;
+  /** `runOnce('info-save-btn','Saving…')` — app.html:6232. */
+  saving: boolean;
 }
 
 /**
@@ -1332,7 +1334,7 @@ export default function FinanceInfo(p: FinanceInfoProps) {
             {isEdit
               ? (
                 <div style={st('position:sticky;bottom:0;background:linear-gradient(180deg,transparent,var(--bg) 30%);padding:14px 0;margin-top:10px;display:flex;gap:10px;align-items:center;z-index:5')}>
-                  <button className="btn p" onClick={p.onSave} id="info-save-btn">💾 Save changes</button>
+                  <button className="btn p" onClick={p.onSave} id="info-save-btn" disabled={p.saving}>💾 Save changes</button>
                   <span className="muted" style={st('font-size:12px')} id="info-save-status">{p.dirty ? '⚠ unsaved changes' : ''}</span>
                 </div>
               )

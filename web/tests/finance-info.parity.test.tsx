@@ -125,6 +125,7 @@ function screen(over: Partial<Props> = {}) {
       onRowAdd={noop}
       onRowDel={noop}
       onSave={noop}
+      saving={false}
       {...over}
     />
   );
@@ -1476,5 +1477,16 @@ describe('Upload cannot be clicked twice into two filed copies', () => {
     expect(body.indexOf('setUploading(true)')).toBeLessThan(body.indexOf('company_doc_upload'));
     expect(body).toMatch(/finally\s*\{[^}]*setUploading\(false\)/);
     expect(ROUTE).toMatch(/uploading=\{uploading\}/);
+  });
+});
+
+describe('Save changes locks while its POST is in flight', () => {
+  // `runOnce('info-save-btn','Saving…')` — app.html:6232. Last-write-wins, so cosmetic; guarded the
+  // same way as the upload above so the screen has one shape.
+  it('disables the button', () => {
+    expect(renderToStaticMarkup(screen({ saving: true, mode: 'edit', editable: true })))
+      .toMatch(/id="info-save-btn"[^>]*disabled=""/);
+    expect(renderToStaticMarkup(screen({ saving: false, mode: 'edit', editable: true })))
+      .not.toMatch(/id="info-save-btn"[^>]*disabled/);
   });
 });

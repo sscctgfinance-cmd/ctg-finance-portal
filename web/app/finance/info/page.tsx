@@ -59,6 +59,8 @@ export default function FinanceInfoPage() {
   /** `runOnce('info-doc-upload-btn','Uploading…')` — app.html:5812. A double-click files the same
    *  document twice, and nothing on either side dedupes it. */
   const [uploading, setUploading] = useState(false);
+  /** `runOnce('info-save-btn','Saving…')` — app.html:6232. */
+  const [saving, setSaving] = useState(false);
   /** `now` is read ONCE per mount and handed to the component — it never reads the clock itself. */
   const [now] = useState(() => Date.now());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -332,6 +334,7 @@ export default function FinanceInfoPage() {
    * refuses a blank tenant. Both are pinned in the screen's test, where no golden could reach them.
    */
   const onSave = useCallback(() => {
+    if (saving) return;
     if (!editable || !active) return;
     const root = form.current;
     if (!root) return;
@@ -351,6 +354,7 @@ export default function FinanceInfoPage() {
     });
     const status = document.getElementById('info-save-status');
     if (status) status.textContent = '';
+    setSaving(true);
     void call(saveBody(active, savePatch(raw)))
       .then(async () => {
         if (status) { status.textContent = '✓ Saved'; status.style.color = 'var(--green-soft)'; }
@@ -359,8 +363,9 @@ export default function FinanceInfoPage() {
       })
       .catch((e) => {
         if (status) { status.textContent = '✗ ' + (e instanceof Error ? e.message : String(e)); status.style.color = 'var(--red-soft)'; }
-      });
-  }, [editable, active, loadInfo]);
+      })
+      .finally(() => setSaving(false));
+  }, [editable, active, loadInfo, saving]);
 
   /**
    * app.html:6047 — a postcode fills the state and offers the city, applied to the uncontrolled form.
@@ -455,6 +460,7 @@ export default function FinanceInfoPage() {
           onRowAdd={onRowAdd}
           onRowDel={onRowDel}
           onSave={onSave}
+          saving={saving}
         />
       </div>
     </>

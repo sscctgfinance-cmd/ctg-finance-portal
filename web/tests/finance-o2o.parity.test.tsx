@@ -88,6 +88,7 @@ function screen(over: Partial<Props> = {}) {
       onTogglePharmacy={noop}
       onLinkContact={noop}
       onSearchContacts={noop}
+      fetchingPdfs={false}
       onDownloadPdfs={noop}
       onDismissPdfPanel={noop}
       onAddPharmacy={noop}
@@ -724,5 +725,24 @@ describe('the Issue button cannot be clicked twice into two batches of real invo
     // And the handler itself refuses a re-entry, belt and braces over the attribute — salesrecon's
     // `if (posting)` and Quick Invoice's `if (busy)`, the two screens this one is matched to.
     expect(body).toMatch(/if\s*\(issuing\)\s*return/);
+  });
+});
+
+describe('the ZIP download button locks while its fetch is in flight', () => {
+  // `runOnce('o2o-dl', 'Fetching PDFs from Xero…')` — app.html:3071. Cosmetic (a duplicate download),
+  // guarded the same way as Issue so the screen has one shape.
+  const issued = {
+    kind: 'issued' as const,
+    res: { ok: true, results: [] },
+    downloadable: [{ invoice_id: 'iv1', pharmacy: 'Sihat', number: 'INV-1', total: 10 }],
+    failures: [{ pharmacy: 'Sihat', error: 'boom' }],
+    downloaded: 0,
+  };
+  it('disables both the batch button and the retry button', () => {
+    const on = renderToStaticMarkup(screen({ out: issued, fetchingPdfs: true }));
+    expect(on.match(/<button[^>]*disabled=""/g) || []).not.toHaveLength(0);
+    expect(on).toMatch(/id="o2o-dl"[^>]*disabled=""/);
+    expect(renderToStaticMarkup(screen({ out: issued, fetchingPdfs: false })))
+      .not.toMatch(/id="o2o-dl"[^>]*disabled/);
   });
 });

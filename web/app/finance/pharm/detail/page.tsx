@@ -42,6 +42,9 @@ export default function FinancePharmDetailPage() {
   const [refused, setRefused] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** `runOnce('pharm-save-btn','Saving…')` — app.html:6527. Last-write-wins, but a live button under a
+   *  request in flight is the same shape the O2O Issue guard closes. */
+  const [saving, setSaving] = useState(false);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   // `PHARM_XERO_CONTACTS` — app.html:6681, cached for the session. `null` is "not fetched yet".
   const [contacts, setContacts] = useState<XeroContact[] | null>(null);
@@ -108,7 +111,9 @@ export default function FinancePharmDetailPage() {
 
   /** `pharmSave()` — app.html:6422. */
   const onSave = useCallback(() => {
+    if (saving) return;
     if (!editable) { setNotice('Admins only'); return; }
+    setSaving(true);
     void (async () => {
       try {
         const body = saveBody(collect(), isNew ? null : id);
@@ -124,9 +129,11 @@ export default function FinancePharmDetailPage() {
         void list;
       } catch (e) {
         setNotice(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSaving(false);
       }
     })();
-  }, [editable, collect, isNew, id, loadList]);
+  }, [editable, collect, isNew, id, loadList, saving]);
 
   /** `pharmDelete()` — app.html:6443. */
   const onDelete = useCallback(() => {
@@ -230,6 +237,7 @@ export default function FinancePharmDetailPage() {
         onBack={onBack}
         onSetMode={onSetMode}
         onSave={onSave}
+        saving={saving}
         onDelete={onDelete}
         onLink={onLink}
         onDirty={() => setDirty(true)}

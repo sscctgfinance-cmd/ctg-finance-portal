@@ -657,6 +657,18 @@ with the same two sentences rather than dropping the question — a handoff is n
 that lives inside the screen, and silently removing the only thing between a mis-click and a voided
 supplier bill is not a migration detail.
 
+**Every legacy `runOnce(...)` is a double-submit guard, and a React port that drops it is a hole in a
+ported pattern, not a missing one.** `runOnce` (app.html:1367) disables the button, relabels it and
+restores it in `finally`; grep it to find every call site that needs one. React does it INLINE on each
+screen — a state flag, an early return in the handler, a `disabled` prop, the release in `finally` so one
+network error does not strand the operator — see `finance/qinv` (`busy`) and `finance/salesrecon`
+(`posting`). Do NOT build a shared wrapper. Two traps: a flag derived from the RESPONSE (`canIssue` was
+`out.kind === 'preview'`, and `out` only changes after the await) leaves the button live for the whole
+request — `o2o_issue` (finance.ts:609) has no dedupe, so that was a second set of REAL Xero invoices, one
+per pharmacy; and the route half has no output to assert through, so pin it by SOURCE with comments
+blanked, as `web/tests/finance-o2o.parity.test.tsx` does. `disabled={false}` renders no attribute, so no
+golden moves.
+
 **A Finance golden can hold almost NOTHING of the screen — `finance.collections` is the case.**
 `renderCollections()` (app.html:2425) writes a panel, a paragraph, one button and an EMPTY `#collres`;
 every figure the screen ever shows is written into that div by `trigColl()` after the action runs, and

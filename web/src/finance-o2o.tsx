@@ -298,6 +298,8 @@ export interface FinanceO2OProps {
   onTogglePharmacy: (i: number) => void;
   onLinkContact: (pharmacy: string, contactId: string, contactName: string, source: string) => void;
   onSearchContacts: (pharmacy: string, q: string) => void;
+  /** `runOnce('o2o-dl', …)` — app.html:3071. */
+  fetchingPdfs: boolean;
   onDownloadPdfs: (retryOnly: boolean) => void;
   onDismissPdfPanel: () => void;
   onAddPharmacy: (name: string) => void;
@@ -469,7 +471,7 @@ function Issued({ o, props }: { o: Extract<O2OOut, { kind: 'issued' }>; props: F
       {r.dry_run ? <div className="status-bar" style={st('margin:0 0 10px')}><div className="dot-green"></div>DRY-RUN — nothing posted (set live in backend)</div> : null}
       {o.downloadable.length ? (
         <div style={st('display:flex;gap:10px;align-items:center;margin:0 0 12px;flex-wrap:wrap')}>
-          <button className="btn p" id="o2o-dl" onClick={() => props.onDownloadPdfs(false)}>📥 Download all invoices (ZIP)</button>
+          <button className="btn p" id="o2o-dl" onClick={() => props.onDownloadPdfs(false)} disabled={props.fetchingPdfs}>📥 Download all invoices (ZIP)</button>
           <span className="muted" style={st('font-size:12px')}>
             {o.downloadable.length + ' PDFs · file names like '}
             <code style={st('background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px')}>Pharmacy_INV-1234_MYR159.98.pdf</code>
@@ -483,7 +485,7 @@ function Issued({ o, props }: { o: Extract<O2OOut, { kind: 'issued' }>; props: F
               <span style={st('color:var(--red-soft);font-weight:600;font-size:13px')}>
                 {'⚠ ' + failures.length + ' PDF' + (failures.length > 1 ? 's' : '') + ' failed' + (o.downloaded ? ' · ' + o.downloaded + ' downloaded' : '')}
               </span>
-              <button className="btn" onClick={() => props.onDownloadPdfs(true)} style={st('padding:5px 11px;font-size:12px')}>↻ Retry failed only</button>
+              <button className="btn" onClick={() => props.onDownloadPdfs(true)} disabled={props.fetchingPdfs} style={st('padding:5px 11px;font-size:12px')}>↻ Retry failed only</button>
               <button className="btn" onClick={props.onDismissPdfPanel} style={st('padding:5px 11px;font-size:12px')}>Dismiss</button>
             </div>
             <div className="tbl-wrap" style={st('max-height:260px;overflow-y:auto')}>
