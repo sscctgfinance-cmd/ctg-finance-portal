@@ -67,6 +67,10 @@ export default function FinanceO2OPage() {
   /** `runOnce('o2o-issue', …)` (app.html:3172). `o2o_issue` has no dedupe, so a second click is a
    *  second set of REAL Xero invoices — one per pharmacy. Same shape as salesrecon's `posting`. */
   const [issuing, setIssuing] = useState(false);
+  // SYNCHRONOUS refuse gate — see hr/expenses `savingRef` (PR #112). `issuing` is state, so two taps in
+  // one tick both read `false` before React re-renders and both create a full set of REAL Xero
+  // invoices. The ref refuses the second synchronously; the state is only what the button READS.
+  const issuingRef = useRef(false);
   /** `runOnce('o2o-dl', 'Fetching PDFs from Xero…')` — app.html:3071. Cosmetic (a duplicate
    *  download), guarded the same way so the screen has one shape. */
   const [fetchingPdfs, setFetchingPdfs] = useState(false);
@@ -189,7 +193,9 @@ export default function FinanceO2OPage() {
 
   /** `o2oIssue()` — app.html:3299. The body itself is `issueBody()`, in src/, and pinned by the test. */
   const onIssue = useCallback(async () => {
-    if (issuing) return;
+    if (issuing || issuingRef.current) return;
+    issuingRef.current = true;
+    try {
     if (out.kind !== 'preview') { toast('Preview first', true); return; }
     if (!tenant) { toast('Pick a company first', true); return; }
     const data = out.data;
@@ -224,6 +230,9 @@ export default function FinanceO2OPage() {
       setOut({ kind: 'error', message: 'Failed: ' + (e instanceof Error ? e.message : String(e)) });
     } finally {
       setIssuing(false);
+    }
+    } finally {
+      issuingRef.current = false;
     }
   }, [out, tenant, companies, issuing]);
 

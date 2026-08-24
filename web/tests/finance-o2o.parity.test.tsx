@@ -722,9 +722,12 @@ describe('the Issue button cannot be clicked twice into two batches of real invo
     expect(lock).toBeLessThan(post);
     // Released in `finally`, so one network error does not strand the operator on a dead button.
     expect(body).toMatch(/finally\s*\{[^}]*setIssuing\(false\)/);
-    // And the handler itself refuses a re-entry, belt and braces over the attribute — salesrecon's
-    // `if (posting)` and Quick Invoice's `if (busy)`, the two screens this one is matched to.
-    expect(body).toMatch(/if\s*\(issuing\)\s*return/);
+    // And the handler itself refuses a re-entry SYNCHRONOUSLY, via a `useRef` — hr/expenses `savingRef`
+    // (PR #112). A `useState` flag is read a render too late: two taps in one tick both see `false`.
+    // The ref is checked-and-set with nothing awaited between, then released in a `finally`.
+    expect(body).toMatch(/if\s*\(issuing\s*\|\|\s*issuingRef\.current\)\s*return/);
+    expect(body.indexOf('issuingRef.current = true')).toBeLessThan(post);
+    expect(body).toMatch(/finally\s*\{[^}]*issuingRef\.current = false/);
   });
 });
 

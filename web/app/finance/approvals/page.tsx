@@ -18,7 +18,7 @@
 // (app.html:2395). That modal IS migrated now — src/confirm.tsx — so this asks with the app's own
 // dialog carrying the legacy's title, sentence and button word, rather than with the browser's.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import FinanceApprovals, {
   approvalsReachable, decideBody, type Bill, type Decision, type Perms,
@@ -32,6 +32,10 @@ export default function FinanceApprovalsPage() {
   const [noData, setNoData] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number[]>([]);
+  // SYNCHRONOUS refuse gate, per row — see hr/expenses `savingRef` (PR #112). `busy` is state, so two
+  // taps on the same row in one tick both read it empty before React re-renders and both apply or VOID
+  // the same Xero bill. The ref holds the in-flight indices and refuses the second synchronously.
+  const busyRef = useRef<Set<number>>(new Set());
   const [filter, setFilter] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -73,8 +77,10 @@ export default function FinanceApprovalsPage() {
   const onDecide = useCallback((tenant: string, invoice: string, action: Decision, i: number) => {
     // app.html:2411 sets `pointer-events:none` on the row, which does NOT stop a keyboard activation.
     // A second post would apply or void the same bill twice, so the in-flight row is refused here too.
-    if (busy.indexOf(i) >= 0) return;
+    if (busy.indexOf(i) >= 0 || busyRef.current.has(i)) return;
+    busyRef.current.add(i);
     void (async () => {
+      try {
       // `showConfirm('Reject Bill', …, 'Reject', 'd')` — app.html:2413, now the ported dialog rather
       // than the browser's. Same title, same sentence, same button word.
       if (action === 'reject' && !await showConfirm('Reject Bill',
@@ -92,6 +98,9 @@ export default function FinanceApprovalsPage() {
         setErr('Failed: ' + (e instanceof Error ? e.message : String(e)));
       } finally {
         setBusy((b) => b.filter((x) => x !== i));
+      }
+      } finally {
+        busyRef.current.delete(i);
       }
     })();
   }, [busy]);

@@ -36,6 +36,10 @@ export default function FinanceQinvPage() {
   const [err, setErr] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  // SYNCHRONOUS refuse gate — see hr/expenses `savingRef` (PR #112). Two taps in one tick both read
+  // `busy===false` before React re-renders, and this posts a LIVE Xero invoice; the state is only what
+  // the button READS. The ref is what refuses.
+  const busyRef = useRef(false);
   const cache = useRef<Record<string, { data: QinvMeta; ts: number }>>({});
   const root = useRef<HTMLDivElement>(null);
 
@@ -131,8 +135,10 @@ export default function FinanceQinvPage() {
     const d = readForm();
     if (d.errors.length) { setOut({ kind: 'errors', errors: d.errors }); return; }
     const test = !!el<HTMLInputElement>('qi_test')?.checked;
-    if (busy) return;
+    if (busy || busyRef.current) return;
+    busyRef.current = true;
     void (async () => {
+      try {
       // Last-chance confirm before posting a LIVE invoice — protects against accidental clicks.
       if (!test && !await showConfirm('Create a live invoice',
         'Create a LIVE invoice in Xero for ' + d.customer + '? This cannot be undone via this app.', 'Create', 'p')) return;
@@ -152,6 +158,9 @@ export default function FinanceQinvPage() {
         setOut({ kind: 'failed', error: e instanceof Error ? e.message : String(e) });
       } finally {
         setBusy(false);
+      }
+      } finally {
+        busyRef.current = false;
       }
     })();
   }, [busy, readForm]);

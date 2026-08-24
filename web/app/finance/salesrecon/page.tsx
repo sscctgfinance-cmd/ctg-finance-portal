@@ -90,6 +90,10 @@ export default function FinanceSalesReconPage() {
   const lines = useRef<SrLine[]>([]);
   const tally = useRef<SrTallyRow[] | null>(null);
   const posted = useRef(false);
+  // SYNCHRONOUS refuse gate — see hr/expenses `savingRef` (PR #112). `posting` is state, so two taps in
+  // one tick both read `false` before React re-renders and both create the Xero draft batch; the ref
+  // refuses the second synchronously. (`posted` above is a different flag: did a post COMPLETE.)
+  const postingRef = useRef(false);
 
   const say = useCallback((m: string) => setNote((n) => [...n.slice(-4), m]), []);
 
@@ -215,8 +219,10 @@ export default function FinanceSalesReconPage() {
     const out = lines.current;
     if (!out.length) { say('Nothing to post.'); return; }
     // `SR._posting` (app.html:3777). The legacy also disables the button, which does NOT stop a keyboard
-    // activation — same gap Approvals has — so the guard is the state, not the attribute.
-    if (posting) { say('Already posting…'); return; }
+    // activation — same gap Approvals has — so the guard is the ref, not the attribute or the state.
+    if (posting || postingRef.current) { say('Already posting…'); return; }
+    postingRef.current = true;
+    try {
     const total = out.reduce((s, l) => s + l.amt, 0);
     if (!await showConfirm('Create Sales Invoices in Xero',
       'Create ' + out.length + ' Sales Invoices in Xero (I PROCARE) as DRAFT?\nTotal RM ' + total.toFixed(2) + '\n\nThey go in as DRAFT — you review & approve inside Xero.\nInvoice numbers are unique, so already-created ones are skipped automatically.',
@@ -240,6 +246,7 @@ export default function FinanceSalesReconPage() {
       say('Xero: ' + ok + ' draft invoice(s) created' + (dup ? (' · ' + dup + ' already existed (skipped)') : '') + (fail ? (' · ' + fail + ' FAILED') : ''));
       if (failures.length) say('Failed invoices (' + failures.length + '): ' + failures.slice(0, 12).join(' | ') + (failures.length > 12 ? ' …' : ''));
     } finally { setPosting(false); }
+    } finally { postingRef.current = false; }
   }, [posting, say]);
 
   const download = useCallback((blob: Blob, name: string) => {

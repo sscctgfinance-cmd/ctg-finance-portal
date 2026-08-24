@@ -9,7 +9,7 @@
 // so there is no load step. The only call it ever makes is the one the operator asks for by pressing
 // the button, and that call SENDS MAIL, so it is made from here and nowhere else.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import FinanceCollections, { collectionsReachable, previewBody, type CollPreview, type Perms } from '../../../src/finance-collections';
 import { call, legacyUrl, token } from '../../../src/portal';
@@ -17,6 +17,10 @@ import { call, legacyUrl, token } from '../../../src/portal';
 export default function FinanceCollectionsPage() {
   const [perms, setPerms] = useState<Perms | null>(null);
   const [busy, setBusy] = useState(false);
+  // SYNCHRONOUS refuse gate — see hr/expenses `savingRef` (PR #112). The button had no `if (busy)`
+  // guard at all, so two taps in one tick both fired `previewBody()` and mailed the collections run
+  // twice. The state is only what the button READS; the ref is what refuses.
+  const busyRef = useRef(false);
   const [result, setResult] = useState<CollPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -37,6 +41,8 @@ export default function FinanceCollectionsPage() {
 
   /** `trigColl(btn)` — app.html:2434, including its failure copy. */
   const onGenerate = useCallback(() => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     void (async () => {
       try {
@@ -49,6 +55,7 @@ export default function FinanceCollectionsPage() {
         setError('no permission or network issue');
       } finally {
         setBusy(false);
+        busyRef.current = false;
       }
     })();
   }, []);
