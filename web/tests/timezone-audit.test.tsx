@@ -174,6 +174,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'src/finance-qinv.tsx', n: 4, cat: 'a', legacy: 'app.html:1263, :4238', note: 'todayLocalISO is MYT; fmtDate parses at LOCAL midnight and reads back local' },
   { file: 'src/finance-users-audit.tsx', n: 1, cat: 'a', legacy: 'app.html:4919', note: 'bare toLocaleString() — no locale, no zone' },
   { file: 'src/finance-users-sessions.tsx', n: 2, cat: 'c', legacy: 'app.html:4695, :4697', note: 'epoch arithmetic against a `now` prop' },
+  { file: 'src/finance-users-xero-tools.tsx', n: 7, cat: 'a', legacy: 'app.html:5099, :5131, :5203-5204, :5217, :5238-5239', note: 'relTime/staleness are epoch arithmetic; drift "Checked at" is bare toLocaleString en-GB; audit timestamp carries timeZone explicitly (app.html:5131); silent-tenant filter is epoch; two NUMBER toLocaleString for cache counts' },
   { file: 'src/finance-users-xero.tsx', n: 2, cat: 'a', legacy: 'app.html:4973, :4978', note: 'bare toLocaleString() on an instant; one is a NUMBER formatter' },
   { file: 'src/finance-users.tsx', n: 2, cat: 'a', legacy: 'app.html:4739-4744', note: 'relTime — epoch arithmetic, then toLocaleDateString with no zone' },
   // ---- HR screens -----------------------------------------------------------------------------
@@ -506,14 +507,15 @@ describe('The timezone audit — the inline reads are pinned too', () => {
       .filter((f) => /timeZone/.test(codeOnly(readFileSync(f, 'utf8'))))
       .map((f) => relative(WEB, f).split(sep).join('/'))
       .sort();
-    expect(carriers).toEqual(['src/finance-ap.tsx']);
+    expect(carriers).toEqual(['src/finance-ap.tsx', 'src/finance-users-xero-tools.tsx']);
     expect([...codeOnly(readFileSync(join(WEB, 'src', 'finance-ap.tsx'), 'utf8'))
       .matchAll(/timeZone: 'Asia\/Kuala_Lumpur'/g)].length).toBe(2);   // its two DATE toLocale* calls
+    expect([...codeOnly(readFileSync(join(WEB, 'src', 'finance-users-xero-tools.tsx'), 'utf8'))
+      .matchAll(/timeZone: 'Asia\/Kuala_Lumpur'/g)].length).toBe(1);   // the Live AR audit timestamp — app.html:5131
     // (app.html writes the zone at four sites — :6710, :6854, :6867 on the AP screen, which the two
-    // helpers here cover between them, and :5106 inside `xeroSyncLoad()`'s Live AR audit panel, which
-    // is one of the six advanced Xero tools that still hand off to the legacy app and so has no React
-    // equivalent to carry it. `finance-ap.parity.test.tsx` asserts every toLocale* in that component
-    // carries the zone; this assertion is about everything ELSE not gaining one.)
+    // helpers here cover between them, and :5131 inside `syncAudit()`'s Live AR audit panel, which now
+    // has a React equivalent in finance-users-xero-tools.tsx. `finance-ap.parity.test.tsx` asserts every
+    // toLocale* in that component carries the zone; this assertion is about everything ELSE not gaining one.)
   });
 
   it('guard the guard — the timeZone sweep really reads the routes', () => {

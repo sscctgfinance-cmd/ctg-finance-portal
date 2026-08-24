@@ -13,8 +13,7 @@
 // `usersView()` (app.html:4680) dispatches over five; the first migration shipped only `users` and sent
 // the other four back to app.html mid-screen. Roles & permissions, Active sessions, Audit log and the
 // webhook-activity half of Xero sync now render here, and so do the two modals (`userForm()`,
-// `roleForm()`) the list opens. What still hands off is named in one place — `HANDOFF` below — so the
-// banner cannot claim more than is true.
+// `roleForm()`) the list opens. All six advanced Xero tools now render here too.
 //
 // The `confirm()`s named above go through the shell's ported dialog (src/confirm.tsx), not the browser's.
 // The `prompt()` does NOT: a text prompt is not one of the two controls that shell ported, and the
@@ -38,12 +37,17 @@ import SessionsTable, {
 import XeroOut, {
   XeroPanel, webhookKeyBody, xeroActionBody, type WebhookResponse, type XeroAction,
 } from '../../../src/finance-users-xero';
+import {
+  ArAgingPanel, CompanyNamesPanel, InvoiceResyncPanel, LiveAuditPanel, RebuildPanel, SyncHealthPanel,
+  arAgingBody, arBucketBody, driftCheckBody, invoiceResyncBody, syncAuditBody, syncHealthBody,
+  tenantRebuildBody, tenantsRefreshBody,
+  type ArAgingResponse, type ArBucketResponse, type AuditResponse, type DriftResponse,
+  type InvoiceResyncResponse, type SyncHealthResponse, type TenantRebuildResponse, type TenantsRefreshResponse,
+} from '../../../src/finance-users-xero-tools';
+import { toast } from '../../../src/toast';
 import { API, call, legacyUrl, token } from '../../../src/portal';
 
 interface UsersResponse { ok?: boolean; error?: string; users?: User[]; user_companies?: UserCompany[] }
-
-/** What still lives only in app.html. Named once so the banner and the Xero footer cannot drift from it. */
-const HANDOFF = 'the six advanced Xero tools (company names, sync health, live AR audit, force-resync, emergency rebuild and AR aging)';
 
 export default function FinanceUsersPage() {
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -71,6 +75,35 @@ export default function FinanceUsersPage() {
   const [xeroBusy, setXeroBusy] = useState<XeroAction | null>(null);
   const [keyPanelOpen, setKeyPanelOpen] = useState(false);
 
+  // ── the six advanced Xero tools ─────────────────────────────────────────────────────────────────
+  const [tRefreshBusy, setTRefreshBusy] = useState(false);
+  const [tRefreshResult, setTRefreshResult] = useState<TenantsRefreshResponse | null>(null);
+  const [tRefreshErr, setTRefreshErr] = useState<string | null>(null);
+  const [health, setHealth] = useState<SyncHealthResponse | null>(null);
+  const [healthErr, setHealthErr] = useState<string | null>(null);
+  const [driftBusy, setDriftBusy] = useState(false);
+  const [driftResult, setDriftResult] = useState<DriftResponse | null>(null);
+  const [driftErr, setDriftErr] = useState<string | null>(null);
+  const [auditXBusy, setAuditXBusy] = useState(false);
+  const [auditXResult, setAuditXResult] = useState<AuditResponse | null>(null);
+  const [auditXErr, setAuditXErr] = useState<string | null>(null);
+  const [rsyncBusy, setRsyncBusy] = useState(false);
+  const [rsyncResult, setRsyncResult] = useState<InvoiceResyncResponse | null>(null);
+  const [rsyncErr, setRsyncErr] = useState<string | null>(null);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<TenantRebuildResponse | null>(null);
+  const [rebuildErr, setRebuildErr] = useState<string | null>(null);
+  const [rebuildConfirm, setRebuildConfirm] = useState('');
+  const [rebuildTenant, setRebuildTenant] = useState('');
+  const [arData, setArData] = useState<ArAgingResponse | null>(null);
+  const [arErr, setArErr] = useState<string | null>(null);
+  const [arDrillBusy, setArDrillBusy] = useState(false);
+  const [arDrillLabel, setArDrillLabel] = useState<string | null>(null);
+  const [arDrillData, setArDrillData] = useState<ArBucketResponse | null>(null);
+  const [arDrillErr, setArDrillErr] = useState<string | null>(null);
+  const rebuildingRef = useRef(false);
+  const rsyncingRef = useRef(false);
+
   // ── the two modals ──────────────────────────────────────────────────────────────────────────────
   const [userModal, setUserModal] = useState<UserFormUser | null | undefined>(undefined);
   const [ufErr, setUfErr] = useState<string | null>(null);
@@ -92,7 +125,9 @@ export default function FinanceUsersPage() {
         const rs = await call<{ roles?: RoleRow[] }>({ api: 'roles_list' });
         setRoles((rs && rs.roles) || []);
         const co = await call<{ companies?: Company[] }>({ api: 'companies_list' });
-        setCompanies((co && co.companies) || []);
+        const coList = (co && co.companies) || [];
+        setCompanies(coList);
+        if (coList.length) setRebuildTenant((prev) => prev || coList[0].tenant_id);
         const r = await call<UsersResponse>({ api: 'users_list' });
         if (!r || r.ok === false) { setUsersErr((r && r.error) || 'failed'); return; }
         setUsers(r.users || []);
@@ -135,7 +170,7 @@ export default function FinanceUsersPage() {
       .catch((e) => setAuditErr(fail(e)));
   }, []);
 
-  /** `xeroSyncLoad()`'s own fetch — app.html:4966. The six panels below it hand off; see the component. */
+  /** `xeroSyncLoad()`'s own fetch — app.html:4966. */
   const loadXero = useCallback(() => {
     setXeroErr(null); setXero(null);
     void call<WebhookResponse & { ok?: boolean; error?: string }>({ api: 'webhook_events', limit: 80 })
@@ -146,13 +181,27 @@ export default function FinanceUsersPage() {
       .catch((e) => setXeroErr(fail(e)));
   }, []);
 
+  const loadSyncHealth = useCallback(() => {
+    setHealthErr(null);
+    void call<SyncHealthResponse>(syncHealthBody())
+      .then((r) => { if (!r || r.ok === false) { setHealthErr((r && r.error) || 'failed'); return; } setHealth(r); })
+      .catch((e) => setHealthErr(fail(e)));
+  }, []);
+
+  const loadArAging = useCallback(() => {
+    setArErr(null); setArData(null);
+    void call<ArAgingResponse>(arAgingBody())
+      .then((r) => { if (!r || r.ok === false) { setArErr((r && r.error) || 'failed'); return; } setArData(r); })
+      .catch((e) => setArErr(fail(e)));
+  }, []);
+
   const loadFor = useCallback((v: UsersView) => {
     if (v === 'users') loadUsers();
     else if (v === 'roles') loadRoles();
     else if (v === 'sessions') loadSessions();
-    else if (v === 'xero') loadXero();
+    else if (v === 'xero') { loadXero(); loadSyncHealth(); loadArAging(); }
     else loadAudit();
-  }, [loadAudit, loadRoles, loadSessions, loadUsers, loadXero]);
+  }, [loadAudit, loadArAging, loadRoles, loadSessions, loadSyncHealth, loadUsers, loadXero]);
 
   useEffect(() => {
     // localStorage is not readable during prerender, so the session check runs on mount, not on render.
@@ -346,6 +395,89 @@ export default function FinanceUsersPage() {
     setKeyPanelOpen((v) => !v);
   }, []);
 
+  // ── the six advanced Xero tools (handlers) ──────────────────────────────────────────────────────
+
+  const onTenantsRefresh = useCallback(() => {
+    setTRefreshBusy(true); setTRefreshErr(null); setTRefreshResult(null);
+    void call<TenantsRefreshResponse>(tenantsRefreshBody())
+      .then((r) => {
+        if (!r || r.ok === false) { setTRefreshErr((r && r.error) || 'Failed'); return; }
+        setTRefreshResult(r);
+        if (r.companies) { setCompanies(r.companies); if (r.companies.length) setRebuildTenant((prev) => prev || r.companies![0].tenant_id); }
+        toast('Refreshed ' + r.total + ' companies · ' + (r.renamed || []).length + ' renamed');
+      })
+      .catch((e) => setTRefreshErr(fail(e)))
+      .finally(() => setTRefreshBusy(false));
+  }, []);
+
+  const onDriftCheck = useCallback(() => {
+    setDriftBusy(true); setDriftErr(null); setDriftResult(null);
+    void call<DriftResponse>(driftCheckBody())
+      .then((r) => {
+        if (!r || r.ok === false) { setDriftErr((r && r.error) || 'Reconcile failed'); return; }
+        setDriftResult(r);
+        const res = r.results || [];
+        const checked = res.filter((x) => !x.error && !x.skipped).length;
+        const allOk = checked > 0 && res.every((x) => x.skipped || (!x.error && Math.abs(x.drift || 0) === 0 && (x.missing || 0) === 0 && (x.extra || 0) === 0));
+        toast(allOk ? '✓ All companies match Xero · data accurate' : 'Drift auto-repaired — please reconcile again');
+      })
+      .catch((e) => setDriftErr(fail(e)))
+      .finally(() => { setDriftBusy(false); loadSyncHealth(); });
+  }, [loadSyncHealth]);
+
+  const onSyncAudit = useCallback(() => {
+    setAuditXBusy(true); setAuditXErr(null); setAuditXResult(null);
+    void call<AuditResponse>(syncAuditBody())
+      .then((r) => { if (!r || r.ok === false) { setAuditXErr((r && r.error) || 'Failed'); return; } setAuditXResult(r); })
+      .catch((e) => setAuditXErr(fail(e)))
+      .finally(() => setAuditXBusy(false));
+  }, []);
+
+  const onInvoiceResync = useCallback(() => {
+    if (rsyncingRef.current) return;
+    const tenant = (document.getElementById('rsync_tenant') as HTMLSelectElement | null)?.value || '';
+    const key = (document.getElementById('rsync_key') as HTMLInputElement | null)?.value || '';
+    let body: Record<string, unknown>;
+    try { body = invoiceResyncBody(tenant, key); } catch (e) { setRsyncErr(fail(e)); return; }
+    rsyncingRef.current = true;
+    setRsyncBusy(true); setRsyncErr(null); setRsyncResult(null);
+    void call<InvoiceResyncResponse>(body)
+      .then((r) => {
+        if (r && r.ok) { setRsyncResult(r); toast('✓ Invoice resynced'); loadSyncHealth(); }
+        else { setRsyncErr((r && r.error) || 'Failed'); }
+      })
+      .catch((e) => setRsyncErr(fail(e)))
+      .finally(() => { rsyncingRef.current = false; setRsyncBusy(false); });
+  }, [loadSyncHealth]);
+
+  const onTenantRebuild = useCallback(() => {
+    if (rebuildingRef.current) return;
+    const tenant = rebuildTenant;
+    const co = companies.find((c) => c.tenant_id === tenant);
+    const tenantName = co ? co.tenant_name : '';
+    if (!tenant || !tenantName) { setRebuildErr('Pick a company'); return; }
+    if (rebuildConfirm !== tenantName) { setRebuildErr('Name did not match — rebuild cancelled'); return; }
+    let body: Record<string, unknown>;
+    try { body = tenantRebuildBody(tenant); } catch (e) { setRebuildErr(fail(e)); return; }
+    rebuildingRef.current = true;
+    setRebuildBusy(true); setRebuildErr(null); setRebuildResult(null);
+    void call<TenantRebuildResponse>(body)
+      .then((r) => {
+        if (r && r.ok) { setRebuildResult(r); toast('✓ Rebuild started for ' + tenantName); setRebuildConfirm(''); setTimeout(loadSyncHealth, 3000); }
+        else { setRebuildErr((r && r.error) || 'Failed'); }
+      })
+      .catch((e) => setRebuildErr(fail(e)))
+      .finally(() => { rebuildingRef.current = false; setRebuildBusy(false); });
+  }, [companies, loadSyncHealth, rebuildConfirm, rebuildTenant]);
+
+  const onArBucket = useCallback((key: string, label: string) => {
+    setArDrillBusy(true); setArDrillErr(null); setArDrillData(null); setArDrillLabel(label);
+    void call<ArBucketResponse>(arBucketBody(key))
+      .then((r) => { if (!r || r.ok === false) { setArDrillErr((r && r.error) || 'failed'); return; } setArDrillData(r); })
+      .catch((e) => setArDrillErr(fail(e)))
+      .finally(() => setArDrillBusy(false));
+  }, []);
+
   // ── the body of #uv_body, one branch per sub-view ───────────────────────────────────────────────
 
   const errBox = (m: string) => <div style={{ color: 'var(--red-soft)' }}>{m}</div>;
@@ -387,12 +519,15 @@ export default function FinanceUsersPage() {
                                 onToggleKeyPanel={onToggleKeyPanel} onSaveKey={onSaveKey} />
               : undefined}
           </XeroPanel>
-          <div className="panel" style={{ marginTop: '16px' }}>
-            <div className="muted" style={{ padding: '14px', fontSize: '12.5px', lineHeight: '1.6' }}>
-              Still on the legacy screen: {HANDOFF}.{' '}
-              <a href={`${legacyUrl('app.html')}#tab=users`}>Open Xero sync in app.html</a>
-            </div>
-          </div>
+          <CompanyNamesPanel companies={companies} busy={tRefreshBusy} result={tRefreshResult} error={tRefreshErr} onRefresh={onTenantsRefresh} />
+          <SyncHealthPanel health={health} healthErr={healthErr} driftBusy={driftBusy} driftResult={driftResult} driftErr={driftErr} onDriftCheck={onDriftCheck} />
+          <LiveAuditPanel busy={auditXBusy} result={auditXResult} error={auditXErr} onRun={onSyncAudit} />
+          <InvoiceResyncPanel companies={companies} busy={rsyncBusy} result={rsyncResult} error={rsyncErr} onResync={onInvoiceResync} />
+          <RebuildPanel companies={companies} busy={rebuildBusy} result={rebuildResult} error={rebuildErr}
+                        confirmText={rebuildConfirm} selectedTenant={rebuildTenant}
+                        onTenantChange={setRebuildTenant} onConfirmChange={setRebuildConfirm} onRebuild={onTenantRebuild} />
+          <ArAgingPanel data={arData} error={arErr} drillBusy={arDrillBusy} drillLabel={arDrillLabel}
+                        drillData={arDrillData} drillErr={arDrillErr} onBucket={onArBucket} onCloseDrill={() => { setArDrillData(null); setArDrillLabel(null); }} />
         </>
       );
     }
@@ -452,8 +587,8 @@ function Banner() {
       <div className="muted" style={{ padding: '12px 14px', fontSize: '11.5px' }}>
         <b>React.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('app.html')}#tab=users`}>app.html · Users</a>, unchanged.
-        All five sub-views render here from the same session; the Users list is diffed against the same golden and
-        the other four are pinned against the legacy renderers&apos; own source. Still on app.html: {HANDOFF}.
+        All five sub-views and all six advanced Xero tools render here from the same session; the Users list is
+        diffed against the same golden and the other four are pinned against the legacy renderers&apos; own source.
       </div>
     </div>
   );

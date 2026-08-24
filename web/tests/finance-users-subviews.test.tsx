@@ -612,21 +612,18 @@ describe('Xero sync — xeroSyncLoad() and its three actions', () => {
     pinsLegacyMarkup(OUT, all, 22);
   });
 
-  it('SCOPE: the six panels below it are named, deferred and handed off — not half-drawn', () => {
-    // The honest strangler edge. Emergency rebuild WIPES one company's cached invoice history before
-    // re-pulling from 2015; re-expressing it with no golden and no ask is not a migration detail.
+  it('SCOPE: the six panels below it are NOW ported — every handler is wired in the route', () => {
+    // Previously the honest strangler edge; now all six tools render in React.
     for (const title of XERO_HANDOFF_PANELS) expect(DEFERRED).toContain(title);
     expect(XERO_HANDOFF_PANELS.length).toBe(6);
-    // Guard the guard: the deferred slice really is six panels of app.html and not an empty string.
+    // Guard the guard: the deferred slice really is six panels of app.html.
     expect((DEFERRED.match(/<div class="panel"/g) || []).length).toBe(6);
-    // Their handlers are NOT wired anywhere in the React screen…
-    for (const h of ['tenantsRefresh', 'xeroDriftCheck', 'syncAudit', 'invoiceResync', 'tenantRebuild', 'arBucket']) {
-      expect(DEFERRED + APP.slice(0, 0)).toBeTruthy();
-      expect(ROUTE).not.toContain(h);
+    // Their handlers ARE now wired in the React route…
+    for (const h of ['onTenantsRefresh', 'onDriftCheck', 'onSyncAudit', 'onInvoiceResync', 'onTenantRebuild', 'onArBucket']) {
+      expect(ROUTE).toContain(h);
     }
-    // …and the route says so on the screen, with a link, rather than leaving a silent gap.
-    expect(ROUTE).toContain('Still on the legacy screen: {HANDOFF}');
-    expect(ROUTE).toContain("#tab=users");
+    // …and the handoff banner is gone.
+    expect(ROUTE).not.toContain('Still on the legacy screen');
   });
 
   it('each of the three buttons posts what its LABEL says, and nothing else does', () => {
@@ -965,7 +962,10 @@ describe('usersView() — one gate, five sub-views, and no handoff left in the m
     expect(mine).toContain("if (v === 'users') loadUsers();");
     expect(mine).toContain("else if (v === 'roles') loadRoles();");
     expect(mine).toContain("else if (v === 'sessions') loadSessions();");
-    expect(mine).toContain("else if (v === 'xero') loadXero();");
+    expect(mine).toContain("else if (v === 'xero')");
+    expect(mine).toContain('loadXero()');
+    expect(mine).toContain('loadSyncHealth()');
+    expect(mine).toContain('loadArAging()');
     expect(mine).toContain('else loadAudit();');
   });
 
