@@ -13,6 +13,7 @@ import { showConfirm } from '../../../src/confirm';
 import HrAttendance, { type AttendanceList, type AttEmployee, type AttPunch } from '../../../src/hr-attendance';
 import { mytFromDtLocal, mytISO } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -160,7 +161,7 @@ export default function HrAttendancePage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !company && !data ? <Panel><span className="spin"></span> Loading attendance…</Panel>
         : (
           <>

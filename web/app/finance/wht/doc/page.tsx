@@ -31,6 +31,7 @@ import FinanceWhtDoc, {
   type Company, type DocField, type LineField, type WhtDocLine, type WhtDocState, type WhtEntity,
 } from '../../../../src/finance-wht-doc';
 import { call, legacyUrl, token } from '../../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../../src/failed-load';
 
 /** `whtNew()` — app.html:3331, field for field. */
 function blankDoc(tenant: string): WhtDocState {
@@ -186,7 +187,7 @@ export default function FinanceWhtDocPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms !== null && !whtReachable(perms)
           ? <Panel>
               Withholding Tax is an admin-only screen — it holds non-resident payees&apos; tax numbers and the tax

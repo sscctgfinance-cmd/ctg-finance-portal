@@ -19,6 +19,7 @@ import HrCalculator, {
 } from '../../../src/hr-calculator';
 import { mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 import { hrAge } from '../../../../payroll.js';
 import { hrDrawPayslip } from '../../../../hr-docs.js';
 
@@ -223,7 +224,7 @@ export default function HrCalculatorPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !rates || company === null ? <Panel><span className="spin"></span> Loading the statutory rates…</Panel>
         : (
           <HrCalculator

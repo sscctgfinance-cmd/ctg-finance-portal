@@ -28,6 +28,7 @@ import HrProfile, {
 } from '../../../src/hr-profile';
 import { openPasswordModal } from '../../../src/password-modal';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 const LEGACY = () => `${legacyUrl('hros.html')}#tab=profile`;
 
@@ -255,7 +256,7 @@ export default function HrProfilePage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : emp === undefined || company === null ? <Panel><span className="spin"></span> Loading your profile…</Panel>
         : (
           <>

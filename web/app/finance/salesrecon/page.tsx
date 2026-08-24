@@ -29,6 +29,7 @@ import FinanceSalesRecon, {
 } from '../../../src/finance-salesrecon';
 import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 interface Xlsx {
   read: (data: unknown, opts: Record<string, unknown>) => { SheetNames: string[]; Sheets: Record<string, unknown> };
@@ -281,7 +282,7 @@ export default function FinanceSalesReconPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms === null ? <Panel><span className="spin"></span> Checking your access…</Panel>
         : !salesreconReachable(perms)
           ? <Panel>

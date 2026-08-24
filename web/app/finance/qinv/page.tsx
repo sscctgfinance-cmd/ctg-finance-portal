@@ -23,6 +23,7 @@ import { showConfirm } from '../../../src/confirm';
 import { mytISO } from '../../../../myt.js';
 import { registerScreenSave } from '../../../src/finance-save';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 /** `QINV_META_CACHE` / `QINV_META_TTL` — app.html:4661. Per tenant, because Xero's Items call is slow. */
 const META_TTL = 5 * 60 * 1000;
@@ -203,7 +204,7 @@ export default function FinanceQinvPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms === null ? <Panel><span className="spin"></span> Loading…</Panel>
         : !qinvReachable(perms)
           ? <Panel>

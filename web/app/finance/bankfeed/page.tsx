@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 
 import FinanceBankFeed, { bankfeedReachable, type Perms } from '../../../src/finance-bankfeed';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 export default function FinanceBankFeedPage() {
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -46,7 +47,7 @@ export default function FinanceBankFeedPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms === null ? <Panel><span className="spin"></span> Checking access…</Panel>
         : !bankfeedReachable(perms)
           ? <Panel>

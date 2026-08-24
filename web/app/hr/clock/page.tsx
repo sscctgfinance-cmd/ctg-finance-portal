@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import HrClock, { type ClockStatus } from '../../../src/hr-clock';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 /** `hrClkTick()` — hros.html:2910. Same arithmetic; here it feeds a prop instead of `el.textContent`. */
 function elapsedSince(iso: string, now: number): string {
@@ -125,7 +126,7 @@ export default function HrClockPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !data || company === null ? <Panel><span className="spin"></span> Loading your clock…</Panel>
         : (
           <HrClock

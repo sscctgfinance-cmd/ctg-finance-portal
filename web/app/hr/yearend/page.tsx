@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import HrYearend, { defaultTaxYear, eaSelection, taxYears, type YeEmployee, type YeTotals } from '../../../src/hr-yearend';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 import { hrCp8dFile, hrDrawEA, hrDrawFormE, hrEmpView, hrFormEStats, hrYePaid, HR_EA_ZERO } from '../../../../hr-docs.js';
 
 interface Employer { name?: string; employer_no?: string; address?: string }
@@ -155,7 +156,7 @@ export default function HrYearendPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !employees || !company ? <Panel><span className="spin"></span> Loading…</Panel>
         : (
           <HrYearend

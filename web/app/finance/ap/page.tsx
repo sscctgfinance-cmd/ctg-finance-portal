@@ -29,6 +29,7 @@ import FinanceAp, {
 } from '../../../src/finance-ap';
 import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 export default function FinanceApPage() {
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -268,7 +269,7 @@ export default function FinanceApPage() {
               were exhausted on 2026&#8209;07&#8209;09; the screen is intact and comes back with a top-up.
               Ask an administrator.
             </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : loading ? <Panel><span className="spin"></span> Loading…</Panel>
         : <>
             <FinanceAp

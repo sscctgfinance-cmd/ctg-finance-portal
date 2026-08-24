@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import FinanceCollections, { collectionsReachable, previewBody, type CollPreview, type Perms } from '../../../src/finance-collections';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 export default function FinanceCollectionsPage() {
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -69,7 +70,7 @@ export default function FinanceCollectionsPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms !== null && !collectionsReachable(perms)
           ? <Panel>Collections is not one of the features on your login. Ask an administrator if you need access.</Panel>
         : perms === null ? <Panel><span className="spin"></span> Loading…</Panel>

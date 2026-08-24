@@ -22,6 +22,7 @@ import FinanceOcr, {
 } from '../../../src/finance-ocr';
 import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 /** `UP_MAX_MB` — app.html:4546. */
 const UP_MAX_MB = 10;
@@ -211,7 +212,7 @@ export default function FinanceOcrPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         // THE PERMISSION GATE — app.html:1427. Smart OCR is hidden from EVERYONE, not admin-gated and
         // not feature-gated: the Anthropic vision credits ran out on 2026-07-09. `ocrReachable()`
         // returns false for every login and the screen's test pins that. Re-enabling is one edit in

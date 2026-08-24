@@ -1788,6 +1788,22 @@ screen and drops its `useState`, which the legacy's global state never did, so t
 first via `showConfirm`. Wired on Payroll, Company Info and Pharmacy detail (their `dirty` states). The
 pure flag is tested in `web/tests/unsaved.test.tsx`; the hook itself is not (vitest is `node`).
 
+**A failed initial load is `web/src/failed-load.tsx`, NOT a bare `<Panel>⚠️ {err}</Panel>` — the C2
+gap.** app.html:1574-1600 categorises a failed `render(t)` into session / network / server and offers
+Retry + Go to Overview (session offers Sign in instead) with a `<details>` technical message; every
+React route used to dead-end on a bare error panel whose only escape was a browser reload. `FailedLoad`
+mirrors it: `categorizeFailure()` is the pure taxonomy (pinned in `web/tests/failed-load.test.tsx`),
+Finance routes pass `home={OVERVIEW_HOME}`, HR routes pass none (the legacy HR side uses inline retry
+and has no "Overview"). Two things it depends on: (1) the categorisation is only as good as the message
+handed to it, which is why `src/portal.ts`'s `call()` (#120) already normalises them — "Session
+expired…" on a 401/unauthorized, "Network error…" on a fetch failure, "Request timed out…" on the 30s
+abort — so `categorizeFailure()` keys on the legacy words and gets a clean signal; and (2) `retryReload()`
+is a route reload, not a soft re-`load()`, because the ternary error state replaces the whole screen (no
+form mounted, nothing typed to lose, so it never trips the `unsaved.ts` `beforeunload` guard) and only a
+reload re-runs the perms gate too. Use it for any new route; the banner-form
+`{err ? <Panel>…</Panel> : null}` sites that render the screen alongside are transient action errors,
+not dead ends, and are left as-is.
+
 ## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
 
 The session is `localStorage['ctg_portal_token']`, which is scoped per ORIGIN. Two hosts would be two

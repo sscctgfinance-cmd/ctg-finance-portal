@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { showConfirm } from '../../../src/confirm';
 import HrAccess, { type HrUsersList, type InviteState } from '../../../src/hr-access';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -103,7 +104,7 @@ export default function HrAccessPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !data || !company ? <Panel><span className="spin"></span> Loading users…</Panel>
         : (
           <>

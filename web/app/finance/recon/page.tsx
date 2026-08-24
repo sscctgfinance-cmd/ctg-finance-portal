@@ -19,6 +19,7 @@ import FinanceRecon, {
   type Perms, type ReconCompany, type ReconOut, type ReconResponse,
 } from '../../../src/finance-recon';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 interface Xlsx {
   read: (data: unknown, opts: Record<string, unknown>) => { SheetNames: string[]; Sheets: Record<string, unknown> };
@@ -111,7 +112,7 @@ export default function FinanceReconPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms !== null && !reconReachable(perms)
           ? <Panel>
               Bank Rec is not on your feature list — it matches bank lines against this company&apos;s open Xero

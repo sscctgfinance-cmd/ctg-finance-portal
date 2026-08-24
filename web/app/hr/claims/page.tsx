@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import HrClaims, { claimsReachable, type Claim } from '../../../src/hr-claims';
 import { BASE_PATH, call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -80,7 +81,7 @@ export default function HrClaimsPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : role !== null && !claimsReachable(role)
           ? <Panel>
               Claims is an HR admin screen — it lists every employee&apos;s claims. Your own are under{' '}

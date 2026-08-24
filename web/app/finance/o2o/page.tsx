@@ -28,6 +28,7 @@ import { o2oApplyMasterRate, o2oGrandTotal, o2oInvoiceNumbers, o2oParseRows } fr
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad, { OVERVIEW_HOME } from '../../../src/failed-load';
 
 /** The one place a base path is read in this route — src/portal.ts is the one place it is defined. */
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -282,7 +283,7 @@ export default function FinanceO2OPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} home={OVERVIEW_HOME} />
         : perms !== null && !o2oReachable(perms)
           ? <Panel>
               O2O Billing is not on your feature list — it parses the monthly pharmacy workbook and issues

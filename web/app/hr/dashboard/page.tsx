@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import HrDashboard, { type DashData, type DashEmployee, type DashPage } from '../../../src/hr-dashboard';
 import { mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -204,7 +205,7 @@ export default function HrDashboardPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : (
           <HrDashboard
             data={data}

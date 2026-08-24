@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { showConfirm } from '../../../src/confirm';
 import HrEmployees, { EMP_UI_DEFAULT, credsText, type Bank, type Cred, type CredSkip, type EmpUI, type Employee } from '../../../src/hr-employees';
 import { call, legacyUrl, token } from '../../../src/portal';
+import FailedLoad from '../../../src/failed-load';
 import { toast } from '../../../src/toast';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -232,7 +233,7 @@ export default function HrEmployeesPage() {
             the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
             already be signed in.
           </Panel>
-        : err ? <Panel>⚠️ {err}</Panel>
+        : err ? <FailedLoad message={err} />
         : !employees || !company ? <Panel><span className="spin"></span> Loading employees…</Panel>
         : (
           <>
