@@ -486,7 +486,20 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
   const actedUserIds = otherSteps.filter((s:any)=>s.acted_by).map((s:any)=>s.acted_by);
   const actedEmpIds  = otherSteps.filter((s:any)=>s.acted_emp_id).map((s:any)=>s.acted_emp_id);
   if(!(await canActOrGap(who, step, claim.tenant_id, { requesterEmpId: claim.employee_id, actedUserIds, actedEmpIds })))
-    return { ok:false, error:"You are not the approver for this step"+(step&&step.approver_role?(" (\""+step.approver_role+"\")"):"")+". Ask that approver to act, or assign someone to the role in Claim settings.", forbidden:true };
+  {
+    // v226: name WHO owns the step. This message only ever named a ROLE, so a step assigned to a named
+    // employee — which is what the amount-band workflows produce — refused with "You are not the
+    // approver for this step." and nothing else. The operator could not tell who to chase from the
+    // error, and the screen showed no assignee either (hros.html ignored can_act until v226).
+    let owner = "";
+    if(step && step.approver_employee_id){
+      const { data: oe } = await sb.from("hr_employees").select("name").eq("id",step.approver_employee_id).maybeSingle();
+      if(oe && oe.name) owner = " It belongs to "+oe.name+".";
+    } else if(step && step.approver_role){
+      owner = " It belongs to the \""+step.approver_role+"\" role.";
+    }
+    return { ok:false, error:"You are not the approver for this step."+owner+" Ask them to act — an admin is deliberately not an override.", forbidden:true };
+  }
   const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const actorEmp=(who.employee&&who.employee.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
   const sodErr = await sodViolation("hr_claim_approval_steps","instance_id",inst.id,step&&step.id,actor,who.employee&&who.employee.id,claim.employee_id,"acted_by","acted_emp_id");
   if(sodErr) return { ok:false, error:sodErr, forbidden:true };

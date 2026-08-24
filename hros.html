@@ -2602,7 +2602,32 @@ function hrRCDetail(){
   var recs=(d.attachments&&d.attachments.length)?'<div class="panel"><div class="panel-hd"><h3>Receipts ('+d.attachments.length+')</h3></div>'+d.attachments.map(function(a){return '<div style="font-size:12.5px;padding:4px 0">📎 '+(a.url?('<a href="'+esc(a.url)+'" target="_blank" style="color:var(--sky-soft)">'+esc(a.file_name)+'</a>'):esc(a.file_name))+'</div>';}).join('')+'</div>':'';
   var coms=(d.comments&&d.comments.length)?'<div class="panel"><div class="panel-hd"><h3>Comments</h3></div>'+d.comments.map(function(x){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px"><b>'+esc(x.author_name||'—')+'</b> <span class="muted" style="font-size:10.5px">'+esc(String(x.created_at).slice(0,16).replace('T',' '))+'</span><div style="margin-top:2px">'+esc(x.comment)+'</div></div>';}).join('')+'</div>':'';
   var actions='';
-  if(pending){ actions='<div class="panel"><div class="panel-hd"><h3>Approver actions</h3></div><textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn p sm" onclick="hrRCDecide(\'approve\')">✓ Approve</button><button class="btn sm d" onclick="hrRCDecide(\'reject\')">✕ Reject</button><button class="btn sm" onclick="hrRCDecide(\'request_info\')">↩ Request info</button><button class="btn xs" onclick="hrRCOverride()">Override amount</button></div></div>'; }
+  // v226: the approver buttons follow `d.can_act` — the SERVER's answer — not the claim's status.
+  // `pending` above is status-only, so every viewer who could open a claim saw a live "✓ Approve",
+  // pressed it, and got "You are not the approver for this step" back from hr_rc_decide. hr_rc_get has
+  // COMPUTED AND RETURNED can_act since the claims module shipped — its own comment says "so the
+  // Approve button hides instead of erroring on click" — and no client ever read the field. The React
+  // port (web/src/hr-expenses.tsx) had the same gap.
+  //
+  // can_act already folds in the status check, the segregation-of-duties rule and the v152/154 gap
+  // escapes, so re-deriving any of that here would be a second copy that can disagree with the gate
+  // that actually decides.
+  var curStep=(d.steps||[]).filter(function(s){ return Number(s.step_order)===Number(c.current_step); })[0];
+  if(pending && d.can_act){ actions='<div class="panel"><div class="panel-hd"><h3>Approver actions</h3></div><textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn p sm" onclick="hrRCDecide(\'approve\')">✓ Approve</button><button class="btn sm d" onclick="hrRCDecide(\'reject\')">✕ Reject</button><button class="btn sm" onclick="hrRCDecide(\'request_info\')">↩ Request info</button><button class="btn xs" onclick="hrRCOverride()">Override amount</button></div></div>'; }
+  else if(pending){
+    // Not "you have no business here" — the operator IS usually an admin and can see the whole claim.
+    // What they cannot do is act, and the one thing they need is the NAME to chase. Reassigning is
+    // deliberately not offered: there is no in-flight reassign action, and editing the approval
+    // workflow only re-routes claims submitted AFTER the edit — this claim's steps were fixed at
+    // submission. Saying otherwise would send them to a settings screen that changes nothing here.
+    var waitFor=(curStep&&curStep.assignee_name)?esc(curStep.assignee_name):null;
+    actions='<div class="panel"><div class="panel-hd"><h3>⏳ Waiting for another approver</h3></div>'+
+      '<div style="font-size:13px">'+(waitFor
+        ? 'This step belongs to <b>'+waitFor+'</b>'+((curStep&&curStep.name&&curStep.name!==(curStep.assignee_name||''))?(' <span class="muted">· step '+esc(String(curStep.step_order))+' “'+esc(curStep.name)+'”</span>'):'')+'.'
+        : 'This step is assigned to somebody else.')+'</div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:6px">Only the assigned approver can act on it. An admin is <b>not</b> an override — that is deliberate (segregation of duties): nobody approves two levels of one request, and nobody approves their own.</div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:4px">Changing the approval workflow in Claim settings affects <b>new</b> claims only — this claim&rsquo;s steps were fixed when it was submitted.</div></div>';
+  }
   else if(c.status==='Approved'){ actions='<div class="panel"><div class="panel-hd"><h3>💵 Finance — mark as paid</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px"><div><label class="muted" style="font-size:11px">Method</label><input id="rc_pm" placeholder="Bank Transfer" style="'+RC_SEL+'"></div><div><label class="muted" style="font-size:11px">Reference</label><input id="rc_pr" placeholder="TT / cheque ref" style="'+RC_SEL+'"></div></div><button class="btn p sm" onclick="hrRCMarkPaid()">Mark as Paid</button></div>'; }
   else if(c.status==='Paid'&&d.payment){ actions='<div class="panel"><div style="font-size:13px;color:var(--green-soft)">✓ Paid '+esc(d.payment.paid_date||'')+(d.payment.payment_method?(' · '+esc(d.payment.payment_method)):'')+(d.payment.payment_reference?(' · '+esc(d.payment.payment_reference)):'')+'</div></div>'; }
   var xeroBlock='';
