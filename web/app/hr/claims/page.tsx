@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import HrClaims, { claimsReachable, type Claim } from '../../../src/hr-claims';
-import { call, legacyUrl, token } from '../../../src/portal';
+import { BASE_PATH, call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -84,7 +84,7 @@ export default function HrClaimsPage() {
         : role !== null && !claimsReachable(role)
           ? <Panel>
               Claims is an HR admin screen — it lists every employee&apos;s claims. Your own are under{' '}
-              <a href={`${legacyUrl('hros.html')}#tab=expenses`}>Reimbursement</a>.
+              <a href={`${BASE_PATH}/hr/expenses/`}>Reimbursement</a>.
             </Panel>
         : !claims || !company ? <Panel><span className="spin"></span> Loading claims…</Panel>
         : (

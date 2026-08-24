@@ -26,6 +26,7 @@ import HrProfile, {
   profileBody, sigFileRefusal, sigStoreRefusal, sigTrimBox, sigUploadSize,
   type Bank, type ProfileEmployee,
 } from '../../../src/hr-profile';
+import { openPasswordModal } from '../../../src/password-modal';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 const LEGACY = () => `${legacyUrl('hros.html')}#tab=profile`;
@@ -245,8 +246,6 @@ export default function HrProfilePage() {
     }
   }, [load]);
 
-  const toLegacy = useCallback(() => { window.location.href = LEGACY(); }, []);
-
   return (
     <div ref={formRef}>
       <Banner />
@@ -273,7 +272,7 @@ export default function HrProfilePage() {
               onSigWipe={onSigWipe}
               onSigCancel={onSigCancel}
               onSigUpload={onSigUpload}
-              onPwModal={toLegacy}
+              onPwModal={() => openPasswordModal(false)}
             />
           </>
         )}
@@ -295,8 +294,8 @@ function Banner() {
       <div className="muted" style={{ padding: '12px 14px', fontSize: '11.5px' }}>
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={LEGACY()}>hros.html · My Profile</a>, unchanged. This page renders the same data from the
-        same session and is diffed against the same golden. Drawing a signature and changing your
-        password open the legacy screen.
+        same session and is diffed against the same golden. The signature pad and the change-password
+        dialog are ported and run here.
       </div>
     </div>
   );

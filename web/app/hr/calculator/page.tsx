@@ -262,7 +262,7 @@ function Banner() {
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('hros.html')}#tab=calculator`}>hros.html · Calculator</a>, unchanged. This page runs the
         same statutory engine (<code>payroll.js</code>) from the same session and is diffed against the same golden.
-        The payslip PDF is on the legacy screen only.
+        The payslip PDF is drawn here, by the same shared <code>hr-docs.js</code>.
       </div>
     </div>
   );
