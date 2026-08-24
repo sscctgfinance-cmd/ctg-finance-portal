@@ -476,9 +476,21 @@ side; the payroll statutory-file builders (`hrExpBank` / `hrExpKwsp` / `hrExpAss
 them off. **`HR.submitPack`'s tracker takes the pack as a PROP**, so whoever ports those builders wires
 one prop and the panel appears.
 
+**💾 Save entries and Finalise are migrated (F1).** The captain's decision was: match the legacy exactly
+— Save sends a DELTA, only the cells that differ from each employee's base record, because that is the
+shape `hr_payroll_grid_save` stores and `hr_payroll_finalise` recomputes from. NOT a full row per
+employee (React shipped that against `hr_payroll_save_entries`, which the server does not implement, so
+Save silently 400'd and Finalise sent no `rows` and was refused "no rows to finalise"). The diff is
+`gridSaveAdjustments()` and the finalise rows are `finaliseRows()`, both pure in `web/src/hr-payroll.tsx`
+mirroring `hrGridSave()`/`hrFinalise()` (hros.html:4304/:4364) and pinned in
+`web/tests/hr-payroll-writes.test.tsx` — that test fails if either reverts to the wrong shape. Both
+writes carry the pre-finalise "save first" guard and a SYNCHRONOUS `useRef` double-submit guard (not
+`useState`, PR #112). The 13 file/export controls (statutory files, payslip PDF, email, Xero journal,
+ZIP pack) are STILL the open seam and still `toLegacy()` in the route.
+
 **The Payroll screen's three RECORD editors are migrated — ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers.**
 Distinguish them from the file builders above: a record editor is a form over data an admin already
-edits, so it is independent of the still-open payroll save/finalise decision. None of the three is in a
+edits, so it was independent of the (now-closed) payroll save/finalise decision. None of the three is in a
 golden (all three render only on a flag every surface was captured with false), so they live in
 `web/tests/hr-payroll-editors.test.tsx`, pinned by assertion, and `tests/golden/hr.payroll.html` did not
 move. Three things they establish:

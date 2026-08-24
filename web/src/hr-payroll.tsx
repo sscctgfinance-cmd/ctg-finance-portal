@@ -131,6 +131,58 @@ export interface PayQuote {
 /** One rendered grid row — `hrGridAll()`'s `{e,p,d}` (hros.html:3757). */
 export interface PayRow { e: PayEmployee; p: PayQuote; d: Record<string, unknown> }
 
+/** One row of the DELTA `hr_payroll_grid_save` posts — `hrGridSave()`, hros.html:4308. */
+export interface SaveAdjustment {
+  employee_id: string; kind: string; amount: number; epf_subject: boolean; label?: string;
+}
+
+/** One finalise row — `hrFinalise()`'s per-employee statutory figures, hros.html:4365. */
+export interface FinaliseRow {
+  employeeId: string; gross: number; epfEe: number; epfEr: number; socsoEe: number; socsoEr: number;
+  eisEe: number; eisEr: number; lindung: number; pcb: number; net: number; employerCost: number;
+}
+
+/**
+ * `hrGridSave()`'s diff — hros.html:4305-4317. A DELTA: only cells that differ from the employee's base
+ * record become rows. This is the stored shape `hr_payroll_finalise` recomputes from, so it must stay
+ * byte-for-byte the legacy's (the captain's decision — one stored shape, one basis for recompute).
+ * Iterates ALL employees, not the skip-filtered `gridAll` set, because `skip` is itself a delta kind.
+ */
+export function gridSaveAdjustments(data: PayData, grid: Record<string, GridRow>): SaveAdjustment[] {
+  const out: SaveAdjustment[] = [];
+  (data.employees || []).forEach((e) => {
+    const g = grid[e.id];
+    if (!g) return;
+    const mb = Number(e.basic_salary || 0), ma = Number(e.fixed_allowance || 0);
+    if (Number(g.basic) !== mb) out.push({ employee_id: e.id, kind: 'basic_set', amount: Number(g.basic) || 0, epf_subject: true });
+    if (Number(g.allow) !== ma) out.push({ employee_id: e.id, kind: 'allow_set', amount: Number(g.allow) || 0, epf_subject: true });
+    if (Number(g.bonus)) out.push({ employee_id: e.id, kind: 'bonus', amount: Number(g.bonus), epf_subject: true });
+    if (Number(g.ot)) out.push({ employee_id: e.id, kind: 'ot', amount: Number(g.ot), epf_subject: true });
+    if (Number(g.allowance)) out.push({ employee_id: e.id, kind: 'allowance', amount: Number(g.allowance), epf_subject: true });
+    (g.deductions || []).forEach((x) => { if (Number(x.amount)) out.push({ employee_id: e.id, kind: 'deduction', label: x.label || 'Other deduction', amount: Number(x.amount), epf_subject: false }); });
+    if (Number(g.unpaid)) out.push({ employee_id: e.id, kind: 'unpaid_leave', amount: Number(g.unpaid), epf_subject: false });
+    if (g.pcbSet != null) out.push({ employee_id: e.id, kind: 'pcb_set', amount: Number(g.pcbSet) || 0, epf_subject: false });
+    if (g.skip) out.push({ employee_id: e.id, kind: 'skip', amount: 0, epf_subject: false });
+  });
+  return out;
+}
+
+/**
+ * `hrFinalise()`'s rows — hros.html:4365. One entry per computed (skip-filtered) grid row, carrying the
+ * eleven statutory figures the server recompute is checked against. Fed `gridAll().rows`, which is the
+ * legacy's `HR.pay._rows`.
+ */
+export function finaliseRows(rows: PayRow[]): FinaliseRow[] {
+  return rows.map((r) => {
+    const q = r.p;
+    return {
+      employeeId: r.e.id, gross: q.gross, epfEe: q.epfEe, epfEr: q.epfEr, socsoEe: q.socsoEe,
+      socsoEr: q.socsoEr, eisEe: q.eisEe, eisEr: q.eisEr, lindung: q.lindung, pcb: q.pcb,
+      net: q.net, employerCost: q.employerCost,
+    };
+  });
+}
+
 export interface PayTotals {
   gross: number; epfEe: number; epfEr: number; socsoEe: number; socsoEr: number;
   eisEe: number; eisEr: number; lindung: number; pcb: number; net: number; cost: number;

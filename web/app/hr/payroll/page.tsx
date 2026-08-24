@@ -11,11 +11,11 @@
 // The statutory maths is NOT here and NOT in the component: it is `gridAll()`/`gridRowCompute()`, which
 // call `hrCompute` in payroll.js. This file only decides when to run them.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import HrPayroll, {
   EMPLOYER_TEXT_FIELDS, HR_MONTHS, LOGO_JPEG_QUALITY, RATES_INPUT_IDS,
-  dueInfo, employerBody, employerInit, gridAll, gridInit, gridState,
+  dueInfo, employerBody, employerInit, finaliseRows, gridAll, gridInit, gridSaveAdjustments, gridState,
   logoDataRefusal, logoFileRefusal, logoScale, ratesBody, statIdsBody, statIdsRows, tp1Body,
   type CellField, type EmployerEdit, type GridRow, type HubKey, type PayData, type PayEmployee,
   type RatesCfg, type StatFile, type StatIdField, type StatIdRow, type StatIdsState,
@@ -144,19 +144,60 @@ export default function HrPayrollPage() {
     catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   }, [company]);
 
-  const entries = useCallback(() => (data?.employees || []).map((e) => ({ employee_id: e.id, ...grid[e.id] })), [data, grid]);
+  // `hrOnce()` — hros.html:4167. A SYNCHRONOUS ref, not `useState`: two rapid clicks both read the same
+  // stale `false` out of a state closure and both fire the POST (five such holes were fixed in PRs
+  // 108/109/112). The ref is set before any await and released in `finally` for every branch, exactly as
+  // hrOnce's try/finally does — so a cancelled confirm or an early guard also frees it.
+  const savingGrid = useRef(false);
+  const finalising = useRef(false);
 
+  /**
+   * `hrGridSave()` — hros.html:4304. Posts a DELTA (`gridSaveAdjustments`), not a full row per employee,
+   * to `hr_payroll_grid_save`. On success the legacy drops `HR.pay.data` and re-renders, which reloads
+   * the month; here that is an explicit reload, so the saved adjustments come back and the grid recomputes
+   * from the server's stored basis.
+   */
   const onGridSave = useCallback(async () => {
-    await post({ api: 'hr_payroll_save_entries', month, year, entries: entries() }, 'Entries saved ✓');
-    setDirty(false);
-  }, [post, month, year, entries]);
+    if (savingGrid.current) return;
+    savingGrid.current = true;
+    try {
+      if (!data) return;
+      await call({ api: 'hr_payroll_grid_save', month, year, adjustments: gridSaveAdjustments(data, grid), tenant: company ? company.tenant_id : null });
+      setNotice('Payroll entries saved ✓ — not final until you finalise');
+      setDirty(false);
+      await load(month, year);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      savingGrid.current = false;
+    }
+  }, [data, grid, month, year, company, load]);
 
+  /**
+   * `hrFinalise()` — hros.html:4364. Posts the `rows` shape (`finaliseRows`): one entry per computed
+   * grid row with its eleven statutory figures. The server recomputes from the SAVED adjustments and 409s
+   * on any disagreement, so unsaved entries must be refused up-front with the real message (hros.html:4370)
+   * rather than left to fail on a confusing stale-cache error.
+   */
   const onFinalise = useCallback(async () => {
-    if (!await showConfirm('Finalise payroll',
-      `Finalise ${HR_MONTHS[month]} ${year}? Payslips are written for every employee in the run.`, 'Finalise', 'p')) return;
-    await post({ api: 'hr_payroll_finalise', month, year, entries: entries() }, 'Payroll finalised ✓');
-    void load(month, year);
-  }, [post, month, year, entries, load]);
+    if (finalising.current) return;
+    finalising.current = true;
+    try {
+      const rows = data ? finaliseRows(gridAll(data, grid, { month, year }).rows) : [];
+      if (!rows.length) { setNotice('No active employees'); return; }
+      if (dirty) { setNotice('Save your entries first — click 💾 Save entries, then finalise'); return; }
+      if (!await showConfirm('Finalise payroll',
+        `Finalise ${HR_MONTHS[month]} ${year} (${rows.length} employees)? Payslips are written for every employee in the run.`, 'Finalise', 'p')) return;
+      await call({ api: 'hr_payroll_finalise', month, year, rows, tenant: company ? company.tenant_id : null });
+      setNotice('Payroll finalised ✓');
+      setEditFinal(false);
+      await load(month, year);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      finalising.current = false;
+    }
+  }, [data, grid, dirty, month, year, company, load]);
 
   const onResign = useCallback(async (id: string) => {
     const e = (data?.employees || []).find((x) => x.id === id);
