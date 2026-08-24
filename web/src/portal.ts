@@ -54,17 +54,53 @@ export function token(): string {
 }
 
 /**
- * One POST to the edge function. Deliberately much smaller than common.js's `call()`: no retry, no
- * session-expired modal, no toast queue — those belong to the app shell, and the shell is still the
- * legacy one. A migrated screen surfaces its own error, which is what the caller does here.
+ * Session-expired path — the React equivalent of app.html:1378's `handleSessionExpired()`. There is no
+ * modal to show from a pure module, so this does what the modal's one button does: clear the dead token
+ * and send the operator back to sign in. Guarded so a burst of failing calls redirects once.
+ * Deliberately still NO retry — see common.js's `call()` and tests/retry_safety_test.ts: a bad-gateway
+ * or gateway-timeout status can mean the slow Xero-bound POST already ran, so repeating it is unsafe.
+ */
+let sessionExpiredShown = false;
+function handleSessionExpired(): void {
+  if (sessionExpiredShown) return;
+  sessionExpiredShown = true;
+  try { localStorage.removeItem('ctg_portal_token'); } catch { /* private mode */ }
+  location.href = `${BASE_PATH}/index.html`;
+}
+
+/**
+ * One POST to the edge function. Matches common.js's `call()` for its three resilience behaviours: a 30s
+ * abort timeout, session-expired detection on 401/unauthorized, and friendly messages for timeout and
+ * network failure. No retry and no toast queue — a migrated screen surfaces its own error.
  */
 export async function call<T = unknown>(body: Record<string, unknown>): Promise<T> {
-  const r = await fetch(API, {
-    method: 'POST',
-    body: JSON.stringify({ token: token(), ...body }),
-  });
-  const data = await r.json().catch(() => null);
-  if (!r.ok || !data) throw new Error((data && data.error) || `Server returned ${r.status}`);
-  if (data.ok === false) throw new Error(data.error || 'Request failed');
-  return data as T;
+  const reqToken = body.token !== undefined ? body.token : token();
+  const isAuthExempt = body.api === 'login' || body.api === 'login_2fa';
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const r = await fetch(API, {
+      method: 'POST',
+      body: JSON.stringify({ token: token(), ...body }),
+      signal: ctrl.signal,
+    });
+    const data = await r.json().catch(() => null);
+    // Session expired: we sent a token and the server rejected it → the token died.
+    const isUnauth = r.status === 401 || (data && data.ok === false && data.error === 'unauthorized');
+    if (isUnauth && reqToken && !isAuthExempt) {
+      handleSessionExpired();
+      throw new Error('Session expired — please sign in again');
+    }
+    if (!r.ok || !data) throw new Error((data && data.error) || `Server returned ${r.status}`);
+    if (data.ok === false) throw new Error(data.error || 'Request failed');
+    return data as T;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Request timed out — server or Xero is slow, please retry');
+    }
+    if (e instanceof TypeError) throw new Error('Network error — check your connection and retry');
+    throw e;
+  } finally {
+    clearTimeout(tm);
+  }
 }
