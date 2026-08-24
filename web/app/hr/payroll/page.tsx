@@ -14,9 +14,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import HrPayroll, {
-  HR_MONTHS, dueInfo, gridAll, gridInit, gridState, tp1Body,
-  type CellField, type GridRow, type HubKey, type LegacyPanel, type PayData, type PayEmployee,
-  type StatFile, type Tp1Line, type Tp1State, type UobCfg,
+  EMPLOYER_TEXT_FIELDS, HR_MONTHS, LOGO_JPEG_QUALITY, RATES_INPUT_IDS,
+  dueInfo, employerBody, employerInit, gridAll, gridInit, gridState,
+  logoDataRefusal, logoFileRefusal, logoScale, ratesBody, statIdsBody, statIdsRows, tp1Body,
+  type CellField, type EmployerEdit, type GridRow, type HubKey, type PayData, type PayEmployee,
+  type RatesCfg, type StatFile, type StatIdField, type StatIdRow, type StatIdsState,
+  type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
 import { showConfirm } from '../../../src/confirm';
 import { mytISO, mytYMD } from '../../../../myt.js';
@@ -192,17 +195,188 @@ export default function HrPayrollPage() {
   }, [company]);
 
   /**
-   * The exports and the four un-migrated panels. Every one of them is a file builder in hros.html
-   * (`hrExpBank`, `hrExpKwsp`, `hrExpAssist`, `hrExpCp39`, `hrExpSummary`, `hrExpPayslips`, the jsPDF
-   * payslip drawers in hr-docs.js) or a full record editor (⚙️ Rates, 🏢 Company, 🆔 Statutory numbers,
-   * 🧾 TP1). None is migrated with this screen, and each is wired to a notice pointing at the legacy
-   * screen rather than to nothing — the same choice hr-calculator's payslip button makes.
+   * The FILE builders, and only those: `hrExpBank`, `hrExpGiro`, `hrExpKwsp`, `hrExpAssist`,
+   * `hrExpCp39`, `hrExpSummary`, `hrExpPayslips`, `hrEmailAll`, `hrPostXero`, `hrExpStatutory` and the
+   * ZIP `hrSubmitAll()` builds — every one of them a statutory upload, a bank payment file, a payslip
+   * PDF or a posting into a live Xero ledger, and every one blocked on an open captain decision. Each
+   * is wired to a notice pointing at the legacy screen rather than to nothing, the same choice
+   * hr-calculator's payslip button makes. The four record editors that used to be in this list —
+   * ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers and 🧾 TP1 — are migrated below.
    */
   const toLegacy = useCallback((what: string) =>
     setNotice(`${what} is on the legacy screen — open HR OS · Payroll.`), []);
-  const legacyPanel = useCallback((k: LegacyPanel) => toLegacy(
-    { rates: 'The statutory rates editor', employer: 'The company details editor', statids: 'The statutory numbers editor' }[k],
-  ), [toLegacy]);
+
+  /* ── ⚙️ Rates · 🏢 Company · 🆔 Statutory numbers — the three record editors ──────────────────────
+   *
+   * All three keep the legacy's shape: the panel holds a working copy, the INPUTS are uncontrolled and
+   * carry the legacy element ids, and the save reads them back out of the DOM and hands them to the
+   * pure body builder in src/. Each save is guarded against a double-click by an in-flight flag, which
+   * is React's spelling of `hrOnce()` (hros.html:4167) — the button is disabled and relabelled, and the
+   * flag is released in `finally` so one network error does not strand the operator.
+   */
+
+  const [rates, setRates] = useState<RatesCfg | null>(null);
+  const [savingRates, setSavingRates] = useState(false);
+  const [employer, setEmployer] = useState<EmployerEdit | null>(null);
+  const [employerLoading, setEmployerLoading] = useState(false);
+  const [savingEmployer, setSavingEmployer] = useState(false);
+  const [statIds, setStatIds] = useState<StatIdsState | null>(null);
+  const [savingStatIds, setSavingStatIds] = useState(false);
+
+  /** `hrRatesToggle()` — hros.html:4081. The cfg is already loaded: it is what drives the grid. */
+  const onRatesToggle = useCallback(() =>
+    setRates((r) => (r ? null : ((data?.rates as RatesCfg) || null))), [data]);
+
+  /**
+   * `hrRatesSave()` — hros.html:4172. ONE row, group-wide, so there is no tenant in the body and the
+   * server wants a full-scope admin. On success the new rates go straight back into `data`, which is
+   * what the grid computes from — the legacy's `HR.pay.data.rates=rates`, i.e. "applies immediately".
+   */
+  const onRatesSave = useCallback(async () => {
+    if (savingRates || !rates) return;
+    setSavingRates(true);
+    try {
+      const vals: Record<string, string> = {};
+      RATES_INPUT_IDS.forEach((id) => { vals[id] = (document.getElementById(id) as HTMLInputElement | null)?.value ?? ''; });
+      const body = ratesBody(vals, rates);
+      await call(body);
+      setData((d) => (d ? { ...d, rates: body.rates } : d));
+      setRates(null);
+      setNotice('Statutory rates saved ✓');
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingRates(false);
+    }
+  }, [rates, savingRates]);
+
+  /**
+   * `hrEmployerToggle()` — hros.html:4084. The legacy already holds the employer record (it comes down
+   * with `hr_bootstrap` into `HR.data`); this screen loads only `hr_payroll_data`, which does not carry
+   * one (hr.ts:1749), so the panel fetches it on open from the same action the legacy got it from.
+   */
+  const onEmployerToggle = useCallback(async () => {
+    if (employer || employerLoading) { setEmployer(null); setEmployerLoading(false); return; }
+    if (!company) { setNotice('Pick a company first'); return; }
+    setEmployerLoading(true);
+    try {
+      const r = await call<{ employer?: Partial<EmployerEdit> | null }>({ api: 'hr_bootstrap', tenant: company.tenant_id });
+      setEmployer(employerInit(r.employer, company.tenant_name));
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEmployerLoading(false);
+    }
+  }, [company, employer, employerLoading]);
+
+  /** `hrEmployerSyncInputs()` — hros.html:4110. The nine text boxes, read back by their legacy ids. */
+  const employerFromDom = useCallback((e: EmployerEdit): EmployerEdit => {
+    const out = { ...e };
+    EMPLOYER_TEXT_FIELDS.forEach((k) => {
+      const el = document.getElementById('emp_' + k) as HTMLInputElement | HTMLTextAreaElement | null;
+      if (el) out[k] = el.value;
+    });
+    return out;
+  }, []);
+
+  /** `hrEmployerLogoClear()` — hros.html:4112. `null`, not absent: the server reads that as "clear it". */
+  const onEmployerLogoClear = useCallback(() =>
+    setEmployer((e) => (e ? { ...employerFromDom(e), logo: null } : e)), [employerFromDom]);
+
+  /**
+   * `hrEmployerLogoPick()` — hros.html:4113. The canvas is device code and stays here; every number it
+   * uses (4 MB, 260px, 380,000 chars, JPEG 0.85) is a pure helper in src/ so it is under test.
+   */
+  const onEmployerLogoPick = useCallback((f: File | null) => {
+    if (!f) return;
+    const refusal = logoFileRefusal(f);
+    if (refusal) { setNotice(refusal); return; }
+    setEmployer((e) => (e ? employerFromDom(e) : e));
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const { w, h } = logoScale(img.width, img.height);
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d');
+        if (!ctx) { setNotice('Could not read that image'); return; }
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+        let out = cv.toDataURL('image/png');
+        if (logoDataRefusal(out)) out = cv.toDataURL('image/jpeg', LOGO_JPEG_QUALITY);
+        const tooBig = logoDataRefusal(out);
+        if (tooBig) { setNotice(tooBig); return; }
+        setEmployer((e) => (e ? { ...e, logo: out } : e));
+      };
+      img.onerror = () => setNotice('Could not read that image');
+      img.src = String(ev.target?.result || '');
+    };
+    reader.readAsDataURL(f);
+  }, [employerFromDom]);
+
+  /**
+   * `hrEmployerSave()` — hros.html:4128. The logo travels in this one request, so the guard below IS
+   * the upload's double-submit guard: a second click while the first POST is in flight would file the
+   * same image again and race the two writes to `hr_employer_info`.
+   */
+  const onEmployerSave = useCallback(async () => {
+    if (savingEmployer || !employer) return;
+    const edit = employerFromDom(employer);
+    const body = employerBody(edit, company ? company.tenant_id : null);
+    if ('error' in body) { setEmployer(edit); setNotice(body.error as string); return; }
+    setSavingEmployer(true);
+    try {
+      await call(body);
+      setEmployer(null);
+      setNotice('Company details saved ✓');
+    } catch (e) {
+      setEmployer(edit);
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingEmployer(false);
+    }
+  }, [company, employer, employerFromDom, savingEmployer]);
+
+  /** `hrStatIdsOpen()` — hros.html:3886. */
+  const onStatIdsOpen = useCallback(async () => {
+    if (!company) { setNotice('Pick a company first'); return; }
+    setStatIds({ loading: true, rows: null });
+    try {
+      const r = await call<{ employees?: Record<string, unknown>[] }>({ api: 'hr_stat_ids_get', tenant: company.tenant_id });
+      setStatIds({ loading: false, rows: statIdsRows(r.employees || []) });
+    } catch (e) {
+      setStatIds(null);
+      setNotice(e instanceof Error ? e.message : String(e));
+    }
+  }, [company]);
+
+  /** `hrStatIdsCell()` — hros.html:3898. The value is TRIMMED as it is stored, as the legacy does. */
+  const onStatIdsCell = useCallback((id: string, field: StatIdField, v: string) => {
+    setStatIds((st) => (st && st.rows
+      ? { ...st, rows: st.rows.map((r) => (r.id === id ? { ...r, [field]: String(v == null ? '' : v).trim() } : r)) }
+      : st));
+  }, []);
+
+  /**
+   * `hrStatIdsSave()` — hros.html:3913. The legacy drops `HR.pay.data` afterwards so the exports see
+   * the new numbers; here that is a reload of the month.
+   */
+  const onStatIdsSave = useCallback(async () => {
+    if (savingStatIds) return;
+    const body = statIdsBody(company ? company.tenant_id : null, (statIds && statIds.rows) || ([] as StatIdRow[]));
+    if ('error' in body) { setNotice(body.error as string); return; }
+    setSavingStatIds(true);
+    try {
+      const r = await call<{ n?: number }>(body);
+      setNotice(`Statutory numbers saved ✓ (${r.n || 0} staff)`);
+      setStatIds(null);
+      await load(month, year);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingStatIds(false);
+    }
+  }, [company, load, month, savingStatIds, statIds, year]);
 
   /* ── 🧾 TP1 relief declarations — hros.html:3844-3910 ─────────────────────────────────────────── */
 
@@ -317,7 +491,23 @@ export default function HrPayrollPage() {
             rowMenu={rowMenu}
             today={todayLocalISO()}
             onPickPeriod={onPickPeriod}
-            onLegacyPanel={legacyPanel}
+            rates={rates}
+            savingRates={savingRates}
+            onRatesToggle={onRatesToggle}
+            onRatesSave={onRatesSave}
+            employer={employer}
+            employerLoading={employerLoading}
+            savingEmployer={savingEmployer}
+            onEmployerToggle={onEmployerToggle}
+            onEmployerLogoPick={onEmployerLogoPick}
+            onEmployerLogoClear={onEmployerLogoClear}
+            onEmployerSave={onEmployerSave}
+            statIds={statIds}
+            savingStatIds={savingStatIds}
+            onStatIdsOpen={onStatIdsOpen}
+            onStatIdsClose={() => setStatIds(null)}
+            onStatIdsCell={onStatIdsCell}
+            onStatIdsSave={onStatIdsSave}
             tp1={tp1}
             onTp1Open={onTp1Open}
             onTp1Close={() => setTp1(null)}
@@ -377,8 +567,10 @@ function Banner() {
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('hros.html')}#tab=payroll`}>hros.html · Payroll</a>, unchanged. This page runs the
         same statutory engine (<code>payroll.js</code>) from the same session and is diffed against the same golden.
-        The statutory file exports and the rates / company / statutory-numbers editors are on the legacy
-        screen only; 🧾 TP1 reliefs is migrated.
+        The statutory file exports — the bank salary files, the KWSP / PERKESO / CP39 uploads, the raw
+        statutory CSVs, the Excel summary, the payslips PDF and its email, the Xero journal and the
+        submission-pack ZIP — are on the legacy screen only. The ⚙️ Rates, 🏢 Company, 🆔 Statutory
+        numbers and 🧾 TP1 editors are migrated.
       </div>
     </div>
   );

@@ -476,6 +476,27 @@ side; the payroll statutory-file builders (`hrExpBank` / `hrExpKwsp` / `hrExpAss
 them off. **`HR.submitPack`'s tracker takes the pack as a PROP**, so whoever ports those builders wires
 one prop and the panel appears.
 
+**The Payroll screen's three RECORD editors are migrated — ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers.**
+Distinguish them from the file builders above: a record editor is a form over data an admin already
+edits, so it is independent of the still-open payroll save/finalise decision. None of the three is in a
+golden (all three render only on a flag every surface was captured with false), so they live in
+`web/tests/hr-payroll-editors.test.tsx`, pinned by assertion, and `tests/golden/hr.payroll.html` did not
+move. Three things they establish:
+
+- **`hr_payroll_data` carries NO employer record** (hr.ts:1749) — the legacy has one only because
+  `hr_bootstrap` put it in `HR.data`. The Company panel therefore FETCHES on open, which gives it a
+  loading state the legacy has no equivalent of. Do not add the employer to `hr_payroll_data` for this;
+  a panel almost nobody opens should not widen every payroll load.
+- **`hr_rates_save` takes no tenant.** One `hr_statutory_rates` row drives every company, which is why
+  the server demands a full-scope admin. The body must also start from the CURRENT rates object (v157) —
+  it used to replace the row wholesale, destroying any key the panel does not draw — and it reads the six
+  DISABLED SOCSO/EIS boxes back, because a disabled input still has a value and dropping them sends
+  all-null, which hr.ts:2745 refuses outright.
+- **`numRO()` (hros.html:4143) writes TWO `style=` attributes on one input**, by string-replacing
+  `<input` into an already-styled tag — so the width, padding and right-align of the six reference-only
+  rate boxes have never reached the DOM. `ln()`'s finding (hros.html:4837) in its third place. Mirrored
+  as the DOM the legacy actually has, reported not fixed.
+
 **The year-end statutory figures are LIFTED, and the question that decided it is not "does the server
 re-derive this?".** `hrDrawEA` and `hrDrawFormE` were already in `hr-docs.js`, so the two PDFs could not
 fork — but the numbers they are drawn FROM, and the whole of CP8D, were assembled inside hros.html's

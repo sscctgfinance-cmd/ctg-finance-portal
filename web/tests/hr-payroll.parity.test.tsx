@@ -71,7 +71,16 @@ function screen(over: Partial<Props> = {}) {
       uob={{}}
       due={dueInfo(PERIOD.month, PERIOD.year, NOW)}
       onPickPeriod={noop}
-      onLegacyPanel={noop}
+      onRatesToggle={noop}
+      onRatesSave={noop}
+      onEmployerToggle={noop}
+      onEmployerLogoPick={noop}
+      onEmployerLogoClear={noop}
+      onEmployerSave={noop}
+      onStatIdsOpen={noop}
+      onStatIdsClose={noop}
+      onStatIdsCell={noop}
+      onStatIdsSave={noop}
       onGridSave={noop}
       onFinalise={noop}
       onEditFinalised={noop}
@@ -174,9 +183,12 @@ describe('HR Payroll — React vs the legacy golden', () => {
  */
 const LEGACY_TO_PROP: Record<string, string> = {
   hrPickPeriod: 'pickPeriod',
-  hrEmployerToggle: 'legacy:employer',
-  hrRatesToggle: 'legacy:rates',
-  hrStatIdsOpen: 'legacy:statids',
+  // v225: all three record editors are migrated, so these are real openers rather than handoffs — the
+  // same change v222 made for TP1. A Company button that reverted to the notice, or that opened the
+  // rates editor, fails here and nowhere else: neither carries an argument.
+  hrEmployerToggle: 'employerToggle',
+  hrRatesToggle: 'ratesToggle',
+  hrStatIdsOpen: 'statIdsOpen',
   hrTp1Open: 'tp1Open',   // v222: the TP1 panel is migrated, so this is no longer a legacy handoff
   hrGridSave: 'gridSave',
   hrFinalise: 'finalise',
@@ -208,9 +220,9 @@ function assertHandlerParity(over: Partial<Props> = {}) {
 
   const got = reactHandlers(screen({
     onPickPeriod: record('pickPeriod') as never,
-    // The panel key travels in the ATTR, not the args: the golden's `hrEmployerToggle()` carries no
-    // argument, so putting 'employer' in the args would be comparing against something that is not there.
-    onLegacyPanel: ((k: string) => calls.push({ attr: 'legacy:' + k, args: [] })) as never,
+    onRatesToggle: record('ratesToggle') as never,
+    onEmployerToggle: record('employerToggle') as never,
+    onStatIdsOpen: record('statIdsOpen') as never,
     onGridSave: record('gridSave') as never,
     onFinalise: record('finalise') as never,
     onRowMenu: record('rowMenu') as never,
@@ -360,8 +372,15 @@ describe('the comparison still bites', () => {
     // Neither button carries an argument in the golden, so this is invisible to argument parity — it is
     // the case LEGACY_TO_PROP was added for.
     expect(() => assertHandlerParity({
-      onLegacyPanel: (() => misfire()) as never,
+      onEmployerToggle: (() => misfire()) as never,
     })).toThrow(/deeply equal/);
+  });
+
+  it('catches ⚙️ Rates or 🆔 Statutory numbers reverting to the legacy handoff', () => {
+    // Same shape, for the other two editors: a button that stopped calling its own opener records a
+    // different PROP under the same empty argument list.
+    expect(() => assertHandlerParity({ onRatesToggle: (() => misfire()) as never })).toThrow(/deeply equal/);
+    expect(() => assertHandlerParity({ onStatIdsOpen: (() => misfire()) as never })).toThrow(/deeply equal/);
   });
 });
 

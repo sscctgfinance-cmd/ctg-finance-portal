@@ -37,11 +37,20 @@
 // parity test. They are here rather than dropped because leaving them out would wire "⋯", "Deduct" and
 // the finalise flow to nothing — see CLAUDE.md, "a branch the golden does not hold is not covered".
 //
-// Four heavyweight panels the legacy screen also owns — ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers and
-// 🧾 TP1 reliefs — are NOT migrated. Their buttons are in the golden, so they are wired, but to the
-// route's `onLegacyPanel` notice pointing at hros.html, the same way hr-calculator's payslip button is
-// (app/hr/calculator/page.tsx). Each is a full editor over records this screen does not otherwise
-// touch; migrating one is its own screen, not a footnote on this one.
+// The four heavyweight panels the legacy screen also owns — ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers
+// and 🧾 TP1 reliefs — are all migrated now. NONE of them is in a golden: each returns '' while closed
+// and every golden was captured closed, so they are mirrored from the legacy source and pinned by
+// assertion in this screen's own test. What still hands off to hros.html is the FILE builders (the bank
+// and statutory uploads, the payslip PDF, the Xero journal, the ZIP pack) — those are blocked on open
+// captain decisions and are deliberately not here.
+//
+// Each of the three record editors keeps the legacy's element ids (`rt_*`, `emp_*`, `si_*`) and keeps
+// its inputs UNCONTROLLED, because the legacy reads its form back out of the DOM at save time and the
+// ids ARE the contract — see CLAUDE.md, "Where the legacy reads a control back out of the DOM". What
+// each one POSTS is a pure function in this file (`ratesBody`, `employerBody`, `statIdsBody`), pinned
+// by the test: no golden sees a request body, and these three write the employer record printed on
+// every payslip, the group-wide statutory rates, and the member numbers the KWSP/PERKESO/CP39 files
+// are blocked on.
 
 import type { CSSProperties, FocusEvent, ReactNode } from 'react';
 
@@ -303,8 +312,51 @@ function M(n: number): string {
   return 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Which of the three un-migrated legacy panels a button asked for. TP1 is no longer one of them. */
-export type LegacyPanel = 'rates' | 'employer' | 'statids';
+/* ─────────────── ⚙️ Rates / 🏢 Company / 🆔 Statutory numbers — the three record editors ─────────────── */
+
+/** `hr_statutory_rates.rates` — `cfg` at hros.html:4035, and what `hrCompute` reads. */
+export interface RatesCfg {
+  epf?: { eeRate?: number | null; erRateLow?: number | null; erRateHigh?: number | null; threshold?: number | null; erSenior?: number | null; eeSenior?: number | null };
+  socso?: { eeRate?: number | null; erRate?: number | null; erRate2?: number | null; ceiling?: number | null };
+  eis?: { eeRate?: number | null; erRate?: number | null; ceiling?: number | null };
+  reliefPersonal?: number | null;
+  reliefSpouse?: number | null;
+  reliefChild?: number | null;
+  reliefEpfMax?: number | null;
+  [k: string]: unknown;
+}
+
+/** `HR_EMP_EDIT` — hros.html:4083. The working copy of `hr_employer_info` while the panel is open. */
+export interface EmployerEdit {
+  name: string;
+  reg_no: string;
+  doc_code: string;
+  employer_no: string;
+  epf_employer_no: string;
+  socso_employer_no: string;
+  address: string;
+  phone: string;
+  email: string;
+  /** A data URI, or null for "no logo". `null` is what CLEARS it server-side (hr.ts:2768). */
+  logo: string | null;
+}
+
+/** One row of `HR_STATIDS.rows` — hros.html:3891. The four field names are the POST's contract. */
+export interface StatIdRow {
+  id: string;
+  emp_no: string;
+  name: string;
+  ic: string;
+  epfNo: string;
+  socsoNo: string;
+  taxNo: string;
+}
+
+/** Which of a stat-ids row's four numbers a cell edits. */
+export type StatIdField = 'ic' | 'epfNo' | 'socsoNo' | 'taxNo';
+
+/** `HR_STATIDS` — hros.html:3885. `null` is the panel CLOSED, which is every golden's state. */
+export interface StatIdsState { loading?: boolean; rows: StatIdRow[] | null }
 
 /** `HR_TP1_CATS` — hros.html:3839. The relief categories LHDN's TP1 form lists. */
 export const HR_TP1_CATS: [string, string][] = [
@@ -382,11 +434,32 @@ export interface HrPayrollProps {
   today?: string;
   /** `HR_TP1` — hros.html:3843. `null` when the panel is closed. */
   tp1?: Tp1State | null;
+  /** `HR.pay.showRates ? HR.pay.data.rates : null` — hros.html:4098. `null` is the panel closed. */
+  rates?: RatesCfg | null;
+  /** `HR.pay.showEmployer ? HR_EMP_EDIT : null` — hros.html:4099. `null` is the panel closed. */
+  employer?: EmployerEdit | null;
+  /** The company record is fetched when the panel opens (the legacy already holds it in `HR.data`). */
+  employerLoading?: boolean;
+  /** `HR_STATIDS` — hros.html:3885. `null` is the panel closed. */
+  statIds?: StatIdsState | null;
+  /** In-flight flags for the three saves — `hrOnce()` (hros.html:4167), which React does inline. */
+  savingRates?: boolean;
+  savingEmployer?: boolean;
+  savingStatIds?: boolean;
   /** `HR.submitPack` — hros.html:4675. `null` until Submit all has built the ZIP. */
   submitPack?: SubmitPack | null;
 
   onPickPeriod: () => void;
-  onLegacyPanel: (p: LegacyPanel) => void;
+  onRatesToggle: () => void;
+  onRatesSave: () => void;
+  onEmployerToggle: () => void;
+  onEmployerLogoPick: (f: File | null) => void;
+  onEmployerLogoClear: () => void;
+  onEmployerSave: () => void;
+  onStatIdsOpen: () => void;
+  onStatIdsClose: () => void;
+  onStatIdsCell: (id: string, field: StatIdField, v: string) => void;
+  onStatIdsSave: () => void;
   onGridSave: () => void;
   onFinalise: () => void;
   onEditFinalised: () => void;
@@ -495,6 +568,10 @@ export default function HrPayroll(p: HrPayrollProps) {
         <button className="btn sm" onClick={() => p.onPickPeriod()}>Load</button>
       </div>
 
+      {/* `return picker+employerPanel+ratesPanel+table+…` — hros.html:4104, and in that order. */}
+      <EmployerPanel p={p} />
+      <RatesPanel p={p} />
+
       {/* the grid — hros.html:4105 */}
       <div className="panel">
         <div className="panel-hd">
@@ -503,8 +580,8 @@ export default function HrPayroll(p: HrPayrollProps) {
             <span id="hr_paystate" className={'pill ' + p.state.cls} style={{ fontSize: '10px', fontWeight: '600' }} title={p.state.tip}>{p.state.text}</span>
           </h3>
           <span style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {rw(<button className="btn sm" onClick={() => p.onLegacyPanel('employer')} title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>)}
-            <button className="btn sm" onClick={() => p.onLegacyPanel('rates')} title="View / edit statutory rates">⚙️ Rates</button>
+            {rw(<button className="btn sm" onClick={() => p.onEmployerToggle()} title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>)}
+            <button className="btn sm" onClick={() => p.onRatesToggle()} title="View / edit statutory rates">⚙️ Rates</button>
             {/* v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it. */}
             {p.locked
               ? rw(<button className="btn sm" onClick={() => p.onEditFinalised()} title="Payslips are already written for this month. Unlock to change the entries; you must re-finalise afterwards for the payslips to match.">✏️ Edit entries</button>)
@@ -748,9 +825,10 @@ function PayHub({ p, period }: { p: HrPayrollProps; period: string }) {
   const dd = <span style={{ fontSize: '10.5px', color: p.due.col }}>{p.due.txt}</span>;
   return (
     <>
-    {/* `hrPayHub()` returns `hrStatIdsPanel()+hrTp1Panel()+<the hub panel>` — hros.html:4031, so the TP1
-        panel sits ABOVE the hub, not inside it. Both return '' when closed, which is why no golden holds
-        either. hrStatIdsPanel() is still a handoff. */}
+    {/* `hrPayHub()` returns `hrStatIdsPanel()+hrTp1Panel()+<the hub panel>` — hros.html:4031, so both
+        panels sit ABOVE the hub, not inside it, and in that order. Both return '' when closed, which is
+        why no golden holds either. */}
+    <StatIdsPanel p={p} />
     <Tp1Panel p={p} />
     <div className="panel" style={{ marginTop: '14px' }}>
       <div className="panel-hd">
@@ -761,7 +839,7 @@ function PayHub({ p, period }: { p: HrPayrollProps; period: string }) {
       {/* One-click bar: generate ALL statutory + salary files in a single ZIP, then guide the upload. */}
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', background: 'linear-gradient(180deg,rgba(226,96,75,.16),rgba(226,96,75,.05))', border: '1px solid rgba(226,96,75,.4)', borderRadius: '11px', padding: '12px 14px', marginBottom: '12px' }}>
         <button className="btn p" onClick={() => p.onSubmitAll()} style={{ fontSize: '14px' }}>📤 Submit all — generate every file</button>
-        <button className="btn" onClick={() => p.onLegacyPanel('statids')} style={{ fontSize: '13px' }}>🆔 Statutory numbers</button>
+        <button className="btn" onClick={() => p.onStatIdsOpen()} style={{ fontSize: '13px' }}>🆔 Statutory numbers</button>
         <button className="btn" onClick={() => p.onTp1Open && p.onTp1Open()} style={{ fontSize: '13px' }}>🧾 TP1 reliefs</button>
         <span className="muted" style={{ fontSize: '11.5px', flex: '1', minWidth: '160px' }}>One click builds the UOB salary + EPF + SOCSO/EIS + PCB files into a single ZIP, then shows exactly where to upload each. {p.finalised ? null : <b style={{ color: 'var(--amber)' }}>Finalise payroll first for authoritative figures.</b>}</span>
       </div>
@@ -972,6 +1050,390 @@ export function tp1Body(t: Tp1State): { error: string } | Record<string, unknown
     effective_month: t.effMonth,
     note: t.note,
   };
+}
+
+
+/* ══════════════ ⚙️ Rates · 🏢 Company · 🆔 Statutory numbers — hros.html:4139 / :4085 / :3922 ══════════════
+ *
+ * THREE RECORD EDITORS, none of them in a golden. `hrRatesPanel()` / `hrEmployerPanel()` render only on
+ * `HR.pay.showRates` / `HR.pay.showEmployer`, and `hrStatIdsPanel()` returns '' unless `HR_STATIDS.open`
+ * — all three false in every captured surface. So they are mirrored from the legacy source and pinned by
+ * assertion in this screen's own test, the same treatment `Tp1Panel` above gets.
+ *
+ * WHAT THEY WRITE, and why the POST bodies are pure functions down the file rather than route code:
+ *   ⚙️ Rates   — ONE group-wide row (`hr_statutory_rates` id 1). Every company's EPF/SOCSO/EIS/PCB comes
+ *                out of it, and the server refuses a partial payload rather than let a missing ceiling
+ *                leak NaN into every payslip (hr.ts:2745).
+ *   🏢 Company — the employer record printed on every payslip, the reimbursement form and the year-end
+ *                EA / Form E / CP8D, INCLUDING the logo.
+ *   🆔 Numbers — the EPF / SOCSO / TIN member numbers the KWSP, PERKESO and CP39 files are BLOCKED on.
+ *
+ * Every input is UNCONTROLLED and keeps its legacy id (`rt_*`, `emp_*`, `si_*`), because that is how the
+ * legacy reads each form back at save time and the route does the same — see CLAUDE.md.
+ */
+
+const RT_INPUT: CSSProperties = {
+  width: '100%', padding: '6px 8px', background: 'var(--panel-2)', border: '1px solid var(--border)',
+  borderRadius: '6px', color: 'var(--text)', fontSize: '12px', textAlign: 'right',
+};
+
+/**
+ * The reference-only cells. `numRO()` (hros.html:4143) builds them by string-replacing `<input` with
+ * `<input disabled title=… style="opacity:.6;cursor:not-allowed"`, which leaves TWO `style=` attributes
+ * on one element — so the browser keeps the FIRST and the width / padding / right-align in `RT_INPUT`
+ * have never reached the DOM. Same finding as `ln()` (hros.html:4837) and `whtDocHtml()`; React cannot
+ * emit a duplicate attribute at all, so this mirrors the DOM the legacy actually has. Reported, not
+ * fixed: restoring the dropped style is a visible change to a live screen.
+ */
+const RT_INPUT_RO: CSSProperties = { opacity: '.6', cursor: 'not-allowed' };
+
+/** `row()` — hros.html:4145. */
+function RtRow({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '8px', alignItems: 'center', padding: '4px 0' }}>
+      <span className="muted" style={{ fontSize: '12px' }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** `f()` / `pct()` — hros.html:4140-4141. A decimal rate is SHOWN as a percentage: 0.11 → 11. */
+const rtF = (v: number | null | undefined): string => (v == null ? '' : String(v));
+export const rtPct = (v: number | null | undefined): string =>
+  (v == null ? '' : String(Math.round(Number(v) * 100000) / 1000));
+
+/** `num()` — hros.html:4142. */
+function RtNum({ id, value, ro }: { id: string; value: string; ro?: boolean }) {
+  return <input id={id} type="number" step="any" defaultValue={value} placeholder=""
+    disabled={ro || undefined} title={ro ? 'Table-driven — not editable' : undefined}
+    style={ro ? RT_INPUT_RO : RT_INPUT} />;
+}
+
+/** `hrRatesPanel()` — hros.html:4139. NOT IN THE GOLDEN. */
+function RatesPanel({ p }: { p: HrPayrollProps }) {
+  const cfg = p.rates;
+  if (!cfg) return null;
+  const e = cfg.epf || {}, s = cfg.socso || {}, i = cfg.eis || {};
+  return (
+    <div className="panel" style={{ maxWidth: '760px', borderColor: 'var(--coral-soft)', marginBottom: '14px' }}>
+      <div className="panel-hd">
+        <h3>⚙️ Statutory rates &amp; reliefs</h3>
+        <button className="btn sm" onClick={() => p.onRatesToggle()}>✕ Close</button>
+      </div>
+      <div className="muted" style={{ fontSize: '11px', padding: '0 2px 10px' }}>These drive every payroll calculation group-wide. Rates are entered as <b>percentages</b> (e.g. 11), ceilings/reliefs as <b>RM</b>. Update here whenever KWSP / PERKESO / LHDN revise the rates — no code change needed.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+        <div>
+          <div className="muted" style={{ fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>EPF (KWSP)</div>
+          <RtRow label="Employee %"><RtNum id="rt_epf_ee" value={rtPct(e.eeRate)} /></RtRow>
+          <RtRow label="Employer % (wage ≤ threshold)"><RtNum id="rt_epf_erlow" value={rtPct(e.erRateLow)} /></RtRow>
+          <RtRow label={'Employer % (wage > threshold)'}><RtNum id="rt_epf_erhigh" value={rtPct(e.erRateHigh)} /></RtRow>
+          <RtRow label="Threshold (RM)"><RtNum id="rt_epf_thr" value={rtF(e.threshold)} /></RtRow>
+          <RtRow label="Employer % (age 60+)"><RtNum id="rt_epf_ersen" value={rtPct(e.erSenior)} /></RtRow>
+        </div>
+        <div>
+          <div className="muted" style={{ fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', marginBottom: '4px' }}>SOCSO (PERKESO) &amp; EIS <span style={{ textTransform: 'none', fontWeight: '400', opacity: '.85' }}>— reference only</span></div>
+          <div className="muted" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '-2px 0 8px', padding: '6px 8px', borderLeft: '2px solid var(--coral-soft)', background: 'rgba(255,255,255,.03)' }}>SOCSO &amp; EIS are taken from the official PERKESO contribution <b>tables</b> (RM100 bands to the RM6,000 ceiling), not from a percentage. These figures are shown for reference and <b>changing them has no effect</b> — a table revision needs a code update.</div>
+          <RtRow label="SOCSO EE % (Cat 1)"><RtNum id="rt_soc_ee" value={rtPct(s.eeRate)} ro /></RtRow>
+          <RtRow label="SOCSO ER % (Cat 1)"><RtNum id="rt_soc_er" value={rtPct(s.erRate)} ro /></RtRow>
+          <RtRow label="SOCSO ER % (Cat 2, 60+)"><RtNum id="rt_soc_er2" value={rtPct(s.erRate2)} ro /></RtRow>
+          <RtRow label="SOCSO ceiling (RM)"><RtNum id="rt_soc_ceil" value={rtF(s.ceiling)} ro /></RtRow>
+          <RtRow label="EIS EE/ER % (each)"><RtNum id="rt_eis" value={rtPct(i.eeRate)} ro /></RtRow>
+          <RtRow label="EIS ceiling (RM)"><RtNum id="rt_eis_ceil" value={rtF(i.ceiling)} ro /></RtRow>
+        </div>
+      </div>
+      <div className="muted" style={{ fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', margin: '14px 0 4px' }}>PCB reliefs (annual, RM)</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
+        <RtRow label="Personal"><RtNum id="rt_r_pers" value={rtF(cfg.reliefPersonal)} /></RtRow>
+        <RtRow label="Spouse"><RtNum id="rt_r_sp" value={rtF(cfg.reliefSpouse)} /></RtRow>
+        <RtRow label="Per child"><RtNum id="rt_r_ch" value={rtF(cfg.reliefChild)} /></RtRow>
+        <RtRow label="EPF/life cap"><RtNum id="rt_r_epf" value={rtF(cfg.reliefEpfMax)} /></RtRow>
+      </div>
+      <div style={{ marginTop: '14px' }}>
+        <button className="btn p sm" onClick={() => p.onRatesSave()} disabled={p.savingRates || undefined}>{p.savingRates ? 'Saving…' : 'Save rates'}</button>
+        {' '}
+        <span className="muted" style={{ fontSize: '11px' }}>Applies immediately to the grid.</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `hrRatesSave()`'s POST body — hros.html:4172. Split out of the route because no golden sees a request
+ * and this one moves every employee's statutory deduction in every company at once.
+ *
+ * Three things it must keep doing, all of them the legacy's own:
+ *  · a percentage box is DIVIDED BY 100 (`p2`), a ceiling/relief is taken as typed (`n`), and an EMPTY
+ *    box is `null` — which the server then refuses as an incomplete payload rather than storing NaN.
+ *  · it starts from the CURRENT rates object (v157). This used to replace the row wholesale, so any key
+ *    the panel does not render — `epf.eeSenior` was hand-carried for exactly that reason — was destroyed
+ *    on the next rate edit.
+ *  · the six SOCSO/EIS boxes are read back even though they are disabled: a disabled input still has a
+ *    value, so the round-trip preserves the reference figures instead of nulling them.
+ *
+ * There is NO tenant. `hr_statutory_rates` is one row for the whole group (hr.ts:2737), and the server
+ * demands a full-scope admin because of it.
+ */
+export function ratesBody(v: Record<string, string>, cur: RatesCfg): Record<string, unknown> {
+  const g = (id: string) => (v[id] == null ? '' : String(v[id]));
+  const p2 = (id: string) => { const x = g(id); return x === '' ? null : Number(x) / 100; };
+  const n = (id: string) => { const x = g(id); return x === '' ? null : Number(x); };
+  const rates = Object.assign({}, cur, {
+    epf: { eeRate: p2('rt_epf_ee'), erRateLow: p2('rt_epf_erlow'), erRateHigh: p2('rt_epf_erhigh'), threshold: n('rt_epf_thr'), erSenior: p2('rt_epf_ersen'), eeSenior: (cur.epf && cur.epf.eeSenior != null ? cur.epf.eeSenior : 0) },
+    socso: { eeRate: p2('rt_soc_ee'), erRate: p2('rt_soc_er'), erRate2: p2('rt_soc_er2'), ceiling: n('rt_soc_ceil') },
+    eis: { eeRate: p2('rt_eis'), erRate: p2('rt_eis'), ceiling: n('rt_eis_ceil') },
+    reliefPersonal: n('rt_r_pers'), reliefSpouse: n('rt_r_sp'), reliefChild: n('rt_r_ch'), reliefEpfMax: n('rt_r_epf'),
+  });
+  return { api: 'hr_rates_save', rates };
+}
+
+/** The eleven ids `ratesBody()` reads, so the route collects exactly this set out of the DOM. */
+export const RATES_INPUT_IDS = [
+  'rt_epf_ee', 'rt_epf_erlow', 'rt_epf_erhigh', 'rt_epf_thr', 'rt_epf_ersen',
+  'rt_soc_ee', 'rt_soc_er', 'rt_soc_er2', 'rt_soc_ceil', 'rt_eis', 'rt_eis_ceil',
+  'rt_r_pers', 'rt_r_sp', 'rt_r_ch', 'rt_r_epf',
+] as const;
+
+/* ─────────────────────────────────── 🏢 Company details ─────────────────────────────────── */
+
+const EMP_INPUT: CSSProperties = {
+  width: '100%', padding: '8px 10px', background: 'var(--panel-2)', border: '1px solid var(--border)',
+  borderRadius: '8px', color: 'var(--text)', fontSize: '13px',
+};
+
+/** The nine text fields — the ids `hrEmployerSyncInputs()` (hros.html:4110) reads the form back by. */
+export const EMPLOYER_TEXT_FIELDS = [
+  'name', 'reg_no', 'doc_code', 'employer_no', 'epf_employer_no', 'socso_employer_no', 'phone', 'email', 'address',
+] as const;
+
+/**
+ * `hrEmployerToggle()`'s working copy — hros.html:4084. The company NAME falls back to the selected
+ * company's own name, so a company with no `hr_employer_info` row yet opens with something sensible in
+ * the box rather than blank.
+ */
+export function employerInit(e: Partial<EmployerEdit> | null | undefined, companyName: string): EmployerEdit {
+  const v = e || {};
+  return {
+    name: v.name || companyName, reg_no: v.reg_no || '', doc_code: v.doc_code || '',
+    employer_no: v.employer_no || '', epf_employer_no: v.epf_employer_no || '',
+    socso_employer_no: v.socso_employer_no || '', address: v.address || '',
+    phone: v.phone || '', email: v.email || '', logo: v.logo || null,
+  };
+}
+
+/**
+ * The claim-number example under the Company code box — hros.html:4098.
+ *
+ * NO CLOCK. The legacy builds it from `new Date().getFullYear()` + `getMonth()`, i.e. the MACHINE's
+ * zone; this takes the MYT date the route already hands the screen (`today`) and slices the month out
+ * of it, so the component reads no clock and the answer is Malaysian, which v224 made the rule. That is
+ * a divergence from hros.html in the first eight hours of the 1st of a month for an operator west of
+ * Greenwich, in an EXAMPLE string — reported in the PR; hros.html is not touched here.
+ */
+export function claimNumberSample(code: string, todayISO: string): string {
+  const t = String(todayISO || '');
+  return String(code || 'IPC').toUpperCase() + '-' + t.slice(0, 4) + t.slice(5, 7) + '-0001';
+}
+
+/** `hrEmployerPanel()` — hros.html:4085. NOT IN THE GOLDEN. */
+function EmployerPanel({ p }: { p: HrPayrollProps }) {
+  const e = p.employer;
+  if (p.employerLoading) {
+    return (
+      <div className="panel" style={{ maxWidth: '720px', borderColor: 'var(--coral-soft)', marginBottom: '14px' }}>
+        <div className="panel-hd"><h3>🏢 Company details — {p.companyName}</h3></div>
+        <div className="muted" style={{ padding: '18px', textAlign: 'center' }}>Loading company details…</div>
+      </div>
+    );
+  }
+  if (!e) return null;
+  const g = (label: ReactNode, el: ReactNode) => (
+    <div><label className="muted" style={{ fontSize: '11px', display: 'block', marginBottom: '3px' }}>{label}</label>{el}</div>
+  );
+  const inp = (id: string, val: string, ph?: string) =>
+    <input id={'emp_' + id} defaultValue={val == null ? '' : val} placeholder={ph || ''} style={EMP_INPUT} />;
+  return (
+    <div className="panel" style={{ maxWidth: '720px', borderColor: 'var(--coral-soft)', marginBottom: '14px' }}>
+      <div className="panel-hd">
+        <h3>🏢 Company details — {p.companyName}</h3>
+        <button className="btn sm" onClick={() => p.onEmployerToggle()}>✕ Close</button>
+      </div>
+      <div className="muted" style={{ fontSize: '11px', marginBottom: '12px' }}>These print on <b>payslips</b>, the <b>reimbursement form</b>, and the <b>year-end (EA / Form E / CP8D)</b>. Set once per company.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+        {g('Company name', inp('name', e.name, 'e.g. I PROCARE MALAYSIA SDN BHD'))}
+        {g('SSM registration no', inp('reg_no', e.reg_no, 'e.g. 201901000123 (1234567-A)'))}
+        {g(<>Company code <span style={{ opacity: '.7' }}>— prefixes claim numbers</span></>, <>
+          {inp('doc_code', e.doc_code, 'e.g. IPC')}
+          <div className="muted" style={{ fontSize: '10.5px', marginTop: '3px' }}>Claims are numbered <b>{claimNumberSample(e.doc_code, p.today || '')}</b>, restarting each month. 2–6 letters/digits, unique per company. Changing it only affects new claims.</div>
+        </>)}
+        {g('LHDN employer no (E)', inp('employer_no', e.employer_no, 'E 1234567890'))}
+        {g('EPF employer no', inp('epf_employer_no', e.epf_employer_no))}
+        {g('SOCSO employer no', inp('socso_employer_no', e.socso_employer_no))}
+        {g('Phone', inp('phone', e.phone, 'e.g. 03-1234 5678'))}
+        {g('Email', inp('email', e.email, 'hr@company.com'))}
+      </div>
+      {g('Address', <textarea id="emp_address" rows={2} defaultValue={e.address || ''} placeholder="Business address" style={{ ...EMP_INPUT, resize: 'vertical' }} />)}
+      <div style={{ marginTop: '14px' }}>
+        <label className="muted" style={{ fontSize: '11px', display: 'block', marginBottom: '5px' }}>Company logo</label>
+        {e.logo
+          ? <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <img src={e.logo} alt="" style={{ maxHeight: '60px', maxWidth: '180px', border: '1px solid var(--border)', borderRadius: '6px', background: '#fff', padding: '4px' }} />
+              <button className="btn xs d" onClick={() => p.onEmployerLogoClear()}>Remove logo</button>
+            </div>
+          : <div className="muted" style={{ fontSize: '12px' }}>No logo set.</div>}
+        <div style={{ marginTop: '8px' }}>
+          <input type="file" id="emp_logo_file" accept="image/png,image/jpeg" style={{ fontSize: '12px' }}
+            onChange={(ev) => p.onEmployerLogoPick((ev.target as HTMLInputElement).files?.[0] || null)} />
+          <span className="muted" style={{ fontSize: '10.5px', marginLeft: '6px' }}>PNG/JPG · shown top-left on documents · auto-resized</span>
+        </div>
+      </div>
+      <div style={{ marginTop: '16px' }}>
+        <button className="btn p sm" onClick={() => p.onEmployerSave()} disabled={p.savingEmployer || undefined}>{p.savingEmployer ? 'Saving…' : '💾 Save company details'}</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `hrEmployerSave()`'s POST body — hros.html:4128. Split out for the same reason `profileBody()` was:
+ * no golden sees a request, and this one sets the employer name, E-number and LOGO printed on every
+ * payslip and every EA form.
+ *
+ * The two validations are the LEGACY's, not stricter ones. A blank name is refused. A company code is
+ * upper-cased and stripped to A-Z0-9, and then must be 2–6 characters — but a code that strips to
+ * EMPTY is sent as an empty string, which the server reads as "keep the current one" (hr.ts:2774), so
+ * a blank box never blocks saving the rest of the form and never resets claim numbering.
+ *
+ * `logo` is sent as it stands: a data URI to set one, `null` to CLEAR it (hr.ts:2768 distinguishes the
+ * two, and `undefined` would mean "leave it alone" — which is not what the Remove button means).
+ */
+export function employerBody(e: EmployerEdit, tenant: string | null): { error: string } | Record<string, unknown> {
+  if (!String(e.name || '').trim()) return { error: 'Company name is required' };
+  const dc = String(e.doc_code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (dc && (dc.length < 2 || dc.length > 6)) return { error: 'Company code must be 2–6 letters or digits (e.g. IPC), or leave it blank to keep the current one' };
+  return { api: 'hr_employer_save', tenant, employer: { ...e, doc_code: dc } };
+}
+
+/* ── the logo, split the way `hrSigBind()`'s pad was: the device code in the route, the rules here ──
+ *
+ * `hrEmployerLogoPick()` — hros.html:4113. Four numbers decide what is stored, and every one of them is
+ * the legacy's: refuse a FILE over 4 MB before reading it; scale the image down to at most 260px wide
+ * (never up); re-encode as PNG, and if that data URI is over 380,000 characters try JPEG at quality
+ * 0.85; refuse if it is still over. The server's own cap is 400,000 (hr.ts:2769), so the client's is
+ * deliberately the tighter of the two and the operator is told before the request rather than after it.
+ */
+
+export const LOGO_MAX_FILE_BYTES = 4 * 1024 * 1024;
+export const LOGO_MAX_WIDTH = 260;
+export const LOGO_MAX_DATA_URI = 380000;
+export const LOGO_JPEG_QUALITY = 0.85;
+
+/** The refusal for the FILE, before any decoding — hros.html:4114. `null` means "go ahead". */
+export function logoFileRefusal(f: { size: number } | null | undefined): string | null {
+  if (!f) return null;                                     // no file picked: the legacy just returns
+  if (f.size > LOGO_MAX_FILE_BYTES) return 'Image too large — pick one under 4 MB';
+  return null;
+}
+
+/** The resize — hros.html:4118. `Math.min(1, …)` is what stops a small logo being blown up. */
+export function logoScale(w: number, h: number): { w: number; h: number } {
+  const sc = Math.min(1, LOGO_MAX_WIDTH / w);
+  return { w: Math.round(w * sc), h: Math.round(h * sc) };
+}
+
+/** The refusal for the ENCODED image — hros.html:4123. */
+export function logoDataRefusal(dataUri: string): string | null {
+  return dataUri.length > LOGO_MAX_DATA_URI ? 'Logo still too large after resize — try a simpler image' : null;
+}
+
+/* ───────────────────────────────── 🆔 Statutory numbers ───────────────────────────────── */
+
+/** `hrStatIdsOpen()`'s mapping — hros.html:3891. The four field names ARE the save contract. */
+export function statIdsRows(employees: Record<string, unknown>[]): StatIdRow[] {
+  return (employees || []).map((e) => ({
+    id: String(e.id), emp_no: String(e.emp_no || ''), name: String(e.name || ''),
+    ic: String(e.ic_no || ''), epfNo: String(e.epf_no || ''),
+    socsoNo: String(e.socso_no || ''), taxNo: String(e.tax_no || ''),
+  }));
+}
+
+/** `hrStatIdsSummary()` — hros.html:3904. How many rows have each number, out of how many. */
+export const STAT_ID_COLS: [StatIdField, string][] = [['ic', 'IC'], ['epfNo', 'EPF'], ['socsoNo', 'SOCSO'], ['taxNo', 'TIN']];
+
+/**
+ * `hrStatIdsSave()`'s POST body — hros.html:3913. The rows go up as they stand; the server pins every
+ * id to this company before writing (hr.ts:2853) and treats an absent field as "leave it alone".
+ */
+export function statIdsBody(tenant: string | null, rows: StatIdRow[]): { error: string } | Record<string, unknown> {
+  if (!rows || !rows.length) return { error: 'Nothing to save' };
+  return { api: 'hr_stat_ids_save', tenant, rows };
+}
+
+/** `hrStatIdsPanel()` — hros.html:3922. NOT IN THE GOLDEN. */
+function StatIdsPanel({ p }: { p: HrPayrollProps }) {
+  const st = p.statIds;
+  if (!st) return null;
+  if (st.loading || !st.rows) {
+    return (
+      <div className="panel" style={{ marginTop: '14px' }}>
+        <div className="panel-hd"><h3>🆔 Statutory numbers</h3></div>
+        <div className="muted" style={{ padding: '18px', textAlign: 'center' }}>Loading employees…</div>
+      </div>
+    );
+  }
+  const rows = st.rows;
+  const save = <button className="btn p sm" onClick={() => p.onStatIdsSave()} disabled={p.savingStatIds || undefined}>{p.savingStatIds ? 'Saving…' : 'Save all'}</button>;
+  const inp = (r: StatIdRow, field: StatIdField, ph: string) => {
+    const v = String(r[field] || '');
+    const bad = !v.trim();
+    const style: CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '5px 7px', fontSize: '12px', borderRadius: '6px' };
+    if (bad) style.borderColor = 'var(--danger,#e2604b)';
+    return <input id={'si_' + field + '_' + r.id} defaultValue={v} placeholder={ph}
+      onChange={(ev) => p.onStatIdsCell(r.id, field, (ev.target as HTMLInputElement).value)} style={style} />;
+  };
+  return (
+    <div className="panel" style={{ marginTop: '14px', borderColor: 'var(--coral-soft)' }}>
+      <div className="panel-hd">
+        <h3>🆔 Statutory numbers — {p.companyName}</h3>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {save}
+          <button className="btn sm" onClick={() => p.onStatIdsClose()}>✕ Close</button>
+        </div>
+      </div>
+      <div className="muted" style={{ fontSize: '11.5px', padding: '0 2px 8px', lineHeight: '1.6' }}>KWSP, PERKESO and LHDN CP39 files are <b>blocked</b> until these are filled in — an empty member number used to be exported as <code>000000000000</code>, which the portal accepts but can never allocate to the member. Tab across the row; changes save together.</div>
+      <div id="si_summary" style={{ fontSize: '12px', padding: '6px 2px 10px' }}>
+        {STAT_ID_COLS.map(([f, label]) => {
+          const miss = rows.filter((r) => !String(r[f] || '').trim()).length;
+          return <span key={f} style={{ marginRight: '14px' }}>{label + ': '}<b style={{ color: miss ? 'var(--danger,#e2604b)' : 'var(--ok,#3fb984)' }}>{(rows.length - miss) + '/' + rows.length}</b></span>;
+        })}
+      </div>
+      <div className="tbl-wrap" style={{ overflowX: 'auto' }}>
+        <table className="bigtable" style={{ minWidth: '820px' }}>
+          <thead><tr>
+            <th style={{ minWidth: '200px' }}>Employee</th>
+            <th style={{ minWidth: '140px' }}>IC (New)</th>
+            <th style={{ minWidth: '140px' }}>EPF member no</th>
+            <th style={{ minWidth: '130px' }}>SOCSO no</th>
+            <th style={{ minWidth: '150px' }}>TIN (income tax)</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={{ whiteSpace: 'nowrap' }}><b>{r.emp_no}</b> <span className="muted">{r.name}</span></td>
+                <td>{inp(r, 'ic', 'IC (no dashes ok)')}</td>
+                <td>{inp(r, 'epfNo', 'EPF member no')}</td>
+                <td>{inp(r, 'socsoNo', 'SOCSO no')}</td>
+                <td>{inp(r, 'taxNo', 'TIN / income-tax no')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+        {save}
+        <span className="muted" style={{ fontSize: '11px' }}>Blank fields are outlined in red. Leave a field blank if the employee genuinely has none — that file will stay blocked for them.</span>
+      </div>
+    </div>
+  );
 }
 
 /* ───────────────────── the two panels the golden does not reach — hros.html:3794/:4267 ───────────────────── */
