@@ -77,6 +77,15 @@ export const SURFACES: Surface[] = [
     setup: (extra ?? "") + `HR.view=${JSON.stringify(v)};`,
     render: "hrRender()",
   })),
+  // v225: the payroll process list EXPANDED. `hr.payroll` above captures it collapsed, which is what the
+  // operator sees first and is one line of markup — the table with the money columns, the status pills
+  // and the posted-to-Xero column only exists in this state, so it needs its own golden or the whole
+  // panel is effectively uncovered.
+  {
+    id: "hr.payroll_runs", app: "hros.html" as const, title: "Payroll · all runs (expanded)",
+    setup: "HR.view='payroll'; HR.pay.runsOpen=true;",
+    render: "hrRender()",
+  },
 ];
 
 /** Seed the globals a signed-in operator would have, then hand back the live app. */

@@ -12,7 +12,7 @@
 import {
   sb, j, xeroAccessToken, meFromToken, isAdmin, superAdmin,
   hrManage, hrCanView, logAudit, NO_TENANT, allowedTenants, isFullScopeAdmin,
-  userWriteAllowed, denyTenant, resolveModel, callVisionLLM,
+  userWriteAllowed, denyTenant, tenantPinned, resolveModel, callVisionLLM,
   sendEmailTo,
 } from "./lib.ts";
 
@@ -610,7 +610,15 @@ export function payBandMid(w:number){ if(w<=0) return 0; const upper=Math.ceil((
 export function payAge(dob:any, period?:any){ if(!dob) return null; const d=new Date(dob); if(isNaN(d.getTime())) return null;
   const t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
   let a=t.getUTCFullYear()-d.getUTCFullYear(); const m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
-export function payEpfParts(wage:number,eeRate:number,erRate:number){ const w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?payRoundUp(w*eeRate):0, er:erRate>0?payRoundUp(w*erRate):0 }; }
+// KWSP Third Schedule bands the wage before applying the rate, and the band WIDTH changes at RM5,000:
+// RM20 steps up to RM5,000, RM100 steps from there to RM20,000, the exact wage above that. See the
+// note on hrEpfParts in payroll.js — these two must stay identical or finalise 409s recompute_mismatch.
+export function payEpfParts(wage:number,eeRate:number,erRate:number){
+  const w = wage<=5000 ? Math.ceil(wage/20)*20
+          : wage<=20000 ? Math.ceil(wage/100)*100
+          : wage;
+  return { ee:eeRate>0?payRoundUp(w*eeRate):0, er:erRate>0?payRoundUp(w*erRate):0 };
+}
 export function payTableParts(wage:number,ceiling:number,eeRate:number,erRate:number){ const w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; const mid=payBandMid(w); return { ee:eeRate>0?payRound5(mid*eeRate):0, er:erRate>0?payRound5(mid*erRate):0 }; }
 export function payProgTax(chargeable:number, bands:[number,number][]){ let tax=0,prev=0; for(const [cap,rate] of bands){ if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
 // emp: static employee record; cfg: hr_statutory_rates.rates; adj: this period's hr_payroll_adjustments;
@@ -988,6 +996,13 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||"");
       if (!tenant) return j({ ok:true, employees:[], leaveTypes:[], leaves:[], claims:[], employer:null });
+      // v225 (HR tenant audit): hrCanView() says "may read HR data" — it does NOT say WHICH company's.
+      // The company arrives in the request body and was taken verbatim, so any admin/hr_admin/viewer
+      // could read a company they were deliberately not assigned by editing one field. 4 of the 10
+      // HR-capable accounts are scoped to fewer than all 5 companies, and this payload is the whole HR
+      // dataset: names, IC numbers, salaries, bank accounts, leave and claims. Same bug class v190 fixed
+      // on the finance side (portal_company_info_save); HR was never swept.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_bootstrap", tenant);
       const emp = await sb.from("hr_employees").select("*").eq("tenant_id",tenant).order("emp_no");
       const empIds = (emp.data||[]).map((e:any)=>e.id);
       const [lt, lv, cl, ei, rt, bk] = await Promise.all([
@@ -1543,7 +1558,10 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
     }
     if (api === "hr_leave_flow_get") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const flowG = await leaveFlowFor(String(b.tenant||"").trim()||null);   // v157: per-company chain
+      const flowTenant = String(b.tenant||"").trim();
+      // v225: the approval chain names the company's approvers. See the audit note on hr_bootstrap.
+      if (flowTenant && !(await tenantPinned(b.token, flowTenant))) return denyTenant(me, "hr_leave_flow_get", flowTenant);
+      const flowG = await leaveFlowFor(flowTenant||null);   // v157: per-company chain
       return j({ ok:true, steps: flowG });
     }
     if (api === "hr_leave_admin") {
@@ -1768,6 +1786,53 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       if(row) await logAudit(me,"hr_adj_del",String(b.id),{ employee_id:row.employee_id, kind:row.kind, amount:row.amount, period:row.period_month+"/"+row.period_year });
       return j({ ok:true });
     }
+    // v225: every payroll run for the company, with its own totals — the list AutoCount opens on.
+    // Until now the only way to see a month was to pick it in the month selector and wait for the full
+    // payroll payload; there was no way to see, at a glance, which months exist, which are still draft,
+    // or what each one paid. That is not a cosmetic gap: a month saved but never finalised looked
+    // exactly like a month that was never touched.
+    if (api === "hr_payroll_runs_list") {
+      const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_payroll_runs_list", tenant);
+
+      const { data: runs, error } = await sb.from("hr_payroll_runs")
+        .select("id,period_month,period_year,status,run_date,entries_saved_at,finalised_at,posted_at,xero_journal_id")
+        .eq("tenant_id", tenant)
+        .order("period_year", { ascending:false }).order("period_month", { ascending:false })
+        .limit(120);
+      if (error) return j({ ok:false, error:error.message });
+      const ids = (runs||[]).map((r:any)=> r.id);
+
+      // PAGINATE. PostgREST caps a select at 1000 rows and says nothing when it truncates — 120 runs of
+      // 20 staff is 2,400 payslips, so an unpaginated read would quietly under-report the older months'
+      // totals and nobody would see a number that looked wrong. Same ceiling that bit v104.
+      const totals: Record<string, any> = {};
+      const PAGE = 1000;
+      for (let from = 0; ids.length; from += PAGE) {
+        const { data: rows, error: e2 } = await sb.from("hr_payslips")
+          .select("run_id,gross,net,epf_ee,epf_er,socso_ee,socso_er,eis_ee,eis_er,lindung24,pcb,employer_cost")
+          .in("run_id", ids).range(from, from + PAGE - 1);
+        if (e2) return j({ ok:false, error:e2.message });
+        for (const p of (rows||[]) as any[]) {
+          const t = totals[p.run_id] || (totals[p.run_id] = { employees:0, gross:0, net:0, epf:0, socso:0, eis:0, pcb:0, cost:0 });
+          t.employees++;
+          t.gross += Number(p.gross)||0;   t.net  += Number(p.net)||0;
+          t.epf   += (Number(p.epf_ee)||0) + (Number(p.epf_er)||0);
+          t.socso += (Number(p.socso_ee)||0) + (Number(p.socso_er)||0) + (Number(p.lindung24)||0);
+          t.eis   += (Number(p.eis_ee)||0) + (Number(p.eis_er)||0);
+          t.pcb   += Number(p.pcb)||0;     t.cost += Number(p.employer_cost)||0;
+        }
+        if (!rows || rows.length < PAGE) break;
+      }
+      const r2 = (n:number)=> Math.round(n*100)/100;
+      return j({ ok:true, runs: (runs||[]).map((r:any)=>{
+        const t = totals[r.id] || { employees:0, gross:0, net:0, epf:0, socso:0, eis:0, pcb:0, cost:0 };
+        return { ...r, employees:t.employees, gross:r2(t.gross), net:r2(t.net), epf:r2(t.epf),
+                 socso:r2(t.socso), eis:r2(t.eis), pcb:r2(t.pcb), cost:r2(t.cost) };
+      }) });
+    }
     if (api === "hr_payroll_finalise") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const mo=Number(b.month), yr=Number(b.year), rows=Array.isArray(b.rows)?b.rows:[]; const tenant=String(b.tenant||"");
@@ -1920,6 +1985,9 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const meOut = { isAdmin:who.isAdmin, roles:who.roles, is_manager:who.is_manager, employee: who.employee||null };
       if(who.isAdmin){
         const tenant = String(b.tenant||"");
+        // v225: the employee branch below is self-scoped by who.employee.tenant_id; this admin branch
+        // took the company straight from the body and returned that company's roster. See hr_bootstrap.
+        if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_config", tenant);
         const [types, rates, wfs, steps, policy, roleApprovers, emps, ccs] = await Promise.all([
           sb.from("hr_claim_types").select("*").order("sort_order"),
           sb.from("hr_mileage_rates").select("*").order("rate"),
@@ -2304,6 +2372,8 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
       const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
+      // v225: Finance-role or admin is WHAT you may export, not WHOSE. See the audit note on hr_bootstrap.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_export_accounting", tenant);
       let mFrom="", mTo="";
       if(month){
         // claim_date is a Postgres DATE — "YYYY-02-31" is a hard error Postgres rejects. Use an exclusive next-month bound.
@@ -2546,6 +2616,9 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const pend=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
       if(who.isAdmin){
         const tenant=String(b.tenant||"");
+        // v225: this select joins bank_account, ic_no and email — another company's staff PII if the
+        // caller is not assigned to it. The employee branch below is self-scoped. See hr_bootstrap.
+        if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_list", tenant);
         let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept,bank_name,bank_account,ic_no,email)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
         if(scope==="pending") q=q.in("status",pend);
         else if(scope==="approved") q=q.eq("status","Approved");
@@ -2694,7 +2767,11 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     if (api === "hr_dashboard") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
-      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:String(b.tenant||""), p_month:mo, p_year:yr });
+      // v225: the hr_dashboard RPC takes p_tenant and does NOT check the caller — see the audit note on
+      // hr_bootstrap. It returns the company's payroll totals, so the check has to happen here.
+      const dashTenant = String(b.tenant||"");
+      if (!(await tenantPinned(b.token, dashTenant))) return denyTenant(me, "hr_dashboard", dashTenant);
+      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:dashTenant, p_month:mo, p_year:yr });
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true, data, month:mo, year:yr });
     }
@@ -2702,6 +2779,8 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
       const tenant = String(b.tenant||"");
+      // v225: this one both READS another company's payroll and WRITES a snapshot + insights into it.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_dash_refresh", tenant);
       const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:tenant, p_month:mo, p_year:yr });
       if (error) return j({ ok:false, error:error.message });
       await sb.from("hr_dashboard_snapshots").insert({ tenant_id:tenant, period_month:mo, period_year:yr, payload:data });
@@ -2718,6 +2797,8 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     if (api === "hr_calc_log") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (b.overridden && !String(b.reason||"").trim()) return j({ ok:false, error:"a reason is required for an override" });
+      { const t = String(b.tenant||"");   // v225: writes a payroll-calculation audit row under any company
+        if (!(await tenantPinned(b.token, t))) return denyTenant(me, "hr_calc_log", t); }
       const row = {
         tenant_id:String(b.tenant||""), employee_id:b.employeeId?String(b.employeeId):null, employee_name:b.employeeName||null,
         period:b.period||null, inputs:b.inputs||{}, flags:b.flags||{}, settings:b.settings||{}, result:b.result||{},
@@ -2730,7 +2811,9 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     }
     if (api === "hr_calc_history") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data, error } = await sb.from("hr_calc_audit").select("*").eq("tenant_id",String(b.tenant||"")).order("created_at",{ascending:false}).limit(60);
+      const calcTenant = String(b.tenant||"");   // v225: see the audit note on hr_bootstrap
+      if (!(await tenantPinned(b.token, calcTenant))) return denyTenant(me, "hr_calc_history", calcTenant);
+      const { data, error } = await sb.from("hr_calc_audit").select("*").eq("tenant_id",calcTenant).order("created_at",{ascending:false}).limit(60);
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true, rows:data||[] });
     }
@@ -2904,6 +2987,9 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const yr = Number(b.year); const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
+      // v225: EA / Form E / CP8D figures — every employee's year's pay and tax for the company named in
+      // the body. See the audit note on hr_bootstrap.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_annual", tenant);
       // Filter server-side via the run ids (an unfiltered hr_payslips select silently caps at 1000 rows —
       // at 5 companies × 12 months that understates EA-form annual totals once headcount grows).
       const { data: yrRuns } = await sb.from("hr_payroll_runs").select("id").eq("tenant_id",tenant).eq("period_year",yr);

@@ -71,6 +71,11 @@ function hrDrawPayslip(doc,e,p,period,d){
   if(d.bonus) row('Bonus',d.bonus);
   if(d.ot) row('Overtime',d.ot);
   if(d.allowance) row('Additional allowance',d.allowance);
+  // v225: the NON-statutory half. It reaches gross like any other earning but attracts no EPF/SOCSO/EIS,
+  // so it has to be printed or the earnings lines stop adding up to the Gross pay directly below them —
+  // the exact defect v196 fixed for LINDUNG 24, reintroduced the moment a second allowance bucket
+  // existed and nobody told the payslip about it.
+  if(d.allowanceNs) row('Allowance (non-EPF)',d.allowanceNs);
   if(d.unpaid) row('Unpaid leave',d.unpaid,{neg:true,color:HR_RED});
   row('Gross pay',p.gross,{bold:true}); y+=3;
   section('Deductions (employee)');

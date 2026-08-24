@@ -203,8 +203,11 @@ Deno.test("the EPF employer rate steps at RM5,000 — 13% at the threshold, 12% 
       : computePayrollMY(emp(w), CFG, [], undefined, PERIOD, null);
     assertEquals(at(5000).epfEr, 650, `${side}: RM5,000 is not on the 13% side (650 = 13% of 5,000)`);
     assertEquals(at(4999.99).epfEr, 650, `${side}`);
-    // One sen over: the RM20 wage band rounds to 5,020 and the rate drops to 12% -> 602.4 -> RM603.
-    assertEquals(at(5000.01).epfEr, 603, `${side}: the step is not at RM5,000`);
+    // One sen over, TWO things change at once: the rate drops to 12% and the Third Schedule's band
+    // width widens from RM20 to RM100, so the wage bands up to 5,100 -> 12% -> RM612.
+    // (v201: this asserted 603, which is 5,020 x 12% — the old RM20 banding carried past RM5,000.)
+    assertEquals(at(5000.01).epfEr, 612, `${side}: the step is not at RM5,000`);
+    assertEquals(at(5000.01).epfEe, 561, `${side}: the RM100 band above RM5,000 is not applied (11% of 5,100)`);
     // The employee side is a flat 11% and does NOT step.
     assertEquals(at(5000).epfEe, 550, `${side}`);
     assertEquals(at(5000.01).epfEe >= 550, true, `${side}: the employee rate stepped, which it must not`);

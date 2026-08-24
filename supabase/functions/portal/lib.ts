@@ -130,7 +130,7 @@ export function hrViewer(me){ return me && me.ok && me.user && me.user.role==="v
 export function hrManage(me){ return superAdmin(me) || (me && me.ok && me.user && me.user.role==="hr_admin"); } // full HR write (admin or hr_admin), NO finance
 export function hrCanView(me){ return hrManage(me) || hrViewer(me); }                            // may READ hr data (admin / hr_admin / viewer)
 // HR actions a read-only Viewer is allowed to call; every other hr_/attendance_/clock_ action is blocked for viewers.
-export const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","attendance_list","hr_dashboard","hr_payroll_data","hr_leave_admin","hr_leave_pending","hr_leave_flow_get","hr_rc_config","hr_rc_list","hr_rc_get","hr_rc_dashboard","hr_annual","hr_calc_history","sbi_accounts"]);
+export const HR_VIEWER_READS = new Set(["hr_companies","hr_bootstrap","hr_banks_list","attendance_list","hr_dashboard","hr_payroll_data","hr_payroll_runs_list","hr_leave_admin","hr_leave_pending","hr_leave_flow_get","hr_rc_config","hr_rc_list","hr_rc_get","hr_rc_dashboard","hr_annual","hr_calc_history","sbi_accounts"]);
 // HR-only roles have NO Finance Portal access; every action outside this set is blocked for them.
 export const HR_ONLY_ROLES = new Set(["employee","viewer","hr_admin"]);
 export function isHrNamespace(a){ return a.indexOf("hr_")===0 || a.indexOf("attendance_")===0 || a.indexOf("clock_")===0 || a==="sbi_accounts"; }

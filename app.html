@@ -1014,6 +1014,58 @@ td.amt,.bigtable td.amt{ overflow-wrap:normal; white-space:nowrap; }
 <script src="postcode.js"></script>
 <script src="jszip.min.js"></script>
 <script>
+/* ── v225: the shared scripts above must actually have ARRIVED — see the same guard in hros.html ─────
+   Nine classic <script src> tags, and a request that fails is reported to nobody: the portal boots,
+   most tabs work, and the one that needed the missing file dies inside a click handler with a bare
+   ReferenceError. HR OS lost its Payroll screen exactly that way (myt.js absent, `mytYMD is not
+   defined`) while the file sat correctly on the server.
+
+   app.html is the worse case — nine files instead of four, and until this block it had NO error
+   beacon at all, so a broken tab here reached the operator only by someone complaining. */
+(function(){
+  // `typeof <identifier>` and NOT window[name] — see the note on the same guard in hros.html.
+  var need = [
+    ['myt.js',        function(){ return typeof mytDate; }],
+    ['common.js',     function(){ return typeof toast; }],
+    ['wht.js',        function(){ return typeof whtMoney; }],
+    ['o2o.js',        function(){ return typeof O2O_SKU_MAP; }],
+    ['salesrecon.js', function(){ return typeof SR_CHAN2ACC; }],
+    ['gateway.js',    function(){ return typeof GW_REFOPTS; }],
+    ['pnl.js',        function(){ return typeof PNL_BLOCK_ORDER; }],
+    ['ap.js',         function(){ return typeof apDeriveKeyword; }],
+    ['postcode.js',   function(){ return typeof MY_POSTCODES; }],
+    // jszip.min.js is vendored and the render harness deliberately does NOT concatenate the minified
+    // libraries, so asserting it here would fail every offline render for a file that is fine.
+  ];
+  var missing = [];
+  for (var i=0; i<need.length; i++){ if (need[i][1]() === 'undefined') missing.push(need[i][0]); }
+  if (!missing.length) return;
+
+  try {
+    fetch("https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal", {
+      method:'POST', headers:{'content-type':'application/json'}, keepalive:true,
+      body: JSON.stringify({ api:'client_error', app:'portal', kind:'error',
+        message:'Shared script did not load: ' + missing.join(', '),
+        stack:'boot guard', page: location.pathname + location.hash, ua: navigator.userAgent })
+    }).catch(function(){});
+  } catch(_e){}
+
+  document.addEventListener('DOMContentLoaded', function(){
+    document.body.innerHTML =
+      '<div style="max-width:34rem;margin:12vh auto;padding:2rem;font:15px/1.6 system-ui,sans-serif;text-align:center">'
+      + '<div style="font-size:2.5rem">⚠️</div>'
+      + '<h1 style="font-size:1.25rem;margin:.75rem 0">The portal did not finish loading</h1>'
+      + '<p style="margin:0 0 1rem">Part of the app never arrived, so some tabs would fail without warning. '
+      + 'This is almost always a dropped connection — reloading fixes it.</p>'
+      + '<p style="margin:0 0 1.5rem;color:#888;font-size:13px">Missing: ' + missing.join(', ') + '</p>'
+      + '<button onclick="location.reload(true)" style="padding:.6rem 1.4rem;font-size:15px;border-radius:8px;'
+      + 'border:0;background:#e8674f;color:#fff;cursor:pointer">Reload</button>'
+      + '<p style="margin:1.5rem 0 0;color:#888;font-size:13px">If it keeps happening, tell the operator — '
+      + 'it has been reported automatically.</p></div>';
+  });
+})();
+</script>
+<script>
 /* ── Theme (light/dark) — set before paint to avoid a flash of the wrong theme ── */
 (function(){
   try{

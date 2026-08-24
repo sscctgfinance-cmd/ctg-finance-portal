@@ -9,7 +9,7 @@ import {
   sb, j, SKINDAE_TENANT, O2O_REVENUE_CODE, CLOSE_TEMPLATE, genTotpSecret,
   totpVerify, otpAuthUrl, xeroOrgName, xeroAccessToken, meFromToken, isAdmin,
   superAdmin, hrManage, logAudit, allowedTenants, isFullScopeAdmin, userWriteAllowed,
-  tenantsAssignable, denyTenant, xeroGet, xeroInvoicesAll,
+  tenantsAssignable, denyTenant, tenantPinned, xeroGet, xeroInvoicesAll,
   xeroInvoicesWhere, resolveContact, getWebhookKey, recordVendorCodingHistory, sha256Hex, sha256HexBytes,
   parsePnl, refreshPnlCache, invToCacheRow, processPendingDedup, syncStateUpdate, docaiAccessToken,
   callDocAI, processApEmail, logDecision, buildSelfBilledInvoicePdf, runBackfill, runDelta,
@@ -1348,6 +1348,10 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "sbi_buyer") {
       // fetch buyer (company) details for the form auto-fill
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v225: superAdmin() is not tenant-aware and 4 of 10 admins are scoped to a single company, so this
+      // returned another company's TIN, SST number, registered address and BANK ACCOUNTS to an admin who
+      // was deliberately not given that company. Same class as portal_company_info_save (v190).
+      if (!(await tenantPinned(b.token, String(b.tenant||"")))) return denyTenant(me, "sbi_buyer", String(b.tenant||""));
       const { data: ci } = await sb.from("portal_company_info").select("legal_name,ssm_new,myinvois_tin,sst_no,reg_address,reg_postcode,reg_city,reg_state,bank_accounts").eq("tenant_id", b.tenant).maybeSingle();
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", b.tenant).maybeSingle();
       const addr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
@@ -1892,6 +1896,9 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "ap_rule_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.tenant || !Array.isArray(b.keywords) || !b.keywords.length || !b.account_code) return j({ ok:false, error:"tenant, keywords[], account_code required" });
+      // v225: this rule decides how another company's bills get GL-coded from then on. superAdmin() alone
+      // is not tenant-aware — see the note on sbi_buyer.
+      if (!(await tenantPinned(b.token, String(b.tenant)))) return denyTenant(me, "ap_rule_save", String(b.tenant));
       const row = { tenant_id: String(b.tenant), pattern_keywords: b.keywords.map((k)=>String(k).toLowerCase().trim()).filter(Boolean), account_code: String(b.account_code), priority: Number(b.priority)||100, notes: b.notes||null, updated_at: new Date().toISOString() };
       if (b.id){
         const { error } = await sb.from("portal_gl_rules").update(row).eq("id", Number(b.id));

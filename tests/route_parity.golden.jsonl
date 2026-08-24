@@ -90,6 +90,7 @@
 {"api":"hr_payroll_data","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_payroll_finalise","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_payroll_grid_save","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
+{"api":"hr_payroll_runs_list","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_post_xero","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rates_save","status":403,"body":"{\"ok\":false,\"error\":\"unauthorized (group-wide statutory rates — full-scope admin only)\"}"}
 {"api":"hr_rc_adjust_amount","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}

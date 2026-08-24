@@ -397,6 +397,19 @@ Object.assign(FIXTURES, {
     { code: "PUBLIC BANK", name: "Public Bank Berhad", active: true },
   ] },
 
+  // v225: the payroll process list. Two runs on purpose — one finalised and posted, one still draft —
+  // so the golden covers both status pills and the "posted" column, not just the happy row.
+  hr_payroll_runs_list: { ok: true, runs: [
+    { id: "r-2026-08", period_month: 8, period_year: 2026, status: "draft",
+      run_date: "2026-08-31", entries_saved_at: "2026-08-30T09:15:00Z", finalised_at: null,
+      posted_at: null, xero_journal_id: null,
+      employees: 3, gross: 16050, net: 13884.15, epf: 3410, socso: 268.55, eis: 60.20, pcb: 427.10, cost: 18299.10 },
+    { id: "r-2026-07", period_month: 7, period_year: 2026, status: "finalised",
+      run_date: "2026-07-31", entries_saved_at: "2026-07-29T02:10:00Z", finalised_at: "2026-07-30T11:42:00Z",
+      posted_at: "2026-08-01T03:00:00Z", xero_journal_id: "MJ-771",
+      employees: 3, gross: 15800, net: 13701.40, epf: 3355, socso: 264.10, eis: 59.20, pcb: 402.55, cost: 18010.30 },
+  ] },
+
   hr_payroll_data: {
     ok: true, rates: RATES, run: null, payslips: [], leaveBalances: {}, ytd: {},
     employees: EMPLOYEES.filter((e) => e.status === "active"),
