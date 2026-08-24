@@ -8,12 +8,15 @@
 //
 // No seventh relaxation. The six the pilot argued cover this screen as it stands.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
 import HrYearend, { defaultTaxYear, eaSelection, taxYears, type YeEmployee, type YeTotals } from '../src/hr-yearend';
-import { goldenSection, relax } from './parity';
+import { goldenSection, relax, REPO } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
 
 /** `hrCompanyName()` (hros.html:4445) resolves the chip in the page head to the selected company. */
@@ -302,5 +305,40 @@ describe('the year-end exports', () => {
     const stats = hrFormEStats(EMPLOYEES as never, ANNUAL as never, 2025);
     expect(stats.total).toBe(EMPLOYEES.length);
     expect(hrYePaid(EMPLOYEES, ANNUAL as never).length).toBeLessThan(stats.total);
+  });
+});
+
+/**
+ * BOTH of this route's company-scoped loads must carry the tenant — the defect that made this screen
+ * unreachable, pinned by SOURCE because no golden and no rendered output can see a request body.
+ *
+ * `hr_annual` (hr.ts:2876) refuses a blank tenant, so dropping it turns the whole screen into
+ * `⚠️ no company selected`. `hr_bootstrap` (hr.ts:979) is worse in kind: it answers `ok` with an EMPTY
+ * employee list, so dropping THAT one is a blank EA picker with no error anywhere — and
+ * `tools/serve_both.ts`'s fixture server answers by action name and ignores the tenant entirely, so
+ * neither failure is reproducible under fixtures. Only the source can be checked here.
+ */
+describe('the year-end route sends the company on every company-scoped call', () => {
+  const ROUTE = readFileSync(join(REPO, 'web', 'app', 'hr', 'yearend', 'page.tsx'), 'utf8');
+
+  /** The `{ … }` body of the `call(...)` whose api is `name`, read out of the route's own text. */
+  function body(name: string): string {
+    const i = ROUTE.indexOf(`api: '${name}'`);
+    expect(i).toBeGreaterThan(-1);
+    return ROUTE.slice(ROUTE.lastIndexOf('{', i), ROUTE.indexOf('}', i) + 1);
+  }
+
+  it.each(['hr_annual', 'hr_bootstrap'])('%s carries a tenant', (api) => {
+    expect(body(api)).toMatch(/\btenant:/);
+  });
+
+  it('and that tenant is the tenant_id of the picked company, not its name', () => {
+    // Guard the guard: `tenant: company.tenant_name` would satisfy the check above and would match no
+    // row on the server, which is the silent-empty failure again in a different spelling.
+    for (const api of ['hr_annual', 'hr_bootstrap']) {
+      expect(body(api)).toMatch(/\btenant:\s*[A-Za-z_$][\w$.?]*\.tenant_id\b/);
+    }
+    // hr_companies is the call that RESOLVES the tenant, so it must not be asked to send one.
+    expect(body('hr_companies')).not.toMatch(/\btenant\b/);
   });
 });

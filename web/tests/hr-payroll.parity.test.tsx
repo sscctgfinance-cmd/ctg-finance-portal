@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { FIXTURES, COMPANIES, HR_TENANT } from '../../tests/render_fixtures';
 import HrPayroll, {
   HR_TP1_CATS, dueInfo, gridAll, gridInit, gridState, tp1Body,
-  type GridRow, type HubKey, type PayData, type PayEmployee, type Tp1Line, type Tp1State,
+  type GridRow, type HubKey, type PayData, type PayEmployee, type PayrollRun, type Tp1Line, type Tp1State,
 } from '../src/hr-payroll';
 import { goldenSection, relax } from './parity';
 import { goldenHandlers, reactHandlers, STUB_VALUE } from './handlers';
@@ -31,6 +31,14 @@ const GOLDEN = goldenSection('hr.payroll', 'hr');
 
 const DATA = FIXTURES.hr_payroll_data as PayData;
 const PERIOD = { month: 8, year: 2026 };
+
+/**
+ * `hr_payroll_runs_list` — the same answer the golden was captured under, so the 📋 panel is built
+ * from the fixture rather than hand-written. `HR.pay.runsOpen` is false on first paint, which is the
+ * state in `tests/golden/hr.payroll.html`; the EXPANDED table is its own surface
+ * (`tests/golden/hr.payroll_runs.html`) and is driven separately below.
+ */
+const RUNS = (FIXTURES.hr_payroll_runs_list as { runs: PayrollRun[] }).runs;
 
 /**
  * THE CLOCK, PINNED. `hrDueInfo()` (hros.html:3831) computes "· 28 days left" from `new Date()`, so the
@@ -68,9 +76,12 @@ function screen(over: Partial<Props> = {}) {
       finalised={false}
       state={gridState(DATA.run || null, false)}
       ticks={{}}
+      runs={RUNS}
       uob={{}}
       due={dueInfo(PERIOD.month, PERIOD.year, NOW)}
       onPickPeriod={noop}
+      onRunsToggle={noop}
+      onRunOpen={noop}
       onLegacyPanel={noop}
       onGridSave={noop}
       onFinalise={noop}
@@ -174,6 +185,7 @@ describe('HR Payroll — React vs the legacy golden', () => {
  */
 const LEGACY_TO_PROP: Record<string, string> = {
   hrPickPeriod: 'pickPeriod',
+  hrRunsToggle: 'runsToggle',
   hrEmployerToggle: 'legacy:employer',
   hrRatesToggle: 'legacy:rates',
   hrStatIdsOpen: 'legacy:statids',
@@ -208,6 +220,8 @@ function assertHandlerParity(over: Partial<Props> = {}) {
 
   const got = reactHandlers(screen({
     onPickPeriod: record('pickPeriod') as never,
+    onRunsToggle: record('runsToggle') as never,
+    onRunOpen: record('runOpen') as never,
     // The panel key travels in the ATTR, not the args: the golden's `hrEmployerToggle()` carries no
     // argument, so putting 'employer' in the args would be comparing against something that is not there.
     onLegacyPanel: ((k: string) => calls.push({ attr: 'legacy:' + k, args: [] })) as never,

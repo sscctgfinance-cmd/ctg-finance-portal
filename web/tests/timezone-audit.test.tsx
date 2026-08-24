@@ -180,7 +180,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'src/hr-attendance.tsx', n: 2, cat: 'a', legacy: 'hros.html:2908', note: 'v224: only hhmm/clkTime are left — dtLocal now delegates to myt.js and reads no clock here' },
   { file: 'src/hr-clock.tsx', n: 2, cat: 'a', legacy: 'hros.html:2908', note: 'hrClkTime — toLocaleTimeString, read under the harness zone override in its test' },
   { file: 'src/hr-leave.tsx', n: 6, cat: 'a', legacy: 'hros.html:1246', note: 'hrDT — +8h then getUTC*, MYT without a timezone database' },
-  { file: 'src/hr-payroll.tsx', n: 6, cat: 'a', legacy: 'hros.html:3831, :4303-4304, :4309', note: 'dueInfo subtracts two LOCAL midnights but anchors "today" in MYT; fmt is BARE toLocale*' },
+  { file: 'src/hr-payroll.tsx', n: 8, cat: 'a', legacy: 'hros.html:3831, :4303-4304, :4309, :4450', note: 'dueInfo subtracts two LOCAL midnights but anchors "today" in MYT; fmt and runDate are BARE toLocale*' },
   { file: 'src/hr-profile.tsx', n: 6, cat: 'a', legacy: 'hros.html:1246', note: 'hrDT again — the second copy, identical' },
   { file: 'src/hr-yearend.tsx', n: 2, cat: 'a', legacy: 'hros.html:4921-4922', note: 'taxYears/defaultTaxYear — pure functions of a Date they are handed' },
 ];
@@ -407,6 +407,12 @@ describe('The timezone audit — the derivations are pinned at the source', () =
     const pay = codeOnly(readFileSync(join(WEB, 'src', 'hr-payroll.tsx'), 'utf8'));
     expect(pay).toContain("toLocaleDateString(undefined, { day: 'numeric', month: 'short' })");
     expect(pay).toContain("toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })");
+    // v225: `runDate()` in the 📋 All payroll runs panel — the saved / finalised / posted stamps. Same
+    // BARE form as the legacy `dt()` inside hrRunsPanel(), which this pins on the other side too. Adding
+    // Asia/Kuala_Lumpur to either is the improvement that makes the two renderers disagree about what
+    // day a run was finalised, and it is invisible to every output assertion on a UTC+8 fleet.
+    expect(pay).toContain("toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' })");
+    expect(hros).toContain("d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'})");
     expect(pay).not.toMatch(/timeZone/);
   });
 

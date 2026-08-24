@@ -42,8 +42,12 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
+// hros.html:1408. A failed or empty hr_companies is not fatal there either — it falls back to I PROCARE.
+const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
+const HR_PROCARE_TENANT = '99911869-9e91-4572-b7dc-4db51b45b6a9';
+
 export default function HrYearendPage() {
-  const [company, setCompany] = useState<string | null>(null);
+  const [company, setCompany] = useState<{ tenant_id: string; tenant_name: string } | null>(null);
   const [employees, setEmployees] = useState<YeEmployee[] | null>(null);
   const [year, setYear] = useState(() => defaultTaxYear(new Date()));
   const [years] = useState(() => taxYears(new Date()));
@@ -60,23 +64,29 @@ export default function HrYearendPage() {
       try {
         const saved = (() => { try { return localStorage.getItem('hr_tenant') || ''; } catch { return ''; } })();
         const co = await call<{ companies?: { tenant_id: string; tenant_name: string }[] }>({ api: 'hr_companies' });
-        const list = co.companies || [];
-        setCompany((list.find((c) => c.tenant_id === saved) || list[0])?.tenant_name || '');
-        setEmployees((await call<{ employees?: YeEmployee[] }>({ api: 'hr_bootstrap' })).employees || []);
+        const all = co.companies || [];
+        const list = all.length ? all : [{ tenant_id: HR_PROCARE_TENANT, tenant_name: PROCARE }];
+        // The tenant_id is kept, not just the name: hr_bootstrap and hr_annual are both company-scoped
+        // and BOTH must carry it. hr.ts:2876 refuses a blank tenant outright, and hr.ts:979 is worse —
+        // it returns ok with an EMPTY employee list, so a missing tenant there is a blank EA picker and
+        // no error anywhere.
+        const pick = list.find((c) => c.tenant_id === saved) || list.find((c) => c.tenant_id === HR_PROCARE_TENANT) || list[0];
+        setCompany(pick);
+        setEmployees((await call<{ employees?: YeEmployee[] }>({ api: 'hr_bootstrap', tenant: pick.tenant_id })).employees || []);
       } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     })();
   }, []);
 
   /** `hrYeLoad()` — hros.html:4946. Re-runs whenever the Y/A changes, which is what Load does. */
   useEffect(() => {
-    if (signedIn !== true) return;
+    if (signedIn !== true || !company) return;
     let live = true;
     setData(null);
-    call<Annual>({ api: 'hr_annual', year })
+    call<Annual>({ api: 'hr_annual', year, tenant: company.tenant_id })
       .then((r) => { if (live) setData({ annual: r.annual || {}, employer: r.employer || null }); })
       .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [signedIn, year]);
+  }, [signedIn, company, year]);
 
   /**
    * `hrYePick()` — hros.html:4945. Reads `#hr_yey` back out of the DOM exactly as the legacy one does,
@@ -103,7 +113,7 @@ export default function HrYearendPage() {
     const jsPDF = await loadJsPDF();
     if (!jsPDF) { setNote('Could not load the PDF engine (jspdf.umd.min.js).'); return; }
     // hros.html:4954's fallback employer, for a company with no hr_employer_info row yet.
-    const emp = data?.employer || { name: company || '', employer_no: '', address: '' };
+    const emp = data?.employer || { name: company?.tenant_name || '', employer_no: '', address: '' };
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     sel.list.forEach((e, i) => {
       if (i > 0) doc.addPage();
@@ -116,7 +126,7 @@ export default function HrYearendPage() {
   const onExpFormE = useCallback(async () => {
     const jsPDF = await loadJsPDF();
     if (!jsPDF) { setNote('Could not load the PDF engine (jspdf.umd.min.js).'); return; }
-    const emp = data?.employer || { name: company || '', employer_no: '' };
+    const emp = data?.employer || { name: company?.tenant_name || '', employer_no: '' };
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     hrDrawFormE(doc, emp as Record<string, unknown>, hrFormEStats(employees || [], (data?.annual || {}) as never, year), year);
     doc.save('FormE_YA' + year + '.pdf');
@@ -146,7 +156,7 @@ export default function HrYearendPage() {
             already be signed in.
           </Panel>
         : err ? <Panel>⚠️ {err}</Panel>
-        : !employees || company === null ? <Panel><span className="spin"></span> Loading…</Panel>
+        : !employees || !company ? <Panel><span className="spin"></span> Loading…</Panel>
         : (
           <HrYearend
             year={year}
@@ -154,7 +164,7 @@ export default function HrYearendPage() {
             employees={employees}
             annual={data?.annual ?? null}
             employerNo={data?.employer?.employer_no || ''}
-            companyName={company}
+            companyName={company.tenant_name}
             onPick={onPick}
             onExpEA={onExpEA}
             onExpFormE={onExpFormE}

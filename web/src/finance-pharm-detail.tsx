@@ -154,6 +154,8 @@ export interface FinancePharmDetailProps {
   onSetMode: (mode: 'view' | 'edit') => void;
   /** `pharmSave()` — app.html:6422. */
   onSave: () => void;
+  /** `runOnce('pharm-save-btn','Saving…')` — app.html:6527. */
+  saving: boolean;
   /** `pharmDelete()` — app.html:6443. */
   onDelete: () => void;
   /** `pharmOpenLinkModal()` — app.html:6683. */
@@ -230,7 +232,7 @@ export default function FinancePharmDetail(props: FinancePharmDetailProps) {
         {props.editable && !props.isNew
           ? (props.mode === 'edit'
             ? <>
-                <button className="btn p" id="pharm-save-btn" onClick={props.onSave}>💾 Save</button>
+                <button className="btn p" id="pharm-save-btn" onClick={props.onSave} disabled={props.saving}>💾 Save</button>
                 <button className="btn" onClick={() => props.onSetMode('view')}>Cancel</button>
               </>
             : <>
@@ -239,7 +241,7 @@ export default function FinancePharmDetail(props: FinancePharmDetailProps) {
                 <button className="btn d" onClick={props.onDelete}>🗑 Delete</button>
               </>)
           : null}
-        {props.isNew ? <button className="btn p" id="pharm-save-btn" onClick={props.onSave}>💾 Create</button> : null}
+        {props.isNew ? <button className="btn p" id="pharm-save-btn" onClick={props.onSave} disabled={props.saving}>💾 Create</button> : null}
       </div>
 
       <div id="pharm-form" onInput={isEdit ? props.onDirty : undefined}>

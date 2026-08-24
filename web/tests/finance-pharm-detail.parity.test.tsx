@@ -56,6 +56,7 @@ function screen(over: Partial<Props> = {}) {
   return (
     <FinancePharmDetail
       pharmacy={P} isNew={false} mode="view" editable={false} refused={null} failed={null}
+      saving={false}
       onBack={noop} onSetMode={noop} onSave={noop} onDelete={noop} onLink={noop} onDirty={noop}
       {...over}
     />
@@ -433,3 +434,16 @@ function invokeAll(node: unknown, kinds: string[]): void {
   }
   invokeAll(el.props.children, kinds);
 }
+
+describe('Save / Create locks while its POST is in flight', () => {
+  // `runOnce('pharm-save-btn','Saving…')` — app.html:6527. BOTH spellings of the button carry the id,
+  // and only one is rendered at a time — an edit of an existing record, and a create.
+  it('disables the edit-mode Save and the new-record Create', () => {
+    for (const over of [{ mode: 'edit' as const, editable: true }, { isNew: true, editable: true, mode: 'edit' as const }]) {
+      expect(renderToStaticMarkup(screen({ ...over, saving: true })))
+        .toMatch(/id="pharm-save-btn"[^>]*disabled=""/);
+      expect(renderToStaticMarkup(screen({ ...over, saving: false })))
+        .not.toMatch(/id="pharm-save-btn"[^>]*disabled/);
+    }
+  });
+});

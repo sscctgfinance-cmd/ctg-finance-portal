@@ -1,4 +1,4 @@
-// The 40 rendered surfaces of the two apps, how to render each one offline, and how to normalise the
+// The 42 rendered surfaces of the two apps, how to render each one offline, and how to normalise the
 // result so a golden means something.
 //
 // The inventory was taken from the code, not from the migration spec:
@@ -6,7 +6,9 @@
 //   HR OS      — 14 nav views, from `hrRender()` at hros.html:1683. One of them ("dashboard") is itself
 //                a dispatcher over `HR_DASH.page` (hros.html:1879) with 5 sub-pages, so it contributes
 //                5 surfaces rather than 1 → 13 + 5 = 18.
-//   22 + 18 = 40.
+//   22 + 18 = 40, plus the two screens that live behind another screen's nav id: `hr.leave.emp` (the
+//   second renderer of the `leave` id — hros.html:1553 dispatches it by role) and `hr.payroll_runs`
+//   (the payroll run list EXPANDED, which shares no markup with the collapsed one) — = 42.
 //
 
 import { type AppHandle, loadApp } from "./render_harness.ts";
@@ -77,10 +79,23 @@ export const SURFACES: Surface[] = [
     setup: (extra ?? "") + `HR.view=${JSON.stringify(v)};`,
     render: "hrRender()",
   })),
+  // `leave` is the ONE nav id hros.html:1553 dispatches to two different screens by role —
+  // `HR_EMP_MODE?hrEmpLeave():hrLeave()`. `hr.leave` above is the admin one; this is the other, and it
+  // is the whole of Leave for every non-admin employee. Captured as its own surface because a mode the
+  // goldens never reach is a mode nothing protects: the React port of the employee branch was missing
+  // entirely while `hr.leave` stayed green.
+  {
+    id: "hr.leave.emp", app: "hros.html" as const, title: "Leave (employee)",
+    setup: EMP_MODE + "HR.view='leave';",
+    render: "hrRender()",
+  },
   // v225: the payroll process list EXPANDED. `hr.payroll` above captures it collapsed, which is what the
   // operator sees first and is one line of markup — the table with the money columns, the status pills
   // and the posted-to-Xero column only exists in this state, so it needs its own golden or the whole
   // panel is effectively uncovered.
+  //
+  // Same reasoning as `hr.leave.emp` directly above, arrived at independently: one nav id, two screens
+  // that share no markup, and a golden for only one of them protects only one of them.
   {
     id: "hr.payroll_runs", app: "hros.html" as const, title: "Payroll · all runs (expanded)",
     setup: "HR.view='payroll'; HR.pay.runsOpen=true;",

@@ -274,12 +274,23 @@ const DocScanner = (function () {
   }
 
   // ---- PDF (lazy jsPDF) ----
+  // The vendored build sits BESIDE common.js, so it is resolved against this script's own URL and not
+  // against the document's. A relative `src` resolves against the DOCUMENT: app.html and hros.html are
+  // files at the root, so `./jspdf.umd.min.js` was right there and this was invisible for years — but
+  // the React routes are DIRECTORIES (`trailingSlash: true`, web/next.config.mjs), so from
+  // /finance/upload/ it asked for /finance/upload/jspdf.umd.min.js, a 404. buildPdf() runs on every
+  // completed scan and swallows the rejection into 'Failed to build document', so the operator lined up
+  // a bill, tapped Save and got nothing. This also carries any base path for free without knowing one
+  // exists: both React routes inject common.js through legacyUrl(), so whatever prefix the deployment
+  // uses is already in SELF_URL. Empty only where there is no <script> element at all (the offline
+  // harness), and the bare name is that case's honest answer.
+  const SELF_URL = (document.currentScript && document.currentScript.src) || '';
   let jspdfLoading = null;
   function loadJsPDF() {
     if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
     if (jspdfLoading) return jspdfLoading;
     jspdfLoading = new Promise((res, rej) => { const s = document.createElement('script');
-      s.src = './jspdf.umd.min.js';   // vendored in the repo — no CDN, works offline
+      s.src = SELF_URL ? new URL('jspdf.umd.min.js', SELF_URL).href : 'jspdf.umd.min.js';   // vendored in the repo — no CDN, works offline
       s.onload = res; s.onerror = () => rej(new Error('Could not load PDF library')); document.head.appendChild(s); });
     return jspdfLoading;
   }

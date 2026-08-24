@@ -32,13 +32,16 @@ Deno.test("the surface inventory matches the goldens on disk — no screen silen
     "tests/golden/ and SURFACES disagree — regenerate with: deno run -A tools/render_probe.ts tests/golden");
 });
 
-Deno.test("all 41 rendered surfaces are covered", () => {
-  assertEquals(SURFACES.length, 41);
+Deno.test("all 42 rendered surfaces are covered", () => {
+  assertEquals(SURFACES.length, 42);
   assertEquals(SURFACES.filter((s) => s.app === "app.html").length, 22, "Finance OS tabs");
-  // v225: 19 = 13 HR views + 5 dashboard sub-pages + the payroll run list in its EXPANDED state, which
-  // is a different screen from the collapsed one and shares no markup with it.
-  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 19, "HR OS views (13) + dashboard sub-pages (5) + payroll runs expanded (1)");
-  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 41, "duplicate surface id");
+  // 20 = 13 HR views + 5 dashboard sub-pages + the two screens that exist behind another screen's nav
+  // id: the employee half of Leave (hros.html:1553) and the payroll run list in its EXPANDED state,
+  // which shares no markup with the collapsed one. Both were added independently for the same reason —
+  // a mode the goldens never reach is a mode nothing protects.
+  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 20,
+    "HR OS views (13) + dashboard sub-pages (5) + employee Leave (1) + payroll runs expanded (1)");
+  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 42, "duplicate surface id");
 });
 
 /**

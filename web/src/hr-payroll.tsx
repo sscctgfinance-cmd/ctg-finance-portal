@@ -76,7 +76,11 @@ export interface PayEmployee {
 }
 
 /** One row of `hr_payroll_data.adjustments`. */
-export interface PayAdjustment { employee_id?: string; kind?: string; label?: string | null; amount?: number | null }
+export interface PayAdjustment {
+  employee_id?: string; kind?: string; label?: string | null; amount?: number | null;
+  /** v225: whether this earning is statutory wages. Absent on pre-split rows and read as `true`. */
+  epf_subject?: boolean | null;
+}
 
 /** The finalise/save state the backend keeps for the month — `hr_payroll_data.run`. */
 export interface PayRun {
@@ -103,6 +107,9 @@ export interface GridRow {
   bonus: number;
   ot: number;
   allowance: number;
+  /** v225: the NON-statutory half of the ad-hoc allowance — it reaches gross and attracts no
+      EPF / SOCSO / EIS. Split from `allowance` because one bucket cannot answer both. */
+  allowanceNs: number;
   deductions: Deduction[];
   unpaid: number;
   pcbSet: number | null;
@@ -149,6 +156,11 @@ export function gridInit(data: PayData): Record<string, GridRow> {
   emps.forEach((e) => {
     const mine = adjs.filter((a) => a.employee_id === e.id);
     const sumK = (k: string) => mine.filter((a) => a.kind === k).reduce((s, a) => s + Number(a.amount || 0), 0);
+    // v225: same kind, split by whether it is statutory wages. `epf_subject` is undefined on rows
+    // written before the split, and an undefined there meant EPF-subject — hence `!== false`, not `=== true`.
+    const sumKe = (k: string, stat: boolean) => mine
+      .filter((a) => a.kind === k && ((a.epf_subject !== false) === stat))
+      .reduce((s, a) => s + Number(a.amount || 0), 0);
     const setK = (k: string) => { const f = mine.filter((a) => a.kind === k); return f.length ? Number(f[f.length - 1].amount) : null; };
     const bset = setK('basic_set'), aset = setK('allow_set');
     const deds = mine.filter((a) => a.kind === 'deduction').map((a) => ({ label: a.label || 'Other deduction', amount: Number(a.amount) || 0 }));
@@ -161,7 +173,8 @@ export function gridInit(data: PayData): Record<string, GridRow> {
     const baseVal = bset != null ? bset : (autoBasic != null ? autoBasic : Number(e.basic_salary || 0));
     grid[e.id] = {
       basic: baseVal, allow: aset != null ? aset : Number(e.fixed_allowance || 0),
-      bonus: sumK('bonus'), ot: sumK('ot'), allowance: sumK('allowance'), deductions: deds,
+      bonus: sumK('bonus'), ot: sumK('ot'),
+      allowance: sumKe('allowance', true), allowanceNs: sumKe('allowance', false), deductions: deds,
       unpaid: sumK('unpaid_leave'), pcbSet: setK('pcb_set'),
       skip: mine.some((a) => a.kind === 'skip'),
       _att: att, _autoBasic: autoBasic, _payType: String(e.pay_type || 'monthly'),
@@ -201,6 +214,7 @@ export function gridRowCompute(
   if (Number(g.bonus)) adj.push({ kind: 'bonus', amount: Number(g.bonus), epf_subject: true });
   if (Number(g.ot)) adj.push({ kind: 'ot', amount: Number(g.ot), epf_subject: true });
   if (Number(g.allowance)) adj.push({ kind: 'allowance', amount: Number(g.allowance), epf_subject: true });
+  if (Number(g.allowanceNs)) adj.push({ kind: 'allowance', amount: Number(g.allowanceNs), epf_subject: false });
   const dt = dedTot(g); if (dt) adj.push({ kind: 'deduction', amount: dt, epf_subject: false });
   if (Number(g.unpaid)) adj.push({ kind: 'unpaid_leave', amount: Number(g.unpaid), epf_subject: false });
   // v195: blank = let the engine compute. 0 is a REAL override (some staff genuinely have nil MTD), so
@@ -228,6 +242,7 @@ export function gridAll(
     const d = {
       basic: Number(g.basic) || 0, allow: Number(g.allow) || 0, bonus: Number(g.bonus) || 0,
       ot: Number(g.ot) || 0, allowance: Number(g.allowance) || 0,
+      allowanceNs: Number(g.allowanceNs) || 0,
       deductions: (g.deductions || []).slice(), deduction: dedTot(g), unpaid: Number(g.unpaid) || 0,
     };
     rows.push({ e: eff, p: q, d });
@@ -298,8 +313,12 @@ export function gridState(run: PayRun | null | undefined, dirty: boolean): GridS
 
 /* ───────────────────────────────────────── the component ───────────────────────────────────────── */
 
-/** `M()` — hros.html:1268. */
-function M(n: number): string {
+/**
+ * `M()` — hros.html:1268. The parameter is widened to match the legacy, which is called with nulls
+ * all through hros.html: the body already coerces (`Number(n) || 0`), so narrowing the type only
+ * pushed a second `Number(x) || 0` onto every caller reading a nullable column.
+ */
+function M(n: number | null | undefined): string {
   return 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -340,8 +359,22 @@ export interface SubmitPackItem {
 /** `HR.submitPack` — hros.html:4675. `null` until Submit all has run, which is every golden's state. */
 export interface SubmitPack { per: string; items: SubmitPackItem[] }
 
+/** One row of `hr_payroll_runs_list` — the process list, hros.html's `hrRunsPanel()`. */
+export interface PayrollRun {
+  period_month: number;
+  period_year: number;
+  status?: string | null;
+  employees?: number | null;
+  gross?: number | null; net?: number | null;
+  epf?: number | null; socso?: number | null; eis?: number | null; pcb?: number | null;
+  entries_saved_at?: string | null;
+  finalised_at?: string | null;
+  posted_at?: string | null;
+  xero_journal_id?: string | null;
+}
+
 /** The grid cells `hrGCell()` draws — hros.html:4081. */
-export type CellField = 'basic' | 'allow' | 'bonus' | 'ot' | 'allowance' | 'unpaid';
+export type CellField = 'basic' | 'allow' | 'bonus' | 'ot' | 'allowance' | 'allowanceNs' | 'unpaid';
 
 /** The raw-csv exports — hros.html:4053. */
 export type StatFile = 'epf' | 'socso' | 'eis' | 'pcb';
@@ -384,8 +417,14 @@ export interface HrPayrollProps {
   tp1?: Tp1State | null;
   /** `HR.submitPack` — hros.html:4675. `null` until Submit all has built the ZIP. */
   submitPack?: SubmitPack | null;
+  /** `HR.pay.runs` — `hr_payroll_runs_list`. `null` while the read is in flight; `[]` renders nothing. */
+  runs?: PayrollRun[] | null;
+  /** `HR.pay.runsOpen` — hros.html's `hrRunsPanel()`. The golden was captured collapsed. */
+  runsOpen?: boolean;
 
   onPickPeriod: () => void;
+  onRunsToggle: () => void;
+  onRunOpen: (month: number, year: number) => void;
   onLegacyPanel: (p: LegacyPanel) => void;
   onGridSave: () => void;
   onFinalise: () => void;
@@ -460,6 +499,97 @@ const UOB_INPUT: CSSProperties = {
   borderRadius: '6px', color: 'var(--text)', fontSize: '12px',
 };
 
+const MON = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * `dt()` inside `hrRunsPanel()` — a BARE `toLocaleDateString`, no locale and no `timeZone`, mirrored
+ * rather than improved. Adding `Asia/Kuala_Lumpur` here is the finding `finance.calendar` records: it
+ * passes every output assertion on this fleet (UTC+8) while making the two renderers disagree about
+ * what day a payroll run was saved. These are INSTANTS being displayed — the BARE kind in
+ * web/tests/timezone-audit.test.tsx.
+ */
+function runDate(sv?: string | null) {
+  if (!sv) return <span className="muted">—</span>;
+  const d = new Date(sv);
+  if (isNaN(d.getTime())) return <span className="muted">—</span>;
+  return <>{d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' })}</>;
+}
+
+/**
+ * `hrRunsPanel()` — the process list AutoCount opens on. The month picker above could only answer
+ * "show me this month"; a month saved but never finalised looked exactly like a month nobody had
+ * touched. `runs === null` is the in-flight read and renders NOTHING, which is what the legacy does
+ * — the route kicks the load and repaints.
+ *
+ * Two states, and only the COLLAPSED one is in `tests/golden/hr.payroll.html`. The expanded table is
+ * its own surface (`hr.payroll_runs`), so it is mirrored here from the legacy source and diffed
+ * there rather than by this screen's parity test.
+ */
+function RunsPanel({ p }: { p: HrPayrollProps }) {
+  const runs = p.runs;
+  if (runs === null || runs === undefined) return null;
+  if (!runs.length) return null;
+  const fin = runs.filter((r) => r.status === 'finalised').length;
+  const draft = runs.length - fin;
+  const hd = (
+    <div className="panel-hd" style={{ cursor: 'pointer' }} onClick={() => p.onRunsToggle()}>
+      <h3>📋 All payroll runs</h3>
+      <span className="muted" style={{ fontSize: '11.5px' }}>
+        {runs.length + ' run' + (runs.length === 1 ? '' : 's') + ' · ' + fin + ' finalised'}
+        {draft ? <> · <span style={{ color: 'var(--amber)' }}>{draft + ' draft'}</span></> : null}
+        {' '}<span style={{ opacity: '.6' }}>{p.runsOpen ? '▲' : '▼'}</span>
+      </span>
+    </div>
+  );
+  if (!p.runsOpen) return <div className="panel" style={{ marginBottom: '14px' }}>{hd}</div>;
+  return (
+    <div className="panel" style={{ marginBottom: '14px' }}>
+      {hd}
+      <div className="tbl-wrap">
+        <table className="bigtable" style={{ fontSize: '12px' }}>
+          <thead>
+            <tr>
+              <th>Period</th><th className="amt">Staff</th><th>Status</th>
+              <th className="amt">Gross</th><th className="amt">Net pay</th>
+              <th className="amt" title="Employee + employer">EPF</th>
+              <th className="amt" title="Employee + employer + LINDUNG 24">SOCSO</th>
+              <th className="amt" title="Employee + employer">EIS</th><th className="amt">PCB</th>
+              <th>Saved</th><th>Finalised</th><th>Posted</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((r) => {
+              const cur = Number(r.period_month) === Number(p.month) && Number(r.period_year) === Number(p.year);
+              return (
+                <tr key={r.period_year + '-' + r.period_month} style={cur ? { background: 'var(--panel-2)' } : undefined}>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <b>{MON[Number(r.period_month) || 0] + ' ' + String(r.period_year)}</b>
+                    {cur ? <> <span className="muted" style={{ fontSize: '10px' }}>· open</span></> : null}
+                  </td>
+                  <td className="amt">{r.employees || 0}</td>
+                  <td>{r.status === 'finalised'
+                    ? <span className="pill pill-green" style={{ fontSize: '10px' }}>✓ Finalised</span>
+                    : <span className="pill pill-amber" style={{ fontSize: '10px' }}>● Draft</span>}</td>
+                  <td className="amt">{M(r.gross)}</td>
+                  <td className="amt" style={{ fontWeight: '700', color: 'var(--green-soft)' }}>{M(r.net)}</td>
+                  <td className="amt">{M(r.epf)}</td>
+                  <td className="amt">{M(r.socso)}</td>
+                  <td className="amt">{M(r.eis)}</td>
+                  <td className="amt">{M(r.pcb)}</td>
+                  <td className="muted" style={{ fontSize: '11px' }}>{runDate(r.entries_saved_at)}</td>
+                  <td className="muted" style={{ fontSize: '11px' }}>{runDate(r.finalised_at)}</td>
+                  <td className="muted" style={{ fontSize: '11px' }}>{r.xero_journal_id ? runDate(r.posted_at) : <span className="muted">—</span>}</td>
+                  <td><button className="btn xs" onClick={() => p.onRunOpen(Number(r.period_month), Number(r.period_year))}>Open</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** `onfocus="this.select()"` — hros.html:3768. The browser selecting the field's own text. */
 const selectAll = (e: FocusEvent<HTMLInputElement>) => e.target.select?.();
 
@@ -495,6 +625,8 @@ export default function HrPayroll(p: HrPayrollProps) {
         <button className="btn sm" onClick={() => p.onPickPeriod()}>Load</button>
       </div>
 
+      <RunsPanel p={p} />
+
       {/* the grid — hros.html:4105 */}
       <div className="panel">
         <div className="panel-hd">
@@ -523,7 +655,7 @@ export default function HrPayroll(p: HrPayrollProps) {
             <thead>
               <tr style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.03em' }}>
                 <th></th>
-                <th colSpan={5} className="muted" style={GRP_TH}>Earnings (RM)</th>
+                <th colSpan={6} className="muted" style={GRP_TH}>Earnings (RM)</th>
                 <th colSpan={2} className="muted" style={GRP_TH}>Deductions (RM)</th>
                 <th colSpan={7} className="muted" style={{ textAlign: 'center', borderBottom: '1px solid var(--coral-soft)', paddingBottom: '3px', color: 'var(--coral)' }}>Statutory · auto-calculated</th>
               </tr>
@@ -533,7 +665,8 @@ export default function HrPayroll(p: HrPayrollProps) {
                 <th className="amt">Allow</th>
                 <th className="amt">Bonus</th>
                 <th className="amt">OT</th>
-                <th className="amt">Extra allow</th>
+                <th className="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th>
+                <th className="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th>
                 <th className="amt">Deduct</th>
                 <th className="amt">Unpaid</th>
                 <th className="amt">Gross</th>
@@ -557,12 +690,12 @@ export default function HrPayroll(p: HrPayrollProps) {
                       <span><b>{e.emp_no}</b> {e.name}<div style={{ fontSize: '9.5px', marginTop: '1px', color: 'var(--amber)' }}>Skipped — no payslip this month</div></span>
                     </span>
                   </td>
-                  <td colSpan={13} className="muted" style={{ fontSize: '11px' }}>Not in this run. {rw(<button className="btn xs" onClick={() => p.onSkip(e.id, false)}>Include</button>)}</td>
+                  <td colSpan={14} className="muted" style={{ fontSize: '11px' }}>Not in this run. {rw(<button className="btn xs" onClick={() => p.onSkip(e.id, false)}>Include</button>)}</td>
                 </tr>
               ))}
               <tr style={{ fontWeight: '700', borderTop: '2px solid var(--border)' }}>
                 <td>{'Total (' + p.rows.length + (p.skipped.length ? (' · ' + p.skipped.length + ' skipped') : '') + ')'}</td>
-                <td colSpan={7} className="muted" style={{ fontSize: '11px', fontWeight: '400', textAlign: 'right' }}>variable items →</td>
+                <td colSpan={8} className="muted" style={{ fontSize: '11px', fontWeight: '400', textAlign: 'right' }}>variable items →</td>
                 <td className="amt" id="t_g">{M(p.tot.gross)}</td>
                 <td className="amt" id="t_epf">{M(p.tot.epfEe)}</td>
                 <td className="amt" id="t_soc">{M(p.tot.socsoEe)}</td>
@@ -694,6 +827,7 @@ function GridTr({ p, r }: { p: HrPayrollProps; r: PayRow }) {
       <td><Cell p={p} id={id} field="bonus" /></td>
       <td><Cell p={p} id={id} field="ot" /></td>
       <td><Cell p={p} id={id} field="allowance" /></td>
+      <td><Cell p={p} id={id} field="allowanceNs" /></td>
       {/* `hrDedCell()` — hros.html:3791 */}
       <td>
         <button className="btn xs" id={'ded_' + id} onClick={() => p.onDedOpen(id)} title="Itemise deductions" style={dedOpen ? { minWidth: '74px', borderColor: 'var(--coral)' } : { minWidth: '74px' }}>

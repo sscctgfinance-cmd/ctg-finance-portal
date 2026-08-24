@@ -124,6 +124,17 @@ rules they all share:
 - **One documented exception to "reads no app state":** `hrDrawPayslip` reads `HR_EMPLOYER`/`HR_COMPANY`,
   which stay in `hros.html`. `hr-docs.js`'s header says what a bundler has to do about it.
 
+**No shared root `.js` may set a page-relative asset `src`.** A relative `src` resolves against the
+DOCUMENT, and the legacy apps are FILES at the root while the React routes are DIRECTORIES
+(`trailingSlash: true`), so `./jspdf.umd.min.js` in `DocScanner`'s lazy PDF loader was correct from
+`/app.html` and a 404 from `/finance/upload/` — and `common.js` swallows the rejection into
+`toast('Failed to build document')`, so every scan on both React scanner screens ended in nothing with
+the page looking fine. Resolve against the SCRIPT's own URL instead (`document.currentScript.src`,
+captured at load time), which also carries `NEXT_PUBLIC_BASE_PATH` for free without the shared file
+knowing a base path exists — React injects these files through `legacyUrl()`, so the prefix is already
+there. `tests/docscanner_pdf_url_test.ts` drives common.js's own loader source from four page depths and
+sweeps every non-vendored root `.js` for the general form.
+
 **`xlsx.full.min.js` is NOT in `app.html`'s head — `gwLoadXlsx()` loads it on demand.** 952 KB raw,
 335 KB gzipped: 54% of everything a Finance page used to transfer, paid by all 22 tabs when six
 functions touch it. That one loader (in app.html's Gateway section, Gateway's by birth) is now the
@@ -147,7 +158,7 @@ spelling it recommended. Standardise on the queueing shape, whichever file it en
 
 **A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
 reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
-evaluates `inlineScript()` — the 40 goldens included — parses and runs your file too, and
+evaluates `inlineScript()` — the 42 goldens included — parses and runs your file too, and
 `tests/shared_scripts_test.ts` fails if one is missing, empty or unparseable. The `cp common.js` step in
 `.github/workflows/ci.yml` is still by name and still only covers `common.js`; that gap is now closed
 from the tests side, so you do not have to edit the workflow.
@@ -322,6 +333,33 @@ another way.** `hr.employees` is the first: `HR.editEmp` is `null` after every `
 id there saves as blank, which on that form is a wiped bank account or IC and no error anywhere. Do the
 same rather than inventing a golden.
 
+**When a mode is a WHOLE OTHER SCREEN, capture the golden — `hr.leave` is where "tested another way"
+was not enough.** `hros.html:1553` is `body=(HR_EMP_MODE?hrEmpLeave():hrLeave())`: one nav id, two
+renderers, two data sources, two page heads. Only the admin one was ported, `nav.ts` said `leave` was
+migrated for BOTH navs, and so every non-admin — the largest population in the product, mostly on
+phones — tapped Leave and got `⚠️ unauthorized`, because the route's only load was `hr_leave_admin` and
+`hrCanView()` (hr.ts:1541 → lib.ts:131) does not include `employee`. `tests/golden/hr.leave.html` stayed
+green throughout: **a golden cannot see a screen that is never mounted.** The fix was a 41st surface,
+`hr.leave.emp`, which is one entry in `tests/render_surfaces.ts` — cheap, and the only thing that makes
+the second renderer diffable at all. Distinguish this from `hr.employees` above: there the second mode
+is the SAME renderer's other branch, here it is a different function entirely.
+
+**A screen-level parity test cannot see a missing ROUTE, so pin the branch by SOURCE.** The corollary,
+and the reason F2 survived: `web/tests/hr-emp-leave.parity.test.tsx` reads `app/hr/leave/page.tsx` at
+run time (comments blanked first — the file's own header names `hr_leave_admin` while explaining the
+bug, which is `tests/forwarding_page_test.ts`'s lesson again) and asserts three things: it mounts the
+employee screen, it decides with `hrRole().empMode` and nothing hand-rolled, and it asks the server for
+NOTHING but `me` before that gate. The third is `finance.users`' finding — a gate that exists but sits
+downstream of the load leaves the employee eating the same 401. All three were verified by introducing
+the defect. Note also which way the failure falls: on a `me` that fails the route picks EMPLOYEE mode,
+because the admin screen is everyone's leave plus the approval-chain editor.
+
+**`hrRole('')` is NOT employee mode, whatever nav.ts's own doc comment says.** `empMode` is
+`!!r && r !== 'admin' && …` (nav.ts:150), so an empty role is all three flags false and `hrNavFor()`
+hands it the ADMIN nav. The comment above that function claims the opposite. Pinned as-is in
+`hr-emp-leave.parity.test.tsx`; changing it moves the nav for every login with no role, which is a
+decision, not a migration detail.
+
 **A legacy attribute value written without `esc()` is the same finding as the duplicate `style=`.**
 `hrEmpCard()` (hros.html:2712) writes `title="… submit claims & clock in"` with a bare `&`; a parser
 reads that and `&amp;` as the same character, but React's attribute escaper can only emit the second.
@@ -417,6 +455,18 @@ employee from the token (`hr.ts:1362`) and the request carries no id, so the pro
 assert no key is or contains one. `web/tests/hr-profile.parity.test.tsx` also pins the v159 rule that
 lives half in each half: an ABSENT `bankCode` means "unchanged", an empty one means "clear it", and the
 form paints before `hr_banks_list` resolves.
+
+**A route that reads the company list must keep the `tenant_id`, and EVERY company-scoped call must
+carry it.** `hr.yearend` kept only `tenant_name`, so `hr_annual` and `hr_bootstrap` both went out
+without a tenant and the screen was `⚠️ no company selected` for everyone. The two failure MODES are
+what to learn: `hr_annual` (hr.ts:2876) refuses a blank tenant outright, so it is loud — but
+`hr_bootstrap` (hr.ts:979) answers `ok` with an EMPTY employee list, so the same omission there is a
+blank picker and no error anywhere. **`tools/serve_both.ts`'s fixture server answers by ACTION NAME and
+ignores the tenant**, so neither is reproducible under fixtures and no golden or rendered output sees a
+request body. Pin it by SOURCE, in the screen's own test — that the body carries `tenant:` AND that what
+it carries is a `.tenant_id`, since sending the NAME satisfies the first check and matches no row. The
+layout's picker writes `hr_tenant` and RELOADS (`app/hr/layout.tsx:142`), which is why reading the key
+once on mount is correct.
 
 ### The exports and the drawing surfaces — v222, the gap after all 36 screens
 
@@ -606,6 +656,18 @@ modals that were not migrated. `web/app/finance/approvals/page.tsx` uses the bro
 with the same two sentences rather than dropping the question — a handoff is not available for a control
 that lives inside the screen, and silently removing the only thing between a mis-click and a voided
 supplier bill is not a migration detail.
+
+**Every legacy `runOnce(...)` is a double-submit guard, and a React port that drops it is a hole in a
+ported pattern, not a missing one.** `runOnce` (app.html:1367) disables the button, relabels it and
+restores it in `finally`; grep it to find every call site that needs one. React does it INLINE on each
+screen — a state flag, an early return in the handler, a `disabled` prop, the release in `finally` so one
+network error does not strand the operator — see `finance/qinv` (`busy`) and `finance/salesrecon`
+(`posting`). Do NOT build a shared wrapper. Two traps: a flag derived from the RESPONSE (`canIssue` was
+`out.kind === 'preview'`, and `out` only changes after the await) leaves the button live for the whole
+request — `o2o_issue` (finance.ts:609) has no dedupe, so that was a second set of REAL Xero invoices, one
+per pharmacy; and the route half has no output to assert through, so pin it by SOURCE with comments
+blanked, as `web/tests/finance-o2o.parity.test.tsx` does. `disabled={false}` renders no attribute, so no
+golden moves.
 
 **A Finance golden can hold almost NOTHING of the screen — `finance.collections` is the case.**
 `renderCollections()` (app.html:2425) writes a panel, a paragraph, one button and an EMPTY `#collres`;
@@ -1242,7 +1304,7 @@ rather than a silent filing change.
 **What is deliberately still not Malaysian, and why it CANNOT be here:** the BARE `toLocale*` calls that
 display an INSTANT (a punch time, a password-reset stamp). `tests/render_harness.ts` makes the local
 getters read as UTC and forces `timeZone:'UTC'` on every `toLocale*`, so shifting one by 8 hours moves a
-committed golden — and regenerating 40 goldens is a bigger, separate change. The consequence is real and
+committed golden — and regenerating 42 goldens is a bigger, separate change. The consequence is real and
 worth knowing: an admin abroad sees a Malaysian hour in the punch EDITOR and their own in the punch
 TABLE beside it. Fixing that means regenerating goldens on purpose.
 
@@ -1761,7 +1823,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 138 cases, incl. all 40 render goldens
+deno test --allow-read tests/          # 274 cases, incl. all 42 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
@@ -1798,7 +1860,7 @@ RM5,000) and are pinned as deliberate so nobody smooths a statutory rule out of 
 
 ### If a `tests/golden/` test fails
 
-All 40 screens of the two apps are rendered offline and diffed against a committed baseline
+All 42 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
 (`tests/render_golden_test.ts`; `tests/COVERAGE.md` says what that does and does not hold). A failure
 means you changed what an operator sees. If that was the point:
 

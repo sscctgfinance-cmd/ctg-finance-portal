@@ -1,7 +1,7 @@
 # Render-golden coverage — what is actually covered, and what is not
 
-`tests/render_golden_test.ts` renders all **40** surfaces of the two apps and diffs each one against a
-committed golden under `tests/golden/`. This file is the honest accounting of what those 40 goldens do
+`tests/render_golden_test.ts` renders all **42** surfaces of the two apps and diffs each one against a
+committed golden under `tests/golden/`. This file is the honest accounting of what those 42 goldens do
 and do not hold, because a coverage number nobody has qualified is worse than no number.
 
 Regenerate deliberately, then read the diff before committing:
@@ -18,16 +18,18 @@ git diff tests/golden/
 | Finance OS tabs | 22 | `render(t)` — `app.html:1512`; tab divs `app.html:1124` |
 | HR OS nav views | 14 | `hrRender()` — `hros.html:1683` |
 | …of which `dashboard` is itself a dispatcher | −1 +5 | `HR_DASH.page` — `hros.html:1879` |
-| **total surfaces** | **40** | |
+| …plus `leave`, which `hros.html:1553` dispatches to two DIFFERENT screens by role | +1 | `HR_EMP_MODE?hrEmpLeave():hrLeave()` |
+| …plus `payroll` EXPANDED, a table that exists in no other state | +1 | `HR.pay.runsOpen` — `hrRunsPanel()`, `hros.html` |
+| **total surfaces** | **42** | |
 
-All 40 render real, populated content — no surface is covered by an empty state or an error panel, and
+All 42 render real, populated content — no surface is covered by an empty state or an error panel, and
 `renderSurface()` throws rather than capturing a golden if a screen asks for an action with no fixture.
-Smallest golden is 8 lines (`finance.bankfeed`, which genuinely is a launcher button); largest is 847
-(`finance.info`). 8,477 lines of committed baseline in total.
+Smallest golden is 8 lines (`finance.bankfeed`, which genuinely is a launcher button); largest is 957
+(`finance.cfo`). 9,524 lines of committed baseline in total.
 
-## Covered: 40 / 40. Complete for the screen: 34 / 40
+## Covered: 42 / 42. Complete for the screen: 34 / 42
 
-Six goldens record a **narrower slice** than the screen can show. They are real coverage of the default
+Eight goldens record a **narrower slice** than the screen can show. They are real coverage of the default
 state — the state an operator lands on — but the branch listed is not in the golden.
 
 | surface | in the golden | not in the golden | why |
@@ -37,6 +39,8 @@ state — the state an operator lands on — but the branch listed is not in the
 | `finance.ocr` | the upload form and the “Scan with camera” button | the DocScanner overlay itself | `DocScanner.open()` mounts a camera overlay and needs `getUserMedia` + a real canvas. Another change is unifying DocScanner across both files; a golden of it now would be captured against code that is moving. |
 | `hr.clock` | status card, today’s punches, work schedule, mobile tab bar | `hrPushCard()` | it returns `''` unless `PUSH.supported`, which needs `PushManager` on `window`. Stubbing one would assert against a stub, not against the app. |
 | `hr.employees` | the employee list, filters and search | `hrEmpForm()` | the edit form is the `HR.editEmp !== null` branch of the same view. |
+| `hr.leave` | the ADMIN screen — `hrLeave()` | the EMPLOYEE screen — `hrEmpLeave()` | one nav id, two screens (`hros.html:1553`). `hr.leave.emp` is the other one, captured separately: for as long as it was not, the React port of the employee half could be — and was — missing entirely while this golden stayed green. |
+| `hr.payroll` | the period picker, the employer panel, the grid, and the run list COLLAPSED | the run list EXPANDED — `hrRunsPanel()`’s table | `HR.pay.runsOpen` defaults false, and the money columns, status pills and posted-to-Xero column exist in no other state. `hr.payroll_runs` is that state, captured separately — `hr.leave`’s arrangement, for the same reason. |
 | `hr.expenses` | the claims list | `hrRCForm()`, `hrRCDetail()`, the dashboard and settings sub-pages | `RC.page` has six states; the golden holds `list`. |
 
 Every one of those is a fixture/state change away, not an app change. They are listed rather than
