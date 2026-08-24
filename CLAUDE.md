@@ -697,8 +697,12 @@ screen — a state flag, an early return in the handler, a `disabled` prop, the 
 network error does not strand the operator — see `finance/qinv` (`busy`) and `finance/salesrecon`
 (`posting`). Do NOT build a shared wrapper. Two traps: a flag derived from the RESPONSE (`canIssue` was
 `out.kind === 'preview'`, and `out` only changes after the await) leaves the button live for the whole
-request — `o2o_issue` (finance.ts:609) has no dedupe, so that was a second set of REAL Xero invoices, one
-per pharmacy; and the route half has no output to assert through, so pin it by SOURCE with comments
+request — a second set of REAL Xero invoices, one per pharmacy. (`o2o_issue`, finance.ts:609, now ALSO
+dedupes server-side: before posting it queries Xero for a non-VOIDED ACCREC invoice under the batch's
+`reference` and adopts the existing batch instead of creating a second — the same guard `hr_rc post_xero`
+uses at hr.ts:2500, on top of the button guard, because the Xero Idempotency-Key backstop is void the
+moment a retry's payload differs. The client guard is still the first line, not a substitute.)
+And the route half has no output to assert through, so pin it by SOURCE with comments
 blanked, as `web/tests/finance-o2o.parity.test.tsx` does. `disabled={false}` renders no attribute, so no
 golden moves.
 

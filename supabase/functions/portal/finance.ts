@@ -654,6 +654,40 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       }
       if (b.dry_run !== false) return j({ ok:true, dry_run:true, tenant: targetTenant, issued:0, emailed:0, failed:0, results: built.map((x:any,i:number)=>({ pharmacy:x.pharmacy, total:x.total, number: x.xero.InvoiceNumber || "(Xero auto)", status:"dry_run", contact: x.matched?"existing":"new" })) });
       const access = await xeroAccessToken();
+      // v67: server-side idempotency. The Xero Idempotency-Key below is a 24h backstop, but it is void
+      // the moment the payload differs between attempts (a retry that resolves a contact id the first run
+      // cached changes the body — see the hr_rc post_xero comment, hr.ts:2492), so a racing retry or a
+      // second operator could still create a whole second batch of real invoices. Guard it directly, the
+      // way hr_rc does: the frontend-formatted per-batch reference IS the batch identity, so if any
+      // non-VOIDED ACCREC invoice already exists under it, this batch was already issued — adopt those
+      // instead of posting again. Only runs when a real (non-default) reference is supplied.
+      if (b.reference && String(b.reference).trim()) {
+        try {
+          const q = 'Type=="ACCREC" AND Reference=="' + reference.replace(/"/g,'') + '" AND Status!="VOIDED"';
+          const ex = await fetch("https://api.xero.com/api.xro/2.0/Invoices?where="+encodeURIComponent(q), { headers:{ "Authorization":"Bearer " + access, "Xero-Tenant-Id":targetTenant, "Accept":"application/json" } });
+          if (ex.ok) {
+            const exj = await ex.json();
+            const existing = (exj.Invoices||[]).slice();
+            if (existing.length) {
+              const results = built.map((p:any)=>{
+                const pcid = p.xero.Contact && p.xero.Contact.ContactID;
+                let hit = -1;
+                for (let k=0;k<existing.length;k++){ const iv=existing[k]; if (!iv) continue;
+                  if ((pcid && iv.Contact && iv.Contact.ContactID===pcid) ||
+                      (iv.Contact && String(iv.Contact.Name||"").toLowerCase()===String(p.pharmacy||"").toLowerCase())) { hit=k; break; } }
+                const iv = hit>=0 ? existing[hit] : null; if (hit>=0) existing[hit]=null;
+                return { pharmacy:p.pharmacy, total:p.total, number: iv?(iv.InvoiceNumber||""):"", contact: p.matched?"existing":"new",
+                         status: iv&&iv.InvoiceID?"issued":"failed", error: iv?undefined:"already issued under "+reference+" but no matching invoice found",
+                         contact_id: (iv&&iv.Contact&&iv.Contact.ContactID)||undefined, invoice_id: (iv&&iv.InvoiceID)||undefined };
+              });
+              await logAudit(me, "o2o_issue", period, { tenant: targetTenant, adopted:true, existing: (exj.Invoices||[]).length });
+              return j({ ok:true, dry_run:false, adopted:true, tenant: targetTenant,
+                         note:"This batch was already issued in Xero under "+reference+" — returned the existing invoices instead of creating duplicates.",
+                         issued: results.filter(x=>x.status==="issued").length, emailed:0, failed: results.filter(x=>x.status==="failed").length, results });
+            }
+          }
+        } catch(_e){ /* best-effort: a lookup failure must not block a legitimate first issue */ }
+      }
       const idem = await sha256Hex(JSON.stringify(built.map(x=>x.xero)) + "|" + period + "|" + targetTenant);
       const r = await fetch("https://api.xero.com/api.xro/2.0/Invoices?summarizeErrors=false", { method:"POST", headers:{ "Authorization":"Bearer " + access, "Xero-Tenant-Id":targetTenant, "Content-Type":"application/json", "Accept":"application/json", "Idempotency-Key": idem }, body: JSON.stringify({ Invoices: built.map(x=>x.xero) }) });
       const out = await r.json();
