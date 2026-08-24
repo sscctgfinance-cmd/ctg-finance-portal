@@ -28,6 +28,23 @@ export function legacyUrl(file: string): string {
   return `${BASE_PATH}/${file}`;
 }
 
+/**
+ * `STORAGE_OK` — app.html:1226. Safari in private mode and a locked-down browser both make
+ * `localStorage` throw, and `token()` below swallows exactly that into `''`: the operator signs in,
+ * works, refreshes, and is signed out again with nothing on screen explaining why. app.html:1421 warns;
+ * this is the same probe, so `app/finance/layout.tsx` can warn too.
+ */
+export function storageOk(): boolean {
+  try {
+    const k = '__ctg_test__';
+    localStorage.setItem(k, '1');
+    localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function token(): string {
   try {
     return localStorage.getItem('ctg_portal_token') || '';

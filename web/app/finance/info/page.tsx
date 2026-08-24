@@ -34,6 +34,7 @@ import FinanceInfo, {
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
 import { mytISO } from '../../../../myt.js';
+import { registerScreenSave } from '../../../src/finance-save';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `renderInfo()` groups both lists by tenant before rendering — app.html:5532-5533. */
@@ -410,6 +411,12 @@ export default function FinanceInfoPage() {
     root.querySelectorAll<HTMLInputElement>('#info-form [data-city][data-state]')
       .forEach((el) => applyPostcode(el, false));
   }, [mode, active, applyPostcode, companies]);
+
+  // Ctrl/Cmd+S → infoSave() when in edit mode — app.html:1305.
+  useEffect(() => {
+    if (mode !== 'edit') return;
+    return registerScreenSave(() => onSave());
+  }, [mode, onSave]);
 
   if (signedIn === false) {
     return (

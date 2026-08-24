@@ -21,6 +21,7 @@ import FinanceQinv, {
 } from '../../../src/finance-qinv';
 import { showConfirm } from '../../../src/confirm';
 import { mytISO } from '../../../../myt.js';
+import { registerScreenSave } from '../../../src/finance-save';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** `QINV_META_CACHE` / `QINV_META_TTL` — app.html:4661. Per tenant, because Xero's Items call is slow. */
@@ -180,6 +181,9 @@ export default function FinanceQinvPage() {
       });
     });
   }, []);
+
+  // Ctrl/Cmd+S → qiPreview() — app.html:1308, "safer than Create".
+  useEffect(() => registerScreenSave(onPreview), [onPreview]);
 
   return (
     <div ref={root}>

@@ -16,11 +16,12 @@ import ConfirmHost from '../../src/confirm';
 import AlertsPanel, { alertFeeds, alertHref, alertsFor, badgeText, computeAlerts,
   type Alert, type OverviewLite, type PendingLite } from '../../src/finance-alerts';
 import { NOTHING_TO_EXPORT, exportFileName, exportLogBody, screenExport, sheetName } from '../../src/finance-export';
+import { isSaveKey, screenSave } from '../../src/finance-save';
 import SecurityHost, { disableBody, openSecurityModal, verifyBody } from '../../src/finance-security';
 import FinanceShell, { roleLabel, type Company } from '../../src/finance-shell';
 import { financeCatsFor, financeNavFor, type Perms } from '../../src/nav';
 import PasswordHost, { openPasswordModal } from '../../src/password-modal';
-import { BASE_PATH, call, legacyUrl, token } from '../../src/portal';
+import { BASE_PATH, call, legacyUrl, storageOk, token } from '../../src/portal';
 import { THEME_KEYS, asTheme } from '../../src/theme';
 import ToastHost, { toast } from '../../src/toast';
 import { useSpaNav } from '../../src/use-spa-nav';
@@ -148,6 +149,46 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
     return () => { document.removeEventListener('click', away); document.removeEventListener('keydown', esc); };
   }, [alertsOpen]);
 
+  // ── Ctrl/Cmd+S — app.html:1299-1311. ──
+  // One listener in the layout; each screen registers what Save means on it via registerScreenSave().
+  // A screen that registers nothing lets the browser's own Save Page dialog through, exactly as the
+  // legacy does for every tab that is not Company Info or Quick Invoice.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!isSaveKey(e)) return;
+      const saver = screenSave();
+      if (saver) { e.preventDefault(); saver(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // ── Storage-unavailable warning — app.html:1421, on `STORAGE_OK`. ──
+  // Safari in private mode (and a locked-down browser) throw on `localStorage`. `token()` swallows that
+  // into '' — the operator signs in, works, refreshes, is signed out, with nothing on screen saying why.
+  const [storageWarn, setStorageWarn] = useState(false);
+  useEffect(() => { if (!storageOk()) setStorageWarn(true); }, []);
+
+  // ── Stale-tab refresh — app.html:1325-1336. ──
+  // If the tab was hidden >10 min, drop the loaded-tab cache so the screen refetches on next switch.
+  // Without it, a screen left open overnight shows yesterday's figures. Here the "cache" is the current
+  // page's state — a reload is the equivalent of `for(const k in loaded) delete loaded[k]`.
+  // `performance.now()` rather than `Date.now()` — elapsed time only, no zone to get wrong, and the
+  // timezone audit (tests/timezone-audit.test.tsx) rightly flags any new `Date.now()` for classification.
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+    const handler = () => {
+      if (document.hidden) { hiddenAt = performance.now(); }
+      else {
+        const away = hiddenAt != null ? performance.now() - hiddenAt : 0;
+        hiddenAt = null;
+        if (away > 10 * 60 * 1000) location.reload();
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
   /** `toggleTheme()` — app.html:1036. Same key, same two values. */
   const onToggleTheme = useCallback(() => {
     const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
@@ -259,7 +300,8 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
       onSecurity={() => openSecurityModal()}
       onExport={onExport}
       onSignOut={onSignOut}
-    ><div ref={screen}>{children}</div></FinanceShell>
+    >{storageWarn ? <StorageWarning onDismiss={() => setStorageWarn(false)} /> : null}
+    <div ref={screen}>{children}</div></FinanceShell>
     {/* app.html:1185 — the panel sits OUTSIDE `#app`, which is what `position:fixed` (app.html:253)
         expects. `notifGo()` closes it and then opens the alert's own tab (app.html:2746). */}
     <AlertsPanel open={alertsOpen} alerts={alerts} tabs={tabs}
@@ -270,5 +312,19 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
         if (h) location.href = h;
       }} />
     {hosts}</>
+  );
+}
+
+/** app.html:1421 — the amber banner. Matches its text and its dismiss link exactly. */
+function StorageWarning({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div id="storage-warn" style={{
+      background: 'rgba(255,187,86,.12)', border: '1px solid rgba(255,187,86,.4)',
+      color: 'var(--amber)', padding: '10px 16px', fontSize: '12.5px', textAlign: 'center',
+    }}>
+      {'⚠ Browser storage is disabled (private mode?). You will be signed out on refresh. '}
+      <a href="#" onClick={(e) => { e.preventDefault(); onDismiss(); }}
+        style={{ color: 'var(--amber)', textDecoration: 'underline', marginLeft: '8px' }}>dismiss</a>
+    </div>
   );
 }
