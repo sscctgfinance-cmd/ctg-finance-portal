@@ -1,7 +1,7 @@
 # Render-golden coverage — what is actually covered, and what is not
 
-`tests/render_golden_test.ts` renders all **41** surfaces of the two apps and diffs each one against a
-committed golden under `tests/golden/`. This file is the honest accounting of what those 41 goldens do
+`tests/render_golden_test.ts` renders all **44** surfaces of the two apps and diffs each one against a
+committed golden under `tests/golden/`. This file is the honest accounting of what those 44 goldens do
 and do not hold, because a coverage number nobody has qualified is worse than no number.
 
 Regenerate deliberately, then read the diff before committing:
@@ -19,16 +19,18 @@ git diff tests/golden/
 | HR OS nav views | 14 | `hrRender()` — `hros.html:1683` |
 | …of which `dashboard` is itself a dispatcher | −1 +5 | `HR_DASH.page` — `hros.html:1879` |
 | …plus `leave`, which `hros.html:1553` dispatches to two DIFFERENT screens by role | +1 | `HR_EMP_MODE?hrEmpLeave():hrLeave()` |
-| **total surfaces** | **41** | |
+| …plus `expenses`, which `hrRC()` dispatches over `RC.page` — Submit and a claim's detail | +2 | `hrRCForm()` / `hrRCDetail()` — `hros.html:2000`, `:2513` |
+| …plus `expenses` again, in EMPLOYEE mode: two tabs and four different scopes | +1 | `RC.me.isAdmin===false` — `hros.html:1785`, `:1821` |
+| **total surfaces** | **44** | |
 
-All 41 render real, populated content — no surface is covered by an empty state or an error panel, and
+All 44 render real, populated content — no surface is covered by an empty state or an error panel, and
 `renderSurface()` throws rather than capturing a golden if a screen asks for an action with no fixture.
 Smallest golden is 8 lines (`finance.bankfeed`, which genuinely is a launcher button); largest is 847
-(`finance.info`). 8,477 lines of committed baseline in total.
+(`finance.info`). 9,601 lines of committed baseline in total.
 
-## Covered: 41 / 41. Complete for the screen: 34 / 41
+## Covered: 44 / 44. Complete for the screen: 38 / 44
 
-Seven goldens record a **narrower slice** than the screen can show. They are real coverage of the default
+Six goldens record a **narrower slice** than the screen can show. They are real coverage of the default
 state — the state an operator lands on — but the branch listed is not in the golden.
 
 | surface | in the golden | not in the golden | why |
@@ -39,7 +41,7 @@ state — the state an operator lands on — but the branch listed is not in the
 | `hr.clock` | status card, today’s punches, work schedule, mobile tab bar | `hrPushCard()` | it returns `''` unless `PUSH.supported`, which needs `PushManager` on `window`. Stubbing one would assert against a stub, not against the app. |
 | `hr.employees` | the employee list, filters and search | `hrEmpForm()` | the edit form is the `HR.editEmp !== null` branch of the same view. |
 | `hr.leave` | the ADMIN screen — `hrLeave()` | the EMPLOYEE screen — `hrEmpLeave()` | one nav id, two screens (`hros.html:1553`). `hr.leave.emp` is the other one, captured separately: for as long as it was not, the React port of the employee half could be — and was — missing entirely while this golden stayed green. |
-| `hr.expenses` | the claims list | `hrRCForm()`, `hrRCDetail()`, the dashboard and settings sub-pages | `RC.page` has six states; the golden holds `list`. |
+| `hr.expenses` | the claims list | `hrRCDash()`, `hrRCSettings()` | `RC.page` has five states. `list` is here, `form` and `detail` are `hr.expenses.form` / `hr.expenses.detail`, and the two admin sub-pages are not migrated. |
 
 Every one of those is a fixture/state change away, not an app change. They are listed rather than
 quietly padded into the count.
@@ -51,8 +53,9 @@ quietly padded into the count.
   a fallback "HR OS / HR" page head, and `hrEmpPayslipsLoad` refuses to repaint at all
   (`HR.view==='payslip' && HR_EMP_MODE`), which is how the first cut of this file captured a loading
   spinner as a whole screen's golden. The other eleven views are captured as a master admin, so the
-  employee-mode variants of `leave` (`hrEmpLeave()` rather than `hrLeave()`), `expenses` and `profile`
-  are **not** covered. That is the single largest remaining gap: a second set of surfaces, not a variant.
+  employee-mode variant of `profile` is **not** covered. `leave` and `expenses` now are — `hr.leave.emp`
+  and `hr.expenses.emp` — each because the React port of the employee half was, or would have been,
+  missing entirely while the admin golden stayed green.
 - **Role variants** — `HR_VIEWER` (view-only) and non-`HR_MASTER` change what `hrRender()` will even
   route to. Captured as `HR_MASTER=true, HR_VIEWER=false`.
 - **Modals and overlays** — `hrAttEditModal`, the confirm dialog, the 2FA prompt, `userForm`,

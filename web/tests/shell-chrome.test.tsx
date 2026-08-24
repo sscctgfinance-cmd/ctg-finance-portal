@@ -580,9 +580,12 @@ describe('every React route asks with the app’s own controls', () => {
   // `prompt()` is deliberately still the browser's, in both apps — see the headers of
   // app/finance/users/page.tsx and app/hr/expenses/page.tsx. Asserted so the choice is visible rather
   // than looking like an oversight next to the scan above.
+  // v225 took the count from 7 to 11: `app/hr/expenses/page.tsx` ported `hrRCOverride()` (hros.html:2597)
+  // and `hrRCAdjustAmount()` (hros.html:2581), two prompts each. Both ask for a FIGURE and a REASON, and
+  // the legacy asks the same way; the confirm that follows the adjustment IS the app's own dialog.
   it('prompt() is deliberately left native, and there are exactly the sites we know about', () => {
     const n = routes.reduce((a, p) => a + [...code(readFileSync(p, 'utf8')).matchAll(/(?<![\w.])(?:window\.)?prompt\s*\(/g)].length, 0);
-    expect(n).toBe(7);
+    expect(n).toBe(11);
   });
 });
 

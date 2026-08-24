@@ -1,0 +1,170 @@
+<!-- #hr -->
+<div class="page-head">
+<div>
+<div class="page-eyebrow">People</div>
+<h2 class="page-title">Reimbursement</h2>
+<div class="page-sub">Employee expense claims, receipts &amp; multi-level approval</div>
+</div>
+<div class="page-meta">
+<span class="page-chip">
+<span class="dot">
+</span>I PROCARE MALAYSIA SDN BHD</span>
+</div>
+</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+<button class="btn p sm" onclick="hrRCNav('list')">📋 Claims</button>
+<button class="btn sm" onclick="hrRCNav('form')">➕ Submit</button>
+</div>
+<div class="panel">
+<div class="panel-hd">
+<h3>Claims</h3>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+<div style="display:flex;gap:5px">
+<button class="btn xs" onclick="hrRCScope('all')">My claims</button>
+<button class="btn xs p" onclick="hrRCScope('pending')">🔔 Approvals (3)</button>
+<button class="btn xs" onclick="hrRCScope('approved')">Approved</button>
+<button class="btn xs" onclick="hrRCScope('paid')">Paid</button>
+</div>
+<div style="display:flex;gap:6px">
+<button class="btn xs" onclick="hrRCExportCsv()" title="Export this list to CSV">⬇ CSV</button>
+<button class="btn p sm" onclick="hrRCNav('form')">➕ New claim</button>
+</div>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable">
+<thead>
+<tr>
+<th>Claim #</th>
+<th>Employee</th>
+<th>Type</th>
+<th>Date</th>
+<th class="amt">Amount</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr onclick="hrRCOpen('rc1')" style="cursor:pointer">
+<td>
+<b>RC-2026-0031</b>
+</td>
+<td>—</td>
+<td class="muted">—</td>
+<td class="muted">2026-08-09</td>
+<td class="amt">RM 0.00</td>
+<td>
+<span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">pending_approval</span>
+</td>
+</tr>
+<tr onclick="hrRCOpen('rc2')" style="cursor:pointer">
+<td>
+<b>RC-2026-0030</b>
+</td>
+<td>—</td>
+<td class="muted">—</td>
+<td class="muted">2026-08-02</td>
+<td class="amt">RM 0.00</td>
+<td>
+<span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">approved</span>
+</td>
+</tr>
+<tr onclick="hrRCOpen('rc3')" style="cursor:pointer">
+<td>
+<b>RC-2026-0029</b>
+</td>
+<td>—</td>
+<td class="muted">—</td>
+<td class="muted">2026-07-28</td>
+<td class="amt">RM 0.00</td>
+<td>
+<span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">paid</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- #hr_nav -->
+<div class="side-group">Insights</div>
+<button class="side-link" onclick="hrNav('dashboard')" title="Dashboard">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3v6h8V3zM3 21h8v-6H3z"/>
+</svg>
+<span class="lbl">Dashboard</span>
+</button>
+<div class="side-group">People</div>
+<button class="side-link" onclick="hrNav('employees')" title="Employees">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+<circle cx="9" cy="7" r="4"/>
+<path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+</svg>
+<span class="lbl">Employees</span>
+</button>
+<button class="side-link" onclick="hrNav('attendance')" title="Attendance">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="12" cy="12" r="9"/>
+<path d="M12 7v5l3 2"/>
+</svg>
+<span class="lbl">Attendance</span>
+</button>
+<button class="side-link" onclick="hrNav('leave')" title="Leave">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s7-8 7-13a7 7 0 0 0-14 0c0 5 7 13 7 13z"/>
+<path d="M12 6v6"/>
+</svg>
+<span class="lbl">Leave</span>
+</button>
+<button class="side-link" onclick="hrNav('claims')" title="Claims">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M14 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8z"/>
+<path d="M14 3v5h5M9 13h6M9 17h6"/>
+</svg>
+<span class="lbl">Claims</span>
+</button>
+<button class="side-link on" onclick="hrNav('expenses')" title="Reimbursement">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="2" y="7" width="20" height="13" rx="1.5"/>
+<path d="M2 11h20M6 3h12"/>
+</svg>
+<span class="lbl">Reimbursement</span>
+</button>
+<div class="side-group">Payroll</div>
+<button class="side-link" onclick="hrNav('payroll')" title="Payroll">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 1v22"/>
+<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+</svg>
+<span class="lbl">Payroll</span>
+</button>
+<button class="side-link" onclick="hrNav('calculator')" title="Calculator">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="4" y="2" width="16" height="20" rx="2"/>
+<path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M8 19h4"/>
+</svg>
+<span class="lbl">Calculator</span>
+</button>
+<button class="side-link" onclick="hrNav('yearend')" title="Year-end">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<rect x="3" y="4" width="18" height="18" rx="2"/>
+<path d="M3 10h18M8 2v4M16 2v4"/>
+</svg>
+<span class="lbl">Year-end</span>
+</button>
+<div class="side-group">Admin</div>
+<button class="side-link" onclick="hrNav('approvals')" title="Approvals">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<circle cx="6" cy="6" r="2.4"/>
+<circle cx="6" cy="18" r="2.4"/>
+<circle cx="18" cy="12" r="2.4"/>
+<path d="M8.4 6H13a2.6 2.6 0 0 1 2.6 2.6V10M8.4 18H13a2.6 2.6 0 0 0 2.6-2.6V14"/>
+</svg>
+<span class="lbl">Approvals</span>
+</button>
+<button class="side-link" onclick="hrNav('access')" title="Access &amp; Roles">
+<svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+<path d="M9 12l2 2 4-4"/>
+</svg>
+<span class="lbl">Access &amp; Roles</span>
+</button>

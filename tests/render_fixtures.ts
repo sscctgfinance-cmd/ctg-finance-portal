@@ -519,9 +519,12 @@ Object.assign(FIXTURES, {
 
   hr_rc_config: { ok: true,
     me: { isAdmin: true, roles: ["hr_admin"], is_manager: true, employee: EMPLOYEES[0] },
-    claim_types: [ { id: "ct1", code: "TRAVEL", name: "Travel & transport", active: true, sort_order: 1, requires_receipt: true, cap_amount: 500 },
-                   { id: "ct2", code: "MEAL", name: "Meals & entertainment", active: true, sort_order: 2, requires_receipt: true, cap_amount: 200 },
-                   { id: "ct3", code: "MILEAGE", name: "Mileage", active: true, sort_order: 3, requires_receipt: false, cap_amount: null } ],
+    // `is_mileage` / `gl_account` / `taxable` are columns of `hr_claim_types` (hr.ts:1994 reads all
+    // three) and were missing here, so `hrRCForm()`'s mileage branch — a different amount cell, a
+    // different `⋯` block and a different set of `rc_it_*` ids — was unreachable from any fixture.
+    claim_types: [ { id: "ct1", code: "TRAVEL", name: "Travel & transport", active: true, sort_order: 1, requires_receipt: true, cap_amount: 500, is_mileage: false, taxable: false, gl_account: "429-0000" },
+                   { id: "ct2", code: "MEAL", name: "Meals & entertainment", active: true, sort_order: 2, requires_receipt: true, cap_amount: 200, is_mileage: false, taxable: false, gl_account: "420-0000" },
+                   { id: "ct3", code: "MILEAGE", name: "Mileage", active: true, sort_order: 3, requires_receipt: false, cap_amount: null, is_mileage: true, taxable: false, gl_account: "493-0000" } ],
     mileage_rates: [ { id: "mr1", label: "Car ≤ 1600cc", rate: 0.60, active: true }, { id: "mr2", label: "Motorcycle", rate: 0.30, active: true } ],
     workflows: [ { id: "wf1", name: "Standard", priority: 10, min_amount: 0, max_amount: 1000, active: true },
                  { id: "wf2", name: "High value", priority: 20, min_amount: 1000.01, max_amount: null, active: true } ],
@@ -547,6 +550,90 @@ Object.assign(FIXTURES, {
       status: "paid", submitted_at: "2026-07-28T01:00:00.000Z", claim_date: "2026-07-28",
       current_step_name: null, attachments: 0, description: "Site visit — 70 km" },
   ] },
+
+  // `hr_rc_get` (hr.ts:2563) — one claim, in full. It is the source for `hr.expenses.detail`, the
+  // second screen behind the `expenses` nav id, so it is shaped to reach the branches that matter and
+  // to leave the two v225 does NOT migrate out of the golden entirely:
+  //
+  //   • `can_finance:false` / `can_post:false` — no per-line GL `edit` link and no 📤 Post to Xero
+  //     panel. Both are admin-half controls; the React screen mirrors them and hands them off, and its
+  //     own test drives both branches directly rather than through a golden.
+  //   • `Pending Manager Approval` — the "Approver actions" panel, which `hrRCDetail()` renders from the
+  //     STATUS alone (hros.html:2516), i.e. to the claim's owner as well. Mirrored, not fixed.
+  //   • TWO items, one of them a MILEAGE line with parking and toll, so the `km × rate + park + toll`
+  //     caption is in the diff — a single non-mileage line would leave that branch unproven.
+  //   • The header `amount` (128.40) is deliberately NOT the sum of the two lines (86.40 + 42.00 =
+  //     128.40 — it IS, and it must be: `hr_rc_save` stores the sum of the rounded lines, so a fixture
+  //     where they disagree would let a re-summing port pass).
+  //   • Step 2 carries an `approver_role` and NO assignee — the "nobody assigned" warning branch.
+  //   • `buyer.complete:false` with no TIN and no IC — both fallback spellings in one row.
+  hr_rc_get: {
+    ok: true,
+    claim: {
+      id: "rc1", claim_no: "RC-2026-0031", claim_date: "2026-08-09", claim_month: "2026-08",
+      cost_center: "SLS", department: "Sales", project: "Q3 roadshow", description: "Client visit — Grab + mileage",
+      status: "Pending Manager Approval", amount: 128.40, employee_id: "e2", current_step: 1,
+      submitted_at: "2026-08-09T03:20:00.000Z",
+      warnings: ["Submitted 11 days after the expense date"],
+      override_amount: null, override_reason: null, xero_bill_id: null,
+      hr_employees: {
+        emp_no: "E002", name: "SITI NURHALIZA BINTI OMAR", dept: "Sales", position: "Sales Executive",
+        bank_name: "CIMB Bank Berhad", bank_account: "8001234567", ic_no: "960722-14-6622",
+        email: "siti@ctg.test", phone: "+6012-345 6789", address: "12 Jalan Molek, 81100 Johor Bahru", tax_no: null,
+      },
+      hr_claim_types: { name: "Travel & transport", is_mileage: false },
+    },
+    items: [
+      { id: "ri1", claim_type_id: "ct1", item_date: "2026-08-09", description: "Grab — office to client",
+        amount: 86.40, vendor_name: "GRABCAR MALAYSIA SDN BHD", receipt_no: "GR-77120", invoice_no: "INV-77120",
+        gl_account: null, cost_center: "SLS", remarks: null, tax_amount: 0, sst_amount: 5.18,
+        is_einvoice: true, supplier_tin: "C24680135790", einvoice_uuid: "F9K2M4P6R8T0V2X4Z6B8D0G2",
+        hr_claim_types: { name: "Travel & transport", is_mileage: false, gl_account: "429-0000" } },
+      { id: "ri2", claim_type_id: "ct3", item_date: "2026-08-09", description: "Return leg",
+        amount: 42.00, vendor_name: null, receipt_no: null, invoice_no: null,
+        gl_account: "493-0000", cost_center: null, remarks: "Own car",
+        total_km: 60, mileage_rate: 0.60, parking_amount: 4.00, toll_amount: 2.00,
+        start_location: "Client KL", end_location: "Office",
+        is_einvoice: false, tax_amount: 0, sst_amount: 0,
+        hr_claim_types: { name: "Mileage", is_mileage: true, gl_account: "493-0000" } },
+    ],
+    mileage: null,
+    steps: [
+      { step_order: 1, name: "Manager", approver_role: "manager", assignee_name: "AHMAD BIN ISMAIL",
+        status: "Pending", decision: null, comment: null, acted_by_name: null, acted_at: null },
+      { step_order: 2, name: "Finance", approver_role: "finance", assignee_name: null,
+        status: "Pending", decision: null, comment: null, acted_by_name: null, acted_at: null },
+    ],
+    attachments: [
+      { id: "at1", file_name: "grab-receipt.pdf", url: "https://example.test/grab-receipt.pdf" },
+      { id: "at2", file_name: "toll.jpg", url: "https://example.test/toll.jpg" },
+    ],
+    comments: [
+      { author_name: "AHMAD BIN ISMAIL", created_at: "2026-08-10T02:05:00.000Z", comment: "Please attach the toll receipt too." },
+    ],
+    payment: null,
+    buyer: { complete: false, name: "SITI NURHALIZA BINTI OMAR", tin: null, tin_effective: "EI00000000010",
+             ic: null, address: "12 Jalan Molek, 81100 Johor Bahru", email: "siti@ctg.test", phone: "+6012-345 6789" },
+    declaration: { business_purpose: true, not_claimed_before: true, receipts_valid: true,
+                   understand_disciplinary: true, declared_at: "2026-08-09T03:20:00.000Z" },
+    can_finance: false, can_post: false, employer: EMPLOYER, signer_sig: null,
+  },
+
+  // The Reimbursement WRITES. No golden reaches any of them — they exist so `tools/serve_both.ts` can
+  // drive Submit, the receipt upload and a claim's lifecycle end to end without production credentials,
+  // which is what that server is for. Same arrangement as the three `hr_leave_*` writes above.
+  hr_rc_save: { ok: true, id: "rc1", amount: 128.40 },
+  hr_rc_submit: { ok: true, status: "Pending Manager Approval", warnings: ["Submitted 11 days after the expense date"] },
+  hr_rc_decide: { ok: true, status: "Pending Finance Approval" },
+  hr_rc_mark_paid: { ok: true },
+  hr_rc_cancel: { ok: true },
+  hr_rc_adjust_amount: { ok: true, from: 128.40, to: 99.00 },
+  hr_rc_attach_sign: { ok: true, url: null, path: "rc1/receipt.pdf" },
+  hr_rc_attach: { ok: true },
+  // `hr_rc_ocr` is behind Claude vision credits in production (hr.ts:2129). The scanner is built to work
+  // without it — the QR and the attachment still land — so the fixture answers the way a credit-less
+  // deployment does, which is the branch worth being able to drive.
+  hr_rc_ocr: { ok: false, error: "vision credits exhausted" },
 
   hr_my_payslips: { ok: true, year: 2026, employer: EMPLOYER,
     payslips: [7, 6, 5].map((m) => ({

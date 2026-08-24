@@ -88,6 +88,35 @@ export const SURFACES: Surface[] = [
     setup: EMP_MODE + "HR.view='leave';",
     render: "hrRender()",
   },
+  // `expenses` is the OTHER nav id with more than one screen behind it, and it has FOUR. `hrRC()`
+  // (hros.html:1783) is a tab bar over `RC.page` — list / form / detail / dashboard / settings — and
+  // `hr.expenses` above only ever captured the list, because `RC.page` starts there. Two of the others
+  // are the EMPLOYEE half of Reimbursement (Submit, and a claim's detail) and are the whole reason an
+  // employee opens this screen at all; a golden cannot see a screen that is never mounted, which is how
+  // the React route shipped for months sending every Submit click back to hros.html. Dashboard and
+  // Settings are admin-only and are not migrated, so they get no surface here.
+  {
+    id: "hr.expenses.form", app: "hros.html" as const, title: "Reimbursement · Submit",
+    setup: RC_PRIMED + "HR.view='expenses';",
+    render: "(RC.page='form', hrRender())",
+  },
+  {
+    // `hrRCOpen()` (hros.html:2508) fetches `hr_rc_get`, sets `RC.page='detail'` and renders — so the
+    // render expression is the real navigation, not a state poke. It paints `#hr` twice (a spinner,
+    // then the claim); last-write-wins per id keeps the loaded screen, `finance.approvals`' case.
+    id: "hr.expenses.detail", app: "hros.html" as const, title: "Reimbursement · a claim",
+    setup: RC_PRIMED + "HR.view='expenses';",
+    render: "hrRCOpen('rc1')",
+  },
+  {
+    // Employee mode. `RC.me.isAdmin===false` is what changes the shape (hros.html:1785, :1821): two
+    // tabs instead of four, and "My claims / 🔔 Approvals / Approved / Paid" instead of the admin
+    // scopes. It is set directly because `hr_rc_config` is one fixture and the admin surfaces need the
+    // admin answer — the flag is the whole of the difference the renderer reads.
+    id: "hr.expenses.emp", app: "hros.html" as const, title: "Reimbursement (employee)",
+    setup: RC_PRIMED + "HR.view='expenses';",
+    render: "(RC.me={isAdmin:false,is_manager:false,roles:[]}, RC.page='list', hrRender())",
+  },
 ];
 
 /** Seed the globals a signed-in operator would have, then hand back the live app. */

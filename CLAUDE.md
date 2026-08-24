@@ -158,7 +158,7 @@ spelling it recommended. Standardise on the queueing shape, whichever file it en
 
 **A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
 reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
-evaluates `inlineScript()` — the 41 goldens included — parses and runs your file too, and
+evaluates `inlineScript()` — the 44 goldens included — parses and runs your file too, and
 `tests/shared_scripts_test.ts` fails if one is missing, empty or unparseable. The `cp common.js` step in
 `.github/workflows/ci.yml` is still by name and still only covers `common.js`; that gap is now closed
 from the tests side, so you do not have to edit the workflow.
@@ -1325,7 +1325,7 @@ rather than a silent filing change.
 **What is deliberately still not Malaysian, and why it CANNOT be here:** the BARE `toLocale*` calls that
 display an INSTANT (a punch time, a password-reset stamp). `tests/render_harness.ts` makes the local
 getters read as UTC and forces `timeZone:'UTC'` on every `toLocale*`, so shifting one by 8 hours moves a
-committed golden — and regenerating 41 goldens is a bigger, separate change. The consequence is real and
+committed golden — and regenerating 44 goldens is a bigger, separate change. The consequence is real and
 worth knowing: an admin abroad sees a Malaysian hour in the punch EDITOR and their own in the punch
 TABLE beside it. Fixing that means regenerating goldens on purpose.
 
@@ -1529,6 +1529,68 @@ input, no select, no form, no second button — in the loaded state AND the empt
 asks for exactly `audit_list` on that sub-view. It is the record of who changed the permissions the other
 three sub-views hand out, and five of the seven actions `actMeta` names are this screen's own.
 
+### `hr.expenses` was the same gap on the HR side — v225, the EMPLOYEE half of Reimbursement
+
+`hrRC()` (hros.html:1783) is a tab bar over FIVE bodies dispatched on `RC.page` — list / form / detail /
+dashboard / settings — behind one nav id. Only the list was migrated, so **no employee could file an
+expense claim from React at all**: Submit and a claim's detail did `window.location.href` back to
+hros.html. `finance.users`' lesson, in HR. v225 migrates list + form + detail; Dashboard and Settings
+are admin-only and still hand off, and the on-page banner names them.
+
+**Two defects were already live in that route and NEITHER is visible to any golden.** (1) `hr_companies`
+(hr.ts:815) requires `hrCanView()` — admin / hr_admin / viewer — and the route awaited it FIRST, so every
+plain `employee` got `⚠️ unauthorized` as the whole page and could not see even their own claims. That is
+`hr.leave`'s F2 and `finance.users`' "a gate downstream of the load" at once; `hr_rc_config` answers for
+an employee AND says which shape to render, so it is loaded first and `hr_companies` only inside the
+admin branch. (2) The company was kept by NAME, so every call went out with no `tenant` and
+`hr_rc_list`'s admin branch (hr.ts:2549) answered `ok` with an EMPTY list — `hr.yearend`'s `hr_bootstrap`
+finding, silent the same way. Both are pinned by SOURCE in `web/tests/hr-expenses-emp.parity.test.tsx`.
+
+**THE DOUBLE-SUBMIT GUARD HAS TO BE A REF, AND `useState` LOOKS IDENTICAL UNTIL YOU TAP FIVE TIMES.**
+`hrRCSave()` opens with `if(RC._saving) return;` (hros.html:2083) — a plain mutable flag, set
+SYNCHRONOUSLY. Written with `useState` first, this route recorded **five `hr_rc_save` and five
+`hr_rc_submit` calls** from five taps in one tick: every handler read the same `false` out of one
+closure, and `disabled={saving}` does not help because the attribute lands on the NEXT render, after the
+burst. Five such holes were fixed in PRs 108/109 and this would have been the sixth. It was found by
+driving a real browser, not by a test — no output assertion this fleet can run sees it. `savingRef` /
+`detailBusyRef` / the scan modal's `busyRef` are the shape; the state flags stay, but only to grey the
+control out. **Check every React `runOnce`/busy port this way.**
+
+**Three surfaces, not one — 42, 43 and 44.** `hr.expenses.form`, `hr.expenses.detail` and
+`hr.expenses.emp` (the two-tab, four-scope shape `RC.me.isAdmin===false` produces). `hr.leave`'s rule:
+when a mode is a WHOLE OTHER SCREEN behind one nav id, capture the golden — a golden cannot see a screen
+that is never mounted.
+
+**`src/hr-rc-pdf.ts` is a KNOWN FORK of `hrRCBuildFormPdf()` (hros.html:1895) and is held by
+EXTRACTION.** Everywhere else a drawer both halves need lives in `hr-docs.js` so it cannot fork; v225's
+brief forbade editing hros.html, and lifting a function means deleting it from there.
+`web/tests/hr-expenses-pdf.test.tsx` therefore pulls `hrRCBuildFormPdf` out of hros.html at run time,
+runs it and the React copy against the SAME recording jsPDF stub, and requires the two call logs to be
+identical — every coordinate, every font size, every string, in order. That is as strong as importing
+it. **Folding it into `hr-docs.js` is the right next change**: one edit to hros.html and one import.
+`hrRCParseEinv` is held the same way in `web/tests/hr-expenses-scan.test.tsx`.
+
+**The scanner splits like `hr.profile`'s signature pad.** Every DECISION — the auto-crop heuristic and
+its three bails, the 12px tap discard, the rotate sizing, the QR parse, the OCR field mapping — is a
+pure function in `src/hr-rc-scan.ts` with its own test; the canvas and the pointer events are
+`app/hr/expenses/scan-modal.tsx`. The camera itself is `DocScanner` in `common.js`, SHARED and reached
+by indirect `eval` (`app/finance/upload/page.tsx`'s precedent). **The QR beats the OCR** for the
+e-invoice identity — it is read off the document with no model in the loop — and every OCR assignment is
+truthiness-guarded, because an unguarded port BLANKS a vendor name the employee typed when the next scan
+comes back empty.
+
+**Three legacy findings raised here and deliberately NOT fixed.** (1) `hrRCDetail()` derives `pending`
+from the STATUS alone (hros.html:2516), so the "Approver actions" panel — Approve / Reject / Override —
+renders for the claim's OWNER on their own Submitted claim; `hr_rc_decide` refuses them, so it errors on
+click. `hrClaims()` not wrapping its decisions in `hrRW()` is the same class. (2)
+`hrRCFormAndReceipts()`'s toast branches on `added`, so a merge where every receipt failed to fetch
+reports "Form generated ✓ (no receipts attached)" rather than naming the failures (hros.html:1985).
+(3) `tests/render_fixtures.ts`'s `hr_rc_list` rows are in the wrong SHAPE — `employee_name` /
+`total_amount` / `status:"pending_approval"` where `hrRCList()` reads `hr_employees.name`,
+`hr_claim_types.name` and `amount` — so `tests/golden/hr.expenses.html` holds `—`, `—` and **RM 0.00**
+for all three claims. The same class as the `role_approvers` finding above, and left alone because
+correcting it moves a committed golden that is not this change's to move.
+
 ### The shell is `web/src/nav.ts` + one component per app, and the nav lists ALL 36 screens
 
 The chrome landed after the first fifteen screens, not before them. `web/app/hr/layout.tsx` and
@@ -1661,7 +1723,7 @@ HR OS a control the legacy never offered is a feature, not a migration — pinne
 files at run time, so a button added to hros.html surfaces as a failure here.
 
 **A dialog whose HOST cannot be mounted still needs its decisions driven — split the effect out.**
-vitest runs `environment: 'node'` and all 45 test files depend on that, so `SecurityHost` cannot be
+vitest runs `environment: 'node'` and all 52 test files depend on that, so `SecurityHost` cannot be
 rendered. `submitEnroll(step, verify)` and `submitDisable(step, disable)` are therefore pure functions
 of their inputs plus ONE injected effect (`bankFile()`'s split, for an async path): `{enabled:true}` is
 returned on exactly one branch, after `verify` RESOLVED, and that is drivable. What is left in the host
@@ -1703,7 +1765,7 @@ occurrences.
 **Still not done:** the session-expired and idle-timeout modals (app.html:1376, :2685) have no React
 equivalent — a React-only operator's session dies silently. `prompt()` is still native. The toast
 QUEUE's timing, the confirm's Escape listener and the alert panel's click-away listener are not covered
-by a test: vitest runs `environment: 'node'` and all 45 test files depend on that, so adding jsdom for
+by a test: vitest runs `environment: 'node'` and all 52 test files depend on that, so adding jsdom for
 three behaviours was not worth it.
 
 ## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
@@ -1849,7 +1911,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 196 cases, incl. all 41 render goldens
+deno test --allow-read tests/          # 264 cases, incl. all 44 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
@@ -1886,7 +1948,7 @@ RM5,000) and are pinned as deliberate so nobody smooths a statutory rule out of 
 
 ### If a `tests/golden/` test fails
 
-All 41 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
+All 44 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
 (`tests/render_golden_test.ts`; `tests/COVERAGE.md` says what that does and does not hold). A failure
 means you changed what an operator sees. If that was the point:
 

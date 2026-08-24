@@ -3,7 +3,7 @@
 // WHY THIS FILE EXISTS: render_smoke_test.ts exists because v205 shipped a ReferenceError inside
 // hrPayroll() that lint could not see, the parse gate could not see, and no test could see because no
 // test had ever CALLED a renderer — the operator found it, as a spinner that never stopped. That fix
-// covered two screens. This covers all forty, and takes it one step further: not just "it did not
+// covered two screens. This covers all forty-four, and takes it one step further: not just "it did not
 // throw", but "it produced exactly this HTML".
 //
 // The goldens under tests/golden/ were captured from the current code and ARE the contract, the same
@@ -32,12 +32,14 @@ Deno.test("the surface inventory matches the goldens on disk — no screen silen
     "tests/golden/ and SURFACES disagree — regenerate with: deno run -A tools/render_probe.ts tests/golden");
 });
 
-Deno.test("all 41 rendered surfaces are covered", () => {
-  assertEquals(SURFACES.length, 41);
+Deno.test("all 44 rendered surfaces are covered", () => {
+  assertEquals(SURFACES.length, 44);
   assertEquals(SURFACES.filter((s) => s.app === "app.html").length, 22, "Finance OS tabs");
-  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 19,
-    "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553)");
-  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 41, "duplicate surface id");
+  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 22,
+    "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553) " +
+    "+ Reimbursement's Submit form, a claim's detail and its employee shape (hros.html:1783 dispatches " +
+    "five bodies over RC.page; the `hr.expenses` golden only ever held the list)");
+  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 44, "duplicate surface id");
 });
 
 /**

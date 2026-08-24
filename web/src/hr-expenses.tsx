@@ -13,12 +13,13 @@
 // included. It is not "better" — it is the SAME, because the golden is the contract.
 //
 // ── SCOPE: the list sub-page only ────────────────────────────────────────────────────────────────
-// `hrRC()` is a tab bar over five bodies — list, detail, form, dashboard, settings. The golden captures
-// `RC.page === 'list'`, which is the first-paint state, and each of the other four is its own screen's
-// worth of markup (the form alone is ~60 lines of hros.html). The tab bar is still rendered from props
-// so the active-button class stays a function of state rather than a hardcode; any `page` other than
-// 'list' (and 'detail', which highlights the list tab exactly as the legacy does) renders no body here
-// and the route says so. Same call hr-approvals made about its Reimbursement tab.
+// `hrRC()` is a tab bar over five bodies — list, detail, form, dashboard, settings. This file is the
+// page head, the tab bar and the LIST; `page` selects which, and any value other than 'list' (and
+// 'detail', which highlights the list tab exactly as the legacy does) renders no body HERE. v225 added
+// the other two the employee needs as their own components and their own goldens —
+// `src/hr-expenses-form.tsx` (`hr.expenses.form`) and `src/hr-expenses-detail.tsx`
+// (`hr.expenses.detail`) — which `app/hr/expenses/page.tsx` mounts alongside this one. Dashboard and
+// Settings are admin-only and still hand off.
 //
 // NOT reachable from the golden, mirrored from the legacy source anyway (see CLAUDE.md — "a branch the
 // golden does not hold is not covered, say so where you write it"):
@@ -26,9 +27,10 @@
 //   • the empty-list row — the fixture has three claims;
 //   • the bulk action bar's buttons and the `clear` link — the golden was captured with `RC.sel` empty,
 //     so the bar renders only its prompt. Left out, the bulk buttons would be wired to nothing.
-//   • the `⇢X` Xero badge — no fixture claim carries `xero_bill_id`;
-//   • employee mode (`RC.me.isAdmin === false`), which changes both the tab list and the scope list.
-// The parity test does not reach any of them.
+//   • the `⇢X` Xero badge — no fixture claim carries `xero_bill_id`.
+// This file's parity test does not reach any of them. Employee mode (`RC.me.isAdmin === false`), which
+// changes BOTH the tab list and the scope list, used to be on that list and is now its own golden —
+// `hr.expenses.emp`, diffed in `web/tests/hr-expenses-emp.parity.test.tsx`.
 //
 // ── The bank file is NOT markup, and it is the dangerous part of this screen ─────────────────────
 // `bankFile()` below is `hrRCExportBank()` (hros.html:1849) moved across verbatim, minus the download
