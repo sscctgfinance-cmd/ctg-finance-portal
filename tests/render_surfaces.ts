@@ -117,6 +117,27 @@ export const SURFACES: Surface[] = [
     setup: RC_PRIMED + "HR.view='expenses';",
     render: "(RC.me={isAdmin:false,is_manager:false,roles:[]}, RC.page='list', hrRender())",
   },
+  // ── the ADMIN half, v226 ────────────────────────────────────────────────────────────────────────
+  // `hrRCNav('dashboard')` is the real navigation (it sets RC.page AND fires hrRCLoadDash), so the
+  // render expression is the click, not a state poke — `hr.expenses.detail`'s arrangement. The load is
+  // not awaited by the legacy either; `app.settle()` is what lets it land.
+  {
+    id: "hr.expenses.dash", app: "hros.html" as const, title: "Reimbursement · Dashboard",
+    setup: RC_PRIMED + "HR.view='expenses';",
+    render: "hrRCNav('dashboard')",
+  },
+  // ⚙ Settings is FIVE tabs over `RC.setTab`, and each is a different table over a different slice of
+  // RC.cfg — the `finance.gateway` case, where a screen's tabs are MODES. One golden covers one mode,
+  // so all five get one: a golden per tab is one line here and byte-level, where an assertion written
+  // against the same source agrees with a widened port by construction. `RC.typeEdit` is null on every
+  // nav, so the claim-type EDITOR is in none of them and is pinned in the screen's own test.
+  ...([["types", "Claim Types"], ["rates", "Mileage Rates"], ["costcenters", "Cost Centers"],
+       ["workflows", "Approval Workflows"], ["approvers", "Role Approvers"]] as [string, string][])
+    .map(([t, title]) => ({
+      id: "hr.expenses.settings." + t, app: "hros.html" as const, title: "Reimbursement · Settings · " + title,
+      setup: RC_PRIMED + "HR.view='expenses';",
+      render: `(RC.setTab=${JSON.stringify(t)}, hrRCNav('settings'))`,
+    })),
 ];
 
 /** Seed the globals a signed-in operator would have, then hand back the live app. */

@@ -516,7 +516,12 @@ function Actions({ p, pending }: { p: HrExpensesDetailProps; pending: boolean })
   return null;
 }
 
-/** hros.html:2549-2559. Out of v225's scope: `onPostXero` is the strangler edge back to hros.html. */
+/**
+ * hros.html:2549-2559. `onPostXero` CREATES A BILL IN A LIVE XERO LEDGER (or re-syncs the reference of
+ * one already there), so both buttons carry `busy` — greyed by the state flag the route sets, while the
+ * refusal itself is the route's synchronous ref. Neither branch is in a golden: the fixture claim is
+ * `can_post:false` with no `xero_bill_id`, so the screen's own test drives all three states.
+ */
 function XeroBlock({ p }: { p: HrExpensesDetailProps }) {
   const d = p.detail, c = d.claim;
   if (c.xero_bill_id) {
@@ -527,7 +532,7 @@ function XeroBlock({ p }: { p: HrExpensesDetailProps }) {
           {'ACCPAY bill · SUBMITTED (awaiting your payment approval in Xero) · ref ' + (c.xero_reference || c.claim_no || '')
             + (c.xero_posted_at ? ' · ' + String(c.xero_posted_at).slice(0, 16).replace('T', ' ') : '')}
         </div>
-        {d.can_post ? <button className="btn xs" style={{ marginTop: '8px' }} onClick={p.onPostXero}>Re-sync reference</button> : null}
+        {d.can_post ? <button className="btn xs" style={{ marginTop: '8px' }} disabled={p.busy === 'xero'} onClick={p.onPostXero}>Re-sync reference</button> : null}
       </div>
     );
   }
@@ -538,7 +543,7 @@ function XeroBlock({ p }: { p: HrExpensesDetailProps }) {
       <div className="muted" style={{ fontSize: '12px', marginBottom: '8px' }}>
         Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.
       </div>
-      <button className="btn p sm" onClick={p.onPostXero}>Post to Xero →</button>
+      <button className="btn p sm" disabled={p.busy === 'xero'} onClick={p.onPostXero}>Post to Xero →</button>
     </div>
   );
 }

@@ -635,6 +635,58 @@ Object.assign(FIXTURES, {
   // deployment does, which is the branch worth being able to drive.
   hr_rc_ocr: { ok: false, error: "vision credits exhausted" },
 
+  // ── the ADMIN half of Reimbursement (v226) ─────────────────────────────────────────────────────
+  //
+  // `hr_rc_dashboard` (hr.ts:2665). Every figure on that screen is the SERVER's, rounding included
+  // (`sumF`/`byKey`/`trend` all end in `Math.round(x*100)/100`), so the fixture is the answer the
+  // server would give for the three `hr_rc_list` claims above and the React screen derives none of it:
+  // 128.40 pending (SITI · Sales · Travel), 88.00 approved (AHMAD · Operations · Meals), 42.00 paid
+  // (RAJESH · Warehouse · Mileage). `alerts` carries rc1's own stored warning, which is the branch
+  // that renders the panel rather than "No anomalies flagged ✓".
+  hr_rc_dashboard: { ok: true, data: {
+    total_claims: 3, total_amount: 258.40,
+    pending: 1, approved: 1, rejected: 0, paid: 1, paid_amount: 42.00,
+    trend: [ { label: "Mar", value: 0 }, { label: "Apr", value: 0 }, { label: "May", value: 0 },
+             { label: "Jun", value: 0 }, { label: "Jul", value: 42 }, { label: "Aug", value: 216.4 } ],
+    by_type: [ { label: "Travel & transport", value: 128.4 }, { label: "Meals & entertainment", value: 88 },
+               { label: "Mileage", value: 42 } ],
+    by_department: [ { label: "Sales", value: 128.4 }, { label: "Operations", value: 88 }, { label: "Warehouse", value: 42 } ],
+    by_employee: [ { label: "SITI NURHALIZA BINTI OMAR", value: 128.4 }, { label: "AHMAD BIN ISMAIL", value: 88 },
+                   { label: "RAJESH A/L KUMAR", value: 42 } ],
+    alerts: [ { claim_no: "RC-2026-0031", name: "SITI NURHALIZA BINTI OMAR", amount: 128.40,
+                warnings: ["Submitted 11 days after the expense date"] } ],
+  } },
+
+  // `sbi_accounts` — the Xero chart of accounts. `hrRCLoadAccounts()` (hros.html:2652) keeps
+  // `code`/`name`/`cls` and the claim-type editor filters to `cls === 'EXPENSE'`. No golden reaches it
+  // (`RC.typeEdit` is null on every nav); it is here so `tools/serve_both.ts` can drive the editor.
+  sbi_accounts: { ok: true, accounts: [
+    { code: "420-0000", name: "Entertainment", cls: "EXPENSE" },
+    { code: "429-0000", name: "General Expenses", cls: "EXPENSE" },
+    { code: "493-0000", name: "Travel — National", cls: "EXPENSE" },
+    { code: "200-0000", name: "Sales", cls: "REVENUE" },
+  ] },
+
+  // The admin-half WRITES. No golden reaches any of them either — same arrangement as the `hr_rc_*`
+  // writes above. `hr_rc_export_accounting`'s rows are the shape hr.ts:2304 builds, one per expense
+  // LINE, and `tools/serve_both.ts` is the only thing that reads them; the byte-for-byte export check
+  // in web/tests/hr-expenses-admin.test.tsx builds its own rows so it can drive quoting and rounding.
+  hr_rc_admin_save: { ok: true },
+  hr_rc_set_gl: { ok: true, updated: 2, gl_account: "800-1000" },
+  hr_rc_post_xero: { ok: true, bill_id: "xb-1", attached: 2 },
+  hr_rc_export_accounting: { ok: true, count: 2, rows: [
+    { claim_no: "RC-2026-0030", claim_month: "2026-08", status: "Approved", emp_no: "E001", employee: "AHMAD BIN ISMAIL",
+      department: "Operations", item_date: "2026-08-02", expense_type: "Meals & entertainment", vendor_name: "SUSHI KING",
+      description: "Client lunch", receipt_no: "SK-119", invoice_no: "", gl_account: "420-0000", cost_center: "OPS",
+      project: "", amount: 88, tax_amount: 0, sst_amount: 5.28, payment_date: "", payment_method: "",
+      payment_reference: "", xero_ref: "", bank: "Malayan Banking Berhad", bank_account: "1122334455" },
+    { claim_no: "RC-2026-0029", claim_month: "2026-07", status: "Paid", emp_no: "E003", employee: "RAJESH A/L KUMAR",
+      department: "Warehouse", item_date: "2026-07-28", expense_type: "Mileage", vendor_name: "",
+      description: "Site visit — 70 km", receipt_no: "", invoice_no: "", gl_account: "493-0000", cost_center: "OPS",
+      project: "", amount: 42, tax_amount: 0, sst_amount: 0, payment_date: "2026-08-01", payment_method: "Bank Transfer",
+      payment_reference: "TT-99001", xero_ref: "RC-2026-0029", bank: "Public Bank Berhad", bank_account: "3344556677" },
+  ] },
+
   hr_my_payslips: { ok: true, year: 2026, employer: EMPLOYER,
     payslips: [7, 6, 5].map((m) => ({
       month: m, year: 2026, run_date: "2026-0" + m + "-28",

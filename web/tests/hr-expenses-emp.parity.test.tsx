@@ -193,14 +193,18 @@ describe('the submit button cannot be double-submitted', () => {
   });
 });
 
-describe('what the route still hands off, and what it no longer does', () => {
-  it('Submit and a claim’s detail are handled in React, not by a location change', () => {
+// ── v226: this block USED to pin what still handed off. Nothing does. ─────────────────────────────
+//
+// It read "what the route still hands off, and what it no longer does" and asserted the presence of
+// `goLegacy(pg)`, `onGlEdit={() => goLegacy(…)}`, `onPostXero={() => goLegacy(…)}` and a banner
+// sentence naming five legacy controls. All five were migrated, so those four assertions could not
+// survive the change — they were the REGISTRY of what was left, the way `SURFACES.length` is, not a
+// statement about behaviour. Inverted here rather than deleted, which is strictly stronger: the route
+// is now required to contain NO handoff at all, so a future half-migration fails here.
+describe('nothing on this screen hands off any more', () => {
+  it('every tab of hrRC() is decided in React, and the fall-through goes nowhere', () => {
     const nav = ROUTE.slice(ROUTE.indexOf('onNav={(pg) => {'), ROUTE.indexOf('onScope={onScope}'));
-    expect(nav).toContain("if (pg === 'list')");
-    expect(nav).toContain("if (pg === 'form')");
-    expect(nav).toContain('goLegacy(pg)');
-    // The handoff is the FALL-THROUGH, so a tab added later hands off rather than silently doing nothing.
-    expect(nav.indexOf('goLegacy(pg)')).toBeGreaterThan(nav.indexOf("if (pg === 'form')"));
+    for (const pg of ['list', 'form', 'dashboard', 'settings']) expect(nav).toContain(`if (pg === '${pg}')`);
     expect(ROUTE).toMatch(/onOpen=\{\(id\) => void openDetail\(id\)\}/);
   });
 
@@ -208,22 +212,35 @@ describe('what the route still hands off, and what it no longer does', () => {
     expect(ROUTE).toMatch(/onClose=\{\(\) => \{ setPage\('list'\); void refreshList\(scope\); \}\}/);
   });
 
-  it('the two admin-half controls inside the detail are the only ones that hand off from it', () => {
-    expect(ROUTE).toMatch(/onGlEdit=\{\(\) => goLegacy\(detail\.claim\.id\)\}/);
-    expect(ROUTE).toMatch(/onPostXero=\{\(\) => goLegacy\(detail\.claim\.id\)\}/);
+  it('the detail’s two admin controls call handlers, not the legacy app', () => {
+    expect(ROUTE).toMatch(/onGlEdit=\{onGlEdit\}/);
+    expect(ROUTE).toMatch(/onPostXero=\{onPostXero\}/);
+    expect(ROUTE).toMatch(/onExportAcct=\{onExportAcct\}/);
   });
 
-  it('the on-page notice names exactly what is still on the legacy screen', () => {
+  it('the route contains no route back to hros.html except the sign-in and the notice', () => {
+    // Comments blanked first — this file's own header QUOTES `goLegacy` while explaining that it is
+    // gone, which is tests/forwarding_page_test.ts's lesson.
+    const code = ROUTE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(code).not.toContain('goLegacy');
+    expect(code).not.toContain('window.location.href');
+    // `legacyUrl('hros.html')` survives twice and only twice: the not-signed-in panel's "Sign in to
+    // HR OS" link, and the notice's own link to the screen this one mirrors. Neither is a handoff of a
+    // control on this screen.
+    expect([...code.matchAll(/legacyUrl\(/g)].length).toBe(2);
+  });
+
+  it('the on-page notice names exactly what is left on the legacy screen — nothing', () => {
     // Criterion 5. The banner is the only place a user is told, so it has to stay honest as the
-    // migration moves: Submit and the detail came across in v225 and the sentence shrank with them.
+    // migration moves. v225's version listed five things; v226 migrated all five.
     const banner = ROUTE.slice(ROUTE.indexOf('function Banner('));
-    expect(banner).toContain('Claims, Submit and a claim');
-    expect(banner).toContain('📊 Dashboard');
-    expect(banner).toContain('⚙ Settings');
-    expect(banner).toContain('📒 Accounting CSV');
-    expect(banner).toContain('GL account');
-    expect(banner).toContain('posting a claim to Xero');
-    // …and it must NOT still claim Submit / detail are elsewhere.
-    expect(banner).not.toMatch(/Submit, Dashboard, Settings and a claim/);
+    expect(banner).toContain('Every part of it is here');
+    expect(banner).toContain('Nothing on this screen sends you back to the legacy app');
+    // …and it must not still name one of the five as elsewhere. The whole point of the sentence is
+    // that it shrank; a stale list is the specific failure this project has hit repeatedly.
+    expect(banner).not.toContain('Still on the legacy screen');
+    for (const gone of ['📊 Dashboard,', '⚙ Settings,', '📒 Accounting CSV export']) {
+      expect(banner).not.toContain(gone);
+    }
   });
 });

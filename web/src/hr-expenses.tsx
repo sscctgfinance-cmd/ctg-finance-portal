@@ -90,6 +90,10 @@ export interface HrExpensesProps {
   onSelToggle: (id: string, on: boolean) => void;
   onSelClear: () => void;
   onExportAcct: () => void;
+  /** `exportRef` in the route — greys the 📒 button while its export is in flight. The REFUSAL is the
+   *  route's synchronous ref; this is only what the button reads. `false` renders no attribute, so no
+   *  golden moves. */
+  exportingAcct?: boolean;
   onExportCsv: () => void;
   onExportBank: () => void;
   onBulkApprove: () => void;
@@ -198,7 +202,7 @@ function ClaimsList(p: HrExpensesProps) {
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           {canFinance ? (
-            <button className="btn xs" onClick={p.onExportAcct} title="Approved/Paid lines with GL · tax · SST · cost center — for accounting">📒 Accounting CSV</button>
+            <button className="btn xs" disabled={!!p.exportingAcct} onClick={p.onExportAcct} title="Approved/Paid lines with GL · tax · SST · cost center — for accounting">📒 Accounting CSV</button>
           ) : null}
           <button className="btn xs" onClick={p.onExportCsv} title="Export this list to CSV">⬇ CSV</button>
           <button className="btn p sm" onClick={() => p.onNav('form')}>➕ New claim</button>
@@ -350,5 +354,58 @@ export function listCsv(claims: RcClaim[], scope: string, today: string): { name
     name: 'Reimbursements_' + scope + '_' + today + '.csv',
     text: hrCsv(([head] as (string | number)[][]).concat(body)),
     count: claims.length,
+  };
+}
+
+/** One row of `hr_rc_export_accounting` — hr.ts:2304 builds exactly these keys, one per expense LINE. */
+export interface RcAcctRow {
+  claim_no?: string; claim_month?: string; status?: string; emp_no?: string; employee?: string; department?: string;
+  item_date?: string; expense_type?: string; vendor_name?: string; description?: string; receipt_no?: string;
+  invoice_no?: string; gl_account?: string; cost_center?: string; project?: string;
+  amount?: number; tax_amount?: number; sst_amount?: number;
+  payment_date?: string; payment_method?: string; payment_reference?: string; xero_ref?: string;
+  bank?: string; bank_account?: string;
+}
+
+/**
+ * `hrRCExportAcct()` — hros.html:1856, moved across verbatim minus the prompt, the fetch, the download
+ * and the toast (those are the button; they live in the route). `month` is the operator's own string,
+ * already trimmed, `''` meaning ALL.
+ *
+ * THIS FILE GOES INTO THE BOOKS, so it is held byte-for-byte against the legacy rather than
+ * "equivalently": `web/tests/hr-expenses-admin.test.tsx` EXTRACTS `hrRCExportAcct` out of hros.html at
+ * run time, runs both against the same rows and diffs the two CSV strings. Three things that diff would
+ * catch and a shape assertion would not:
+ *
+ *  1. THE TRAILER IS DELIBERATE, and it is the opposite call to `bankFile()`'s. A bank file is a list of
+ *     PAYMENTS, so a TOTAL row there is a payment for the whole batch (the v157 incident). This is an
+ *     accounting report an operator reconciles, the legacy ends it with a total, and whatever consumes
+ *     it downstream is expecting that line. `'TOTAL'` sits in the PROJECT column (index 14) with the
+ *     figure beside it in `Amount (RM)`; the row is padded to the full 24 columns.
+ *  2. THE TOTAL IS THE SUM OF THE RAW AMOUNTS, rounded ONCE at the end — not the sum of the printed
+ *     `.toFixed(2)` cells. The two can differ by a sen where a stored amount carries more than two
+ *     decimals. They do not here (`hr_rc_save` rounds each line at the store, which is this repo's
+ *     rule), so the legacy's arithmetic is mirrored exactly rather than "corrected" — changing a filed
+ *     figure is a decision, not a migration detail.
+ *  3. EVERY OTHER CELL IS PASSED THROUGH RAW, as the legacy passes it: `hrCsv()` only stringifies a
+ *     cell it has to quote, so coercing a value here (`x.vendor_name || ''`) would change bytes for
+ *     any row the server sent without that key.
+ */
+export function accountingCsv(rows: RcAcctRow[], month: string, today: string): { name: string; text: string; total: number } {
+  const head = ['Claim No', 'Month', 'Status', 'Emp No', 'Employee', 'Department', 'Item Date', 'Expense Type', 'Vendor', 'Description', 'Receipt No', 'Invoice No', 'GL Account', 'Cost Center', 'Project', 'Amount (RM)', 'Tax (RM)', 'SST (RM)', 'Payment Date', 'Payment Method', 'Payment Ref', 'Xero Ref', 'Bank', 'Bank Account'];
+  // `as` and not `|| ''`: the cells are passed through EXACTLY as the legacy passes them (see 3 above),
+  // so the cast is about the type only — the runtime value, undefined included, is untouched.
+  const body = rows.map((x) => [
+    x.claim_no, x.claim_month, x.status, x.emp_no, x.employee, x.department, x.item_date, x.expense_type,
+    x.vendor_name, x.description, x.receipt_no, x.invoice_no, x.gl_account, x.cost_center, x.project,
+    (Number(x.amount) || 0).toFixed(2), (Number(x.tax_amount) || 0).toFixed(2), (Number(x.sst_amount) || 0).toFixed(2),
+    x.payment_date, x.payment_method, x.payment_reference, x.xero_ref, x.bank, x.bank_account,
+  ] as unknown as (string | number)[]);
+  const total = rows.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  body.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '', 'TOTAL', total.toFixed(2), '', '', '', '', '', '', '', '']);
+  return {
+    name: 'Reimbursement_Accounting_' + (month || 'ALL') + '_' + today + '.csv',
+    text: hrCsv(([head] as (string | number)[][]).concat(body)),
+    total,
   };
 }

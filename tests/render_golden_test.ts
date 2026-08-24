@@ -32,14 +32,16 @@ Deno.test("the surface inventory matches the goldens on disk — no screen silen
     "tests/golden/ and SURFACES disagree — regenerate with: deno run -A tools/render_probe.ts tests/golden");
 });
 
-Deno.test("all 44 rendered surfaces are covered", () => {
-  assertEquals(SURFACES.length, 44);
+Deno.test("all 50 rendered surfaces are covered", () => {
+  assertEquals(SURFACES.length, 50);
   assertEquals(SURFACES.filter((s) => s.app === "app.html").length, 22, "Finance OS tabs");
-  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 22,
+  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 28,
     "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553) " +
-    "+ Reimbursement's Submit form, a claim's detail and its employee shape (hros.html:1783 dispatches " +
-    "five bodies over RC.page; the `hr.expenses` golden only ever held the list)");
-  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 44, "duplicate surface id");
+    "+ the NINE surfaces behind the `expenses` nav id beyond its list: Submit, a claim's detail, the " +
+    "employee shape, the Dashboard and Settings' five tabs (hros.html:1783 dispatches five bodies over " +
+    "RC.page and hros.html:2621 dispatches five more over RC.setTab; the `hr.expenses` golden only " +
+    "ever held the list)");
+  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 50, "duplicate surface id");
 });
 
 /**

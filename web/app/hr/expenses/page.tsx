@@ -7,12 +7,19 @@
 //   app/<area>/<screen>/page.tsx   'use client', loads, holds state, wires handlers   — not golden-tested
 //   src/<screen>.tsx              pure, props in / markup out                         — golden-tested
 //
-// ── v225: the SUBMIT half ───────────────────────────────────────────────────────────────────────────
-// Until v225 only `RC.page === 'list'` was here and everything else did `window.location.href` back to
-// hros.html — so NO EMPLOYEE COULD FILE A CLAIM FROM REACT AT ALL. `hrRC()` (hros.html:1783) is a tab
-// bar over five bodies; three of them are now migrated (list, form, detail) and two are not (Dashboard
-// and Settings, both admin-only, both their own screen's worth of markup). The banner at the bottom of
-// this file says exactly that, and `onNav` still hands those two off.
+// ── REIMBURSEMENT IS COMPLETE — v226. Nothing on this screen hands off. ────────────────────────────
+// `hrRC()` (hros.html:1783) is a tab bar over FIVE bodies behind one nav id. v225 brought across the
+// employee half (list, form, detail) after the route had shipped for months sending every Submit click
+// back to hros.html; v226 brings the admin half — 📊 Dashboard, ⚙ Settings, the 📒 Accounting CSV, the
+// per-line GL editor and Post to Xero. There is no `goLegacy` in this file any more and the banner at
+// the bottom names nothing, because nothing is left. A screen added to `hrRC()` tomorrow arrives here
+// unmigrated: put it in the banner then, and not before.
+//
+// TWO OF THE FIVE ARE NOT RENDERING JOBS. `hr_rc_post_xero` writes an ACCPAY bill into a live Xero
+// ledger and `hr_rc_export_accounting` produces a file that goes into the books, so each carries a
+// SYNCHRONOUS ref guard (`detailBusyRef`, `exportRef`) — see `savingRef`'s comment for why a `useState`
+// flag is not one — and the export's bytes are held against the legacy's by extraction, not by shape
+// (`web/tests/hr-expenses-admin.test.tsx`).
 //
 // TWO SHAPES BEHIND ONE SCREEN, decided by role — `RC.me.isAdmin===false` (hros.html:1785) gives an
 // employee two tabs (📋 Claims / ➕ Submit) and four different scopes. `app/hr/leave/page.tsx` is the
@@ -31,7 +38,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
-import HrExpenses, { bankFile, listCsv, selectedIds, type RcClaim, type RcMe, type RcScope } from '../../../src/hr-expenses';
+import HrExpenses, { accountingCsv, bankFile, listCsv, selectedIds, type RcAcctRow, type RcClaim, type RcMe, type RcScope } from '../../../src/hr-expenses';
+import HrExpensesDash, { DashLoading, type RcDash } from '../../../src/hr-expenses-dash';
+import HrExpensesSettings, {
+  approverPrompt, approverRow, costCenterRow, mileageRateRow, typeRow,
+  type RcSetTab, type RcSettingsClaimType, type RcSettingsConfig, type XeroAccount,
+} from '../../../src/hr-expenses-settings';
 import HrExpensesForm, {
   blankItem, claimBody, DECLARATIONS, defaultRate, isMileage, itemAmount, keptItems, pickReceipts,
   saveRefusal, tooBigMessage, type RcConfig, type RcForm, type RcFormItem,
@@ -68,10 +80,8 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-const goLegacy = (page: string) => { window.location.href = `${legacyUrl('hros.html')}#tab=expenses&rc=${page}`; };
-
 interface Company { tenant_id: string; tenant_name: string }
-type Page = 'list' | 'form' | 'detail';
+type Page = 'list' | 'form' | 'detail' | 'dashboard' | 'settings';
 
 const el = (id: string) => document.getElementById(id) as (HTMLInputElement | HTMLSelectElement | null);
 const v = (id: string) => { const e = el(id); return e ? e.value : undefined; };
@@ -80,7 +90,7 @@ export default function HrExpensesPage() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [me, setMe] = useState<RcMe | null>(null);
-  const [cfg, setCfg] = useState<RcConfig | null>(null);
+  const [cfg, setCfg] = useState<RcSettingsConfig | null>(null);
   const [claims, setClaims] = useState<RcClaim[] | null>(null);
   const [scope, setScope] = useState<RcScope>('pending');
   const [sel, setSel] = useState<Record<string, boolean>>({});
@@ -120,6 +130,24 @@ export default function HrExpensesPage() {
   const [scanStatus, setScanStatus] = useState('');
   const [scanImg, setScanImg] = useState<HTMLImageElement | null>(null);
 
+  /** `RC.dash` — hros.html:2610. Null until `hr_rc_dashboard` lands; `hrRCDash()` paints a spinner. */
+  const [dash, setDash] = useState<RcDash | null>(null);
+  /** `RC.setTab` / `RC.typeEdit` / `RC.accounts` / `RC.accLoading` — hros.html:2618, :2652-2657. */
+  const [setTab, setSetTab] = useState<RcSetTab>('types');
+  const [typeEdit, setTypeEdit] = useState<RcSettingsClaimType | null>(null);
+  const [accounts, setAccounts] = useState<XeroAccount[] | null>(null);
+  const [accTenant, setAccTenant] = useState<string | null>(null);
+  const [accLoading, setAccLoading] = useState(false);
+
+  /**
+   * The accounting export's own synchronous guard. Same reason `savingRef` is a ref and not state (see
+   * its comment): two taps in one tick both read `false` out of one closure, and `disabled` lands a
+   * render too late. This one matters because the export is a FILE that goes into the books — a second
+   * one differing from the first by a claim approved in between is the worst kind of duplicate.
+   */
+  const exportRef = useRef(false);
+  const [exporting, setExporting] = useState(false);
+
   const isEmp = me ? me.isAdmin === false : false;
   const repaint = useCallback(() => setGen((g) => g + 1), []);
 
@@ -138,7 +166,7 @@ export default function HrExpensesPage() {
   const load = useCallback(async (s: RcScope) => {
     setErr(null);
     try {
-      const c = await call<{ me?: RcMe; tenant_name?: string } & RcConfig>({ api: 'hr_rc_config' });
+      const c = await call<{ me?: RcMe; tenant_name?: string } & RcSettingsConfig>({ api: 'hr_rc_config' });
       const who = c.me || {};
       setMe(who);
       setCfg(c);
@@ -150,7 +178,7 @@ export default function HrExpensesPage() {
         tenant = list.find((x) => x.tenant_id === saved) || list[0] || null;
         // An admin reloads the config WITH the company, because its claim types, cost centres and
         // employee list are company-scoped (hr.ts:1925) and the first call sent no tenant.
-        if (tenant) setCfg(await call<RcConfig>({ api: 'hr_rc_config', tenant: tenant.tenant_id }));
+        if (tenant) setCfg(await call<RcSettingsConfig>({ api: 'hr_rc_config', tenant: tenant.tenant_id }));
       } else {
         // An employee works in ONE company and never sees the picker (hros.html:1377). `hr_rc_config`
         // resolves their tenant server-side and sends back only its NAME, which is all the chip needs;
@@ -221,6 +249,166 @@ export default function HrExpensesPage() {
     download(f.name, f.text);
     setNote(`CSV exported (${f.count} claim(s))`);
   }, [claims, scope]);
+
+  /**
+   * `hrRCExportAcct()` — hros.html:1856. The 📒 Accounting CSV: a FILE THAT GOES INTO THE BOOKS, so it
+   * gets the same treatment the Xero post does — a synchronous ref, released in `finally`. `month` is
+   * the operator's own `YYYY-MM`, blank meaning every Approved/Paid claim; `hr_rc_export_accounting`
+   * (hr.ts:2304) refuses anyone who is neither Finance nor admin, and that refusal surfaces as the
+   * legacy's does rather than being re-implemented here.
+   */
+  const onExportAcct = useCallback(() => {
+    if (exportRef.current) return;
+    const month = window.prompt('Claim month to export (YYYY-MM), or leave blank for ALL Approved/Paid:', '');
+    if (month == null) return;
+    const m = month.trim();
+    exportRef.current = true;
+    setExporting(true);
+    toast('Building accounting export…');
+    void (async () => {
+      try {
+        const r = await call<{ rows?: RcAcctRow[]; count?: number }>({ api: 'hr_rc_export_accounting', tenant: tenantId, month: m });
+        const rows = r.rows || [];
+        if (!rows.length) { toast('No Approved/Paid claims' + (m ? (' in ' + m) : '') + ' to export', true); return; }
+        const f = accountingCsv(rows, m, today());
+        download(f.name, f.text);
+        toast('Accounting export: ' + r.count + ' line(s) · RM' + f.total.toFixed(2));
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), true);
+      } finally {
+        exportRef.current = false;
+        setExporting(false);
+      }
+    })();
+  }, [tenantId]);
+
+  // ── the dashboard and the settings ───────────────────────────────────────────────────────────────
+
+  /** `hrRCLoadDash()` — hros.html:2610. */
+  const loadDash = useCallback(async () => {
+    try {
+      const r = await call<{ data: RcDash }>({ api: 'hr_rc_dashboard', tenant: tenantId });
+      setDash(r.data);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    }
+  }, [tenantId]);
+
+  /** `hrRCReload()` — hros.html:2692. Every admin save re-reads the config; nothing is patched locally. */
+  const reloadCfg = useCallback(async () => {
+    const r = await call<RcSettingsConfig>({ api: 'hr_rc_config', tenant: tenantId });
+    setCfg(r);
+  }, [tenantId]);
+
+  /** One writer for all five `hr_rc_admin_save` kinds — hros.html:2685-2691's shared tail. */
+  const adminSave = useCallback((kind: string, row: Record<string, unknown>, ok: string) => {
+    void (async () => {
+      try {
+        await call({ api: 'hr_rc_admin_save', kind, row });
+        toast(ok);
+        await reloadCfg();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), true);
+      }
+    })();
+  }, [reloadCfg]);
+
+  /**
+   * `hrRCLoadAccounts()` — hros.html:2652. TENANT-KEYED, and that comment travels with it: the chart of
+   * accounts is per Xero ORG, so serving company A's chart while editing company B's claim types stores
+   * GL codes that do not exist in B. A company switched mid-flight drops the stale chart.
+   */
+  const loadAccounts = useCallback(async (): Promise<XeroAccount[]> => {
+    if (accounts && accTenant === tenantId) return accounts;
+    const t = tenantId;
+    try {
+      const r = await call<{ accounts?: XeroAccount[] }>({ api: 'sbi_accounts', tenant: t });
+      if (tenantId !== t) return [];
+      const list = r.accounts || [];
+      setAccounts(list);
+      setAccTenant(t);
+      return list;
+    } catch (e) {
+      if (tenantId !== t) return [];
+      setAccounts([]);
+      setAccTenant(t);
+      toast(e instanceof Error ? e.message : 'Could not load Xero accounts', true);
+      return [];
+    }
+  }, [accTenant, accounts, tenantId]);
+
+  /** `hrRCEnterTypeEdit()` — hros.html:2656. The form paints first; the chart arrives after. */
+  const enterTypeEdit = useCallback((t: RcSettingsClaimType) => {
+    setTypeEdit(t);
+    if (!accounts || accTenant !== tenantId) {
+      setAccLoading(true);
+      void loadAccounts().finally(() => setAccLoading(false));
+    }
+  }, [accTenant, accounts, loadAccounts, tenantId]);
+
+  /** `hrRCTypeSave()` — hros.html:2679. The DOM read is here; the body is `typeRow()`. */
+  const onTypeSave = useCallback(() => {
+    const t = typeEdit || {} as RcSettingsClaimType;
+    const rv = (id: string) => { const e = document.getElementById('rct_' + id) as HTMLInputElement | HTMLSelectElement | null; return e ? e.value : ''; };
+    const ck = (id: string) => { const e = document.getElementById('rct_' + id) as HTMLInputElement | null; return e ? e.checked : false; };
+    const name = rv('name').trim();
+    if (!name) { toast('Name is required', true); return; }
+    const row = typeRow(t, { name, gl: rv('gl'), pc: rv('pc'), pm: rv('pm'), rr: ck('rr'), tax: ck('tax'), mile: ck('mile'), act: ck('act') }, accLoading, Date.now());
+    void (async () => {
+      try {
+        await call({ api: 'hr_rc_admin_save', kind: 'claim_type', row });
+        toast('Saved');
+        setTypeEdit(null);
+        await reloadCfg();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), true);
+      }
+    })();
+  }, [accLoading, reloadCfg, typeEdit]);
+
+  /** `hrRCAddCC()` — hros.html:2687. Two prompts stay native; the three-way is the app's own confirm,
+   *  and its FALSE branch is "only this company", which is the narrower grant. */
+  const onAddCostCenter = useCallback(() => {
+    const code = window.prompt('Cost center code (short, e.g. MKT):');
+    if (!code || !code.trim()) return;
+    const name = window.prompt('Cost center name:', '');
+    if (name == null) return;
+    void (async () => {
+      const shareAll = await showConfirm('Cost center scope',
+        'Share across ALL companies?\n\nOK = all companies · Cancel = only ' + ((company && company.tenant_name) || 'this company'),
+        'All companies', 'p');
+      adminSave('cost_center', costCenterRow(code, name, shareAll, tenantId), 'Added');
+    })();
+  }, [adminSave, company, tenantId]);
+
+  /** `hrRCDelCC()` — hros.html:2688. */
+  const onDelCostCenter = useCallback((id: string) => {
+    void (async () => {
+      if (!await showConfirm('Deactivate cost center', 'Deactivate this cost center? Existing claims keep it.', 'Deactivate', 'd')) return;
+      adminSave('cost_center_del', { id }, 'Deactivated');
+    })();
+  }, [adminSave]);
+
+  /** `hrRCAddRate()` — hros.html:2689. */
+  const onAddRate = useCallback(() => {
+    const rate = window.prompt('Rate (RM per km), e.g. 0.70:');
+    if (!rate) return;
+    const label = window.prompt('Label:', 'RM' + rate + '/km');
+    adminSave('mileage_rate', mileageRateRow(rate, label), 'Added');
+  }, [adminSave]);
+
+  /** `hrRCAddApprover()` — hros.html:2690. The numbered picker is the legacy's; so is the 1-based index. */
+  const onAddApprover = useCallback((role: string) => {
+    const emps = (cfg && cfg.employees) || [];
+    const pick = window.prompt(approverPrompt(role, emps));
+    if (!pick) return;
+    const e = emps[Number(pick) - 1];
+    if (!e) { toast('Invalid', true); return; }
+    adminSave('role_approver', approverRow(role, e.id, tenantId), 'Assigned');
+  }, [adminSave, cfg, tenantId]);
+
+  /** `hrRCDelApprover()` — hros.html:2691. */
+  const onDelApprover = useCallback((id: string) => adminSave('role_approver_del', { id }, 'Removed'), [adminSave]);
 
   // ── the form ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -543,6 +731,45 @@ export default function HrExpensesPage() {
     })();
   }, [detail, detailRun]);
 
+  /**
+   * `hrRCSetGl()` — hros.html:2571. `itemId` null = every line on the claim (the panel-head button);
+   * an id = that one line's `edit` link. Both prompts are native, as the legacy's are, and the REASON
+   * is required on the client as well as the server (hr.ts:2288) because it is written to the audit
+   * trail beside the change. `detailRun`'s ref is the double-submit guard.
+   */
+  const onGlEdit = useCallback((itemId: string | null) => {
+    const gl = window.prompt('New GL account code (from this company’s Xero chart), e.g. 800-1000:');
+    if (gl == null || !gl.trim()) return;
+    const reason = window.prompt('Reason for changing the GL account (required, audited):');
+    if (reason == null || !reason.trim()) { toast('A reason is required', true); return; }
+    void detailRun('gl', {
+      api: 'hr_rc_set_gl', id: detail!.claim.id, item_id: itemId || undefined,
+      gl_account: gl.trim(), reason: reason.trim(),
+    }, (r) => 'GL updated (' + r.updated + ' line' + (r.updated > 1 ? 's' : '') + ') ✓');
+  }, [detail, detailRun]);
+
+  /**
+   * `hrRCPostXero()` — hros.html:2577. THIS WRITES INTO A LIVE ACCOUNTING LEDGER: it creates an ACCPAY
+   * bill in Xero (SUBMITTED) with the receipts attached, or re-syncs the reference of one already
+   * there. `hr_rc_post_xero` (hr.ts:2436) is the only guard against a duplicate bill, so the client
+   * guard is `detailRun`'s SYNCHRONOUS ref — a `useState` flag is read `false` by every handler in one
+   * tick and would post the same claim as many times as it was tapped. The legacy's own guard is
+   * `hrOnce('hrRCPostXero', …)`, the same shape.
+   */
+  const onPostXero = useCallback(() => {
+    const posted = !!(detail && detail.claim.xero_bill_id);
+    void (async () => {
+      if (!await showConfirm(posted ? 'Re-sync Xero reference' : 'Post to Xero',
+        posted
+          ? 'Re-sync this bill’s reference in Xero?'
+          : 'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.',
+        posted ? 'Re-sync' : 'Post to Xero', 'p')) return;
+      toast('Posting to Xero…');
+      void detailRun('xero', { api: 'hr_rc_post_xero', id: detail!.claim.id },
+        (r) => 'Posted to Xero ✓' + (r.attached ? (' · ' + r.attached + ' receipt(s) attached') : ''));
+    })();
+  }, [detail, detailRun]);
+
   /** `hrRCCancel()` — hros.html:2578. */
 
   const onCancel = useCallback(() => {
@@ -616,7 +843,7 @@ export default function HrExpensesPage() {
   if (signedIn === false) {
     return (
       <>
-        <Banner isEmp={false} />
+        <Banner />
         <Panel>
           Not signed in on this origin. <a href={legacyUrl('hros.html')}>Sign in to HR OS</a>, then come back —
           the session is the same <code>localStorage[&apos;ctg_portal_token&apos;]</code> key, so this page will
@@ -628,7 +855,7 @@ export default function HrExpensesPage() {
 
   return (
     <>
-      <Banner isEmp={isEmp} />
+      <Banner />
       {err ? <Panel>⚠️ {err}</Panel>
         : !claims || !me || !cfg || company === null ? <Panel><span className="spin"></span> Loading claims…</Panel>
         : (
@@ -641,17 +868,20 @@ export default function HrExpensesPage() {
               page={page}
               scope={scope}
               sel={sel}
+              /** `hrRCNav()` — hros.html:1807. Dashboard loads on every visit, exactly as the legacy does. */
               onNav={(pg) => {
                 if (pg === 'list') { setPage('list'); void refreshList(scope); return; }
                 if (pg === 'form') { void openForm(); return; }
-                goLegacy(pg);                    // dashboard / settings — see the banner
+                if (pg === 'dashboard') { setPage('dashboard'); void loadDash(); return; }
+                if (pg === 'settings') { setPage('settings'); return; }
               }}
               onScope={onScope}
               onOpen={(id) => void openDetail(id)}
               onSelAll={onSelAll}
               onSelToggle={onSelToggle}
               onSelClear={() => setSel({})}
-              onExportAcct={() => goLegacy('list')}
+              onExportAcct={onExportAcct}
+              exportingAcct={exporting}
               onExportCsv={onExportCsv}
               onExportBank={onExportBank}
               onBulkApprove={() => void bulk({ api: 'hr_rc_decide_bulk', decision: 'approve' }, 'Approved')}
@@ -726,6 +956,37 @@ export default function HrExpensesPage() {
               />
             ) : null}
 
+            {page === 'dashboard' ? (dash ? <HrExpensesDash dash={dash} /> : <DashLoading />) : null}
+
+            {page === 'settings' ? (
+              <HrExpensesSettings
+                cfg={cfg}
+                tab={setTab}
+                typeEdit={typeEdit}
+                accounts={accounts || []}
+                accLoading={accLoading}
+                onSetTab={setSetTab}
+                onTypeNew={() => enterTypeEdit({
+                  id: '', name: '', gl_account: '', requires_receipt: true, taxable: false, is_mileage: false,
+                  active: true, max_amount_per_claim: '', max_amount_per_month: '',
+                  sort_order: ((cfg.claim_types || []).length + 1),
+                } as RcSettingsClaimType)}
+                onTypeEdit={(id) => {
+                  const t = (cfg.claim_types || []).find((x) => x.id === id);
+                  // A deep COPY, as hrRCEditType() takes: the editor is uncontrolled and Cancel must
+                  // leave the row in `cfg` exactly as the server sent it.
+                  if (t) enterTypeEdit(JSON.parse(JSON.stringify(t)) as RcSettingsClaimType);
+                }}
+                onTypeCancel={() => setTypeEdit(null)}
+                onTypeSave={onTypeSave}
+                onAddRate={onAddRate}
+                onAddCostCenter={onAddCostCenter}
+                onDelCostCenter={onDelCostCenter}
+                onAddApprover={onAddApprover}
+                onDelApprover={onDelApprover}
+              />
+            ) : null}
+
             {page === 'detail' ? (
               loadingDetail || !detail
                 ? <Panel><span className="spin"></span> Loading…</Panel>
@@ -739,8 +1000,8 @@ export default function HrExpensesPage() {
                     onDecide={onDecide}
                     onOverride={onOverride}
                     onMarkPaid={onMarkPaid}
-                    onGlEdit={() => goLegacy(detail.claim.id)}
-                    onPostXero={() => goLegacy(detail.claim.id)}
+                    onGlEdit={onGlEdit}
+                    onPostXero={onPostXero}
                     onFormAndReceipts={onFormAndReceipts}
                     onVoucher={onVoucher}
                     onEdit={onEdit}
@@ -781,22 +1042,23 @@ function Panel({ children }: { children: React.ReactNode }) {
 /**
  * The strangler is explicitly "both versions reachable and comparable side by side" — nothing was
  * deleted from hros.html and the legacy screen is still the one staff use. This says so on the page
- * rather than only in a PR description, and it must stay HONEST: v225 moved Submit and a claim's detail
- * across, so the list of what is still legacy shrank and this line shrank with it. An employee sees a
- * shorter list because Dashboard, Settings and the accounting export are admin-only and are not on
- * their tab bar at all (hros.html:1785).
+ * rather than only in a PR description, and IT MUST STAY HONEST: an inaccurate notice is the failure
+ * this project has hit repeatedly. v225's version listed five things still on the legacy screen. v226
+ * migrated all five, so this one lists none — and it says "every part of it", which is a claim
+ * `web/tests/hr-expenses-admin.test.tsx` checks by reading this file for `goLegacy` /
+ * `window.location.href` rather than by trusting the sentence.
+ *
+ * It no longer takes `isEmp`: the two halves used to differ only in which legacy tabs were named.
  */
-function Banner({ isEmp }: { isEmp: boolean }) {
+function Banner() {
   return (
     <div className="panel" style={{ marginBottom: '14px' }}>
       <div className="muted" style={{ padding: '12px 14px', fontSize: '11.5px' }}>
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('hros.html')}#tab=expenses`}>hros.html · Reimbursement</a>, unchanged. This page renders
-        the same data from the same session and is diffed against the same goldens. Claims, Submit and a claim&apos;s
-        detail are here.{' '}
-        {isEmp
-          ? 'Nothing else on this screen is yours to reach.'
-          : 'Still on the legacy screen: 📊 Dashboard, ⚙ Settings, the 📒 Accounting CSV export, changing a line’s GL account, and posting a claim to Xero.'}
+        the same data from the same session and is diffed against the same goldens. Every part of it is here —
+        Claims, Submit, a claim&apos;s detail, the Dashboard, Settings, the accounting export, the GL editor and
+        posting to Xero. Nothing on this screen sends you back to the legacy app.
       </div>
     </div>
   );

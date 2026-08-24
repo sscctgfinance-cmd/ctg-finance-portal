@@ -162,7 +162,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'app/hr/calculator/page.tsx', n: 2, cat: 'a', legacy: 'hros.html:4897-4898, :4906-4907', note: 'v224: the payslip/audit-log period is MYT — the clock read is still lifted out of the component' },
   { file: 'app/hr/clock/page.tsx', n: 4, cat: 'a', legacy: 'hros.html:2909-2910', note: 'the ticking clock; elapsed is epoch arithmetic' },
   { file: 'app/hr/dashboard/page.tsx', n: 1, cat: 'a', legacy: 'hros.html:1727', note: 'v224: first-paint month/year default is MYT' },
-  { file: 'app/hr/expenses/page.tsx', n: 1, cat: 'a', legacy: 'hros.html:1840 → :1271', note: 'v224: hrToday is MYT — the legacy comment already claimed it was and now it is' },
+  { file: 'app/hr/expenses/page.tsx', n: 2, cat: 'a', legacy: 'hros.html:1840 → :1271, :2684', note: 'v224: hrToday is MYT — the legacy comment already claimed it was and now it is. v226 adds one cat-c read: Date.now() handed to typeRow() for a NEW claim type\'s fallback CODE suffix (hros.html:2684), which is an id, not a date' },
   { file: 'app/hr/leave/page.tsx', n: 1, cat: 'a', legacy: 'hros.html:3437 → :1271', note: 'v224: the apply-on-behalf date default is MYT' },
   { file: 'app/hr/payroll/page.tsx', n: 3, cat: 'a', legacy: 'hros.html:4058, :4270, :3831', note: 'v224: month/year default and the resign-date default are MYT; dueInfo takes the instant' },
   { file: 'app/hr/yearend/page.tsx', n: 2, cat: 'a', legacy: 'hros.html:4921-4922', note: 'taxYears/defaultTaxYear — the clock read lifted out of the component' },

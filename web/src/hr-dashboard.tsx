@@ -151,9 +151,9 @@ const CARD_ICO: CSSProperties = {
 const CARD_VALROW: CSSProperties = { display: 'flex', alignItems: 'baseline', gap: '7px', marginTop: '5px', flexWrap: 'wrap' };
 const CARD_SUB: CSSProperties = { fontSize: '10px', marginTop: '2px' };
 
-interface CardOpt { color?: string; icon?: string; delta?: Delta | null; sub?: string }
+export interface CardOpt { color?: string; icon?: string; delta?: Delta | null; sub?: string }
 
-function hrDCard(label: string, value: ReactNode, opt: CardOpt = {}) {
+export function hrDCard(label: string, value: ReactNode, opt: CardOpt = {}) {
   let tr: ReactNode = null;
   if (opt.delta) {
     const dd = opt.delta, up = dd.pct >= 0;
@@ -180,7 +180,7 @@ function hrDCard(label: string, value: ReactNode, opt: CardOpt = {}) {
   );
 }
 
-function hrCardGrid(cards: ReactNode[]) {
+export function hrCardGrid(cards: ReactNode[]) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(148px,1fr))', gap: '10px', marginBottom: '15px' }}>
       {cards.map((c, i) => <Frag key={i}>{c}</Frag>)}
@@ -188,7 +188,7 @@ function hrCardGrid(cards: ReactNode[]) {
   );
 }
 
-function hrPanel(title: ReactNode, inner: ReactNode) {
+export function hrPanel(title: ReactNode, inner: ReactNode) {
   return (
     <div className="panel">
       <div className="panel-hd"><h3>{title}</h3></div>
@@ -213,7 +213,7 @@ const BAR_LABEL: CSSProperties = { width: '96px', textAlign: 'right', color: 'va
 const BAR_TRACK: CSSProperties = { flex: '1', background: 'var(--panel-2)', borderRadius: '5px', height: '15px' };
 const BAR_VALUE: CSSProperties = { width: '80px', textAlign: 'right', fontWeight: '600' };
 
-function hrDashBars(items: Cat[] | undefined, opt: { color?: string; fmt?: (v: number) => string } = {}) {
+export function hrDashBars(items: Cat[] | undefined, opt: { color?: string; fmt?: (v: number) => string } = {}) {
   if (!items || !items.length) {
     return <div className="muted" style={{ padding: '14px', fontSize: '12px', textAlign: 'center' }}>No data</div>;
   }
@@ -249,7 +249,7 @@ export interface LineKey { k: string; color: string; name: string }
  * numbers verbatim, so this is the one function on the screen where "the same output" means the same
  * arithmetic and not merely the same shape.
  */
-function hrDashLine(rows: TrendRow[] | undefined, keys: LineKey[]) {
+export function hrDashLine(rows: TrendRow[] | undefined, keys: LineKey[]) {
   const w = 560, h = 168, pl = 42, pr = 14, pt = 14, pb = 24;
   if (!rows || !rows.length) {
     return <div className="muted" style={{ padding: '20px', fontSize: '12px', textAlign: 'center' }}>No data</div>;

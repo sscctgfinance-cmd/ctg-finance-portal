@@ -1,7 +1,7 @@
 # Render-golden coverage — what is actually covered, and what is not
 
-`tests/render_golden_test.ts` renders all **44** surfaces of the two apps and diffs each one against a
-committed golden under `tests/golden/`. This file is the honest accounting of what those 44 goldens do
+`tests/render_golden_test.ts` renders all **50** surfaces of the two apps and diffs each one against a
+committed golden under `tests/golden/`. This file is the honest accounting of what those 50 goldens do
 and do not hold, because a coverage number nobody has qualified is worse than no number.
 
 Regenerate deliberately, then read the diff before committing:
@@ -21,14 +21,15 @@ git diff tests/golden/
 | …plus `leave`, which `hros.html:1553` dispatches to two DIFFERENT screens by role | +1 | `HR_EMP_MODE?hrEmpLeave():hrLeave()` |
 | …plus `expenses`, which `hrRC()` dispatches over `RC.page` — Submit and a claim's detail | +2 | `hrRCForm()` / `hrRCDetail()` — `hros.html:2000`, `:2513` |
 | …plus `expenses` again, in EMPLOYEE mode: two tabs and four different scopes | +1 | `RC.me.isAdmin===false` — `hros.html:1785`, `:1821` |
-| **total surfaces** | **44** | |
+| …plus `expenses` admin: the Dashboard and Settings' five tabs | +6 | `hrRCDash()` / `hrRCSettings()` — `hros.html:2611`, `:2619` |
+| **total surfaces** | **50** | |
 
-All 44 render real, populated content — no surface is covered by an empty state or an error panel, and
+All 50 render real, populated content — no surface is covered by an empty state or an error panel, and
 `renderSurface()` throws rather than capturing a golden if a screen asks for an action with no fixture.
 Smallest golden is 8 lines (`finance.bankfeed`, which genuinely is a launcher button); largest is 847
 (`finance.info`). 9,601 lines of committed baseline in total.
 
-## Covered: 44 / 44. Complete for the screen: 38 / 44
+## Covered: 50 / 50. Complete for the screen: 44 / 50
 
 Six goldens record a **narrower slice** than the screen can show. They are real coverage of the default
 state — the state an operator lands on — but the branch listed is not in the golden.
@@ -41,7 +42,7 @@ state — the state an operator lands on — but the branch listed is not in the
 | `hr.clock` | status card, today’s punches, work schedule, mobile tab bar | `hrPushCard()` | it returns `''` unless `PUSH.supported`, which needs `PushManager` on `window`. Stubbing one would assert against a stub, not against the app. |
 | `hr.employees` | the employee list, filters and search | `hrEmpForm()` | the edit form is the `HR.editEmp !== null` branch of the same view. |
 | `hr.leave` | the ADMIN screen — `hrLeave()` | the EMPLOYEE screen — `hrEmpLeave()` | one nav id, two screens (`hros.html:1553`). `hr.leave.emp` is the other one, captured separately: for as long as it was not, the React port of the employee half could be — and was — missing entirely while this golden stayed green. |
-| `hr.expenses` | the claims list | `hrRCDash()`, `hrRCSettings()` | `RC.page` has five states. `list` is here, `form` and `detail` are `hr.expenses.form` / `hr.expenses.detail`, and the two admin sub-pages are not migrated. |
+| `hr.expenses` | the claims list | — | all five RC.page states are now their own surfaces. |
 
 Every one of those is a fixture/state change away, not an app change. They are listed rather than
 quietly padded into the count.

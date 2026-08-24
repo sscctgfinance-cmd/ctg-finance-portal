@@ -583,9 +583,15 @@ describe('every React route asks with the app’s own controls', () => {
   // v225 took the count from 7 to 11: `app/hr/expenses/page.tsx` ported `hrRCOverride()` (hros.html:2597)
   // and `hrRCAdjustAmount()` (hros.html:2581), two prompts each. Both ask for a FIGURE and a REASON, and
   // the legacy asks the same way; the confirm that follows the adjustment IS the app's own dialog.
+  // v226 took it from 11 to 19, all eight in the same route and all eight in the legacy's own words:
+  // the accounting export's month (hros.html:1857), `hrRCSetGl()`'s code + reason (:2572-2573),
+  // `hrRCAddCC()`'s code + name (:2687), `hrRCAddRate()`'s rate + label (:2689) and
+  // `hrRCAddApprover()`'s numbered picker (:2690). Each is a TEXT prompt, which is not one of the two
+  // controls this shell ported — the three CONFIRMS those flows also ask (the cost-centre scope, the
+  // deactivation, the Xero post) are all `showConfirm`, which is what the scan above enforces.
   it('prompt() is deliberately left native, and there are exactly the sites we know about', () => {
     const n = routes.reduce((a, p) => a + [...code(readFileSync(p, 'utf8')).matchAll(/(?<![\w.])(?:window\.)?prompt\s*\(/g)].length, 0);
-    expect(n).toBe(11);
+    expect(n).toBe(19);
   });
 });
 
