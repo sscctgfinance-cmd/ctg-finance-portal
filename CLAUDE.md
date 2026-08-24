@@ -1684,6 +1684,15 @@ one-time password could use every migrated screen and never be asked to replace 
 refuse to render anything else on that flag. The two legacy dialogs post the same `changepw` and enforce
 the same `pwValid`; they differ only in trim, so they are one port (Finance's, the richer one).
 
+**An HR-only login (employee / view-only / hr_admin) gets the "HR OS access only" gate, not the empty
+shell — the C6 gap.** `enterApp()` (app.html:2671) checks `HR_ONLY_ROLES_FE` BEFORE `must_change_pw` and
+shows `showHrOnlyGate()` (app.html:2653); React had no equivalent, so such a login landed on the empty
+Finance shell (`financeNavFor(null)` renders no tabs) plus each screen's own server refusal.
+`web/src/finance-hr-only-gate.tsx` is the pure gate (`isHrOnly(role)` + the branded panel with the HR OS
+jump and Sign out); `app/finance/layout.tsx` sets `hrOnly` when `me` resolves and returns the gate before
+the password gate, mirroring `enterApp()`'s order. No golden holds it (chrome, like the shell);
+`web/tests/finance-hr-only-gate.test.tsx` pins the role set against app.html and both directions.
+
 **Client-side navigation is a delegated listener, and it STOPS at the app boundary.** `spaTarget()`
 (`web/src/spa-nav.ts`) is the pure rule; `useSpaNav()` in each layout is the wiring. It matches a screen
 (`/finance/wht/`) and ONE segment below it — a SIBLING PAGE, `/finance/wht/doc/` and

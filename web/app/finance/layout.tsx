@@ -18,6 +18,7 @@ import AlertsPanel, { alertFeeds, alertHref, alertsFor, badgeText, computeAlerts
 import { NOTHING_TO_EXPORT, exportFileName, exportLogBody, screenExport, sheetName } from '../../src/finance-export';
 import { isSaveKey, screenSave } from '../../src/finance-save';
 import SecurityHost, { disableBody, openSecurityModal, verifyBody } from '../../src/finance-security';
+import HrOnlyGate, { isHrOnly } from '../../src/finance-hr-only-gate';
 import FinanceShell, { roleLabel, type Company } from '../../src/finance-shell';
 import { financeCatsFor, financeNavFor, type Perms } from '../../src/nav';
 import PasswordHost, { openPasswordModal } from '../../src/password-modal';
@@ -61,6 +62,9 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   // `enterApp()` — app.html:2665. A temporary password must be replaced before the app is shown at all.
   const [mustChangePw, setMustChangePw] = useState(false);
+  // `enterApp()` — app.html:2671. An HR-only login (employee / view-only / HR Admin) belongs in HR OS,
+  // and is shown the "HR OS access only" gate instead of the empty Finance shell.
+  const [hrOnly, setHrOnly] = useState(false);
   // `NOTIFS` + the panel's own open flag — app.html:2705, :2744.
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -114,6 +118,8 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
       // app.html:7698 — `me` returns the user AND the Xero orgs the top-bar picker is built from.
       void call<Me>({ api: 'me' }).then((m) => {
         setMe(m);
+        // app.html:2671 — `enterApp()` checks HR-only BEFORE must_change_pw. Same order here.
+        if (isHrOnly(m?.user?.role)) setHrOnly(true);
         // app.html:2665 — `enterApp()` hides `#app` and forces the dialog. Nothing else is rendered.
         if (m?.user?.must_change_pw) setMustChangePw(true);
         setTotp(!!m?.user?.totp_enabled);
@@ -271,6 +277,10 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
         onChanged={(on) => { setTotp(on); toast(on ? '✅ Two-factor authentication enabled' : 'Two-factor disabled'); }} />
     </>
   );
+
+  // app.html:2671 — an HR-only login sees the refusal gate and nothing else. Checked before the
+  // password gate, exactly as `enterApp()` orders it.
+  if (hrOnly) return <><HrOnlyGate name={me?.user?.name} onSignOut={onSignOut} />{hosts}</>;
 
   // app.html:2665 — the whole app is hidden until the temporary password is replaced.
   if (mustChangePw) return hosts;
