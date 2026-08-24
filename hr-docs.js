@@ -319,6 +319,215 @@ function hrCp8dFile(list, employerNo, year, fmt){
   return { name:'CP8D_YA'+year+'.csv', text:hrCsv([head].concat(body)) };
 }
 
+// ── The statutory / bank FILE builders (v226) ──────────────────────────────────────────────────────
+// Lifted verbatim out of hros.html's hrExpStatutory / hrExpKwsp / hrExpAssist / hrExpCp39 / hrExpGiro /
+// hrExpBank so React (web/) builds the same bytes rather than a second copy — the "seam still open"
+// CLAUDE.md names. Each is a pure function of (rows, period, …) and returns the file, an { error }
+// message, or null (nothing to file this period). The I/O — hrCurRows/hrPeriod/hrUobCfg, the download and
+// the toast — stays in the caller (hros.html's thin wrapper, or web's route). `rows` is hrCurRows()'s
+// shape: [{ e: hrEmpView(emp), p: computed quote, d: grid cell }]. tests/statutory_files_test.ts drives
+// these directly; the file contents leave the building, so getting a digit wrong is a real filing error.
+
+// EPF / SOCSO / EIS / PCB raw reconciliation CSVs (with a TOTAL row — these are review copies, not uploads).
+function hrBuildStatutory(rows, period, kind){
+  var tag=period.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
+  var head,body=[],totals,name;
+  if(kind==='epf'){ name='EPF_KWSP_'+tag+'.csv'; head=['No','EPF Member No','IC (New)','Name','EPF Wages (RM)','Employee 11% (RM)','Employer 12-13% (RM)','Total (RM)']; var a1=0,a2=0,a3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.epfEe+p.epfEr; a1+=p.epfEe;a2+=p.epfEr;a3+=t; body.push([i+1,e.epfNo||'',e.ic||'',e.name,f2(p.gross),f2(p.epfEe),f2(p.epfEr),f2(t)]); }); totals=['','','','TOTAL','',f2(a1),f2(a2),f2(a3)]; }
+  // v196: LINDUNG 24 Jam (SKBBK) gets its own column so the file reconciles line by line against ASSIST.
+  else if(kind==='socso'){ name='SOCSO_PERKESO_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.5% (RM)','LINDUNG 24 (RM)','Employee total (RM)','Employer 1.75% (RM)','Total (RM)']; var b1=0,b1l=0,b2=0,b3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,li=Number(p.lindung)||0,ee=p.socsoEe+li,t=ee+p.socsoEr; b1+=p.socsoEe;b1l+=li;b2+=p.socsoEr;b3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.socsoEe),f2(li),f2(ee),f2(p.socsoEr),f2(t)]); }); totals=['','','','TOTAL','',f2(b1),f2(b1l),f2(b1+b1l),f2(b2),f2(b3)]; }
+  else if(kind==='eis'){ name='EIS_SIP_'+tag+'.csv'; head=['No','SOCSO No','IC (New)','Name','Wages (RM)','Employee 0.2% (RM)','Employer 0.2% (RM)','Total (RM)']; var c1=0,c2=0,c3=0; rows.forEach(function(x,i){ var e=x.e,p=x.p,t=p.eisEe+p.eisEr; c1+=p.eisEe;c2+=p.eisEr;c3+=t; body.push([i+1,e.socsoNo||'',e.ic||'',e.name,f2(p.gross),f2(p.eisEe),f2(p.eisEr),f2(t)]); }); totals=['','','','TOTAL','',f2(c1),f2(c2),f2(c3)]; }
+  else { name='PCB_CP39_'+tag+'.csv'; head=['No','IC (New)','TIN (Income Tax No)','Name','Country','Remuneration (RM)','PCB/MTD (RM)','CP38 (RM)']; var d1=0; rows.forEach(function(x,i){ var e=x.e,p=x.p; d1+=p.pcb; body.push([i+1,e.ic||'',e.taxNo||'',e.name,'MY',f2(p.gross),f2(p.pcb),'0.00']); }); totals=['','','','TOTAL','','',f2(d1),'0.00']; }
+  return { name:name, text:hrCsv([head].concat(body,[totals])), mime:'text/csv;charset=utf-8;' };
+}
+// EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
+function hrBuildKwsp(rows, period){
+  rows=rows.filter(function(x){ return x.p.epfEe||x.p.epfEr; });
+  if(!rows.length) return null;
+  var miss=hrMissingIds(rows,[{k:'epfNo',label:'EPF member no'},{k:'ic',label:'IC'}]);
+  if(miss) return { error:'KWSP file blocked — missing EPF member no / IC: '+miss+'. Fill them in Employees, then export again.' };
+  hrFitReset();   // v199: refuse to emit a record whose member number or amount had to be trimmed to fit
+  var total=0;
+  var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.epfEe+p.epfEr;
+    return hrPadL(String(e.epfNo||'').replace(/\D/g,''),12,'0','EPF member no for '+e.name)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12,'0','IC for '+e.name)
+         + hrPadR(hrAscii(e.name).toUpperCase(),40)               // name (40) — clipping a name is fine
+         + hrPadL(hrCents(p.gross),11,'0','EPF wages for '+e.name)
+         + hrPadL(hrCents(p.epfEe),9,'0','EPF employee share for '+e.name)
+         + hrPadL(hrCents(p.epfEr),9,'0','EPF employer share for '+e.name);
+  });
+  if(HR_FIT_ERR.length) return { error:'KWSP file blocked — a value does not fit the layout, and a trimmed one would be credited to the wrong member: '+HR_FIT_ERR.join(' · ') };
+  return { name:'KWSP_iAkaun_'+period.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
+}
+// SOCSO + EIS → PERKESO ASSIST combined contribution file (CSV)
+function hrBuildAssist(rows, period){
+  // v157: only contributing staff belong in an ASSIST submission.
+  rows=rows.filter(function(x){ return x.p.socsoEe||x.p.socsoEr||x.p.eisEe||x.p.eisEr; });
+  if(!rows.length) return null;
+  var miss=hrMissingIds(rows,[{k:'socsoNo',label:'SOCSO no'},{k:'ic',label:'IC'}]);
+  if(miss) return { error:'PERKESO ASSIST blocked — missing SOCSO no / IC: '+miss+'. Fill them in Employees, then export again.' };
+  var f2=function(n){ return Number(n).toFixed(2); };
+  // v196: LINDUNG 24 Jam (SKBBK) gets its own column — an employee-borne PERKESO contribution.
+  var head=['No','No. KP Baru (New IC)','Nama Pekerja','No. Pekerja (SOCSO)','Gaji/Upah (RM)','Caruman SOCSO Pekerja','Caruman LINDUNG 24 (SKBBK)','Caruman SOCSO Majikan','Caruman SIP/EIS Pekerja','Caruman SIP/EIS Majikan'];
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,e.ic||'',e.name,e.socsoNo||'',f2(p.gross),f2(p.socsoEe),f2(Number(p.lindung)||0),f2(p.socsoEr),f2(p.eisEe),f2(p.eisEr)]; });
+  var t=rows.reduce(function(a,x){ a.a+=x.p.socsoEe;a.l+=(Number(x.p.lindung)||0);a.b+=x.p.socsoEr;a.c+=x.p.eisEe;a.d+=x.p.eisEr; return a; },{a:0,l:0,b:0,c:0,d:0});
+  // v157: no TOTAL trailer — ASSIST parses it as one more employee.
+  return { name:'PERKESO_ASSIST_'+period.label.replace(' ','')+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:(t.a+t.l+t.b+t.c+t.d) };
+}
+// PCB → LHDN CP39 / e-PCB text file (fixed-width; amounts in cents)
+function hrBuildCp39(rows, period){
+  rows=rows.filter(function(x){ return x.p.pcb>0; });
+  if(!rows.length) return null;
+  var miss=hrMissingIds(rows,[{k:'taxNo',label:'tax no (TIN)'},{k:'ic',label:'IC'}]);
+  if(miss) return { error:'CP39 blocked — missing TIN / IC: '+miss+'. Fill them in Employees, then export again.' };
+  // v199: the TIN field is the 11-digit income-tax NUMBER, not the printed reference — truncating one files
+  // against the wrong taxpayer, so an over-long TIN blocks the file rather than being clipped.
+  var badTin=rows.filter(function(x){ return String(x.e.taxNo||'').replace(/\D/g,'').length>11; })
+                 .map(function(x){ return x.e.name+' ('+x.e.taxNo+')'; });
+  if(badTin.length) return { error:'CP39 blocked — these income-tax numbers are longer than the 11 digits the layout allows, and truncating one would file the payment against the wrong taxpayer: '+badTin.join(' · ')+'. Correct them in Employees.' };
+  hrFitReset();
+  var total=0;
+  var lines=rows.map(function(x){ var e=x.e,p=x.p; total+=p.pcb;
+    // v157: report CP38 that was actually deducted, not a hard-coded zero.
+    var cp38=(x.d&&x.d.deductions?x.d.deductions:[]).filter(function(dd){ return /^CP38/i.test(String(dd.label||'')); })
+              .reduce(function(s,dd){ return s+(Number(dd.amount)||0); },0);
+    return hrPadL(String(e.taxNo||'').replace(/\D/g,''),11,' ','TIN for '+e.name)  // income-tax no, digits only (11)
+         + hrPadL(String(e.ic||'').replace(/\D/g,''),12,'0','IC for '+e.name)      // new IC (12)
+         + hrPadR(hrAscii(e.name).toUpperCase(),60)                                // name (60) — clipping a name is fine
+         + hrPadL(hrCents(p.pcb),8,'0','PCB for '+e.name)                          // PCB/MTD cents (8)
+         + hrPadL(hrCents(cp38),8,'0','CP38 for '+e.name);                         // CP38 cents (8)
+  });
+  if(HR_FIT_ERR.length) return { error:'CP39 blocked — a value does not fit the layout, and a trimmed one would be filed against the wrong person: '+HR_FIT_ERR.join(' · ') };
+  return { name:'LHDN_CP39_'+period.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
+}
+// Generic IBG salary CSV (net pay). No blockers/error mode — the caller checks for empty rows.
+function hrBuildGiro(rows, period){
+  var tag=period.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
+  var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
+  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
+  // v157 CRITICAL: never append a "TOTAL" trailer to a BANK file — the trailer becomes a real credit line.
+  var total=rows.reduce(function(s,x){return s+x.p.net;},0);
+  return { name:'Bank_Giro_'+tag+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:total };
+}
+// Bank-specific salary bulk-payment file (net pay). `tips` are non-blocking UOB reminders the caller toasts.
+function hrBuildBank(rows, period, bank, uobCfg){
+  if(!rows.length) return null;
+  var tag=period.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
+  var refBase=('SAL'+period.label.replace(/[^A-Za-z0-9]/g,'').toUpperCase()).slice(0,14);
+  var pay=rows.filter(function(x){ return x.p.net>0; });
+  if(!pay.length) return null;
+  var noAcct=pay.filter(function(x){ return !x.e.bankAccount; }).length;
+  var total=pay.reduce(function(s,x){ return s+x.p.net; },0);
+  // v157: real blockers — a salary file with a blank beneficiary account silently leaves that person unpaid.
+  var blockers=[], tips=[];
+  if(noAcct){ var whoNo=pay.filter(function(x){ return !x.e.bankAccount; }).map(function(x){ return x.e.name; }).slice(0,5).join(', ');
+    blockers.push(noAcct+' staff have no bank account ('+whoNo+(noAcct>5?', …':'')+')'); }
+  var head,body,name;
+  if(bank==='maybank'){
+    name='Maybank_M2E_Salary_'+tag+'.csv';
+    head=['Payment Mode','Beneficiary Name','Beneficiary Account No','Beneficiary Bank','SWIFT/BIC','Amount (RM)','Recipient Reference','Payment Description','Beneficiary ID (New IC)','Beneficiary Email'];
+    body=pay.map(function(x){ var e=x.e; var own=/maybank|malayan banking/i.test(e.bankName||''); return [own?'IBFT':'IBG',(e.bankHolder||e.name),e.bankAccount||'',e.bankName||'',hrSwift(e),f2(x.p.net),(refBase+(e.empNo||'')).slice(0,20),'Salary '+period.label,e.ic||'',e.email||'']; });
+  } else {
+    // UOB Infinity — Pay & Transfer → Bulk Transactions → "IBG Payroll with Payment Advice (Employee)"
+    var u=uobCfg||{};
+    if(!u.acct) tips.push('Tip: set the UOB debit account (Payment Hub → Save) so the file carries it.');
+    var cd=u.cd ? u.cd.split('-').reverse().join('/') : '';   // yyyy-mm-dd → dd/mm/yyyy
+    if(!cd) tips.push('Tip: pick a Crediting date in the Payment Hub — UOB needs the date salaries reach staff.');
+    name='UOB_Infinity_IBG_Payroll_'+tag+'.csv';
+    head=['Crediting Date','Debit Account','Beneficiary Name','Beneficiary Bank','SWIFT/BIC','Beneficiary Account No','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Payment Advice Email','Payment Type'];
+    body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',f2(x.p.net),('SALARY '+period.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
+  }
+  return { name:name, text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:pay.length, total:total, noAcct:noAcct, blockers:blockers, tips:tips };
+}
+// ── Dependency-free STORE-method ZIP for the one-click submission pack (no compression needed for text) ──
+var HR_CRC_TBL=(function(){ var t=[],c,n,k; for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; } return t; })();
+function hrCrc32(bytes){ var crc=0xFFFFFFFF; for(var i=0;i<bytes.length;i++) crc=(crc>>>8)^HR_CRC_TBL[(crc^bytes[i])&0xFF]; return (crc^0xFFFFFFFF)>>>0; }
+function hrZip(files){
+  var enc=new TextEncoder(), parts=[], central=[], offset=0;
+  var u16=function(n){return [n&255,(n>>8)&255];}, u32=function(n){n>>>=0;return [n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];};
+  files.forEach(function(f){
+    var nameB=enc.encode(f.name), dataB=enc.encode(f.text), crc=hrCrc32(dataB);
+    var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+    parts.push(new Uint8Array(lh),nameB,dataB);
+    var ch=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
+    central.push(new Uint8Array(ch),nameB);
+    offset+=lh.length+nameB.length+dataB.length;
+  });
+  var cdSize=central.reduce(function(s,p){return s+p.length;},0);
+  var end=[].concat(u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(cdSize),u32(offset),u16(0));
+  return new Blob(parts.concat(central,[new Uint8Array(end)]),{type:'application/zip'});
+}
+// The one-click "Submit all" pack: build every statutory + salary file and report what succeeded/failed.
+// v157: a builder that BLOCKS returns { error }; a null file is nothing-to-file this period (neither got
+// nor failed). The company prefix stops five Sdn Bhd packs for the same month overwriting on extract.
+function hrSubmissionSpecs(rows, period, companyName, uobCfg){
+  var co=(companyName||'CTG').replace(/[^A-Za-z0-9]+/g,'_');
+  // v157: an unusable salary file must FAIL the pack rather than ship silently. hrBuildBank returns the
+  // file with a `blockers` list (a blank beneficiary account leaves that person unpaid); in the ZIP that
+  // is an error, not a warning — the one-click pack must never call itself complete while a file is broken.
+  var bank=hrBuildBank(rows,period,'uob',uobCfg);
+  var salary=(bank&&bank.blockers&&bank.blockers.length)?{ error:'Salary file: '+bank.blockers.join('; ') }:bank;
+  var specs=[
+    { key:'salary',  label:'Salaries (UOB Infinity)', file:salary },
+    { key:'epf',     label:'EPF — KWSP i-Akaun',      file:hrBuildKwsp(rows,period) },
+    { key:'perkeso', label:'SOCSO + EIS — PERKESO',   file:hrBuildAssist(rows,period) },
+    { key:'pcb',     label:'PCB — LHDN CP39',         file:hrBuildCp39(rows,period) }
+  ];
+  var failed=specs.filter(function(s){ return s.file && s.file.error; });
+  var got   =specs.filter(function(s){ return s.file && !s.file.error; });
+  var files=got.map(function(s){ return { name:co+'_'+s.file.name, text:s.file.text }; });
+  return { co:co, specs:specs, got:got, failed:failed, files:files,
+    zipName:'CTG_Payroll_Submissions_'+co+'_'+period.label.replace(' ','')+'.zip' };
+}
+
+// ── Payroll Summary (Excel), payslip email helpers (v226) ───────────────────────────────────────────
+// Same lift as the file builders above. `hrEsc` is hros.html's `esc` — it CANNOT be named `esc` here
+// because hros.html declares `const esc` and hr-docs.js loads first, so a same-name global is a
+// redeclare SyntaxError that white-screens the app; a local name is byte-identical and safe.
+function hrEsc(x){ return (x==null?'':String(x)).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var HR_HRDF_RATE=0.01; // HRD Corp levy = 1% of basic (only for HRDF-registered employers) — rate under finance review.
+// Payroll Summary — a styled .xls that opens formatted in Excel. Also the ONLY place HRDF is computed.
+function hrBuildSummary(rows, period, companyName){
+  var numCell=function(v,dir){ v=Number(v)||0; var st='border:1px solid #B8C4D9;padding:4px 8px;text-align:right;'+(dir?'font-weight:bold;':''); if(!v) return '<td style="'+st+'">-</td>'; return '<td style="'+st+'mso-number-format:\'#,##0.00\'">'+v.toFixed(2)+'</td>'; };
+  var txtCell=function(v,dir){ return '<td style="border:1px solid #B8C4D9;padding:4px 8px;text-align:left;'+(dir?'font-weight:bold;':'')+'">'+hrEsc(String(v==null?'':v))+'</td>'; };
+  var cols=['Employee','Role','Basic','Additional / Allowance','Gross Pay','EPF (Employee)','SOCSO (Employee)','LINDUNG 24','EIS (Employee)','PCB (Tax)','Advance / Other Ded.','Total Deductions','Net Pay','EPF (Employer)','SOCSO (Employer)','EIS (Employer)','HRDF','Notes'];
+  var tot={basic:0,add:0,gross:0,ee_epf:0,ee_soc:0,ee_lin:0,ee_eis:0,pcb:0,oded:0,tded:0,net:0,er_epf:0,er_soc:0,er_eis:0,hrdf:0};
+  var trs=rows.map(function(r){
+    var e=r.e,p=r.p,d=r.d||{};
+    var basic=Number(d.basic!=null?d.basic:e.basic)||0;
+    var add=(Number(d.allow)||0)+(Number(d.bonus)||0)+(Number(d.ot)||0)+(Number(d.allowance)||0);
+    var oded=(d.deductions||[]).reduce(function(s,x){return s+(Number(x.amount)||0);},0);
+    var lin=Number(p.lindung)||0;
+    var tded=p.epfEe+p.socsoEe+lin+p.eisEe+p.pcb+oded;   // v196: lindung was missing, so Gross - Total Deductions did not equal Net Pay
+    var hrdf=Math.round(basic*HR_HRDF_RATE*100)/100;
+    var isDir=/director/i.test(e.position||'');
+    var notes=[];
+    if(d.bonus) notes.push('Bonus '+Number(d.bonus).toFixed(2));
+    if(d.ot) notes.push('OT '+Number(d.ot).toFixed(2));
+    if(d.allowance) notes.push('Allowance '+Number(d.allowance).toFixed(2));
+    (d.deductions||[]).forEach(function(x){ if(Number(x.amount)) notes.push('Less '+(x.label||'Deduction')+' '+Number(x.amount).toFixed(2)); });
+    if(d.unpaid) notes.push('Unpaid leave '+Number(d.unpaid).toFixed(2));
+    tot.basic+=basic; tot.add+=add; tot.gross+=p.gross; tot.ee_epf+=p.epfEe; tot.ee_soc+=p.socsoEe; tot.ee_lin+=lin; tot.ee_eis+=p.eisEe; tot.pcb+=p.pcb; tot.oded+=oded; tot.tded+=tded; tot.net+=p.net; tot.er_epf+=p.epfEr; tot.er_soc+=p.socsoEr; tot.er_eis+=p.eisEr; tot.hrdf+=hrdf;
+    return '<tr'+(isDir?' style="background:#FFF7E6"':'')+'>'+txtCell(e.name,isDir)+txtCell(e.position||'',isDir)+numCell(basic,isDir)+numCell(add,isDir)+numCell(p.gross,isDir)+numCell(p.epfEe,isDir)+numCell(p.socsoEe,isDir)+numCell(lin,isDir)+numCell(p.eisEe,isDir)+numCell(p.pcb,isDir)+numCell(oded,isDir)+numCell(tded,isDir)+numCell(p.net,isDir)+numCell(p.epfEr,isDir)+numCell(p.socsoEr,isDir)+numCell(p.eisEr,isDir)+numCell(hrdf,isDir)+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-style:italic;color:#555">'+hrEsc(notes.join('; '))+'</td></tr>';
+  }).join('');
+  var totRow='<tr style="background:#DCE6F1">'+'<td style="border:1px solid #B8C4D9;padding:4px 8px;font-weight:bold">TOTAL</td><td style="border:1px solid #B8C4D9"></td>'+
+    numCell(tot.basic,1)+numCell(tot.add,1)+numCell(tot.gross,1)+numCell(tot.ee_epf,1)+numCell(tot.ee_soc,1)+numCell(tot.ee_lin,1)+numCell(tot.ee_eis,1)+numCell(tot.pcb,1)+numCell(tot.oded,1)+numCell(tot.tded,1)+numCell(tot.net,1)+numCell(tot.er_epf,1)+numCell(tot.er_soc,1)+numCell(tot.er_eis,1)+numCell(tot.hrdf,1)+'<td style="border:1px solid #B8C4D9"></td></tr>';
+  var thead='<tr>'+cols.map(function(c){ var left=(['Employee','Role','Notes'].indexOf(c)>=0); return '<th style="background:#1F4E79;color:#ffffff;border:1px solid #163A5C;padding:6px 8px;font-weight:bold;text-align:'+(left?'left':'center')+';vertical-align:middle">'+hrEsc(c)+'</th>'; }).join('')+'</tr>';
+  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'+
+    '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>'+hrEsc(period.label)+'</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->'+
+    '</head><body><table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11px">'+
+    '<tr><td colspan="17" style="font-size:16px;font-weight:bold;padding:4px 2px">'+hrEsc(period.label)+' Payroll</td></tr>'+
+    '<tr><td colspan="17" style="font-weight:bold;padding:0 2px 2px">'+hrEsc(companyName)+'</td></tr>'+
+    '<tr><td colspan="17" style="color:#666;font-style:italic;padding:0 2px 10px">Payroll Summary — '+hrEsc(period.label)+'. All amounts in RM. Headcount: '+rows.length+' employees.</td></tr>'+
+    '<thead>'+thead+'</thead><tbody>'+trs+totRow+'</tbody></table></body></html>';
+  return { name:'Payroll_Summary_'+period.label.replace(' ','')+'.xls', text:html, mime:'application/vnd.ms-excel' };
+}
+// Payslip email (Wave 3b): password-protected PDF via the send-payslip-email edge fn. The PDF DRAWING is
+// hrDrawPayslip (already shared); these are the pure helpers around it. `companyName` was the HR_COMPANY
+// global — passed in for the same reason hrBuildSummary takes it.
+function hrAbToB64(ab){ var bytes=new Uint8Array(ab),bin='',chunk=0x8000; for(var i=0;i<bytes.length;i+=chunk){ bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk)); } return btoa(bin); }
+function hrIcPassword(e){ return (String(e.ic||'').replace(/\D/g,''))||e.empNo; }
+function hrPayslipEmailHtml(e,period,companyName){ return '<div style="font-family:Arial,sans-serif;color:#17231f;max-width:520px"><p>Hi '+hrEsc(String(e.name||'').split(' ')[0])+',</p><p>Your payslip for <b>'+hrEsc(period.label)+'</b> is attached as a PDF.</p><p>For your privacy the file is <b>password-protected</b> — open it with your <b>IC number</b> (digits only, no dashes).</p><p>If anything looks wrong, please contact Finance.</p><p style="color:#5e6e67;font-size:13px;margin-top:22px">'+hrEsc(companyName)+' · Finance<br>This is an automated message from ProCare·HR.</p></div>'; }
+
 // Consumable by a bundler without touching this file again — see the note in payroll.js. The one thing
 // that does not survive the trip untouched is hrDrawPayslip's HR_EMPLOYER/HR_COMPANY read, described
 // above; every other export here is a pure function of its arguments.
@@ -327,4 +536,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = {
   hrFitReset, hrFitNote, HR_BANK_CODE, hrBankCode, hrSwift,
   hrDrawPayslip, hrDrawEA, hrDrawFormE, hrCp8dCategory, hrIntNoSen, hrDec2, hrFmtDMY,
   HR_EA_ZERO, hrYePaid, hrFormEStats, hrCp8dFile,
+  hrBuildStatutory, hrBuildKwsp, hrBuildAssist, hrBuildCp39, hrBuildGiro, hrBuildBank,
+  hrCrc32, hrZip, hrSubmissionSpecs,
+  hrEsc, HR_HRDF_RATE, hrBuildSummary, hrAbToB64, hrIcPassword, hrPayslipEmailHtml,
 };

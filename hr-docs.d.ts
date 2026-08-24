@@ -82,3 +82,56 @@ export function hrDrawFormE(
   stats: ReturnType<typeof hrFormEStats>,
   year: number,
 ): void;
+
+// ── The statutory / bank FILE builders (v226) ──────────────────────────────────────────────────────
+// Pure functions of (rows, period, …); the file BYTES, so React (web/) emits the same thing hros.html
+// does rather than a second copy. `rows` is hrCurRows()'s shape — the raw employee flattened through
+// hrEmpView. tests/statutory_files_test.ts drives the file contents.
+
+/** One row for the file builders: the employee flattened through hrEmpView, plus the computed quote and grid cell. */
+export interface HrBuilderRow { e: Record<string, unknown>; p: Record<string, unknown>; d: Record<string, unknown> }
+/** The payroll period the file names and headers are stamped with. */
+export interface HrPeriod { month: number; year: number; label: string }
+/** A built file, or null (nothing to file this period), or { error } (blocked — a value would go to the wrong place). */
+export interface HrBuiltFile {
+  name: string; text: string; mime: string;
+  count?: number; total?: number; noAcct?: number; blockers?: string[]; tips?: string[];
+}
+
+/** EPF / SOCSO / EIS / PCB raw reconciliation CSV (a review copy, with a TOTAL row — not an upload). */
+export function hrBuildStatutory(rows: HrBuilderRow[], period: HrPeriod, kind: 'epf' | 'socso' | 'eis' | 'pcb'): { name: string; text: string; mime: string };
+/** EPF → KWSP i-Akaun bulk contribution text file (fixed-width, cents). */
+export function hrBuildKwsp(rows: HrBuilderRow[], period: HrPeriod): HrBuiltFile | { error: string } | null;
+/** SOCSO + EIS → PERKESO ASSIST combined contribution CSV. */
+export function hrBuildAssist(rows: HrBuilderRow[], period: HrPeriod): HrBuiltFile | { error: string } | null;
+/** PCB → LHDN CP39 / e-PCB text file (fixed-width, cents). */
+export function hrBuildCp39(rows: HrBuilderRow[], period: HrPeriod): HrBuiltFile | { error: string } | null;
+/** Generic IBG salary CSV (net pay). No blockers — the caller checks for empty rows. */
+export function hrBuildGiro(rows: HrBuilderRow[], period: HrPeriod): HrBuiltFile;
+/** Bank-specific salary bulk-payment file (net pay). `tips` are non-blocking UOB reminders the caller toasts. */
+export function hrBuildBank(rows: HrBuilderRow[], period: HrPeriod, bank: string, uobCfg: { acct?: string; cd?: string } | null | undefined): HrBuiltFile | null;
+
+/** CRC-32 of a byte array — the STORE-method ZIP's checksum. */
+export function hrCrc32(bytes: Uint8Array): number;
+/** Dependency-free STORE-method ZIP (no compression) of `{ name, text }` files → a Blob. */
+export function hrZip(files: { name: string; text: string }[]): Blob;
+/** Payroll Summary (styled .xls that opens in Excel). Also the ONLY place HRDF (1% of basic) is computed. */
+export function hrBuildSummary(rows: HrBuilderRow[], period: HrPeriod, companyName: string): { name: string; text: string; mime: string };
+/** ArrayBuffer → base64 (chunked, for the encrypted payslip PDF attachment). */
+export function hrAbToB64(ab: ArrayBuffer): string;
+/** The password an emailed payslip PDF is locked with — the employee's IC digits, or their emp no. */
+export function hrIcPassword(e: Record<string, unknown>): string;
+/** The `hr_send_payslip` email body HTML. `companyName` was the HR_COMPANY global. */
+export function hrPayslipEmailHtml(e: Record<string, unknown>, period: HrPeriod, companyName: string): string;
+
+/** The one-click submission pack: build every statutory + salary file, report got/failed, name the ZIP. */
+export function hrSubmissionSpecs(
+  rows: HrBuilderRow[], period: HrPeriod, companyName: string, uobCfg: { acct?: string; cd?: string } | null | undefined,
+): {
+  co: string;
+  specs: { key: string; label: string; file: HrBuiltFile | { error: string } | null }[];
+  got: { key: string; label: string; file: HrBuiltFile }[];
+  failed: { key: string; label: string; file: { error: string } }[];
+  files: { name: string; text: string }[];
+  zipName: string;
+};

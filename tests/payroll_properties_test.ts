@@ -167,14 +167,15 @@ Deno.test("net is never negative at any wage a person is actually paid", () => {
   assertEquals(hrCompute(emp(4), CFG, [], PERIOD, null).net >= 0, true);
 });
 
-Deno.test("the bank payment file never carries a non-positive amount", () => {
-  // This is what stops the negative net above from ever becoming a payment instruction. hrExpBank
+Deno.test("the bank payment file never carries a non-positive amount", async () => {
+  // This is what stops the negative net above from ever becoming a payment instruction. hrBuildBank
   // filters `x.p.net > 0` before it builds a row; that filter IS the guard, so it is read out of
-  // hros.html rather than described. (It also means such an employee is silently absent from the file —
-  // a real gap, but the safe direction.)
-  const src = HROS.slice(HROS.indexOf("function hrExpBank("), HROS.indexOf("function hrExpBank(") + 900);
+  // hr-docs.js rather than described. (It also means such an employee is silently absent from the file —
+  // a real gap, but the safe direction.) v226: the builder moved from hros.html to hr-docs.js.
+  const docs = await Deno.readTextFile(new URL("../hr-docs.js", import.meta.url));
+  const src = docs.slice(docs.indexOf("function hrBuildBank("), docs.indexOf("function hrBuildBank(") + 900);
   assertEquals(/rows\.filter\(function\(x\)\{ return x\.p\.net>0; \}\)/.test(src), true,
-    "hrExpBank no longer filters out non-positive net pay — a negative amount can now reach a bank file");
+    "hrBuildBank no longer filters out non-positive net pay — a negative amount can now reach a bank file");
 });
 
 Deno.test("SOCSO and EIS stop at the RM6,000 ceiling, and not one ringgit early", () => {

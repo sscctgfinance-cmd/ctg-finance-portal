@@ -471,10 +471,17 @@ once on mount is correct.
 ### The exports and the drawing surfaces — v222, the gap after all 36 screens
 
 Every screen was migrated before any of the **files** was. These five are what closed that gap on the HR
-side; the payroll statutory-file builders (`hrExpBank` / `hrExpKwsp` / `hrExpAssist` / `hrExpCp39` /
-`hrExpSummary` / `hrExpPayslips`) are the seam still open, and `web/app/hr/payroll/page.tsx` still hands
-them off. **`HR.submitPack`'s tracker takes the pack as a PROP**, so whoever ports those builders wires
-one prop and the panel appears.
+side. **The payroll file builders are now closed too (v226).** Every Payroll export
+(`hrExpStatutory` / `hrExpKwsp` / `hrExpAssist` / `hrExpCp39` / `hrExpGiro` / `hrExpBank` / `hrExpSummary`
++ the `hrSubmitAll` ZIP, plus the payslip PDF, its email → `hr_send_payslip`, and the Xero draft journal
+→ `hr_post_xero`) is migrated; nothing on `web/app/hr/payroll/page.tsx` hands off any more. The file
+BYTES are built by pure functions in `hr-docs.js` — `hrBuild*` / `hrSubmissionSpecs` / `hrZip` /
+`hrBuildSummary` / the payslip-email helpers — the SAME functions hros.html's now-thin `hrExp*` wrappers
+call, so the two apps cannot fork a statutory upload; `web/src/hr-payroll-files.ts` is the React glue
+(`hrEmpView` row mapping + toast/download descriptors) and `tests/statutory_files_test.ts` +
+`web/tests/hr-payroll-files.test.tsx` are the gates. **HRDF is `HR_HRDF_RATE = 0.01` in `hr-docs.js`** —
+the only place the levy is computed, and a rate finance owns. `hrPostXero`/`hrEmailAll` are admin/HR-admin
+only (server `hrManage` + the admin-nav Payroll screen), so no client gate is added.
 
 **💾 Save entries and Finalise are migrated (F1).** The captain's decision was: match the legacy exactly
 — Save sends a DELTA, only the cells that differ from each employee's base record, because that is the

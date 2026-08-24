@@ -19,8 +19,13 @@ import { fnSource, inlineScript } from "../tools/extract.ts";
 
 const src = inlineScript(await Deno.readTextFile(new URL("../hros.html", import.meta.url)));
 
+// v226: the file BYTES are built in hr-docs.js (hrBuild*), the hros.html wrappers only do I/O. Both are
+// in `src` because inlineScript() concatenates the page's shared classic scripts (hr-docs.js) too, so
+// this test exercises the real production path — wrapper → hrCurRows → hrBuild* — and fails whether the
+// defect is introduced in the shared builder or in the button.
 const HELPERS = ["hrCsv", "hrPadL", "hrPadR", "hrCents", "hrAscii", "hrMissingIds", "hrEmpView",
   "hrCurRows", "hrPeriod", "hrBankCode", "hrSwift", "hrFitReset", "hrFitNote",
+  "hrBuildStatutory", "hrBuildKwsp", "hrBuildAssist", "hrBuildCp39", "hrBuildGiro", "hrBuildBank",
   "hrExpStatutory", "hrExpKwsp", "hrExpCp39", "hrExpBank"];
 
 // Two employees: an ordinary one, and one at an Islamic subsidiary whose name contains the parent's.
@@ -90,8 +95,8 @@ Deno.test("CP39 refuses to truncate an over-long tax number", () => {
   Object.assign(ROWS[0].e, saved);
   // The module holds its own copy of _rows, so this asserts the guard exists rather than re-running it.
   assertEquals(typeof f === "object", true);
-  assertEquals(/longer than the 11 digits|does not fit the layout/.test(fnSource(src, "hrExpCp39")), true,
-    "hrExpCp39 no longer blocks an over-long TIN — truncation would silently return");
+  assertEquals(/longer than the 11 digits|does not fit the layout/.test(fnSource(src, "hrBuildCp39")), true,
+    "hrBuildCp39 no longer blocks an over-long TIN — truncation would silently return");
 });
 
 Deno.test("the bank salary file carries a real SWIFT/BIC, not HR OS's own bank code", () => {
@@ -118,7 +123,7 @@ Deno.test("the bank file totals exactly the net pay", () => {
 });
 
 Deno.test("KWSP and CP39 block rather than trim a value that does not fit", () => {
-  for (const fn of ["hrExpKwsp", "hrExpCp39"]) {
+  for (const fn of ["hrBuildKwsp", "hrBuildCp39"]) {
     const body = fnSource(src, fn);
     assertEquals(/hrFitReset\(\)/.test(body), true, `${fn} does not reset the overflow list`);
     assertEquals(/HR_FIT_ERR\.length/.test(body), true, `${fn} does not check for overflow before emitting`);

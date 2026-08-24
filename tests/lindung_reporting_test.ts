@@ -63,9 +63,9 @@ Deno.test("LINDUNG is a real, non-zero deduction — the test above is not vacuo
 // referenced at all — a weak check that would nonetheless have caught every one of these misses.
 const CONSUMERS: [string, string, string][] = [
   ["hrDrawPayslip", "the payslip PDF", feSrc],
-  ["hrExpStatutory", "the SOCSO CSV export", feSrc],
-  ["hrExpAssist", "the PERKESO ASSIST submission file", feSrc],
-  ["hrExpSummary", "the payroll summary report", feSrc],
+  ["hrBuildStatutory", "the SOCSO CSV export", feSrc],   // v226: builders moved to hr-docs.js
+  ["hrBuildAssist", "the PERKESO ASSIST submission file", feSrc],
+  ["hrBuildSummary", "the payroll summary report", feSrc],   // v226: moved to hr-docs.js
   ["hrDrawEA", "the EA form (year-end)", feSrc],
   ["hrPaySumHtml", "the statutory-payable summary cards", feSrc],
 ];

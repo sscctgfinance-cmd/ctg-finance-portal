@@ -103,6 +103,8 @@ export interface PayData {
   ytd?: Record<string, unknown>;
   rates?: unknown;
   run?: PayRun | null;
+  /** hr_payroll_data (hr.ts:1751), keyed by employee id — the leave balances hrDrawPayslip prints. */
+  leaveBalances?: Record<string, unknown[]>;
 }
 
 /** One entry of `HR.pay.grid` — hros.html:3721. */

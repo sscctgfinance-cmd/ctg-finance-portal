@@ -19,12 +19,42 @@ import HrPayroll, {
   logoDataRefusal, logoFileRefusal, logoScale, ratesBody, statIdsBody, statIdsRows, tp1Body,
   type CellField, type EmployerEdit, type GridRow, type HubKey, type PayData, type PayEmployee,
   type RatesCfg, type StatFile, type StatIdField, type StatIdRow, type StatIdsState,
-  type Tp1Line, type Tp1State, type UobCfg,
+  type SubmitPack, type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
+import {
+  statutoryExport, kwspExport, assistExport, cp39Export, giroExport, bankExport, submitAllAction,
+  summaryExport, payslipEmp, payslipEmailBody, xeroPostBody, type FileAction,
+} from '../../../src/hr-payroll-files';
 import { showConfirm } from '../../../src/confirm';
+import { toast } from '../../../src/toast';
 import { useUnsavedGuard } from '../../../src/unsaved';
+import { hrDrawPayslip, hrIcPassword, hrAbToB64 } from '../../../../hr-docs.js';
 import { mytISO, mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
+
+/** Blob-and-anchor download — the impure half of every file export; `hrDownload()` (hros.html) + the ZIP anchor. */
+function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** jsPDF, injected from this origin on first use — the same shape app/hr/calculator and app/hr/payslip use. */
+interface JsPdfDoc { save: (n: string) => void; addPage: () => void; output: (t: string) => ArrayBuffer }
+type JsPdfCtor = new (o: Record<string, unknown>) => JsPdfDoc;
+function loadJsPDF(): Promise<JsPdfCtor | null> {
+  const w = window as unknown as { jspdf?: { jsPDF?: JsPdfCtor } };
+  if (w.jspdf && w.jspdf.jsPDF) return Promise.resolve(w.jspdf.jsPDF);
+  return new Promise((res) => {
+    const s = document.createElement('script');
+    s.src = legacyUrl('jspdf.umd.min.js');
+    s.onload = () => res((w.jspdf && w.jspdf.jsPDF) || null);
+    s.onerror = () => res(null);
+    document.head.appendChild(s);
+  });
+}
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
@@ -63,6 +93,7 @@ export default function HrPayrollPage() {
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [submitPack, setSubmitPack] = useState<SubmitPack | null>(null);
 
   const load = useCallback(async (m: number, y: number) => {
     setErr(null); setData(null);
@@ -78,6 +109,7 @@ export default function HrPayrollPage() {
       setGrid(gridInit(d));
       setDirty(false);
       setEditFinal(false);
+      setSubmitPack(null);   // hrPickPeriod() resets HR.submitPack — hros.html:4375
       if (tenant) {
         setTicks(readJson(hubKey(tenant, m, y), {} as Partial<Record<HubKey, boolean>>));
         setUob(readJson(`hr_uob_${tenant}`, {} as UobCfg));
@@ -238,16 +270,18 @@ export default function HrPayrollPage() {
   }, [company]);
 
   /**
-   * The FILE builders, and only those: `hrExpBank`, `hrExpGiro`, `hrExpKwsp`, `hrExpAssist`,
-   * `hrExpCp39`, `hrExpSummary`, `hrExpPayslips`, `hrEmailAll`, `hrPostXero`, `hrExpStatutory` and the
-   * ZIP `hrSubmitAll()` builds — every one of them a statutory upload, a bank payment file, a payslip
-   * PDF or a posting into a live Xero ledger, and every one blocked on an open captain decision. Each
-   * is wired to a notice pointing at the legacy screen rather than to nothing, the same choice
-   * hr-calculator's payslip button makes. The four record editors that used to be in this list —
-   * ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers and 🧾 TP1 — are migrated below.
+   * The statutory / bank FILE exports (v226) — `hrExpStatutory`, `hrExpKwsp`, `hrExpAssist`, `hrExpCp39`,
+   * `hrExpGiro`, `hrExpBank` and the `hrSubmitAll` ZIP. The BYTES are built by `hr-docs.js` (the same
+   * functions hros.html calls, so no fork — see `src/hr-payroll-files.ts`); each handler here runs that
+   * pure descriptor and does the I/O: toast + blob-and-anchor. The Excel summary, the payslips PDF and its
+   * email, and the Xero draft journal are wired further down (they need jsPDF and a POST loop).
    */
-  const toLegacy = useCallback((what: string) =>
-    setNotice(`${what} is on the legacy screen — open HR OS · Payroll.`), []);
+  const runFileAction = useCallback((a: FileAction) => {
+    a.toasts.forEach((t) => toast(t.msg, t.isErr));
+    if (a.download) downloadBlob(a.download.name, new Blob([a.download.text], { type: a.download.mime || 'text/csv;charset=utf-8;' }));
+    if (a.zip) downloadBlob(a.zip.name, a.zip.blob);
+    if (a.pack) setSubmitPack(a.pack);
+  }, []);
 
   /* ── ⚙️ Rates · 🏢 Company · 🆔 Statutory numbers — the three record editors ──────────────────────
    *
@@ -500,6 +534,124 @@ export default function HrPayrollPage() {
   const finalised = !!run && run.status === 'finalised';
   const locked = finalised && !editFinal;
 
+  /* ── The statutory / bank file export handlers. Defined here, after `A` (the computed rows), because
+   * every one feeds `A.rows`; the buttons are only rendered once `A` exists, and each guards on it too. ── */
+  const onExpStatutory = useCallback((f: StatFile) => { if (A) runFileAction(statutoryExport(A.rows, month, year, f)); }, [A, month, year, runFileAction]);
+  const onExpKwsp = useCallback(() => { if (A) runFileAction(kwspExport(A.rows, month, year)); }, [A, month, year, runFileAction]);
+  const onExpAssist = useCallback(() => { if (A) runFileAction(assistExport(A.rows, month, year)); }, [A, month, year, runFileAction]);
+  const onExpCp39 = useCallback(() => { if (A) runFileAction(cp39Export(A.rows, month, year)); }, [A, month, year, runFileAction]);
+  const onExpGiro = useCallback(() => { if (A) runFileAction(giroExport(A.rows, month, year)); }, [A, month, year, runFileAction]);
+  const onExpBank = useCallback((b: string) => { if (A) runFileAction(bankExport(A.rows, month, year, b === 'maybank' ? 'maybank' : 'uob', uob)); }, [A, month, year, uob, runFileAction]);
+
+  /**
+   * `hrSubmitAll()` — hros.html:4488. The "not finalised, generate anyway?" question is a modal and stays
+   * here (`showConfirm`); the pack is built and named by `submitAllAction`. A blank tenant name falls back
+   * to 'CTG', as the legacy's `hrCompanyName()` does.
+   */
+  const onSubmitAll = useCallback(async () => {
+    if (!A) return;
+    if (!A.rows.length) { toast('No payroll to submit — finalise the month first', true); return; }
+    if (!finalised && !await showConfirm('Payroll not finalised',
+      'This month is not finalised.\n\nThe files will use the figures currently on screen, which may differ from the payslips you issue after finalising.\n\nGenerate anyway?', 'Generate anyway')) return;
+    runFileAction(submitAllAction(A.rows, month, year, company ? company.tenant_name : 'CTG', uob));
+  }, [A, finalised, month, year, company, uob, runFileAction]);
+
+  /** Payroll Summary (Excel + HRDF) — `hrExpSummary()`, hros.html:4516. */
+  const onExpSummary = useCallback(() => { if (A) runFileAction(summaryExport(A.rows, month, year, company ? company.tenant_name : '')); }, [A, month, year, company, runFileAction]);
+
+  /**
+   * The payslip PDF and its email both DRAW with `hrDrawPayslip` (the shared file) and read the
+   * `HR_EMPLOYER` / `HR_COMPANY` globals off `window`, exactly as app/hr/calculator does. `hr_payroll_data`
+   * carries no employer (hr.ts:1751), so it is fetched from `hr_bootstrap` — the same source hros.html
+   * boots it from — and cached per company.
+   */
+  const employerRef = useRef<{ tenant: string; employer: unknown } | null>(null);
+  const setPayslipGlobals = useCallback(async () => {
+    const g = window as unknown as { HR_EMPLOYER?: unknown; HR_COMPANY?: unknown };
+    g.HR_COMPANY = company ? company.tenant_name : '';
+    const tenant = company ? company.tenant_id : '';
+    if (employerRef.current && employerRef.current.tenant === tenant) { g.HR_EMPLOYER = employerRef.current.employer; return; }
+    try {
+      const r = await call<{ employer?: unknown }>({ api: 'hr_bootstrap', tenant });
+      employerRef.current = { tenant, employer: r.employer || null };
+      g.HR_EMPLOYER = r.employer || null;
+    } catch { g.HR_EMPLOYER = null; }   // the header just omits the employer's registration numbers
+  }, [company]);
+
+  /** `hrExpPayslips()` — hros.html:4410. One PDF, one page per employee. */
+  const onExpPayslips = useCallback(async () => {
+    if (!A || !A.rows.length) { toast('No payroll rows', true); return; }
+    const JsPDF = await loadJsPDF();
+    if (!JsPDF) { toast('Could not load the PDF engine (jspdf.umd.min.js).', true); return; }
+    await setPayslipGlobals();
+    const per = { month, year, label: HR_MONTHS[month] + ' ' + year };
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    A.rows.forEach((r, i) => { if (i > 0) doc.addPage(); hrDrawPayslip(doc, payslipEmp(r, data?.leaveBalances), r.p as unknown as Record<string, unknown>, per, r.d); });
+    doc.save('Payslips_' + per.label.replace(' ', '') + '.pdf');
+    toast('Payslips PDF generated');
+  }, [A, month, year, data, setPayslipGlobals]);
+
+  /**
+   * `hrEmailAll()` — hros.html:4560. One password-protected PDF per employee (locked with their IC),
+   * POSTed to `hr_send_payslip` (admin / HR admin only — server enforces `hrManage`). Sends serially so a
+   * transient failure counts against one employee and the rest still go, mirroring the legacy `next()` loop.
+   */
+  const emailingRef = useRef(false);
+  const onEmailAll = useCallback(async () => {
+    if (emailingRef.current || !A) return;
+    if (!A.rows.length) { toast('No payroll rows', true); return; }
+    const withEmail = A.rows.filter((r) => (r.e as { email?: string }).email);
+    if (!withEmail.length) { toast('No employees have an email on file', true); return; }
+    if (!await showConfirm('Email payslips',
+      `Email password-protected payslips to ${withEmail.length} employee(s) for ${HR_MONTHS[month]} ${year}? Each PDF is locked with the employee's IC number.`, 'Email')) return;
+    const JsPDF = await loadJsPDF();
+    if (!JsPDF) { toast('Could not load the PDF engine (jspdf.umd.min.js).', true); return; }
+    emailingRef.current = true;
+    try {
+      await setPayslipGlobals();
+      const per = { month, year, label: HR_MONTHS[month] + ' ' + year };
+      toast('Sending payslips…');
+      let sent = 0, failed = 0;
+      for (const r of withEmail) {
+        const e = payslipEmp(r, data?.leaveBalances);
+        let pdf: string;
+        try {
+          const doc = new JsPDF({ unit: 'mm', format: 'a4', encryption: { userPassword: hrIcPassword(e), ownerPassword: hrIcPassword(e) + '-o', userPermissions: ['print', 'copy'] } });
+          hrDrawPayslip(doc, e, r.p as unknown as Record<string, unknown>, per, r.d);
+          pdf = hrAbToB64(doc.output('arraybuffer'));
+        } catch { failed++; continue; }
+        try { await call(payslipEmailBody(e, per, company ? company.tenant_name : '', pdf)); sent++; } catch { failed++; }
+      }
+      toast('Payslips emailed — ' + sent + ' sent' + (failed ? (', ' + failed + ' failed') : '') + '.', failed > 0);
+    } finally {
+      emailingRef.current = false;
+    }
+  }, [A, month, year, data, company, setPayslipGlobals]);
+
+  /**
+   * `hrPostXero()` — hros.html:4707. Posts the finalised run to Xero as a DRAFT manual journal (never
+   * auto-approved). `hr_post_xero` is admin / HR admin only (server `hrManage`), and refuses a tenant the
+   * admin does not hold. Guarded by a synchronous ref so a double click cannot post two journals.
+   */
+  const postingXeroRef = useRef(false);
+  const onPostXero = useCallback(async () => {
+    if (postingXeroRef.current) return;
+    const runId = run?.id;
+    if (!runId) { toast('Finalise payroll first', true); return; }
+    if (!await showConfirm('Post to Xero',
+      'Post this payroll to Xero as a DRAFT manual journal? It will NOT be approved automatically — review and post it inside Xero.', 'Post draft')) return;
+    postingXeroRef.current = true;
+    try {
+      toast('Posting draft journal to Xero…');
+      await call(xeroPostBody(runId, company ? company.tenant_id : ''));
+      toast('Xero draft journal created ✓ — review it in Xero.');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Xero posting failed', true);
+    } finally {
+      postingXeroRef.current = false;
+    }
+  }, [run, company]);
+
   return (
     <>
       <Banner />
@@ -576,18 +728,19 @@ export default function HrPayrollPage() {
             onSkip={onSkip}
             onResign={onResign}
             onEmpDelete={onEmpDelete}
-            onSubmitAll={() => toLegacy('The submission pack (ZIP of every statutory file)')}
+            submitPack={submitPack}
+            onSubmitAll={onSubmitAll}
             onUobSave={onUobSave}
-            onExpBank={(b) => toLegacy(`The ${b} salary file`)}
-            onExpGiro={() => toLegacy('The generic IBG CSV')}
-            onExpKwsp={() => toLegacy('The KWSP i-Akaun file')}
-            onExpAssist={() => toLegacy('The PERKESO ASSIST file')}
-            onExpCp39={() => toLegacy('The CP39 / e-PCB file')}
-            onPostXero={() => toLegacy('Posting the Xero journal')}
-            onExpSummary={() => toLegacy('The payroll summary (Excel)')}
-            onExpPayslips={() => toLegacy('The payslips PDF')}
-            onEmailAll={() => toLegacy('Emailing payslips')}
-            onExpStatutory={(f: StatFile) => toLegacy(`The raw ${f.toUpperCase()} csv`)}
+            onExpBank={onExpBank}
+            onExpGiro={onExpGiro}
+            onExpKwsp={onExpKwsp}
+            onExpAssist={onExpAssist}
+            onExpCp39={onExpCp39}
+            onPostXero={onPostXero}
+            onExpSummary={onExpSummary}
+            onExpPayslips={onExpPayslips}
+            onEmailAll={onEmailAll}
+            onExpStatutory={onExpStatutory}
             onHubTick={onHubTick}
           />
         )}
@@ -610,10 +763,9 @@ function Banner() {
         <b>React migration.</b> The screen staff use is still{' '}
         <a href={`${legacyUrl('hros.html')}#tab=payroll`}>hros.html · Payroll</a>, unchanged. This page runs the
         same statutory engine (<code>payroll.js</code>) from the same session and is diffed against the same golden.
-        The statutory file exports — the bank salary files, the KWSP / PERKESO / CP39 uploads, the raw
-        statutory CSVs, the Excel summary, the payslips PDF and its email, the Xero journal and the
-        submission-pack ZIP — are on the legacy screen only. The ⚙️ Rates, 🏢 Company, 🆔 Statutory
-        numbers and 🧾 TP1 editors are migrated.
+        Every control is now migrated: the bank salary files (UOB / Maybank / IBG), the KWSP / PERKESO / CP39
+        uploads, the raw statutory CSVs, the Excel summary, the payslips PDF and its email, the Xero draft
+        journal, the submission-pack ZIP, and the ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers and 🧾 TP1 editors.
       </div>
     </div>
   );
