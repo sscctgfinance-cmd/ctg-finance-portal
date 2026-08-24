@@ -22,6 +22,7 @@ import HrPayroll, {
   type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
 import { showConfirm } from '../../../src/confirm';
+import { useUnsavedGuard } from '../../../src/unsaved';
 import { mytISO, mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -53,6 +54,7 @@ export default function HrPayrollPage() {
   const [data, setData] = useState<PayData | null>(null);
   const [grid, setGrid] = useState<Record<string, GridRow>>({});
   const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(dirty);            // beforeunload + nav-away confirm — HR.pay.dirty's React mirror
   const [ticks, setTicks] = useState<Partial<Record<HubKey, boolean>>>({});
   const [uob, setUob] = useState<UobCfg>({});
   const [dedEmp, setDedEmp] = useState<string | null>(null);

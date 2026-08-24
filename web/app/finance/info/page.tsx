@@ -32,6 +32,7 @@ import FinanceInfo, {
   type FolderId, type InfoCompany, type InfoDoc, type InfoFolder,
 } from '../../../src/finance-info';
 import { showConfirm } from '../../../src/confirm';
+import { useUnsavedGuard } from '../../../src/unsaved';
 import { toast } from '../../../src/toast';
 import { mytISO } from '../../../../myt.js';
 import { registerScreenSave } from '../../../src/finance-save';
@@ -51,6 +52,7 @@ export default function FinanceInfoPage() {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [search, setSearch] = useState('');
   const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(mode === 'edit' && dirty);   // beforeunload + nav-away confirm
   const [docs, setDocs] = useState<Record<string, InfoDoc[]>>({});
   const [folders, setFolders] = useState<Record<string, InfoFolder[]>>({});
   const [folderActive, setFolderActive] = useState<Record<string, FolderId | null>>({});

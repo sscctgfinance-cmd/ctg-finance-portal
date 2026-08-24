@@ -1780,6 +1780,14 @@ QUEUE's timing, the confirm's Escape listener and the alert panel's click-away l
 by a test: vitest runs `environment: 'node'` and all 52 test files depend on that, so adding jsdom for
 three behaviours was not worth it.
 
+**Unsaved-work protection is `web/src/unsaved.ts` — the React mirror of `UNSAVED_CHANGES` (app.html:1286)
+and `HR.pay.dirty` (hros.html:1404).** One process-wide dirty flag keyed by opaque id; a screen registers
+via `useUnsavedGuard(dirty)`. Two consumers read it: the `beforeunload` guard installed in that module,
+and the in-app nav confirm added to `use-spa-nav.ts` — a client-side `router.push` UNMOUNTS the dirty
+screen and drops its `useState`, which the legacy's global state never did, so the nav-away path ASKS
+first via `showConfirm`. Wired on Payroll, Company Info and Pharmacy detail (their `dirty` states). The
+pure flag is tested in `web/tests/unsaved.test.tsx`; the hook itself is not (vitest is `node`).
+
 ## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
 
 The session is `localStorage['ctg_portal_token']`, which is scoped per ORIGIN. Two hosts would be two

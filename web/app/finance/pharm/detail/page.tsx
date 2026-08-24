@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showConfirm } from '../../../../src/confirm';
+import { useUnsavedGuard } from '../../../../src/unsaved';
 import { pharmReachable } from '../../../../src/finance-pharm';
 import FinancePharmDetail, {
   PharmLinkModal, pharmPatch, saveBody,
@@ -39,6 +40,7 @@ export default function FinancePharmDetailPage() {
   const [isNew, setIsNew] = useState(false);
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(dirty);            // beforeunload + nav-away confirm
   const [refused, setRefused] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

@@ -19,6 +19,8 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { spaTarget } from './spa-nav';
+import { hasUnsaved } from './unsaved';
+import { showConfirm } from './confirm';
 
 export function useSpaNav(): void {
   const router = useRouter();
@@ -36,7 +38,16 @@ export function useSpaNav(): void {
       const to = spaTarget(location.pathname, url.pathname);
       if (!to) return;
       e.preventDefault();
-      router.push(to + url.search + url.hash);
+      const dest = to + url.search + url.hash;
+      // A client-side route unmounts the current screen and drops its `useState` — the Payroll grid,
+      // Company Info and Pharmacy detail forms lose typed work with no browser prompt (unlike a real
+      // page unload, which `beforeunload` guards). Ask first when something is dirty.
+      if (hasUnsaved()) {
+        showConfirm('Unsaved changes', 'You have unsaved changes. Discard them and leave this screen?', 'Discard')
+          .then((ok) => { if (ok) router.push(dest); });
+        return;
+      }
+      router.push(dest);
     };
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
