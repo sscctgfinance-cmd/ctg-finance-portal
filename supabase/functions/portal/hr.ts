@@ -12,7 +12,7 @@
 import {
   sb, j, xeroAccessToken, meFromToken, isAdmin, superAdmin,
   hrManage, hrCanView, logAudit, NO_TENANT, allowedTenants, isFullScopeAdmin,
-  userWriteAllowed, denyTenant, resolveModel, callVisionLLM,
+  userWriteAllowed, denyTenant, tenantPinned, resolveModel, callVisionLLM,
   sendEmailTo,
 } from "./lib.ts";
 
@@ -990,6 +990,13 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||"");
       if (!tenant) return j({ ok:true, employees:[], leaveTypes:[], leaves:[], claims:[], employer:null });
+      // v225 (HR tenant audit): hrCanView() says "may read HR data" — it does NOT say WHICH company's.
+      // The company arrives in the request body and was taken verbatim, so any admin/hr_admin/viewer
+      // could read a company they were deliberately not assigned by editing one field. 4 of the 10
+      // HR-capable accounts are scoped to fewer than all 5 companies, and this payload is the whole HR
+      // dataset: names, IC numbers, salaries, bank accounts, leave and claims. Same bug class v190 fixed
+      // on the finance side (portal_company_info_save); HR was never swept.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_bootstrap", tenant);
       const emp = await sb.from("hr_employees").select("*").eq("tenant_id",tenant).order("emp_no");
       const empIds = (emp.data||[]).map((e:any)=>e.id);
       const [lt, lv, cl, ei, rt, bk] = await Promise.all([
@@ -1545,7 +1552,10 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
     }
     if (api === "hr_leave_flow_get") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const flowG = await leaveFlowFor(String(b.tenant||"").trim()||null);   // v157: per-company chain
+      const flowTenant = String(b.tenant||"").trim();
+      // v225: the approval chain names the company's approvers. See the audit note on hr_bootstrap.
+      if (flowTenant && !(await tenantPinned(b.token, flowTenant))) return denyTenant(me, "hr_leave_flow_get", flowTenant);
+      const flowG = await leaveFlowFor(flowTenant||null);   // v157: per-company chain
       return j({ ok:true, steps: flowG });
     }
     if (api === "hr_leave_admin") {
@@ -1922,6 +1932,9 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const meOut = { isAdmin:who.isAdmin, roles:who.roles, is_manager:who.is_manager, employee: who.employee||null };
       if(who.isAdmin){
         const tenant = String(b.tenant||"");
+        // v225: the employee branch below is self-scoped by who.employee.tenant_id; this admin branch
+        // took the company straight from the body and returned that company's roster. See hr_bootstrap.
+        if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_config", tenant);
         const [types, rates, wfs, steps, policy, roleApprovers, emps, ccs] = await Promise.all([
           sb.from("hr_claim_types").select("*").order("sort_order"),
           sb.from("hr_mileage_rates").select("*").order("rate"),
@@ -2306,6 +2319,8 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can export accounting data." }, 403);
       const tenant=String(b.tenant||""); const month=String(b.month||"").trim(); // 'YYYY-MM' optional
+      // v225: Finance-role or admin is WHAT you may export, not WHOSE. See the audit note on hr_bootstrap.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_export_accounting", tenant);
       let mFrom="", mTo="";
       if(month){
         // claim_date is a Postgres DATE — "YYYY-02-31" is a hard error Postgres rejects. Use an exclusive next-month bound.
@@ -2548,6 +2563,9 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const pend=["Submitted","Pending Manager Approval","Pending HR Approval","Pending Finance Approval","Pending Director Approval","Need More Info"];
       if(who.isAdmin){
         const tenant=String(b.tenant||"");
+        // v225: this select joins bank_account, ic_no and email — another company's staff PII if the
+        // caller is not assigned to it. The employee branch below is self-scoped. See hr_bootstrap.
+        if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_rc_list", tenant);
         let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept,bank_name,bank_account,ic_no,email)").eq("tenant_id",tenant).order("created_at",{ascending:false}).limit(500);
         if(scope==="pending") q=q.in("status",pend);
         else if(scope==="approved") q=q.eq("status","Approved");
@@ -2696,7 +2714,11 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     if (api === "hr_dashboard") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
-      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:String(b.tenant||""), p_month:mo, p_year:yr });
+      // v225: the hr_dashboard RPC takes p_tenant and does NOT check the caller — see the audit note on
+      // hr_bootstrap. It returns the company's payroll totals, so the check has to happen here.
+      const dashTenant = String(b.tenant||"");
+      if (!(await tenantPinned(b.token, dashTenant))) return denyTenant(me, "hr_dashboard", dashTenant);
+      const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:dashTenant, p_month:mo, p_year:yr });
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true, data, month:mo, year:yr });
     }
@@ -2704,6 +2726,8 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const now = new Date(); const mo = Number(b.month)||(now.getMonth()+1); const yr = Number(b.year)||now.getFullYear();
       const tenant = String(b.tenant||"");
+      // v225: this one both READS another company's payroll and WRITES a snapshot + insights into it.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_dash_refresh", tenant);
       const { data, error } = await sb.rpc("hr_dashboard", { p_tenant:tenant, p_month:mo, p_year:yr });
       if (error) return j({ ok:false, error:error.message });
       await sb.from("hr_dashboard_snapshots").insert({ tenant_id:tenant, period_month:mo, period_year:yr, payload:data });
@@ -2720,6 +2744,8 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     if (api === "hr_calc_log") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (b.overridden && !String(b.reason||"").trim()) return j({ ok:false, error:"a reason is required for an override" });
+      { const t = String(b.tenant||"");   // v225: writes a payroll-calculation audit row under any company
+        if (!(await tenantPinned(b.token, t))) return denyTenant(me, "hr_calc_log", t); }
       const row = {
         tenant_id:String(b.tenant||""), employee_id:b.employeeId?String(b.employeeId):null, employee_name:b.employeeName||null,
         period:b.period||null, inputs:b.inputs||{}, flags:b.flags||{}, settings:b.settings||{}, result:b.result||{},
@@ -2732,7 +2758,9 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
     }
     if (api === "hr_calc_history") {
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
-      const { data, error } = await sb.from("hr_calc_audit").select("*").eq("tenant_id",String(b.tenant||"")).order("created_at",{ascending:false}).limit(60);
+      const calcTenant = String(b.tenant||"");   // v225: see the audit note on hr_bootstrap
+      if (!(await tenantPinned(b.token, calcTenant))) return denyTenant(me, "hr_calc_history", calcTenant);
+      const { data, error } = await sb.from("hr_calc_audit").select("*").eq("tenant_id",calcTenant).order("created_at",{ascending:false}).limit(60);
       if (error) return j({ ok:false, error:error.message });
       return j({ ok:true, rows:data||[] });
     }
@@ -2906,6 +2934,9 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
       const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const yr = Number(b.year); const tenant=String(b.tenant||"");
       if (!tenant) return j({ ok:false, error:"no company selected" });
+      // v225: EA / Form E / CP8D figures — every employee's year's pay and tax for the company named in
+      // the body. See the audit note on hr_bootstrap.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_annual", tenant);
       // Filter server-side via the run ids (an unfiltered hr_payslips select silently caps at 1000 rows —
       // at 5 companies × 12 months that understates EA-form annual totals once headcount grows).
       const { data: yrRuns } = await sb.from("hr_payroll_runs").select("id").eq("tenant_id",tenant).eq("period_year",yr);

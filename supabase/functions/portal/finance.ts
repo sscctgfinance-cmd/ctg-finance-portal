@@ -9,7 +9,7 @@ import {
   sb, j, SKINDAE_TENANT, O2O_REVENUE_CODE, CLOSE_TEMPLATE, genTotpSecret,
   totpVerify, otpAuthUrl, xeroOrgName, xeroAccessToken, meFromToken, isAdmin,
   superAdmin, hrManage, logAudit, allowedTenants, isFullScopeAdmin, userWriteAllowed,
-  tenantsAssignable, denyTenant, xeroGet, xeroInvoicesAll,
+  tenantsAssignable, denyTenant, tenantPinned, xeroGet, xeroInvoicesAll,
   xeroInvoicesWhere, resolveContact, getWebhookKey, recordVendorCodingHistory, sha256Hex, sha256HexBytes,
   parsePnl, refreshPnlCache, invToCacheRow, processPendingDedup, syncStateUpdate, docaiAccessToken,
   callDocAI, processApEmail, logDecision, buildSelfBilledInvoicePdf, runBackfill, runDelta,
@@ -873,6 +873,9 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // so a re-post of the same batch reports per-invoice "already existed" instead of duplicating.
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      // v225: superAdmin() is not tenant-aware; this POSTS draft Sales Invoices into the company named in
+      // the body, so a single-company admin could create invoices in another company's Xero. See sbi_buyer.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "sr_post_invoices", tenant);
       const items:any[] = (Array.isArray(b.invoices)? b.invoices : []).slice(0,2000);
       if (!items.length) return j({ ok:false, error:"no invoices" });
       const dISO = (s:any)=>{ const m=String(s||"").match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? (m[3]+"-"+m[2]+"-"+m[1]) : String(s||""); };
@@ -915,6 +918,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // build continues the numbering instead of restarting at 0001 (duplicate import protection).
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      // v225: reads another company's Xero invoice numbers by body tenant, superAdmin-only. See sbi_buyer.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "sr_yrdz_next", tenant);
       const prefixes: string[] = (Array.isArray(b.prefixes)? b.prefixes : []).slice(0,24).map((x:any)=>String(x||"")).filter((x:string)=>x.length>6 && x.length<40);
       if (!prefixes.length) return j({ ok:false, error:"prefixes required" });
       const maxOut:any = {}; const srcOut:any = {};
@@ -942,6 +947,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // Lets the build suffix repeat payments as SO-XXXX_1, _2 … instead of colliding on import.
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const tenant = String(b.tenant||""); if (!tenant) return j({ ok:false, error:"tenant required" });
+      // v225: reads another company's Xero invoice numbers by body tenant, superAdmin-only. See sbi_buyer.
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "sr_so_suffix", tenant);
       const bases: string[] = (Array.isArray(b.bases)? b.bases : []).slice(0,2000).map((x:any)=>String(x||"").trim()).filter((x:string)=>x.length>2 && x.length<60);
       if (!bases.length) return j({ ok:false, error:"bases required" });
       const takenSet = new Set<string>();
@@ -1382,6 +1389,10 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "sbi_buyer") {
       // fetch buyer (company) details for the form auto-fill
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      // v225: superAdmin() is not tenant-aware and 4 of 10 admins are scoped to a single company, so this
+      // returned another company's TIN, SST number, registered address and BANK ACCOUNTS to an admin who
+      // was deliberately not given that company. Same class as portal_company_info_save (v190).
+      if (!(await tenantPinned(b.token, String(b.tenant||"")))) return denyTenant(me, "sbi_buyer", String(b.tenant||""));
       const { data: ci } = await sb.from("portal_company_info").select("legal_name,ssm_new,myinvois_tin,sst_no,reg_address,reg_postcode,reg_city,reg_state,bank_accounts").eq("tenant_id", b.tenant).maybeSingle();
       const { data: tn } = await sb.from("xero_tenants").select("tenant_name").eq("tenant_id", b.tenant).maybeSingle();
       const addr = ci ? [ci.reg_address, ci.reg_postcode, ci.reg_city, ci.reg_state].filter(Boolean).join(", ") : "";
@@ -1391,6 +1402,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // Live Xero chart of accounts for the paying company → GL-account + WHT-payable dropdowns.
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.tenant) return j({ ok:false, error:"tenant required" });
+      // v225: returns another company's Xero chart of accounts by body tenant, superAdmin-only. See sbi_buyer.
+      if (!(await tenantPinned(b.token, String(b.tenant||"")))) return denyTenant(me, "sbi_accounts", String(b.tenant||""));
       let access; try { access = await xeroAccessToken(); } catch(e){ return j({ ok:false, error:"Xero auth: "+String(e).slice(0,150) }); }
       const r = await fetch("https://api.xero.com/api.xro/2.0/Accounts?where=" + encodeURIComponent('Status=="ACTIVE"'), { headers:{ "Authorization":"Bearer "+access, "Xero-Tenant-Id": b.tenant, "Accept":"application/json" } });
       const d = await r.json();
@@ -1926,6 +1939,9 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "ap_rule_save") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.tenant || !Array.isArray(b.keywords) || !b.keywords.length || !b.account_code) return j({ ok:false, error:"tenant, keywords[], account_code required" });
+      // v225: this rule decides how another company's bills get GL-coded from then on. superAdmin() alone
+      // is not tenant-aware — see the note on sbi_buyer.
+      if (!(await tenantPinned(b.token, String(b.tenant)))) return denyTenant(me, "ap_rule_save", String(b.tenant));
       const row = { tenant_id: String(b.tenant), pattern_keywords: b.keywords.map((k)=>String(k).toLowerCase().trim()).filter(Boolean), account_code: String(b.account_code), priority: Number(b.priority)||100, notes: b.notes||null, updated_at: new Date().toISOString() };
       if (b.id){
         const { error } = await sb.from("portal_gl_rules").update(row).eq("id", Number(b.id));
@@ -2200,6 +2216,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // that sync_audit can miss (it only checks open AR totals).
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.tenant) return j({ ok:false, error:"tenant required" });
+      // v225: pulls another company's Xero invoices by body tenant, superAdmin-only. See sbi_buyer.
+      if (!(await tenantPinned(b.token, String(b.tenant||"")))) return denyTenant(me, "xero_diagnose", String(b.tenant||""));
       const days = Math.min(Math.max(parseInt(b.days||"30",10)||30, 1), 730);
       const sinceISO = new Date(Date.now() - days*24*3600*1000).toISOString();
       const sinceHeader = new Date(sinceISO).toUTCString();

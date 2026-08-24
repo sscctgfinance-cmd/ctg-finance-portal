@@ -91,6 +91,16 @@ unauthenticated caller on purpose, regenerate it:
 deno run -A tools/route_probe.ts supabase/functions/portal/index.ts tests/route_parity.golden.jsonl
 ```
 
+**A role gate is not a tenant gate — `tests/tenant_scope_test.ts` is the structural guard.** `hrCanView()` /
+`superAdmin()` answer "may this KIND of data be touched", never "WHOSE". A handler that reads `b.tenant`
+from the body and then queries/writes that company needs `if (!(await tenantPinned(b.token, tenant)))
+return denyTenant(me, "<api>", tenant);` AFTER auth and BEFORE the read/write — `tenantPinned` passes for
+full-scope admins and denies a single-company admin another company's id (4 of 5 are single-company).
+The test parses `hr.ts` AND `finance.ts` and fails if any action touching `b.tenant` lacks a recognized
+guard; a handler where `b.tenant` is an OPTIONAL all-tenants filter (omitting it returns every company)
+goes in `EXEMPT` with that reason — its real control is `isFullScopeAdmin` (v148), a separate concern.
+It is structural because nothing fails at runtime when the check is missing. See the file header.
+
 ## Shared frontend code lives in the root `.js` files
 
 `app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Code that is not UI
