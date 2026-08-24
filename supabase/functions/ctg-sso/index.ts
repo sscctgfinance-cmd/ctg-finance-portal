@@ -15,6 +15,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { remoteJwks, verifyIdToken } from "./verify.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -36,7 +37,15 @@ const APPS: Record<string, string> = {
   hros:   `${SITE_URL}/hros.html`,
   portal: `${SITE_URL}/app.html`,
   index:  `${SITE_URL}/index.html`,
+  // The React sign-in page (web/app/signin/). The callback returns the token in the fragment here and
+  // web/src/signin.ts routes onward by role. The key is spelled once on each side: SSO_APP_KEY there.
+  "finance-portal-react": `${SITE_URL}/signin/`,
 };
+
+// CTG Portal's published JWKS. The id_token from the token endpoint is now VERIFIED against it (below)
+// rather than decoded on trust. createRemoteJWKSet fetches lazily and caches, so this is not a per-login
+// round trip.
+const JWKS = remoteJwks(`${PORTAL_ORIGIN}/api/sso/jwks`);
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -188,22 +197,18 @@ Deno.serve(async (req) => {
     // CTG returns { id_token, token_type, expires_in, session_token } — the identity is INSIDE the JWT,
     // not at the top level. (Established from the live response; the endpoint is undocumented.)
     //
-    // The payload is read without verifying the signature, which is safe here for the reason OIDC Core
-    // §3.1.3.7 allows it: this token was fetched by OUR server directly from the token endpoint over
-    // TLS, in a flow we started ourselves and proved with PKCE. There is no browser in the middle to
-    // substitute a token, and no JWKS endpoint is published to verify against anyway.
-    function jwtPayload(jwt: string): any {
-      try {
-        const part = String(jwt).split(".")[1];
-        if (!part) return null;
-        const b64 = part.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - part.length % 4) % 4);
-        // decodeURIComponent/escape round-trip so non-ASCII names survive.
-        return JSON.parse(decodeURIComponent(Array.from(atob(b64))
-          .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("")));
-      } catch (_e) { return null; }
+    // The id_token is VERIFIED against CTG Portal's published JWKS: ES256 signature, issuer = the portal
+    // origin, audience = our app_id, and expiry (jose checks exp/nbf itself). A forged, wrong-audience or
+    // expired token is rejected here rather than trusted. Tests/ctg_sso_verify_test.ts pins all three.
+    let claims: Record<string, any>;
+    try {
+      claims = await verifyIdToken(String(tok?.id_token || ""), JWKS, { issuer: PORTAL_ORIGIN, audience: id });
+    } catch (e: any) {
+      return page("Could not verify the CTG sign-in",
+        `<p>The identity token from CTG Portal failed verification and was rejected.</p>
+         <p><code>${esc(e?.code || e?.message || String(e))}</code></p>`,
+        502, flow.return_to);
     }
-
-    const claims = jwtPayload(tok?.id_token || "") || {};
     const pick = (...vals: any[]) => String(vals.find((v) => v != null && v !== "") ?? "").trim();
 
     const email = pick(claims.email, tok?.user?.email, tok?.email, tok?.profile?.email).toLowerCase();

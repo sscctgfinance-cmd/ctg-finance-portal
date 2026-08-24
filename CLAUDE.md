@@ -1845,6 +1845,33 @@ ua). `app.html` has no beacon today, so Finance uses `app` as its filename ident
 pure and pinned in `web/tests/beacon.test.tsx` (no token, no email); the install/dedup glue is not tested
 (vitest is `node`, no window).
 
+### React sign-in is `web/app/signin/` — the last auth surface off the legacy files
+
+The one login piece React did not have. `web/src/signin.ts` is the pure half (the split every screen
+uses): `parseSsoToken()` (mirrors app.html:1236's `#sso_token=` consumer), `loginBody()`/`login2faBody()`
+(the `{api:'login'}` / `{api:'login_2fa'}` POSTs, byte-identical to common.js:107/124), `loginOutcome()`
+(doLogin's ok→need_2fa→locked→error ladder) and `routeForRole()` (HR-only roles → `/hr/clock/`, else
+`/finance/overview/`, via `isHrOnly` from `finance-hr-only-gate.tsx`). The impure route
+`web/app/signin/page.tsx` writes ONLY `ctg_portal_token`, strips the fragment, fires the ported
+`PasswordHost` on `must_change_pw`, and reuses the byte-identical login markup so `app/signin/layout.tsx`
+carries just Finance's generated `legacy.css`. It is **top-level, not under `app/finance` or `app/hr`** —
+`web/tests/shell.test.tsx` fails on an unclaimed dir under either. Pinned in `web/tests/signin.test.tsx`;
+no live flow is runnable by any agent (report §5), so the pure half IS the verification.
+
+**The SSO app key is `finance-portal-react`, spelled once per side.** `SSO_APP_KEY` in `signin.ts` (the
+button navigates to `ctg-sso/start?app=<key>`) and the matching `APPS["finance-portal-react"] =
+${SITE_URL}/signin/` in `supabase/functions/ctg-sso/index.ts`. `CTG_SSO` is derived from `API`, never
+hardcoded, so `tests/site_url_test.ts`'s "no fourth host" scan stays clean.
+
+**`ctg-sso` now VERIFIES the id_token — `supabase/functions/ctg-sso/verify.ts`.** The callback used to
+decode the JWT payload on trust; it now `jwtVerify`s (jose) against CTG Portal's published JWKS
+(`${PORTAL_ORIGIN}/api/sso/jwks`), pinning `ES256` + issuer + audience(=app_id) + expiry. Match/mint/
+fragment-redirect are unchanged. `verify.ts` takes the key resolver as an ARGUMENT so
+`tests/ctg_sso_verify_test.ts` drives it with a local key and no network — the module `import`s jose but
+never `fetch`es at test time, so `deno test --allow-read tests/` stays hermetic. Reject cases (wrong aud
+/ bad sig / expired / wrong iss) are all pinned. `ctg-sso` is still deployed BY HAND (in no workflow), so
+this takes effect only when a human redeploys it.
+
 ## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
 
 The session is `localStorage['ctg_portal_token']`, which is scoped per ORIGIN. Two hosts would be two
