@@ -23,6 +23,7 @@ import '../../src/shell.css';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
+import { installBeacon, setBeaconContext } from '../../src/beacon';
 import ConfirmHost from '../../src/confirm';
 import HrShell, { type Company } from '../../src/hr-shell';
 import { hrNavFor, hrRole, type HrRole, type NavEntry } from '../../src/nav';
@@ -57,6 +58,10 @@ export default function HrLayout({ children }: { children: ReactNode }) {
   // Every anchor in this route tree that points at another HR screen becomes a client-side route change
   // instead of a document load; see src/spa-nav.ts for the rule and why it stops at the app boundary.
   useSpaNav();
+
+  // Report uncaught errors and rejections — the mirror of hros.html's beacon, see src/beacon.ts.
+  useEffect(() => { installBeacon('hros'); }, []);
+  useEffect(() => { setBeaconContext('hros', tenant); }, [tenant]);
 
   useEffect(() => {
     // `enterApp()` — hros.html:1359-1360. The saved theme and collapse state are applied to the shell

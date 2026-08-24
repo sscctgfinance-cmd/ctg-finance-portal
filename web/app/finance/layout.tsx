@@ -12,6 +12,7 @@ import '../../src/shell.css';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
+import { installBeacon, setBeaconContext } from '../../src/beacon';
 import ConfirmHost from '../../src/confirm';
 import AlertsPanel, { alertFeeds, alertHref, alertsFor, badgeText, computeAlerts,
   type Alert, type OverviewLite, type PendingLite } from '../../src/finance-alerts';
@@ -77,6 +78,11 @@ export default function FinanceLayout({ children }: { children: ReactNode }) {
   // Every anchor in this route tree that points at another Finance screen becomes a client-side route
   // change instead of a document load; see src/spa-nav.ts for the rule and why it stops at the boundary.
   useSpaNav();
+
+  // Report uncaught errors and rejections — the mirror of hros.html's beacon, see src/beacon.ts.
+  // app.html has no beacon today; 'app' is its filename identity, the natural mirror for the Finance side.
+  useEffect(() => { installBeacon('app'); }, []);
+  useEffect(() => { setBeaconContext('app', company); }, [company]);
 
   /**
    * `loadNotifs()` — app.html:2722-2730.

@@ -1817,6 +1817,17 @@ reload re-runs the perms gate too. Use it for any new route; the banner-form
 `{err ? <Panel>…</Panel> : null}` sites that render the screen alongside are transient action errors,
 not dead ends, and are left as-is.
 
+**The runtime-error beacon is `web/src/beacon.ts` — the React mirror of hros.html:1155-1186 (the F5 gap),
+and it deliberately sends NO token.** Both layouts call `installBeacon('hros'|'app')` once and
+`setBeaconContext(app, tenant)` on tenant change; the module installs the two global `error` /
+`unhandledrejection` listeners (idempotent), deduped (same message once) and capped (8/load), and POSTs
+`client_error` with `keepalive`. The one deviation from the legacy: the server derives `user_email` /
+`user_id` from the `token` in the body (index.ts:110), so the captain's 2026-08-24 "strip the email"
+decision is implemented by omitting `token` entirely — mirror only message/stack/page/tenant (+kind/app/
+ua). `app.html` has no beacon today, so Finance uses `app` as its filename identity. `beaconBody()` is
+pure and pinned in `web/tests/beacon.test.tsx` (no token, no email); the install/dedup glue is not tested
+(vitest is `node`, no window).
+
 ## Hosting is `vercel.json`, and its whole job is ONE ORIGIN
 
 The session is `localStorage['ctg_portal_token']`, which is scoped per ORIGIN. Two hosts would be two
