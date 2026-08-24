@@ -8,15 +8,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showConfirm } from '../../../src/confirm';
-import HrEmployees, { EMP_UI_DEFAULT, type Bank, type EmpUI, type Employee } from '../../../src/hr-employees';
+import HrEmployees, { EMP_UI_DEFAULT, credsText, type Bank, type Cred, type CredSkip, type EmpUI, type Employee } from '../../../src/hr-employees';
 import { call, legacyUrl, token } from '../../../src/portal';
+import { toast } from '../../../src/toast';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
 const PROCARE = 'I PROCARE MALAYSIA SDN BHD';
 const HR_PROCARE_TENANT = '99911869-9e91-4572-b7dc-4db51b45b6a9';
 
 interface Company { tenant_id: string; tenant_name: string }
-interface Cred { name?: string; email?: string; temp_password?: string }
 
 export default function HrEmployeesPage() {
   const [company, setCompany] = useState<Company | null>(null);
@@ -26,7 +26,7 @@ export default function HrEmployeesPage() {
   const [editEmp, setEditEmp] = useState<Employee | Record<string, never> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [creds, setCreds] = useState<Cred[] | null>(null);
+  const [creds, setCreds] = useState<{ rows: Cred[]; skipped: CredSkip[] } | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
@@ -146,7 +146,7 @@ export default function HrEmployeesPage() {
       try {
         const r = await call<{ already?: boolean; name?: string; email?: string; temp_password?: string }>({ api: 'hr_rc_enable_login', employee_id: id });
         if (r.already) setNotice(`${e.name || 'Employee'} already has a login`);
-        else setCreds([{ name: r.name || e.name || '', email: r.email, temp_password: r.temp_password }]);
+        else setCreds({ rows: [{ name: r.name || e.name || '', email: r.email, temp_password: r.temp_password }], skipped: [] });
         await load(company?.tenant_id);
       } catch (er) {
         setErr(er instanceof Error ? er.message : String(er));
@@ -160,9 +160,11 @@ export default function HrEmployeesPage() {
       if (!await showConfirm('Create HR OS logins in bulk',
         'Create HR OS logins for ALL active employees who have an email but no login yet?\n\nEmployees without an email are skipped. You’ll get a list of one-time temporary passwords to share.', 'Create logins', 'p')) return;
       try {
-        const r = await call<{ created?: Cred[]; skipped?: { name?: string; reason?: string }[] }>({ api: 'hr_rc_enable_login_bulk', tenant: company?.tenant_id });
+        const r = await call<{ created?: Cred[]; skipped?: CredSkip[] }>({ api: 'hr_rc_enable_login_bulk', tenant: company?.tenant_id });
         if (!(r.created && r.created.length)) setNotice('No new logins created' + (r.skipped?.length ? ` · ${r.skipped.length} skipped` : ''));
-        else setCreds(r.created);
+        // The skipped list travels WITH the created one — hros.html:2778 passes both. Dropping it means
+        // 5 of 40 staff quietly have no login and nothing on screen says which five.
+        else setCreds({ rows: r.created, skipped: r.skipped || [] });
         await load(company?.tenant_id);
       } catch (er) {
         setErr(er instanceof Error ? er.message : String(er));
@@ -235,7 +237,7 @@ export default function HrEmployeesPage() {
         : (
           <>
             {notice ? <Panel>{notice}</Panel> : null}
-            {creds ? <Creds rows={creds} onClose={() => setCreds(null)} /> : null}
+            {creds ? <Creds rows={creds.rows} skipped={creds.skipped} onClose={() => setCreds(null)} /> : null}
             <HrEmployees
               employees={employees}
               banks={banks}
@@ -265,7 +267,15 @@ export default function HrEmployeesPage() {
  * exposure as the legacy — the passwords are shown once, on this screen, to the admin who asked for
  * them — and nothing else about the employee record is added to it.
  */
-function Creds({ rows, onClose }: { rows: Cred[]; onClose: () => void }) {
+function Creds({ rows, skipped, onClose }: { rows: Cred[]; skipped: CredSkip[]; onClose: () => void }) {
+  // `SITE_URL+'/hros.html'` — hros.html:2783. There is no SITE_URL on this side, and the whole point of
+  // one origin is that this page's own is the right one.
+  const url = (typeof location === 'undefined' ? '' : location.origin) + legacyUrl('hros.html');
+  const onCopy = () => {
+    void navigator.clipboard.writeText(credsText(url, rows))
+      .then(() => toast('Copied ✓'))
+      .catch(() => toast('Copy failed — select manually', true));
+  };
   return (
     <div className="panel" style={{ marginBottom: '14px' }}>
       <div className="panel-hd">
@@ -273,7 +283,8 @@ function Creds({ rows, onClose }: { rows: Cred[]; onClose: () => void }) {
         <button className="btn sm" onClick={onClose}>✕</button>
       </div>
       <div className="muted" style={{ fontSize: '12px', padding: '0 14px 10px', lineHeight: 1.5 }}>
-        Give each person their <b>email + temporary password</b>. <b>Passwords are shown only once — copy them now.</b>
+        Give each person their <b>email + temporary password</b>. They sign in at <b>{url}</b> and should
+        change the password after. <b style={{ color: 'var(--coral-soft)' }}>Passwords are shown only once — copy or print now.</b>
       </div>
       <div className="tbl-wrap">
         <table className="bigtable">
@@ -282,6 +293,15 @@ function Creds({ rows, onClose }: { rows: Cred[]; onClose: () => void }) {
             <tr key={i}><td>{c.name || ''}</td><td>{c.email || ''}</td><td style={{ fontFamily: 'monospace' }}><b>{c.temp_password || ''}</b></td></tr>
           ))}</tbody>
         </table>
+      </div>
+      {skipped.length ? (
+        <div className="muted" style={{ fontSize: '11px', padding: '8px 14px 0' }}>
+          Skipped ({skipped.length}): {skipped.map((sk) => `${sk.name || ''} — ${sk.reason || ''}`).join('; ')}
+        </div>
+      ) : null}
+      <div style={{ display: 'flex', gap: '8px', padding: '12px 14px 14px' }}>
+        <button className="btn p sm" onClick={onCopy}>📋 Copy all</button>
+        <button className="btn sm" onClick={() => window.print()}>🖨 Print</button>
       </div>
     </div>
   );

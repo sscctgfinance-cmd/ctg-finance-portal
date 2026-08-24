@@ -29,6 +29,22 @@
 
 import type { CSSProperties, ReactNode } from 'react';
 
+/** One row of `hr_rc_enable_login_bulk`'s `created` — hr.ts:1971. */
+export interface Cred { name?: string; email?: string; temp_password?: string }
+
+/** One row of its `skipped`: the people who did NOT get a login, and why. */
+export interface CredSkip { name?: string; reason?: string }
+
+/**
+ * `hrShowCreds()`'s hidden `#hr_creds_txt` — hros.html:2787. The tab-separated block 📋 Copy all puts
+ * on the clipboard for the admin to paste into an email. Pure, and split out of the route the way
+ * `bankFile()` is: no golden sees a clipboard, and this text leaves the building.
+ */
+export function credsText(url: string, created: Cred[]): string {
+  return 'HR OS login: ' + url + '\n\n'
+    + created.map((c) => (c.name || '') + '\t' + (c.email || '') + '\t' + (c.temp_password || '')).join('\n');
+}
+
 /** An `hr_bootstrap` employee row, as this screen's two renderers consume it. */
 export interface Employee {
   id: string;
