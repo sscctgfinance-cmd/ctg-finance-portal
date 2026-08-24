@@ -1735,7 +1735,12 @@ now scans `vercel.json` too.
 
 ## The site's address is `SITE_URL`, declared three times because three runtimes hold it
 
-`https://os.ctg4u.com`. It used to be written out longhand in seven places. It is now `SITE_URL` in
+`https://sscctgfinance-cmd.github.io/ctg-finance-portal` — the GitHub Pages origin, which is what
+answers today. It briefly named `https://os.ctg4u.com` (PR #80) and that host has **no DNS record**,
+so five staff emails carried dead links for three days; the value is back on Pages until the DNS
+record exists and answers, which is the sign-in phase's job. Each declaration carries that condition
+as a comment — do not move it back on the strength of the cutover docs alone.
+It used to be written out longhand in seven places. It is now `SITE_URL` in
 `common.js` (the browser half of both legacy apps), `SITE_URL` + `HROS_URL`/`APP_URL`/`CLOCK_URL` in
 `supabase/functions/portal/hr.ts` (the five links that travel by EMAIL — leave approvals, claim
 approvals, employee credentials, admin credentials, clock reminders), and `SITE_URL` in

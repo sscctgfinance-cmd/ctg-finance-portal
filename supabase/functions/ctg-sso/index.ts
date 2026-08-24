@@ -27,7 +27,9 @@ const REDIRECT_URI  = `${SELF}/callback`;
 // The site's public address. One constant here, and the twin declarations in common.js (the browser)
 // and supabase/functions/portal/hr.ts (the emails) — three runtimes, none able to import from another.
 // tests/site_url_test.ts fails if the three stop agreeing.
-const SITE_URL = "https://os.ctg4u.com";
+// INTERIM: back on the GitHub Pages origin. os.ctg4u.com has no DNS record yet, so the
+// address moves back only once that record exists and answers — the sign-in phase owns it.
+const SITE_URL = "https://sscctgfinance-cmd.github.io/ctg-finance-portal";
 // Allow-list, not a parameter. A redirect target taken from the query string is an open redirect, and
 // an open redirect on a login callback is a credential-stealing primitive.
 const APPS: Record<string, string> = {

@@ -29,7 +29,9 @@
 // this one, `SITE_URL` in supabase/functions/portal/hr.ts (the five emails), and `SITE_URL` in
 // supabase/functions/ctg-sso/index.ts (the sign-in allow-list). tests/site_url_test.ts fails if they
 // stop agreeing, and fails if a fourth hardcoded copy appears anywhere in the shipped source.
-const SITE_URL = 'https://os.ctg4u.com';
+// INTERIM: back on the GitHub Pages origin. os.ctg4u.com has no DNS record yet, so the
+// address moves back only once that record exists and answers — the sign-in phase owns it.
+const SITE_URL = 'https://sscctgfinance-cmd.github.io/ctg-finance-portal';
 
 function ctgSsoSignIn(app){ location.href = CTG_SSO + "/start?app=" + encodeURIComponent(app); }
 function storageGet(k){ try { return STORAGE_OK ? localStorage.getItem(k) : null; } catch(_e){ return null; } }
