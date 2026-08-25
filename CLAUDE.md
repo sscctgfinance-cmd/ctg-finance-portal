@@ -2009,6 +2009,38 @@ which is stale: `{"api":"hr_dashboard","tenant":{"a":1}}` answers `bad tenant` 4
 retired action answers `unknown action`. Do not probe `login` / `changepw` / `client_error` — lockout
 counters and row inserts.
 
+**The static site and the edge function reach production by DIFFERENT paths, and only one is automatic.**
+A merge to `ctg/main` fires `deploy-supabase-portal.yml` in the private repo, so the **edge function is
+current the moment CI is green** — but Pages serves the *files* from the separate **public repo**
+(`sscctgfinance-cmd.github.io/ctg-finance-portal` ⇒ Pages "deploy from branch main" on
+`sscctgfinance-cmd/ctg-finance-portal`), which a merge does **not** touch. Pages only moves when the
+operator runs the manual `git push origin main` above. So the two can — and do — drift: on 2026-08-24
+the live `common.js` still served `SITE_URL = 'https://os.ctg4u.com'` (the dead PR #80 address) while
+`ctg/main` had carried PR #111's fix back to the Pages origin for days. The function was current; the
+site staff loaded was not. Two compounders: the public repo is **also pushed to out of band** from the
+operator's GitHub Desktop (its `main` HEAD is often a human *merge* commit, not a mirror of `ctg/main`),
+so a stale or force-diverged public main can outlive a merge; and a green Supabase Action proves nothing
+about Pages.
+
+**Verifying "is the fix live" means asking the Pages ORIGIN, not the Actions log.** For a file your
+change touched (SITE_URL in `common.js` is the usual canary):
+
+```bash
+diff <(curl -s https://sscctgfinance-cmd.github.io/ctg-finance-portal/common.js) <(git show ctg/main:common.js)
+```
+
+Empty diff ⇒ live. Non-empty for a minute or two after a push is Pages' own build lag; non-empty for
+longer means the manual `git push origin main` was skipped, or an out-of-band push reverted it — check
+`raw.githubusercontent.com/sscctgfinance-cmd/ctg-finance-portal/main/common.js` to tell a stale *public
+repo* (fix: publish) from a stale Pages *cache* (fix: wait / re-push).
+
+**This is NOT being automated in-repo, on purpose.** An Action mirroring `ctg/main` → the public repo on
+every merge would need a cross-repo push credential this fleet does not own, and would fight those
+out-of-band Desktop pushes (force-push wars over who owns public main). More to the point, the whole
+Pages+mirror mechanism is retired by the committed Vercel move (`vercel.json`, "Hosting is `vercel.json`"
+above): one origin, one deploy, no second repo to drift. Building deploy automation for a mechanism
+about to be deleted is waste — so the guard is this paragraph plus the verification check, not code.
+
 ⚠️ `origin` is the **public** repo and unrelated projects sit in this folder — they have been published
 by accident once already. Never `git add -A` here; stage named files only.
 
@@ -2067,6 +2099,10 @@ goldens exist to catch. Never regenerate to make a red build green without readi
 
 - `supabase/functions/ctg-sso/` — the deploy workflow only deploys `portal`. `ctg-sso` must be deployed
   explicitly.
+- **The GitHub Pages static site** — a merge auto-deploys the edge function but NOT the files. Pages
+  lives in the separate public repo and only moves on the manual `git push origin main`. See "Publishing
+  to the live site is a separate step" for the origin-level verification check and why it is deliberately
+  not automated (the Vercel move retires it).
 - Database migrations are applied directly, not by CI.
 
 ## Maintaining this file
