@@ -503,7 +503,8 @@ mirroring `hrGridSave()`/`hrFinalise()` (hros.html:4304/:4364) and pinned in
 `web/tests/hr-payroll-writes.test.tsx` — that test fails if either reverts to the wrong shape. Both
 writes carry the pre-finalise "save first" guard and a SYNCHRONOUS `useRef` double-submit guard (not
 `useState`, PR #112). The 13 file/export controls (statutory files, payslip PDF, email, Xero journal,
-ZIP pack) are STILL the open seam and still `toLegacy()` in the route.
+ZIP pack) were the last open seam and are now closed too (v226, see above) — nothing on the payroll
+route hands off any more, and there is no `toLegacy()` left in it.
 
 **The Payroll screen's three RECORD editors are migrated — ⚙️ Rates, 🏢 Company, 🆔 Statutory numbers.**
 Distinguish them from the file builders above: a record editor is a form over data an admin already
