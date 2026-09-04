@@ -114,7 +114,22 @@ BHD, whose books are in AutoCount — exists only as a hand-inserted row with `x
 | a handler that… | must |
 |---|---|
 | calls the Xero API per tenant (`cron_sync`, `cron_drift_repair`, `cron_delta`) | filter `xero_connected` |
+| judges a tenant's SYNC STATE (`cron_watchdog`, the Xero Sync Health panel) | filter — a company with no Xero connection has no sync health |
 | lists companies for a human (`hr_companies`, the pickers) | NOT filter — or the company vanishes from the picker it was added for |
+
+⚠️ **A handler can reach the tenant list without ever naming `xero_tenants`, and the first version of
+that test could not see one.** `cron_watchdog` loops `health.tenants` from the **`portal_sync_health`
+RPC**, so v227 filtered the four direct callers and missed it: from the moment the non-Xero row was
+inserted it mailed *"Delta sync stalled: YUAN CHUAN TANG CTG4U SDN BHD (last ran never)"* every 30
+minutes, an alarm that could never clear, standing in front of the alarm that exists because a real
+outage went unnoticed for 15 days. **A permanent false alarm is worse than no alarm** — it teaches the
+operator to skip the one that matters. The RPC now filters (`where t.xero_connected is not false`,
+applied directly — migrations are not in this repo), **and `cron_watchdog` repeats the check in
+TypeScript anyway**: the RPC lives in the database where no test here can read it, so the repeated copy
+is the one `tests/non_xero_tenant_test.ts` can hold. Two details that test pins, both verified by
+introducing them: the skip is `!== false` (a NULL flag is a Xero company — `=== true` drops a
+never-written row out of the alarm), and it is `if (conn && !xeroIds.has(…))`, so a FAILED lookup
+leaves the alarm noisy rather than skipping every tenant and reporting "ok" forever.
 
 Unfiltered, each cron fails on that company on EVERY run, and `cron_drift_repair` writes the failure
 into `portal_audit` — a permanent daily error in front of the cron health alarm. `xero-delta-hourly`

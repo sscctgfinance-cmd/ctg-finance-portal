@@ -36,6 +36,24 @@ function handler(src: string, api: string): string {
 /** Handlers that iterate the tenant table and hand each id to the Xero API. */
 const CALLS_XERO = ["cron_sync", "cron_drift_repair", "cron_delta"];
 
+/**
+ * A handler can reach the tenant list WITHOUT querying `xero_tenants` — and the first version of this
+ * file could not see one that did.
+ *
+ * `cron_watchdog` loops `health.tenants` from the `portal_sync_health` RPC. v227 filtered the three
+ * crons above and `tenants_refresh`, all of which query the table directly; this fifth consumer was
+ * missed, so from the moment the non-Xero row was inserted the watchdog mailed
+ * "Delta sync stalled: YUAN CHUAN TANG CTG4U SDN BHD (last ran never)" every 30 minutes — an alarm
+ * that could never clear, in front of the one alarm that exists because a REAL outage went unnoticed
+ * for 15 days (v71). A permanent false alarm is worse than no alarm: it teaches the operator to skip it.
+ *
+ * The rpc now filters too, but that is NOT what this test pins and must not be — it lives in the
+ * database, applied directly (CLAUDE.md, "Things that are not covered by a push"), where nothing in
+ * this repo can read it. So the handler repeats the check in TypeScript, and this is the copy that a
+ * test can hold.
+ */
+const RPC_FED_TENANTS = ["cron_watchdog"];
+
 Deno.test("every cron that calls Xero per company filters to Xero-connected ones", () => {
   const missing: string[] = [];
   for (const api of CALLS_XERO) {
@@ -47,6 +65,40 @@ Deno.test("every cron that calls Xero per company filters to Xero-connected ones
   assertEquals(missing, [], "these iterate every row of xero_tenants and call the Xero API with each " +
     "tenant id, so a company that is not in Xero fails on every run — daily noise in portal_audit, in " +
     "front of the cron health alarm: " + missing.join(", "));
+});
+
+Deno.test("a handler fed tenants by an RPC still checks xero_connected itself", () => {
+  for (const api of RPC_FED_TENANTS) {
+    const body = handler(FIN, api);
+    // Guard the guard, twice: this test means nothing if the handler stopped consuming the rpc's
+    // tenant list, and nothing if it stopped looping it.
+    assertMatch(body, /rpc\("portal_sync_health"\)/,
+      api + " no longer calls portal_sync_health — re-point this test rather than deleting it");
+    assertMatch(body, /health\.tenants/,
+      api + " no longer reads health.tenants — re-point this test rather than deleting it");
+    assertMatch(body, /from\("xero_tenants"\)[\s\S]{0,400}xero_connected/,
+      api + " reads its tenant list from an RPC, so the `xero_connected` split is invisible to it. It " +
+      "must resolve which companies are actually in Xero itself — the rpc is in the database, where no " +
+      "test here can check it. Without this, a group company that is deliberately not in Xero trips " +
+      "every staleness rule forever and the alarm can never clear.");
+    // The skip must be NULL-safe in the same direction tenants_refresh (:1052) chose: a row whose flag
+    // has not been set yet is a Xero company, so `=== true` would silently stop alarming for it.
+    assertMatch(body, /xero_connected !== false/,
+      api + " must treat a NULL xero_connected as connected (`!== false`), as tenants_refresh does. " +
+      "`=== true` drops any tenant whose flag was never written from the alarm entirely.");
+  }
+});
+
+Deno.test("the watchdog fails OPEN — a failed lookup must not silence the alarm", () => {
+  const body = handler(FIN, "cron_watchdog");
+  // The lookup that decides which tenants to skip can itself fail. If it does, the safe direction is
+  // to keep alarming (noisy) rather than to skip every tenant (silent) — this alarm's whole purpose is
+  // that a silent failure is the expensive one.
+  assertMatch(body, /if \(conn && !xeroIds\.has\(/,
+    "cron_watchdog must skip tenants only when the xero_tenants lookup actually returned. Written as a " +
+    "bare `!xeroIds.has(t.tenant_id)`, a failed query leaves the set EMPTY and every tenant is skipped — " +
+    "the watchdog reports 'ok' forever and the 15-day silent outage it exists to prevent becomes " +
+    "invisible again, this time by design.");
 });
 
 Deno.test("the company PICKER does not filter — that is the point of the row", () => {

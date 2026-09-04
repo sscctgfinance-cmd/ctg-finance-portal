@@ -461,8 +461,23 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
             if ((dead||0) > 0) problems.push((dead||0) + " webhook event(s) PERMANENTLY STUCK (>=12 attempts, no longer retried) — run a manual resync for the affected tenant");
           } catch(_e){}
           for (const c of (health.crons||[])){ if (c && c.overdue) problems.push("Cron overdue: " + c.cron_name + " (last ran " + (c.last_run_at||"never") + ")"); }
+          // A group company that is NOT in Xero (YUAN CHUAN TANG CTG4U — books are in AutoCount,
+          // `xero_connected = false`) never syncs, so `deltaMin > 25` below is true FOREVER: the watchdog
+          // mailed "Delta sync stalled … (last ran never)" every 30 minutes with no way to clear. The
+          // damage is not the mail — it is that a permanent false alarm trains the operator to ignore the
+          // one alarm that exists because a real outage went unnoticed for 15 days (v71).
+          //
+          // v227 filtered `xero_connected` in cron_sync / cron_drift_repair / cron_delta / tenants_refresh,
+          // all of which query xero_tenants directly. This one was missed because it reaches tenants
+          // through the portal_sync_health RPC. That rpc now filters too, but the check is repeated HERE
+          // deliberately: the rpc lives in the database, where no test in this repo can see it, so relying
+          // on it alone would leave the invariant unpinned. `!== false` (not `=== true`) matches
+          // tenants_refresh at :1052 — a NULL keeps counting as connected.
+          const { data: conn } = await sb.from("xero_tenants").select("tenant_id,xero_connected");
+          const xeroIds = new Set((conn||[]).filter((r: any)=>r.xero_connected !== false).map((r: any)=>r.tenant_id));
           const nowMs = Date.now();
           for (const t of (health.tenants||[])){
+            if (conn && !xeroIds.has(t.tenant_id)) continue;   // non-Xero group company: nothing to sync, nothing to alarm
             // Staleness = the sync MECHANISM stopped running (last_delta_sync_at), NOT "no data changed".
             // A quiet tenant legitimately has an old cache_last_updated — that is normal, not a fault.
             // Delta runs every 5 min, so >25 min without a delta = ~5 consecutive misses = real problem.
