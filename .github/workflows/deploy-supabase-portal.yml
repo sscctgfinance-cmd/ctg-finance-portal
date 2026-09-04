@@ -91,7 +91,8 @@ jobs:
           #    git while merges kept landing. A guard against a truncated source had become a guard
           #    against shipping at all, and nothing said so out loud — the workflow simply went red in
           #    a place nobody was watching, in BOTH repos, since both run this deploy.
-          EXPECTED_ACTIONS=204
+          # v225: 205 — hr_payroll_runs_list added (the payroll process list HR OS never had).
+          EXPECTED_ACTIONS=205
           actions=$(grep -ho 'api === "' "$d"/*.ts | wc -l | tr -d " ")
           echo "action branches: $actions (baseline $EXPECTED_ACTIONS)"
           if [ "$actions" -lt "$EXPECTED_ACTIONS" ]; then

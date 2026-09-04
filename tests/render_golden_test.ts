@@ -3,7 +3,7 @@
 // WHY THIS FILE EXISTS: render_smoke_test.ts exists because v205 shipped a ReferenceError inside
 // hrPayroll() that lint could not see, the parse gate could not see, and no test could see because no
 // test had ever CALLED a renderer — the operator found it, as a spinner that never stopped. That fix
-// covered two screens. This covers all forty-four, and takes it one step further: not just "it did not
+// covered two screens. This covers all fifty-one, and takes it one step further: not just "it did not
 // throw", but "it produced exactly this HTML".
 //
 // The goldens under tests/golden/ were captured from the current code and ARE the contract, the same
@@ -32,16 +32,17 @@ Deno.test("the surface inventory matches the goldens on disk — no screen silen
     "tests/golden/ and SURFACES disagree — regenerate with: deno run -A tools/render_probe.ts tests/golden");
 });
 
-Deno.test("all 50 rendered surfaces are covered", () => {
-  assertEquals(SURFACES.length, 50);
+Deno.test("all 51 rendered surfaces are covered", () => {
+  assertEquals(SURFACES.length, 51);
   assertEquals(SURFACES.filter((s) => s.app === "app.html").length, 22, "Finance OS tabs");
-  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 28,
-    "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553) " +
+  assertEquals(SURFACES.filter((s) => s.app === "hros.html").length, 29,
+    "HR OS views (13) + dashboard sub-pages (5) + the employee half of Leave (hros.html:1553) "
+    + "+ the payroll run list EXPANDED, which shares no markup with the collapsed one " +
     "+ the NINE surfaces behind the `expenses` nav id beyond its list: Submit, a claim's detail, the " +
     "employee shape, the Dashboard and Settings' five tabs (hros.html:1783 dispatches five bodies over " +
     "RC.page and hros.html:2621 dispatches five more over RC.setTab; the `hr.expenses` golden only " +
     "ever held the list)");
-  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 50, "duplicate surface id");
+  assertEquals(new Set(SURFACES.map((s) => s.id)).size, 51, "duplicate surface id");
 });
 
 /**

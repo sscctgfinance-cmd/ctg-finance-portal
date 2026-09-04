@@ -1,0 +1,181 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   CTG SHELL — shared app shell for app.html (Finance Portal) + hros.html (HR OS)
+   Drop-in. Adds nothing to business logic; only re-lays the navigation.
+
+   app.html : ctg-shell.js converts .tab-cats + #sub-tabs into a left sidebar
+              built from the SAME .tab elements, so tab()/tabCat() keep working.
+   hros.html: already has .side — this file only applies the shared polish.
+
+   All colours reference existing tokens with literal fallbacks, so nothing
+   silently falls back to browser defaults if a token is absent.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Shell frame (Finance only; body.ctg-shell is set by ctg-shell.js) ── */
+body.ctg-shell #app > .ctg-app{ display:flex; align-items:flex-start; min-height:100vh; }
+body.ctg-shell #app > .ctg-app > .wrap{ flex:1; min-width:0; max-width:none; margin:0; padding:20px 26px 70px; }
+body.ctg-shell .tab-cats,
+body.ctg-shell #sub-tabs{ display:none !important; }
+
+/* The brand block lives in the sidebar now. */
+body.ctg-shell .top > .brand{ display:none; }
+body.ctg-shell .top{
+  position:sticky; top:0; z-index:30; margin:-20px -26px 16px; padding:11px 26px;
+  background:var(--surface, #FBFBFC);
+  border-bottom:1px solid var(--border, rgba(16,24,39,.09));
+  flex-wrap:wrap; gap:10px 12px;
+}
+body.ctg-shell .ctg-page-title{
+  flex:1 1 200px; min-width:150px;
+  font:700 15px/1.2 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  letter-spacing:-.01em; color:var(--text, #101827);
+}
+body.ctg-shell .ctg-page-title small{
+  display:block; margin-top:2px; font-size:11.5px; font-weight:500;
+  color:var(--muted, #646C7A); letter-spacing:0;
+}
+
+/* ── 2. Sidebar ── */
+.ctg-side{
+  width:248px; flex-shrink:0; display:flex; flex-direction:column;
+  position:sticky; top:0; height:100vh;
+  background:var(--surface, #fff);
+  border-right:1px solid var(--border, rgba(16,24,39,.09));
+}
+.ctg-side-brand{
+  display:flex; align-items:center; gap:11px; padding:17px 18px 15px;
+  border-bottom:1px solid var(--border, rgba(16,24,39,.09));
+}
+.ctg-side-brand img{ width:36px; height:36px; flex-shrink:0; object-fit:contain; }
+.ctg-side-brand-name{
+  font:800 14.5px/1.15 Inter,-apple-system,sans-serif; letter-spacing:-.01em;
+  color:var(--text, #101827);
+}
+.ctg-side-brand-sub{
+  margin-top:3px; font-size:9.5px; font-weight:700; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted, #8A929E);
+}
+.ctg-side-company{ padding:13px 14px 6px; }
+.ctg-side-company label{
+  display:block; margin:0 0 5px 2px; font-size:9px; font-weight:700;
+  letter-spacing:.09em; text-transform:uppercase; color:var(--muted, #8A929E);
+}
+.ctg-side-company select{ width:100%; }
+.ctg-side-company .co-scope{ display:block; margin-top:6px; }
+
+.ctg-side-nav{ flex:1; overflow-y:auto; padding:6px 12px 12px; display:flex; flex-direction:column; gap:1px; }
+.ctg-side-group{
+  padding:14px 10px 6px; font-size:9px; font-weight:700; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted, #8A929E); opacity:.8;
+}
+.ctg-side-link{
+  position:relative; display:flex; align-items:center; gap:11px; width:100%;
+  text-align:left; padding:9px 11px; border:none; border-radius:10px; cursor:pointer;
+  font:600 12.8px Inter,-apple-system,sans-serif;
+  color:var(--text-soft, #3D4653); background:transparent;
+  transition:background .14s, color .14s;
+}
+.ctg-side-link:hover{ background:var(--surface2, #F4F6F9); color:var(--text, #101827); }
+.ctg-side-link .ic{
+  width:20px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  font-size:14.5px; opacity:.9;
+}
+.ctg-side-link .lbl{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ctg-side-link.on{
+  background:linear-gradient(90deg, rgba(224,78,43,.13), rgba(224,78,43,.03));
+  color:var(--coral-deep, #C63F1E); font-weight:700;
+}
+.ctg-side-link.on .ic{ opacity:1; }
+.ctg-side-link.on::before{
+  content:''; position:absolute; left:0; top:50%; transform:translateY(-50%);
+  width:3px; height:19px; border-radius:0 3px 3px 0; background:var(--coral, #E04E2B);
+}
+.ctg-side-link[hidden]{ display:none; }
+
+.ctg-side-foot{
+  padding:10px 12px; border-top:1px solid var(--border, rgba(16,24,39,.09));
+  display:flex; flex-wrap:wrap; gap:6px;
+}
+.ctg-side-foot .btn{ flex:1 1 auto; text-align:center; padding:8px 10px; font-size:12px; }
+.ctg-side-foot > .ctg-side-who{ flex:1 0 100%; }
+.ctg-side-who{ display:flex; align-items:center; gap:9px; padding:2px 4px 6px; }
+.ctg-side-who .chip{
+  width:30px; height:30px; flex-shrink:0; border-radius:9px; display:grid; place-items:center;
+  font:800 11.5px Inter,sans-serif; color:#fff;
+  background:linear-gradient(135deg, var(--coral, #E85D3C), var(--coral-deep, #C63F1E));
+}
+.ctg-side-who .who{ font-size:12.5px; font-weight:700; color:var(--text, #101827); line-height:1.2; }
+.ctg-side-who .role-chip{ margin-top:2px; }
+
+/* Desktop rail (collapsed) — matches HR OS behaviour. */
+.ctg-side.collapsed{ width:66px; }
+.ctg-side.collapsed .ctg-side-brand-sub,
+.ctg-side.collapsed .ctg-side-brand-name,
+.ctg-side.collapsed .ctg-side-company,
+.ctg-side.collapsed .ctg-side-group,
+.ctg-side.collapsed .ctg-side-who > div:last-child,
+.ctg-side.collapsed .ctg-side-link .lbl{ display:none; }
+.ctg-side.collapsed .ctg-side-link{ justify-content:center; padding:9px 0; }
+.ctg-side.collapsed .ctg-side-foot .btn{ text-align:center; padding:9px 6px; font-size:0; }
+.ctg-side.collapsed .ctg-side-foot .btn::first-letter{ font-size:13px; }
+.ctg-side-rail{
+  margin-left:auto; border:1px solid var(--border, rgba(16,24,39,.12));
+  background:transparent; border-radius:8px; cursor:pointer;
+  color:var(--muted, #8A929E); padding:4px 7px; font-size:12px; line-height:1;
+}
+.ctg-side-rail:hover{ color:var(--text, #101827); }
+
+/* ── 3. Responsive: sidebar becomes a scrolling strip ── */
+@media(max-width:900px){
+  body.ctg-shell #app > .ctg-app{ display:block; }
+  body.ctg-shell #app > .ctg-app > .wrap{ padding:16px 14px 60px; }
+  .ctg-side{
+    width:100%; height:auto; position:sticky; top:0; z-index:40;
+    border-right:none; border-bottom:1px solid var(--border, rgba(16,24,39,.09));
+  }
+  .ctg-side-brand{ padding:12px 14px; }
+  .ctg-side-company{ padding:0 14px 10px; }
+  .ctg-side-nav{
+    flex-direction:row; flex-wrap:nowrap; overflow-x:auto; gap:6px; padding:9px 12px;
+    scrollbar-width:none;
+  }
+  .ctg-side-nav::-webkit-scrollbar{ display:none; }
+  .ctg-side-group{ display:none; }
+  .ctg-side-link{ flex:0 0 auto; border-radius:20px; padding:8px 13px; min-height:40px; }
+  .ctg-side-link.on::before{ display:none; }
+  .ctg-side-foot{ flex-direction:row; flex-wrap:wrap; }
+  .ctg-side-foot .btn{ width:auto; }
+  body.ctg-shell .top{ position:static; margin:-16px -14px 12px; padding:10px 14px; }
+}
+
+/* ── 4. HR OS (hros.html) — align its existing .side with the Finance sidebar ──
+   HR OS already ships the sidebar; these rules only reconcile the two so the
+   apps read as one product, and repair spots where the base CSS hardcodes
+   dark-theme whites that disappear on a light background. */
+.side{ width:248px; background:var(--surface, #fff); }
+.side-brand{ padding:17px 18px 15px; }
+.side-brand-mark{ width:36px; height:36px; border-radius:11px; font-size:18px; }
+.side-brand-name{ font-size:14.5px; }
+.side-nav{ padding:6px 12px 12px; }
+.side-group{ padding:14px 10px 6px; opacity:.8; }
+.side-link{ font-size:12.8px; padding:9px 11px; }
+.side-link .ic{ width:20px; }
+.side-foot{ padding:10px 12px; flex-direction:row; flex-wrap:wrap; gap:6px; }
+.side-foot > .side-foot-btn{ flex:1 1 auto; text-align:center; padding:8px 10px; font-size:12px; }
+.side-foot > .side-tools{ flex:1 0 100%; }
+
+:root[data-theme="light"] .side-link:hover{ background:var(--surface2, #F4F6F9); color:var(--text, #101827); }
+:root[data-theme="light"] .side-foot-btn{
+  background:var(--surface, #fff); color:var(--text-soft, #3D4653);
+  border-color:var(--border-strong, rgba(16,24,39,.14));
+}
+:root[data-theme="light"] .side-foot-btn:hover{ background:var(--surface2, #F4F6F9); color:var(--text, #101827); }
+:root[data-theme="light"] .side-foot-btn.accent{ color:var(--coral-deep, #C63F1E); }
+:root[data-theme="light"] .side-foot-btn.accent:hover{
+  background:rgba(224,78,43,.08); color:var(--coral-deep, #C63F1E);
+  border-color:rgba(224,78,43,.45);
+}
+:root[data-theme="light"] .side-link.on{ font-weight:700; }
+
+/* ── 5. Shared polish (both apps) ── */
+.ctg-num{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+.bigtable td.num, .bigtable th.num{ font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right; }

@@ -488,7 +488,20 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
   const actedUserIds = otherSteps.filter((s:any)=>s.acted_by).map((s:any)=>s.acted_by);
   const actedEmpIds  = otherSteps.filter((s:any)=>s.acted_emp_id).map((s:any)=>s.acted_emp_id);
   if(!(await canActOrGap(who, step, claim.tenant_id, { requesterEmpId: claim.employee_id, actedUserIds, actedEmpIds })))
-    return { ok:false, error:"You are not the approver for this step"+(step&&step.approver_role?(" (\""+step.approver_role+"\")"):"")+". Ask that approver to act, or assign someone to the role in Claim settings.", forbidden:true };
+  {
+    // v226: name WHO owns the step. This message only ever named a ROLE, so a step assigned to a named
+    // employee — which is what the amount-band workflows produce — refused with "You are not the
+    // approver for this step." and nothing else. The operator could not tell who to chase from the
+    // error, and the screen showed no assignee either (hros.html ignored can_act until v226).
+    let owner = "";
+    if(step && step.approver_employee_id){
+      const { data: oe } = await sb.from("hr_employees").select("name").eq("id",step.approver_employee_id).maybeSingle();
+      if(oe && oe.name) owner = " It belongs to "+oe.name+".";
+    } else if(step && step.approver_role){
+      owner = " It belongs to the \""+step.approver_role+"\" role.";
+    }
+    return { ok:false, error:"You are not the approver for this step."+owner+" Ask them to act — an admin is deliberately not an override.", forbidden:true };
+  }
   const fromS=claim.status; const actor=(me.user&&me.user.id)||null; const actorEmp=(who.employee&&who.employee.id)||null; const aname=(me.user&&me.user.email)||null; const nowIso=new Date().toISOString();
   const sodErr = await sodViolation("hr_claim_approval_steps","instance_id",inst.id,step&&step.id,actor,who.employee&&who.employee.id,claim.employee_id,"acted_by","acted_emp_id");
   if(sodErr) return { ok:false, error:sodErr, forbidden:true };
@@ -612,7 +625,15 @@ export function payBandMid(w:number){ if(w<=0) return 0; const upper=Math.ceil((
 export function payAge(dob:any, period?:any){ if(!dob) return null; const d=new Date(dob); if(isNaN(d.getTime())) return null;
   const t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
   let a=t.getUTCFullYear()-d.getUTCFullYear(); const m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
-export function payEpfParts(wage:number,eeRate:number,erRate:number){ const w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?payRoundUp(w*eeRate):0, er:erRate>0?payRoundUp(w*erRate):0 }; }
+// KWSP Third Schedule bands the wage before applying the rate, and the band WIDTH changes at RM5,000:
+// RM20 steps up to RM5,000, RM100 steps from there to RM20,000, the exact wage above that. See the
+// note on hrEpfParts in payroll.js — these two must stay identical or finalise 409s recompute_mismatch.
+export function payEpfParts(wage:number,eeRate:number,erRate:number){
+  const w = wage<=5000 ? Math.ceil(wage/20)*20
+          : wage<=20000 ? Math.ceil(wage/100)*100
+          : wage;
+  return { ee:eeRate>0?payRoundUp(w*eeRate):0, er:erRate>0?payRoundUp(w*erRate):0 };
+}
 export function payTableParts(wage:number,ceiling:number,eeRate:number,erRate:number){ const w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; const mid=payBandMid(w); return { ee:eeRate>0?payRound5(mid*eeRate):0, er:erRate>0?payRound5(mid*erRate):0 }; }
 export function payProgTax(chargeable:number, bands:[number,number][]){ let tax=0,prev=0; for(const [cap,rate] of bands){ if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }
 // emp: static employee record; cfg: hr_statutory_rates.rates; adj: this period's hr_payroll_adjustments;
@@ -1779,6 +1800,53 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       if (error) return j({ ok:false, error:error.message });
       if(row) await logAudit(me,"hr_adj_del",String(b.id),{ employee_id:row.employee_id, kind:row.kind, amount:row.amount, period:row.period_month+"/"+row.period_year });
       return j({ ok:true });
+    }
+    // v225: every payroll run for the company, with its own totals — the list AutoCount opens on.
+    // Until now the only way to see a month was to pick it in the month selector and wait for the full
+    // payroll payload; there was no way to see, at a glance, which months exist, which are still draft,
+    // or what each one paid. That is not a cosmetic gap: a month saved but never finalised looked
+    // exactly like a month that was never touched.
+    if (api === "hr_payroll_runs_list") {
+      const me = await meFromToken(b.token); if (!hrCanView(me)) return j({ ok:false, error:"unauthorized" }, 401);
+      const tenant = String(b.tenant||"");
+      if (!tenant) return j({ ok:false, error:"no company selected" });
+      if (!(await tenantPinned(b.token, tenant))) return denyTenant(me, "hr_payroll_runs_list", tenant);
+
+      const { data: runs, error } = await sb.from("hr_payroll_runs")
+        .select("id,period_month,period_year,status,run_date,entries_saved_at,finalised_at,posted_at,xero_journal_id")
+        .eq("tenant_id", tenant)
+        .order("period_year", { ascending:false }).order("period_month", { ascending:false })
+        .limit(120);
+      if (error) return j({ ok:false, error:error.message });
+      const ids = (runs||[]).map((r:any)=> r.id);
+
+      // PAGINATE. PostgREST caps a select at 1000 rows and says nothing when it truncates — 120 runs of
+      // 20 staff is 2,400 payslips, so an unpaginated read would quietly under-report the older months'
+      // totals and nobody would see a number that looked wrong. Same ceiling that bit v104.
+      const totals: Record<string, any> = {};
+      const PAGE = 1000;
+      for (let from = 0; ids.length; from += PAGE) {
+        const { data: rows, error: e2 } = await sb.from("hr_payslips")
+          .select("run_id,gross,net,epf_ee,epf_er,socso_ee,socso_er,eis_ee,eis_er,lindung24,pcb,employer_cost")
+          .in("run_id", ids).range(from, from + PAGE - 1);
+        if (e2) return j({ ok:false, error:e2.message });
+        for (const p of (rows||[]) as any[]) {
+          const t = totals[p.run_id] || (totals[p.run_id] = { employees:0, gross:0, net:0, epf:0, socso:0, eis:0, pcb:0, cost:0 });
+          t.employees++;
+          t.gross += Number(p.gross)||0;   t.net  += Number(p.net)||0;
+          t.epf   += (Number(p.epf_ee)||0) + (Number(p.epf_er)||0);
+          t.socso += (Number(p.socso_ee)||0) + (Number(p.socso_er)||0) + (Number(p.lindung24)||0);
+          t.eis   += (Number(p.eis_ee)||0) + (Number(p.eis_er)||0);
+          t.pcb   += Number(p.pcb)||0;     t.cost += Number(p.employer_cost)||0;
+        }
+        if (!rows || rows.length < PAGE) break;
+      }
+      const r2 = (n:number)=> Math.round(n*100)/100;
+      return j({ ok:true, runs: (runs||[]).map((r:any)=>{
+        const t = totals[r.id] || { employees:0, gross:0, net:0, epf:0, socso:0, eis:0, pcb:0, cost:0 };
+        return { ...r, employees:t.employees, gross:r2(t.gross), net:r2(t.net), epf:r2(t.epf),
+                 socso:r2(t.socso), eis:r2(t.eis), pcb:r2(t.pcb), cost:r2(t.cost) };
+      }) });
     }
     if (api === "hr_payroll_finalise") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);

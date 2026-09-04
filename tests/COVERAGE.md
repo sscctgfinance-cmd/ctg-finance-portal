@@ -1,7 +1,7 @@
 # Render-golden coverage — what is actually covered, and what is not
 
-`tests/render_golden_test.ts` renders all **50** surfaces of the two apps and diffs each one against a
-committed golden under `tests/golden/`. This file is the honest accounting of what those 50 goldens do
+`tests/render_golden_test.ts` renders all **51** surfaces of the two apps and diffs each one against a
+committed golden under `tests/golden/`. This file is the honest accounting of what those 51 goldens do
 and do not hold, because a coverage number nobody has qualified is worse than no number.
 
 Regenerate deliberately, then read the diff before committing:
@@ -22,14 +22,14 @@ git diff tests/golden/
 | …plus `expenses`, which `hrRC()` dispatches over `RC.page` — Submit and a claim's detail | +2 | `hrRCForm()` / `hrRCDetail()` — `hros.html:2000`, `:2513` |
 | …plus `expenses` again, in EMPLOYEE mode: two tabs and four different scopes | +1 | `RC.me.isAdmin===false` — `hros.html:1785`, `:1821` |
 | …plus `expenses` admin: the Dashboard and Settings' five tabs | +6 | `hrRCDash()` / `hrRCSettings()` — `hros.html:2611`, `:2619` |
-| **total surfaces** | **50** | |
+| …plus `payroll` EXPANDED, a table that exists in no other state | +1 | `HR.pay.runsOpen` — `hrRunsPanel()`, `hros.html` |
+| **total surfaces** | **51** | |
 
-All 50 render real, populated content — no surface is covered by an empty state or an error panel, and
+All 51 render real, populated content — no surface is covered by an empty state or an error panel, and
 `renderSurface()` throws rather than capturing a golden if a screen asks for an action with no fixture.
-Smallest golden is 8 lines (`finance.bankfeed`, which genuinely is a launcher button); largest is 847
-(`finance.info`). 9,601 lines of committed baseline in total.
+The line counts below are re-measured whenever the set changes; see the regenerate command above.
 
-## Covered: 50 / 50. Complete for the screen: 44 / 50
+## Covered: 51 / 51. Complete for the screen: 45 / 51
 
 Six goldens record a **narrower slice** than the screen can show. They are real coverage of the default
 state — the state an operator lands on — but the branch listed is not in the golden.
@@ -43,6 +43,7 @@ state — the state an operator lands on — but the branch listed is not in the
 | `hr.employees` | the employee list, filters and search | `hrEmpForm()` | the edit form is the `HR.editEmp !== null` branch of the same view. |
 | `hr.leave` | the ADMIN screen — `hrLeave()` | the EMPLOYEE screen — `hrEmpLeave()` | one nav id, two screens (`hros.html:1553`). `hr.leave.emp` is the other one, captured separately: for as long as it was not, the React port of the employee half could be — and was — missing entirely while this golden stayed green. |
 | `hr.expenses` | the claims list | — | all five RC.page states are now their own surfaces. |
+| `hr.payroll` | the period picker, the employer panel, the grid, and the run list COLLAPSED | the run list EXPANDED — `hrRunsPanel()`’s table | `HR.pay.runsOpen` defaults false, and the money columns, status pills and posted-to-Xero column exist in no other state. `hr.payroll_runs` is that state, captured separately — `hr.leave`’s arrangement, for the same reason. |
 
 Every one of those is a fixture/state change away, not an app change. They are listed rather than
 quietly padded into the count.
