@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { hrCsv } from '../../../../hr-docs.js';
 import { showConfirm } from '../../../src/confirm';
 import HrAttendance, { type AttendanceList, type AttEmployee, type AttPunch } from '../../../src/hr-attendance';
 import { mytFromDtLocal, mytISO } from '../../../../myt.js';
@@ -34,18 +35,17 @@ function needsClock(e: { employment_type?: string | null; pay_type?: string | nu
   return e.employment_type === 'Part-time' || e.pay_type === 'hourly' || e.pay_type === 'daily';
 }
 
-/**
- * `hrCsv()` — hr-docs.js:103, called the way it is defined: ONE call taking the whole row array.
- *
- * The legacy `hrAttExport()` (hros.html:3095) calls it per CELL — `r.map(hrCsv)` — and `hrCsv` starts
- * with `arr.map(...)`, so it throws `arr.map is not a function` on a string and the legacy "⬇ CSV"
- * button has never produced a file. Reproducing that here would be faithful to a crash, not to a screen,
- * so this calls it correctly. hros.html is untouched — see the PR.
+/*
+ * The local `toCsv` that used to sit here was a character-for-character retype of `hrCsv`
+ * (hr-docs.js:108). Its comment recorded, correctly, that the legacy `hrAttExport()` called `hrCsv`
+ * per CELL — `r.map(hrCsv)`, where `hrCsv` opens with `arr.map(...)` — so it threw
+ * `arr.map is not a function` on the first string and the legacy "⬇ CSV" button had NEVER produced a
+ * file. It then said "hros.html is untouched — see the PR", and that PR never landed: the legacy app
+ * is the one staff use, so the operator kept clicking a dead button while this note sat in a file
+ * nobody opens. hros.html:3173 is fixed now, so the fork has nothing left to work around and
+ * `hrCsv` is imported — the quoting rule is bytes that leave the building, and CLAUDE.md's rule for
+ * those is import, never retype.
  */
-function toCsv(rows: (string | number)[][]): string {
-  return rows.map((r) => r.map((c) => (/[",\r\n]/.test(String(c)) ? '"' + String(c).replace(/"/g, '""') + '"' : c)).join(',')).join('\r\n') + '\r\n';
-}
-
 export default function HrAttendancePage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [month, setMonth] = useState(thisMonth);
@@ -143,12 +143,18 @@ export default function HrAttendancePage() {
         p.hours != null ? Number(p.hours).toFixed(2) : '', p.break_minutes || 0, p.source || '',
         (p as { status?: string }).status || '', p.note || '']);
     });
-    const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: 'text/csv' }));
+    // Append before clicking and defer the revoke, as hros.html's hrDownload() (hros.html:4606) does.
+    // A detached anchor does not start a download in every browser, and revoking in the same tick can
+    // invalidate the blob before it has been fetched — while setNotice('CSV exported') below fires
+    // either way, so that failure looks exactly like success.
+    const url = URL.createObjectURL(new Blob([hrCsv(rows)], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = 'Attendance_' + month + '.csv';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
     setNotice('CSV exported');
   }, [data, month]);
 

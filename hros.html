@@ -1827,7 +1827,13 @@ function hrDashExportCsv(){
   else if(page==='payroll'){ var p=d.payroll; push(['Metric','Value']); ['gross','net','basic','allowance','claim','bonus','epf_ee','epf_er','socso_ee','socso_er','eis_ee','eis_er','pcb'].forEach(function(k){push([k,p[k]]);}); push([]); push(['Employee','Gross','Net','Employer cost']); p.by_employee.forEach(function(x){push([x.label,x.gross,x.net,x.cost]);}); }
   else if(page==='attendance'){ var a=d.attendance; push(['Metric','Value']); ['attendance_rate','late_rate','absenteeism_rate','missing_clock','ot_hours','ot_cost'].forEach(function(k){push([k,a[k]]);}); push([]); push(['Department','Attendance %']); a.by_dept.forEach(function(x){push([x.label,x.value]);}); push([]); push(['Late ranking']); a.late_rank.forEach(function(x){push([x.label,x.value]);}); push([]); push(['Absence ranking']); a.absence_rank.forEach(function(x){push([x.label,x.value]);}); }
   else if(page==='cost'){ var c=d.cost; push(['Metric','Value']); ['total_hr_cost','salary_cost','epf_er','socso_er','eis_er','claim_cost','ot_cost','cost_per_employee'].forEach(function(k){push([k,c[k]]);}); push([]); push(['Employee','Employer cost']); c.by_employee.forEach(function(x){push([x.label,x.value]);}); }
-  var blob=new Blob([rows.join('\n')],{type:'text/csv'}), url=URL.createObjectURL(blob), a2=document.createElement('a'); a2.href=url; a2.download='HR_Dashboard_'+page+'_'+String(per).replace(/\s/g,'_')+'.csv'; a2.click(); URL.revokeObjectURL(url); toast('CSV exported');
+  // Rows are already quoted by the local push() above, so the STRING is left alone — only the download
+  // goes through hrDownload(), which appends the anchor before clicking and defers revokeObjectURL by
+  // 1500ms. Revoking in the same tick can invalidate the blob before the browser has fetched it, and a
+  // detached anchor does not start a download in every browser — while toast('CSV exported') fires
+  // regardless, so the failure looks like success.
+  hrDownload('HR_Dashboard_'+page+'_'+String(per).replace(/\s/g,'_')+'.csv', rows.join('\n'));
+  toast('CSV exported');
 }
 // ===== 💳 Reimbursement / Claim module =====
 var RC={ page:'list', scope:'pending', tenant:'', cfg:null, list:[], detail:null, form:null, dash:null, setTab:'types', loading:false };
@@ -3170,8 +3176,13 @@ function hrAttExport(){
   var d=ATT.data; if(!d||!(d.punches||[]).length){ toast('Nothing to export',true); return; }
   var rows=[['Date','Employee','Emp No','Clock In','Clock Out','Hours','Break (min)','Source','Status','Note']];
   d.punches.forEach(function(p){ var e=p.hr_employees||{}; rows.push([p.work_date, e.name||'', e.emp_no||'', p.clock_in||'', p.clock_out||'', p.hours!=null?Number(p.hours).toFixed(2):'', p.break_minutes||0, p.source||'', p.status||'', p.note||'']); });
-  var csv=rows.map(function(r){return r.map(hrCsv).join(',');}).join('\n');
-  var blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a'); a.href=url; a.download='Attendance_'+ATT.month+'.csv'; a.click(); URL.revokeObjectURL(url); toast('CSV exported');
+  // hrCsv (hr-docs.js:108) takes the WHOLE 2-D array and returns the finished CSV. This used to be
+  // `rows.map(r => r.map(hrCsv).join(','))`, i.e. it handed hrCsv one CELL at a time — a string, which
+  // has no .map — so the button threw "arr.map is not a function" on the first cell and did nothing at
+  // all. Every other export in this file goes through hrDownload(); this one hand-rolled both halves
+  // and got both wrong.
+  hrDownload('Attendance_'+ATT.month+'.csv', hrCsv(rows));
+  toast('CSV exported');
 }
 // ===== 🌴 Employee Leave (self-service: apply + balance + my requests) =====
 var ELV={ data:null, loading:false, err:null, pending:[] };
