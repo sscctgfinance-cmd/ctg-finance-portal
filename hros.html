@@ -2801,6 +2801,7 @@ function hrEmpCard(x){
     statusPill(x.status)+
     (gone?'':(x.user_id
       ? '<span class="pill pill-ok" style="font-size:9.5px" title="Has an HR OS login">'+ic('check',12)+' login</span>'
+        +hrRW('<button class="btn xs" onclick="hrSendLogin(\''+x.id+'\')" title="Email this person their sign-in details. It RESETS their password \u2014 right for someone who has never signed in, destructive for someone already using theirs.">\u2709\uFE0F Send login</button>')
       : (x.email
           ? hrRW('<button class="btn xs" onclick="hrEnableLogin(\''+x.id+'\')" title="Create an HR OS login so this employee can apply leave, submit claims & clock in">Enable login</button>')
           : '<span class="pill pill-warn" style="font-size:9.5px" title="Add an email on the profile first">no email</span>')))+
@@ -2835,7 +2836,7 @@ function hrEmployees(){
   var noLogin=act.filter(function(x){return !x.user_id && x.email;}).length;
   var noEmail=act.filter(function(x){return !x.email;}).length;
   var banner=(noLogin||noEmail)?'<div class="muted" style="font-size:11.5px;margin-bottom:12px;padding:9px 12px;background:var(--surface-3);border-radius:var(--r-sm);line-height:1.5">'+ic('employees',14)+' <b>'+noLogin+'</b> employee(s) have an email but <b>no HR OS login yet</b> — they can’t apply leave / claims / clock in until you enable one.'+(noEmail?' &nbsp;·&nbsp; <b>'+noEmail+'</b> have no email on file — add one first.':'')+'</div>':'';
-  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
+  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn sm" onclick="hrSendLoginTest()" title="Send a test email to your own inbox. Touches no passwords \u2014 run it first if delivery is in doubt.">\u2709\uFE0F Test email</button><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
   return '<div class="panel">'+hd+banner+toolbar+'<div id="hr_emp_results">'+hrEmpResultsHtml()+'</div></div>';
 }
 async function hrEnableLogin(id){
@@ -2873,6 +2874,40 @@ function hrShowCreds(created, skipped){
     '<textarea id="hr_creds_txt" style="position:absolute;left:-9999px;top:0">'+esc(txt)+'</textarea>'+
     '</div></div>';
   document.body.appendChild(wrap.firstChild);
+}
+// ── ✉️ Emailing someone their login — v228 ────────────────────────────────────────────────────
+// `hr_send_logins` has existed since v146 (per-person targeting since v188) and NOTHING has ever
+// called it: `grep hr_send_logins hros.html app.html` was 0 in both. So "create a login" and "tell
+// them about it" were two jobs and the product only did the first — the operator read the temp
+// password off the creds modal and passed it on by hand, every time.
+//
+// The thing that must be said out loud in the confirm: this action RESETS the password. That is
+// correct for someone who has never signed in, and destructive for someone already using theirs.
+// The server hands every temp password back in `results`, precisely so a failed email does not leave
+// somebody locked out with a credential nobody has — so the modal is shown even when emailed is 0.
+async function hrSendLogin(id){
+  var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
+  if(!e.user_id){ toast('No login yet — use Enable login first',true); return; }
+  if(!e.email){ toast('This employee has no email on file',true); return; }
+  if(!confirm('Email login details to '+(e.name||'this employee')+'?\n\n'+e.email+'\n\n'+
+     '⚠️ This RESETS their password. If they are already using HR OS, the password they have now stops working.\n\n'+
+     'You will be shown the new temporary password afterwards, so a failed email cannot lock them out.')) return;
+  var r=await call({api:'hr_send_logins', tenant:HR.tenant, emails:[e.email]});
+  if(!(r&&r.ok)){ toast((r&&r.error)||'Could not send',true); return; }
+  var res=(r.results||[]);
+  // Show the credentials whatever happened to the email: the password HAS been reset by now, so the
+  // one outcome that must never be silent is "reset succeeded, email did not".
+  if(res.length) hrShowCreds(res.map(function(x){ return {name:x.name,email:x.email,temp_password:x.temp_password}; }),
+                             res.filter(function(x){return !x.emailed;}).map(function(x){ return {name:x.name, reason:'email failed: '+(x.error||'unknown')}; }));
+  toast(r.emailed ? ('Emailed ✓ — '+(e.name||e.email)) : 'Password reset, but the EMAIL failed — pass the password on yourself', !r.emailed);
+  HR.data=null; renderHR();
+}
+// The probe the handler's own comment says to run first. Sends to the caller's own inbox and touches
+// no passwords, so it is safe to press at any time.
+async function hrSendLoginTest(){
+  var r=await call({api:'hr_send_logins', tenant:HR.tenant, test:true});
+  if(r&&r.ok) toast('Test email sent to '+(r.sent_to||'your inbox')+' — no passwords changed');
+  else toast('Test email FAILED: '+((r&&r.error)||'unknown')+' — fix delivery before sending logins',true);
 }
 function hrCredsCopy(){ var t=document.getElementById('hr_creds_txt'); if(t){ t.select(); try{ document.execCommand('copy'); toast('Copied ✓'); }catch(e){ toast('Copy failed — select manually',true); } } }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }

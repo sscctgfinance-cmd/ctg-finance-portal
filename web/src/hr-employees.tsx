@@ -107,6 +107,10 @@ export interface HrEmployeesProps {
   onDeleteEmp: (id: string) => void;
   onEnableLogin: (id: string) => void;
   onEnableLoginBulk: () => void;
+  /** v228: email an existing login its credentials. RESETS the password — the route says so. */
+  onSendLogin: (id: string) => void;
+  /** v228: hr_send_logins' own `test:true` probe. Touches no passwords. */
+  onSendLoginTest: () => void;
   onClose: () => void;
   onSave: () => void;
   onBankInput: (q: string) => void;
@@ -276,6 +280,7 @@ function Directory(p: HrEmployeesProps) {
           {viewer ? null : (
             <>
               {noLogin ? <button className="btn sm hr-write" onClick={p.onEnableLoginBulk} title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button> : null}
+              <button className="btn sm" onClick={p.onSendLoginTest} title="Send a test email to your own inbox. Touches no passwords — run it first if delivery is in doubt.">{'\u2709\uFE0F Test email'}</button>
               <button className="btn p sm" onClick={() => p.onEditEmp(0)}>+ Add employee</button>
             </>
           )}
@@ -362,7 +367,10 @@ function EmpCard({ x, p }: { x: Employee; p: HrEmployeesProps }) {
       <div className="emp-sal"><div className="v">{M(x.basic_salary)}</div><div className="l">{'+ ' + M(x.fixed_allowance) + ' allow'}</div></div>
       <span className={'pill ' + (x.status === 'active' ? 'pill-ok' : 'pill-neu')}>{x.status || '—'}</span>
       {gone ? null : (x.user_id
-        ? <span className="pill pill-ok" style={{ fontSize: '9.5px' }} title="Has an HR OS login">{' login'}</span>
+        ? <>
+            <span className="pill pill-ok" style={{ fontSize: '9.5px' }} title="Has an HR OS login">{' login'}</span>
+            {rw ? <button className="btn xs" onClick={() => p.onSendLogin(x.id)} title={'Email this person their sign-in details. It RESETS their password \u2014 right for someone who has never signed in, destructive for someone already using theirs.'}>{'\u2709\uFE0F Send login'}</button> : null}
+          </>
         : (x.email
           ? (rw ? <button className="btn xs" onClick={() => p.onEnableLogin(x.id)} title={'Create an HR OS login so this employee can apply leave, submit claims & clock in'}>Enable login</button> : null)
           : <span className="pill pill-warn" style={{ fontSize: '9.5px' }} title="Add an email on the profile first">no email</span>))}

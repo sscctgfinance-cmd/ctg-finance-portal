@@ -65,6 +65,8 @@ function screen(over: Partial<Parameters<typeof HrEmployees>[0]> = {}) {
       onDeleteEmp={noop}
       onEnableLogin={noop}
       onEnableLoginBulk={noop}
+      onSendLogin={noop}
+      onSendLoginTest={noop}
       onClose={noop}
       onSave={noop}
       onBankInput={noop}
@@ -150,6 +152,8 @@ function assertHandlerParity(over: Partial<Parameters<typeof HrEmployees>[0]> = 
     onEditEmp: record('editEmp') as never,
     onEnableLogin: record('enableLogin') as never,
     onEnableLoginBulk: record('enableLoginBulk') as never,
+    onSendLogin: record('sendLogin') as never,
+    onSendLoginTest: record('sendLoginTest') as never,
     ...over,
   }));
 
@@ -222,7 +226,7 @@ describe('the comparison still bites', () => {
     const bent: string[][] = [];
     const record = (...args: unknown[]) => { bent.push(args.filter((a) => typeof a === 'string' || typeof a === 'number').map(String)); };
     // Every "Edit" fires against e1 instead of its own row: the defect R1 alone cannot see.
-    const got = reactHandlers(screen({ onEditEmp: (() => record('e1')) as never, onFilter: (() => record()) as never, onEnableLogin: (() => record()) as never, onEnableLoginBulk: (() => record()) as never }));
+    const got = reactHandlers(screen({ onEditEmp: (() => record('e1')) as never, onFilter: (() => record()) as never, onEnableLogin: (() => record()) as never, onEnableLoginBulk: (() => record()) as never, onSendLogin: (() => record()) as never, onSendLoginTest: (() => record()) as never }));
     got.forEach((h) => h.invoke());
     expect(bent).not.toEqual(goldenHandlers(GOLDEN).map((h) => identArgs(h.raw)));
   });
