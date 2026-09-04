@@ -16,6 +16,7 @@
 <h3>Workforce</h3>
 <div class="page-actions">
 <button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>
+<button class="btn sm" onclick="hrSendLoginTest()" title="Send a test email to your own inbox. Touches no passwords — run it first if delivery is in doubt.">✉️ Test email</button>
 <button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>
 </div>
 </div>
@@ -78,6 +79,7 @@
 </div>
 <span class="pill pill-ok">active</span>
 <span class="pill pill-ok" style="font-size:9.5px" title="Has an HR OS login"> login</span>
+<button class="btn xs" onclick="hrSendLogin('e1')" title="Email this person their sign-in details. It RESETS their password — right for someone who has never signed in, destructive for someone already using theirs.">✉️ Send login</button>
 <button class="btn xs" onclick="hrEditEmp('e1')">Edit</button>
 </div>
 <div class="emp-card">

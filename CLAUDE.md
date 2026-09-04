@@ -101,6 +101,45 @@ guard; a handler where `b.tenant` is an OPTIONAL all-tenants filter (omitting it
 goes in `EXEMPT` with that reason — its real control is `isFullScopeAdmin` (v148), a separate concern.
 It is structural because nothing fails at runtime when the check is missing. See the file header.
 
+## `xero_tenants` is the GROUP list, not only Xero's — `xero_connected` (v227)
+
+Every company picker in both apps enumerates the group from `xero_tenants`; `hr_companies` (hr.ts)
+reads it directly. Nothing writes that table except the Xero OAuth flow (`lib.ts:88` upserts from
+Xero's own `/connections`; `finance.ts:32` only refreshes names), and there is **no "add a company"
+action or screen anywhere**. So a group entity with no Xero organisation — YUAN CHUAN TANG CTG4U SDN
+BHD, whose books are in AutoCount — exists only as a hand-inserted row with `xero_connected = false`.
+
+**The asymmetry is the design, and `tests/non_xero_tenant_test.ts` pins it:**
+
+| a handler that… | must |
+|---|---|
+| calls the Xero API per tenant (`cron_sync`, `cron_drift_repair`, `cron_delta`) | filter `xero_connected` |
+| lists companies for a human (`hr_companies`, the pickers) | NOT filter — or the company vanishes from the picker it was added for |
+
+Unfiltered, each cron fails on that company on EVERY run, and `cron_drift_repair` writes the failure
+into `portal_audit` — a permanent daily error in front of the cron health alarm. `xero-delta-hourly`
+is `1-56/5 * * * *`, so the window between inserting such a row and the first failure is five minutes:
+**deploy the filter BEFORE inserting the row.** `tenants_refresh` is the fourth caller and a different
+failure — nothing there deletes, but a company that was never in Xero was reported as `removed` every
+time an admin refreshed company names, which reads as "a company vanished".
+
+⚠️ **Adding ANY sixth company — Xero or not — silently demotes every full-scope admin.**
+`portal_allowed_tenants` treats an admin as unrestricted on 0 assignments **or** assignments >= the
+company count. All six full-scope admins here hold exactly the five that existed, so a sixth company
+drops them to 5/6: they lose the new company AND the group-wide view of the other five (Dashboard,
+consolidated P&L, CFO Cockpit). Grant the new tenant to them in the SAME transaction as the insert.
+The check before you add one:
+
+```sql
+select u.email, count(uc.tenant_id) assigned, (select count(*) from xero_tenants) total
+from portal_users u left join portal_user_companies uc on uc.user_id = u.id
+group by u.id, u.email having count(uc.tenant_id) >= (select count(*) from xero_tenants);
+```
+
+A non-Xero company still needs `hr_employer_info` (its `doc_code` prefixes claim numbers and is
+globally UNIQUE — DRS / IPC / ZRO / SCH / SKD / YCT are taken; absent falls back to `CLM`). Every
+Xero-fed Finance screen is legitimately EMPTY for it, which is the data, not a fault.
+
 ## Shared frontend code lives in the root `.js` files
 
 `app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Code that is not UI
@@ -168,7 +207,7 @@ spelling it recommended. Standardise on the queueing shape, whichever file it en
 
 **A new shared `.js` file is covered automatically — as long as the app loads it.** `tools/extract.ts`
 reads each page's own `<script src=>` tags (skipping `*.min.js` vendored libs), so every test that
-evaluates `inlineScript()` — the 44 goldens included — parses and runs your file too, and
+evaluates `inlineScript()` — the 51 goldens included — parses and runs your file too, and
 `tests/shared_scripts_test.ts` fails if one is missing, empty or unparseable. The `cp common.js` step in
 `.github/workflows/ci.yml` is still by name and still only covers `common.js`; that gap is now closed
 from the tests side, so you do not have to edit the workflow.
@@ -1359,7 +1398,7 @@ rather than a silent filing change.
 **What is deliberately still not Malaysian, and why it CANNOT be here:** the BARE `toLocale*` calls that
 display an INSTANT (a punch time, a password-reset stamp). `tests/render_harness.ts` makes the local
 getters read as UTC and forces `timeZone:'UTC'` on every `toLocale*`, so shifting one by 8 hours moves a
-committed golden — and regenerating 44 goldens is a bigger, separate change. The consequence is real and
+committed golden — and regenerating 51 goldens is a bigger, separate change. The consequence is real and
 worth knowing: an admin abroad sees a Malaysian hour in the punch EDITOR and their own in the punch
 TABLE beside it. Fixing that means regenerating goldens on purpose.
 
@@ -2048,7 +2087,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 264 cases, incl. all 44 render goldens
+deno test --allow-read tests/          # 300 cases, incl. all 51 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
@@ -2085,7 +2124,7 @@ RM5,000) and are pinned as deliberate so nobody smooths a statutory rule out of 
 
 ### If a `tests/golden/` test fails
 
-All 44 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
+All 51 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
 (`tests/render_golden_test.ts`; `tests/COVERAGE.md` says what that does and does not hold). A failure
 means you changed what an operator sees. If that was the point:
 

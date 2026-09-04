@@ -36,8 +36,78 @@
 <div class="panel" style="margin-bottom:14px">
 <div class="panel-hd" style="cursor:pointer" onclick="hrRunsToggle()">
 <h3>📋 All payroll runs</h3>
-<span class="muted" style="font-size:11.5px">2 runs · 1 finalised · <span style="color:var(--amber)">1 draft</span> <span style="opacity:.6">▼</span>
+<span class="muted" style="font-size:11.5px">2 runs · 1 finalised · <span style="color:var(--amber)">1 draft</span> <span style="opacity:.6">▲</span>
 </span>
+</div>
+<div class="tbl-wrap">
+<table class="bigtable" style="font-size:12px">
+<thead>
+<tr>
+<th>Period</th>
+<th class="amt">Staff</th>
+<th>Status</th>
+<th class="amt">Gross</th>
+<th class="amt">Net pay</th>
+<th class="amt" title="Employee + employer">EPF</th>
+<th class="amt" title="Employee + employer + LINDUNG 24">SOCSO</th>
+<th class="amt" title="Employee + employer">EIS</th>
+<th class="amt">PCB</th>
+<th>Saved</th>
+<th>Finalised</th>
+<th>Posted</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background:var(--panel-2)">
+<td style="white-space:nowrap">
+<b>Aug 2026</b> <span class="muted" style="font-size:10px">· open</span>
+</td>
+<td class="amt">3</td>
+<td>
+<span class="pill pill-amber" style="font-size:10px">● Draft</span>
+</td>
+<td class="amt">RM 16,050.00</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)">RM 13,884.15</td>
+<td class="amt">RM 3,410.00</td>
+<td class="amt">RM 268.55</td>
+<td class="amt">RM 60.20</td>
+<td class="amt">RM 427.10</td>
+<td class="muted" style="font-size:11px">30 Aug 26</td>
+<td class="muted" style="font-size:11px">
+<span class="muted">—</span>
+</td>
+<td class="muted" style="font-size:11px">
+<span class="muted">—</span>
+</td>
+<td>
+<button class="btn xs" onclick="hrRunOpen(8,2026)">Open</button>
+</td>
+</tr>
+<tr>
+<td style="white-space:nowrap">
+<b>Jul 2026</b>
+</td>
+<td class="amt">3</td>
+<td>
+<span class="pill pill-green" style="font-size:10px">✓ Finalised</span>
+</td>
+<td class="amt">RM 15,800.00</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)">RM 13,701.40</td>
+<td class="amt">RM 3,355.00</td>
+<td class="amt">RM 264.10</td>
+<td class="amt">RM 59.20</td>
+<td class="amt">RM 402.55</td>
+<td class="muted" style="font-size:11px">29 Jul 26</td>
+<td class="muted" style="font-size:11px">30 Jul 26</td>
+<td class="muted" style="font-size:11px">1 Aug 26</td>
+<td>
+<button class="btn xs" onclick="hrRunOpen(7,2026)">Open</button>
+</td>
+</tr>
+</tbody>
+</table>
 </div>
 </div>
 <div class="panel">

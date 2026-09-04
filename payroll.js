@@ -66,7 +66,21 @@ function hrAge(dob,period){ if(!dob) return null; var d=new Date(dob); if(isNaN(
   var t=(period&&period.year&&period.month) ? new Date(Date.UTC(Number(period.year),Number(period.month),0)) : new Date(Date.now()+8*3600*1000);
   var a=t.getUTCFullYear()-d.getUTCFullYear(); var m=t.getUTCMonth()-d.getUTCMonth(); if(m<0||(m===0&&t.getUTCDate()<d.getUTCDate())) a--; return a; }
 // EPF — KWSP Third Schedule behaviour: wages <=20k use RM20 wage bands; each side rounded UP to next ringgit.
-function hrEpfParts(wage,eeRate,erRate){ var w=wage<=20000?Math.ceil(wage/20)*20:wage; return { ee:eeRate>0?hrRoundUp(w*eeRate):0, er:erRate>0?hrRoundUp(w*erRate):0 }; }
+// KWSP Third Schedule bands the wage before applying the rate, and the band WIDTH changes at RM5,000:
+// RM20 steps up to RM5,000, RM100 steps from there to RM20,000, and the exact wage above that. Each
+// side is then rounded UP to the next ringgit.
+//
+// v201: this used RM20 steps all the way to RM20,000. Every wage in the book was a round hundred, so
+// both schemes agreed and nothing ever failed — until SIM SOO WOAN's 5,653.85 (a part month), where
+// RM20 banding gives 5,660 -> 623/680 and KWSP's RM100 banding gives 5,700 -> 627/684. AutoCount says
+// 627/684. Under-contributing to a statutory fund is not a rounding preference, so this must mirror
+// payEpfParts in hr.ts exactly or hr_payroll_finalise 409s the whole run.
+function hrEpfParts(wage,eeRate,erRate){
+  var w = wage<=5000 ? Math.ceil(wage/20)*20
+        : wage<=20000 ? Math.ceil(wage/100)*100
+        : wage;
+  return { ee:eeRate>0?hrRoundUp(w*eeRate):0, er:erRate>0?hrRoundUp(w*erRate):0 };
+}
 // SOCSO / EIS — contribution table: midpoint of the RM100 wage band × rate, rounded to nearest 5 sen; wage capped at ceiling.
 function hrTableParts(wage,ceiling,eeRate,erRate){ var w=Math.min(Math.max(wage,0),ceiling); if(w<=0) return {ee:0,er:0}; var mid=hrBandMid(w); return { ee:eeRate>0?hrRound5(mid*eeRate):0, er:erRate>0?hrRound5(mid*erRate):0 }; }
 function hrProgTax(chargeable){ var tax=0,prev=0; for(var i=0;i<HR_TAX_BANDS.length;i++){ var cap=HR_TAX_BANDS[i][0],rate=HR_TAX_BANDS[i][1]; if(chargeable>prev) tax+=(Math.min(chargeable,cap)-prev)*rate; prev=cap; if(chargeable<=cap) break; } return tax; }

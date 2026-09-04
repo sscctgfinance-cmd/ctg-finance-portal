@@ -19,12 +19,16 @@
 // Neither appears in the golden — the fixture claim is `can_finance:false`, `can_post:false` — so the
 // screen's own test pins both branches by assertion.
 //
-// ── A legacy gap, mirrored not fixed ────────────────────────────────────────────────────────────────
-// `pending` (hros.html:2516) is derived from the STATUS alone, so the "Approver actions" panel — Approve
-// / Reject / Request info / Override — renders for the claim's OWNER looking at their own Submitted
-// claim. `hr_rc_decide` (hr.ts:2261) refuses them, so this is a button that errors on click rather than
-// a hole; `hrClaims()` not wrapping its decisions in `hrRW()` is the same class of finding. Changing it
-// is a behaviour change, not a migration detail, so it is mirrored and pinned.
+// ── The approver panel follows `can_act`, not the status — v226, and the legacy leads ───────────────
+// `pending` (hros.html:2516) is the claim's STATUS and nothing else, so the "Approver actions" panel —
+// Approve / Reject / Request info / Override — used to render for anyone who could open the claim,
+// including its own OWNER, and `hr_rc_decide` (hr.ts:2261) then refused them on click. hros.html now
+// gates it on `d.can_act`, the flag `hr_rc_get` has RETURNED since the module shipped and no client
+// ever read, and shows who the step belongs to instead. This mirrors that; the golden
+// (`tests/golden/hr.expenses.detail.html`) is the contract and moved with it.
+//
+// `can_act` already folds in the status check, the segregation-of-duties rule and the v152/154 gap
+// escapes, so nothing is re-derived here — a second copy could disagree with the gate that decides.
 
 import type { CSSProperties } from 'react';
 
@@ -73,6 +77,11 @@ export const canEditGl = (d: RcDetail) =>
 
 // ── The shapes `hr_rc_get` (hr.ts:2563) returns ────────────────────────────────────────────────────
 
+/**
+ * v226: `hr_rc_get` has returned this since the claims module shipped and no client read it. It folds
+ * in the status check, the segregation-of-duties rule and the v152/154 admin gap escapes, so the
+ * screen gates the approver panel on it and re-derives none of that.
+ */
 export interface RcDetailEmployee {
   emp_no?: string | null; name?: string | null; dept?: string | null; position?: string | null;
   bank_name?: string | null; bank_account?: string | null; ic_no?: string | null;
@@ -155,6 +164,8 @@ export interface RcMileageDetail {
 
 /** The whole `hr_rc_get` response — `RC.detail`. */
 export interface RcDetail {
+  /** May THIS viewer act on the current step? See the note above RcDetailEmployee. */
+  can_act?: boolean;
   claim: RcDetailClaim;
   items?: RcDetailItem[];
   mileage?: RcMileageDetail | null;
@@ -477,6 +488,28 @@ function StepWho({ s }: { s: RcStep }) {
 /** hros.html:2545-2548 — one of three panels, or none. */
 function Actions({ p, pending }: { p: HrExpensesDetailProps; pending: boolean }) {
   const d = p.detail, c = d.claim;
+  const cur = (d.steps || []).filter((s) => Number(s.step_order) === Number(c.current_step))[0];
+  const waitFor = (cur && cur.assignee_name) ? cur.assignee_name : null;
+  if (pending && !d.can_act) {
+    // Not "you have no business here" — the viewer can see the whole claim. What they cannot do is
+    // act, and the one thing they need is the NAME to chase. Reassigning is deliberately not offered:
+    // there is no in-flight reassign action, and editing the workflow only re-routes claims submitted
+    // AFTER the edit — this claim's steps were fixed at submission.
+    return (
+      <div className="panel">
+        <div className="panel-hd"><h3>⏳ Waiting for another approver</h3></div>
+        <div style={{ fontSize: '13px' }}>
+          {waitFor
+            ? <>This step belongs to <b>{waitFor}</b>{(cur && cur.name && cur.name !== waitFor)
+                ? <> <span className="muted">{'· step ' + String(cur.step_order) + ' “' + cur.name + '”'}</span></>
+                : null}.</>
+            : 'This step is assigned to somebody else.'}
+        </div>
+        <div className="muted" style={{ fontSize: '11.5px', marginTop: '6px' }}>Only the assigned approver can act on it. An admin is <b>not</b> an override — that is deliberate (segregation of duties): nobody approves two levels of one request, and nobody approves their own.</div>
+        <div className="muted" style={{ fontSize: '11.5px', marginTop: '4px' }}>Changing the approval workflow in Claim settings affects <b>new</b> claims only — this claim&rsquo;s steps were fixed when it was submitted.</div>
+      </div>
+    );
+  }
   if (pending) {
     return (
       <div className="panel">

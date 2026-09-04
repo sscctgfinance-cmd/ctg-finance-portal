@@ -1145,6 +1145,60 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
 <script src="payroll.js"></script>
 <script src="hr-docs.js"></script>
 <script>
+/* ── v225: the shared scripts above must actually have ARRIVED ──────────────────────────────────────
+   They are plain classic <script src> tags, so a request that fails — a dropped connection, a blocked
+   file, a half-published deploy — is reported by the browser to nobody. The page boots, every screen
+   that does not need the missing file works, and the app dies later inside whatever click handler
+   first reaches it, with a bare ReferenceError naming a function the operator has never heard of.
+
+   That is exactly how this reached us: "payroll won't open", which in portal_client_errors was
+   `Uncaught ReferenceError: mytYMD is not defined` at hrPayroll ← hrRender ← hrNav ← a button's
+   onclick, ten hours after a good deploy, with myt.js sitting correctly on the server the whole time.
+   Nothing was wrong with the code. A 4 KB file simply had not loaded, and the app had no idea.
+
+   One marker symbol per file, checked once, before the app boots. Fail loudly and say what to do. */
+(function(){
+  // `typeof <identifier>` and NOT window[name]: it walks the scope chain, so it is right for a `const`
+  // or `let` at the top of a shared file (those never become window properties) and right under the
+  // render harness, which concatenates the shared files into one evaluated script rather than attaching
+  // them to a window. `typeof` on an undeclared name is defined behaviour — it returns "undefined"
+  // instead of throwing, which is the whole reason this can be a one-liner per file.
+  var need = [
+    ['myt.js',      function(){ return typeof mytDate; }],
+    ['common.js',   function(){ return typeof toast; }],
+    ['payroll.js',  function(){ return typeof hrCompute; }],
+    ['hr-docs.js',  function(){ return typeof hrEmpView; }],
+  ];
+  var missing = [];
+  for (var i=0; i<need.length; i++){ if (need[i][1]() === 'undefined') missing.push(need[i][0]); }
+  if (!missing.length) return;
+
+  // Fire-and-forget, and self-contained: `API` and storageGet() live in code that may itself be missing.
+  try {
+    fetch("https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal", {
+      method:'POST', headers:{'content-type':'application/json'}, keepalive:true,
+      body: JSON.stringify({ api:'client_error', app:'hros', kind:'error',
+        message:'Shared script did not load: ' + missing.join(', '),
+        stack:'boot guard', page: location.pathname + location.hash, ua: navigator.userAgent })
+    }).catch(function(){});
+  } catch(_e){}
+
+  document.addEventListener('DOMContentLoaded', function(){
+    document.body.innerHTML =
+      '<div style="max-width:34rem;margin:12vh auto;padding:2rem;font:15px/1.6 system-ui,sans-serif;text-align:center">'
+      + '<div style="font-size:2.5rem">⚠️</div>'
+      + '<h1 style="font-size:1.25rem;margin:.75rem 0">HR OS did not finish loading</h1>'
+      + '<p style="margin:0 0 1rem">Part of the app never arrived, so some screens would fail without warning. '
+      + 'This is almost always a dropped connection — reloading fixes it.</p>'
+      + '<p style="margin:0 0 1.5rem;color:#888;font-size:13px">Missing: ' + missing.join(', ') + '</p>'
+      + '<button onclick="location.reload(true)" style="padding:.6rem 1.4rem;font-size:15px;border-radius:8px;'
+      + 'border:0;background:#e8674f;color:#fff;cursor:pointer">Reload</button>'
+      + '<p style="margin:1.5rem 0 0;color:#888;font-size:13px">If it keeps happening, tell the operator — '
+      + 'it has been reported automatically.</p></div>';
+  });
+})();
+</script>
+<script>
 const API="https://cmostxcjtbuhbzfojuid.supabase.co/functions/v1/portal";
 // ── v162: client error beacon ────────────────────────────────────────────────────────────────────────
 // This app is one ~500 KB inline script with no build step. Until now a runtime error was completely
@@ -1399,7 +1453,7 @@ async function hrEmpBoot(){
   }catch(e){ if(el) el.innerHTML='<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(e.message||e)+' — <a onclick="hrEmpBoot()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>'; }
 }
 // ===== HR / Payroll (Wave 1: dashboard, employees, leave, claims) =====
-var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[], dirty:false, editFinal:false } };
+var HR={ data:null, tenant:'', companies:[], view:'dashboard', editEmp:null, pay:{ month:0, year:0, data:null, loading:false, adjEmp:null, _rows:[], dirty:false, editFinal:false, runs:null, runsFor:'', runsOpen:false } };
 // v181: the browser's own guard. hrGridConfirmDiscard covers in-app navigation; this covers closing the
 // tab, reloading, and following a link out — the ways a month of typed entries actually gets lost.
 window.addEventListener('beforeunload', function(e){
@@ -2548,7 +2602,32 @@ function hrRCDetail(){
   var recs=(d.attachments&&d.attachments.length)?'<div class="panel"><div class="panel-hd"><h3>Receipts ('+d.attachments.length+')</h3></div>'+d.attachments.map(function(a){return '<div style="font-size:12.5px;padding:4px 0">📎 '+(a.url?('<a href="'+esc(a.url)+'" target="_blank" style="color:var(--sky-soft)">'+esc(a.file_name)+'</a>'):esc(a.file_name))+'</div>';}).join('')+'</div>':'';
   var coms=(d.comments&&d.comments.length)?'<div class="panel"><div class="panel-hd"><h3>Comments</h3></div>'+d.comments.map(function(x){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px"><b>'+esc(x.author_name||'—')+'</b> <span class="muted" style="font-size:10.5px">'+esc(String(x.created_at).slice(0,16).replace('T',' '))+'</span><div style="margin-top:2px">'+esc(x.comment)+'</div></div>';}).join('')+'</div>':'';
   var actions='';
-  if(pending){ actions='<div class="panel"><div class="panel-hd"><h3>Approver actions</h3></div><textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn p sm" onclick="hrRCDecide(\'approve\')">✓ Approve</button><button class="btn sm d" onclick="hrRCDecide(\'reject\')">✕ Reject</button><button class="btn sm" onclick="hrRCDecide(\'request_info\')">↩ Request info</button><button class="btn xs" onclick="hrRCOverride()">Override amount</button></div></div>'; }
+  // v226: the approver buttons follow `d.can_act` — the SERVER's answer — not the claim's status.
+  // `pending` above is status-only, so every viewer who could open a claim saw a live "✓ Approve",
+  // pressed it, and got "You are not the approver for this step" back from hr_rc_decide. hr_rc_get has
+  // COMPUTED AND RETURNED can_act since the claims module shipped — its own comment says "so the
+  // Approve button hides instead of erroring on click" — and no client ever read the field. The React
+  // port (web/src/hr-expenses.tsx) had the same gap.
+  //
+  // can_act already folds in the status check, the segregation-of-duties rule and the v152/154 gap
+  // escapes, so re-deriving any of that here would be a second copy that can disagree with the gate
+  // that actually decides.
+  var curStep=(d.steps||[]).filter(function(s){ return Number(s.step_order)===Number(c.current_step); })[0];
+  if(pending && d.can_act){ actions='<div class="panel"><div class="panel-hd"><h3>Approver actions</h3></div><textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn p sm" onclick="hrRCDecide(\'approve\')">✓ Approve</button><button class="btn sm d" onclick="hrRCDecide(\'reject\')">✕ Reject</button><button class="btn sm" onclick="hrRCDecide(\'request_info\')">↩ Request info</button><button class="btn xs" onclick="hrRCOverride()">Override amount</button></div></div>'; }
+  else if(pending){
+    // Not "you have no business here" — the operator IS usually an admin and can see the whole claim.
+    // What they cannot do is act, and the one thing they need is the NAME to chase. Reassigning is
+    // deliberately not offered: there is no in-flight reassign action, and editing the approval
+    // workflow only re-routes claims submitted AFTER the edit — this claim's steps were fixed at
+    // submission. Saying otherwise would send them to a settings screen that changes nothing here.
+    var waitFor=(curStep&&curStep.assignee_name)?esc(curStep.assignee_name):null;
+    actions='<div class="panel"><div class="panel-hd"><h3>⏳ Waiting for another approver</h3></div>'+
+      '<div style="font-size:13px">'+(waitFor
+        ? 'This step belongs to <b>'+waitFor+'</b>'+((curStep&&curStep.name&&curStep.name!==(curStep.assignee_name||''))?(' <span class="muted">· step '+esc(String(curStep.step_order))+' “'+esc(curStep.name)+'”</span>'):'')+'.'
+        : 'This step is assigned to somebody else.')+'</div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:6px">Only the assigned approver can act on it. An admin is <b>not</b> an override — that is deliberate (segregation of duties): nobody approves two levels of one request, and nobody approves their own.</div>'+
+      '<div class="muted" style="font-size:11.5px;margin-top:4px">Changing the approval workflow in Claim settings affects <b>new</b> claims only — this claim&rsquo;s steps were fixed when it was submitted.</div></div>';
+  }
   else if(c.status==='Approved'){ actions='<div class="panel"><div class="panel-hd"><h3>💵 Finance — mark as paid</h3></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px"><div><label class="muted" style="font-size:11px">Method</label><input id="rc_pm" placeholder="Bank Transfer" style="'+RC_SEL+'"></div><div><label class="muted" style="font-size:11px">Reference</label><input id="rc_pr" placeholder="TT / cheque ref" style="'+RC_SEL+'"></div></div><button class="btn p sm" onclick="hrRCMarkPaid()">Mark as Paid</button></div>'; }
   else if(c.status==='Paid'&&d.payment){ actions='<div class="panel"><div style="font-size:13px;color:var(--green-soft)">✓ Paid '+esc(d.payment.paid_date||'')+(d.payment.payment_method?(' · '+esc(d.payment.payment_method)):'')+(d.payment.payment_reference?(' · '+esc(d.payment.payment_reference)):'')+'</div></div>'; }
   var xeroBlock='';
@@ -2722,6 +2801,7 @@ function hrEmpCard(x){
     statusPill(x.status)+
     (gone?'':(x.user_id
       ? '<span class="pill pill-ok" style="font-size:9.5px" title="Has an HR OS login">'+ic('check',12)+' login</span>'
+        +hrRW('<button class="btn xs" onclick="hrSendLogin(\''+x.id+'\')" title="Email this person their sign-in details. It RESETS their password \u2014 right for someone who has never signed in, destructive for someone already using theirs.">\u2709\uFE0F Send login</button>')
       : (x.email
           ? hrRW('<button class="btn xs" onclick="hrEnableLogin(\''+x.id+'\')" title="Create an HR OS login so this employee can apply leave, submit claims & clock in">Enable login</button>')
           : '<span class="pill pill-warn" style="font-size:9.5px" title="Add an email on the profile first">no email</span>')))+
@@ -2756,7 +2836,7 @@ function hrEmployees(){
   var noLogin=act.filter(function(x){return !x.user_id && x.email;}).length;
   var noEmail=act.filter(function(x){return !x.email;}).length;
   var banner=(noLogin||noEmail)?'<div class="muted" style="font-size:11.5px;margin-bottom:12px;padding:9px 12px;background:var(--surface-3);border-radius:var(--r-sm);line-height:1.5">'+ic('employees',14)+' <b>'+noLogin+'</b> employee(s) have an email but <b>no HR OS login yet</b> — they can’t apply leave / claims / clock in until you enable one.'+(noEmail?' &nbsp;·&nbsp; <b>'+noEmail+'</b> have no email on file — add one first.':'')+'</div>':'';
-  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
+  var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn sm" onclick="hrSendLoginTest()" title="Send a test email to your own inbox. Touches no passwords \u2014 run it first if delivery is in doubt.">\u2709\uFE0F Test email</button><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
   return '<div class="panel">'+hd+banner+toolbar+'<div id="hr_emp_results">'+hrEmpResultsHtml()+'</div></div>';
 }
 async function hrEnableLogin(id){
@@ -2794,6 +2874,40 @@ function hrShowCreds(created, skipped){
     '<textarea id="hr_creds_txt" style="position:absolute;left:-9999px;top:0">'+esc(txt)+'</textarea>'+
     '</div></div>';
   document.body.appendChild(wrap.firstChild);
+}
+// ── ✉️ Emailing someone their login — v228 ────────────────────────────────────────────────────
+// `hr_send_logins` has existed since v146 (per-person targeting since v188) and NOTHING has ever
+// called it: `grep hr_send_logins hros.html app.html` was 0 in both. So "create a login" and "tell
+// them about it" were two jobs and the product only did the first — the operator read the temp
+// password off the creds modal and passed it on by hand, every time.
+//
+// The thing that must be said out loud in the confirm: this action RESETS the password. That is
+// correct for someone who has never signed in, and destructive for someone already using theirs.
+// The server hands every temp password back in `results`, precisely so a failed email does not leave
+// somebody locked out with a credential nobody has — so the modal is shown even when emailed is 0.
+async function hrSendLogin(id){
+  var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
+  if(!e.user_id){ toast('No login yet — use Enable login first',true); return; }
+  if(!e.email){ toast('This employee has no email on file',true); return; }
+  if(!confirm('Email login details to '+(e.name||'this employee')+'?\n\n'+e.email+'\n\n'+
+     '⚠️ This RESETS their password. If they are already using HR OS, the password they have now stops working.\n\n'+
+     'You will be shown the new temporary password afterwards, so a failed email cannot lock them out.')) return;
+  var r=await call({api:'hr_send_logins', tenant:HR.tenant, emails:[e.email]});
+  if(!(r&&r.ok)){ toast((r&&r.error)||'Could not send',true); return; }
+  var res=(r.results||[]);
+  // Show the credentials whatever happened to the email: the password HAS been reset by now, so the
+  // one outcome that must never be silent is "reset succeeded, email did not".
+  if(res.length) hrShowCreds(res.map(function(x){ return {name:x.name,email:x.email,temp_password:x.temp_password}; }),
+                             res.filter(function(x){return !x.emailed;}).map(function(x){ return {name:x.name, reason:'email failed: '+(x.error||'unknown')}; }));
+  toast(r.emailed ? ('Emailed ✓ — '+(e.name||e.email)) : 'Password reset, but the EMAIL failed — pass the password on yourself', !r.emailed);
+  HR.data=null; renderHR();
+}
+// The probe the handler's own comment says to run first. Sends to the caller's own inbox and touches
+// no passwords, so it is safe to press at any time.
+async function hrSendLoginTest(){
+  var r=await call({api:'hr_send_logins', tenant:HR.tenant, test:true});
+  if(r&&r.ok) toast('Test email sent to '+(r.sent_to||'your inbox')+' — no passwords changed');
+  else toast('Test email FAILED: '+((r&&r.error)||'unknown')+' — fix delivery before sending logins',true);
 }
 function hrCredsCopy(){ var t=document.getElementById('hr_creds_txt'); if(t){ t.select(); try{ document.execCommand('copy'); toast('Copied ✓'); }catch(e){ toast('Copy failed — select manually',true); } } }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
@@ -3675,6 +3789,13 @@ function hrGridInit(){
   emps.forEach(function(e){
     var mine=adjs.filter(function(a){return a.employee_id===e.id;});
     var sumK=function(k){ return mine.filter(function(a){return a.kind===k;}).reduce(function(s,a){return s+Number(a.amount||0);},0); };
+    // v225: an allowance is not always statutory wages. hr_payroll_adjustments has carried `epf_subject`
+    // since the beginning, but the grid summed every 'allowance' row into ONE field and wrote it back as
+    // epf_subject:true — so a non-EPF-able allowance could be read but never represented, and re-saving a
+    // month silently converted it. The AutoCount migration is full of them (commission, claim), and that
+    // conversion would have moved EPF/SOCSO/EIS on 5 of the 6 imported months.
+    var sumKe=function(k,stat){ return mine.filter(function(a){ return a.kind===k && ((a.epf_subject!==false)===stat); })
+      .reduce(function(s,a){ return s+Number(a.amount||0); },0); };
     var setK=function(k){ var f=mine.filter(function(a){return a.kind===k;}); return f.length?Number(f[f.length-1].amount):null; };
     var bset=setK('basic_set'), aset=setK('allow_set');
     var deds=mine.filter(function(a){return a.kind==='deduction';}).map(function(a){ return { label:a.label||'Other deduction', amount:Number(a.amount)||0 }; });
@@ -3684,7 +3805,7 @@ function hrGridInit(){
     if(e.pay_type==='hourly') autoBasic=Math.round((Number(att.hours)||0)*(Number(e.hourly_rate)||0)*100)/100;
     else if(e.pay_type==='daily') autoBasic=Math.round((Number(att.days)||0)*(Number(e.daily_rate)||0)*100)/100;
     var baseVal=(bset!=null?bset:(autoBasic!=null?autoBasic:Number(e.basic_salary||0)));
-    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumK('allowance'), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), skip:mine.some(function(a){return a.kind==='skip';}), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
+    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumKe('allowance',true), allowanceNs:sumKe('allowance',false), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), skip:mine.some(function(a){return a.kind==='skip';}), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }
@@ -3703,6 +3824,10 @@ function hrGridRowCompute(e,g){
   if(Number(g.bonus)) adj.push({kind:'bonus',amount:Number(g.bonus),epf_subject:true});
   if(Number(g.ot)) adj.push({kind:'ot',amount:Number(g.ot),epf_subject:true});
   if(Number(g.allowance)) adj.push({kind:'allowance',amount:Number(g.allowance),epf_subject:true});
+  // v225: the non-statutory half. It reaches gross and PCB but not EPF/SOCSO/EIS — which is what
+  // AutoCount does with commission and reimbursed claims, and what hrCompute already implements via
+  // addEarnStat. Must stay in step with hrGridSave() and computePayrollMY() or finalise 409s.
+  if(Number(g.allowanceNs)) adj.push({kind:'allowance',amount:Number(g.allowanceNs),epf_subject:false});
   var dedTot=hrDedTot(g); if(dedTot) adj.push({kind:'deduction',amount:dedTot,epf_subject:false});
   if(Number(g.unpaid)) adj.push({kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
   // v195: blank = let the engine compute. 0 is a REAL override (some staff genuinely have nil MTD),
@@ -3718,7 +3843,7 @@ function hrGridAll(){
   var tot={gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,cost:0};
   emps.forEach(function(e){ var g=p.grid[e.id]||{}; var q=hrGridRowCompute(e,g);
     var eff=Object.assign({},e,{ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0 });
-    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, deductions:(g.deductions||[]).slice(), deduction:hrDedTot(g), unpaid:Number(g.unpaid)||0 };
+    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, allowanceNs:Number(g.allowanceNs)||0, deductions:(g.deductions||[]).slice(), deduction:hrDedTot(g), unpaid:Number(g.unpaid)||0 };
     rows.push({e:eff,p:q,d:d});
     tot.gross+=q.gross;tot.epfEe+=q.epfEe;tot.epfEr+=q.epfEr;tot.socsoEe+=q.socsoEe;tot.socsoEr+=q.socsoEr;tot.eisEe+=q.eisEe;tot.eisEr+=q.eisEr;tot.lindung+=(q.lindung||0);tot.pcb+=q.pcb;tot.net+=q.net;tot.cost+=q.employerCost;
   });
@@ -4042,7 +4167,7 @@ function hrPayroll(){
   var trs=A.rows.map(function(r){ var e=r.e,q=r.p,id=e.id,mt=q._meta||{};
     var badge='<div class="muted" style="font-size:9.5px;margin-top:1px">EPF '+Math.round((mt.epfEeRate||0)*1000)/10+'% · SOC C'+(mt.socsoCat||1)+(mt.senior?' · <span style="color:var(--amber)">60+</span>':'')+(e.resident===false?' · <span style="color:var(--amber)">non-res</span>':'')+'</div>';
     return '<tr><td style="white-space:nowrap"><span style="display:inline-flex;align-items:baseline;gap:6px">'+hrGRowMenuBtn(id)+'<span><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</span></span></td>'+
-      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
+      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrGCell(id,'allowanceNs')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
       ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+ec('lin_'+id,q.lindung)+'<td class="amt">'+hrGPcbCell(id,q.pcb)+'</td>'+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
   }).join('');
   // Skipped staff are out of A.rows (hrGridAll drops them), so they get their own greyed rows here. An
@@ -4053,10 +4178,10 @@ function hrPayroll(){
       '<div style="font-size:9.5px;margin-top:1px;color:var(--amber)">Skipped — no payslip this month</div></span></span></td>'+
       '<td colspan="13" class="muted" style="font-size:11px">Not in this run. '+hrRW('<button class="btn xs" onclick="hrGridSkip(\''+e.id+'\',false)">Include</button>')+'</td></tr>';
   }).join('');
-  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+(skipped.length?(' · '+skipped.length+' skipped'):'')+')</td><td colspan="7" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
+  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+(skipped.length?(' · '+skipped.length+' skipped'):'')+')</td><td colspan="8" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
     ec('t_g',tot.gross)+ec('t_epf',tot.epfEe)+ec('t_soc',tot.socsoEe)+ec('t_eis',tot.eisEe)+ec('t_lin',tot.lindung)+ec('t_pcb',tot.pcb)+ec('t_net',tot.net,' style="color:var(--green-soft)"')+'</tr>';
   var grpHd='<tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em"><th></th>'+
-    '<th colspan="5" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
+    '<th colspan="6" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
     '<th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>'+
     '<th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th></tr>';
   // v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it. Payslips are
@@ -4070,13 +4195,13 @@ function hrPayroll(){
     '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+actions+'</span></div>'+
     (locked?'<div class="muted" style="font-size:11.5px;padding:0 2px 8px;color:var(--amber)">This month is finalised — payslips are written, so the entries are locked. Click <b>✏️ Edit entries</b> to change them, then re-finalise so the payslips match.</div>':'')+
     '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
-    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt">Extra allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
+    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th><th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var employerPanel = p.showEmployer ? hrEmployerPanel() : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
   var exp=hrPayHub(tot,finalised,p);
   var dedPanel = (p.dedEmp ? hrDedPanel(p.dedEmp) : '') + (p.rowMenu ? hrGRowMenuPanel(p.rowMenu) : '');
-  return picker+employerPanel+ratesPanel+table+sum+exp+dedPanel;
+  return picker+hrRunsPanel()+employerPanel+ratesPanel+table+sum+exp+dedPanel;
 }
 function hrRatesToggle(){ HR.pay.showRates=!HR.pay.showRates; hrRender(); }
 // ── 🏢 Company details editor (per company) — printed on payslips, the reimbursement form & year-end ──
@@ -4310,6 +4435,7 @@ async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
     if(Number(g.bonus)) out.push({employee_id:e.id,kind:'bonus',amount:Number(g.bonus),epf_subject:true});
     if(Number(g.ot)) out.push({employee_id:e.id,kind:'ot',amount:Number(g.ot),epf_subject:true});
     if(Number(g.allowance)) out.push({employee_id:e.id,kind:'allowance',amount:Number(g.allowance),epf_subject:true});
+    if(Number(g.allowanceNs)) out.push({employee_id:e.id,kind:'allowance',amount:Number(g.allowanceNs),epf_subject:false});   // v225
     (g.deductions||[]).forEach(function(x){ if(Number(x.amount)) out.push({employee_id:e.id,kind:'deduction',label:(x.label||'Other deduction'),amount:Number(x.amount),epf_subject:false}); });
     if(Number(g.unpaid)) out.push({employee_id:e.id,kind:'unpaid_leave',amount:Number(g.unpaid),epf_subject:false});
     if(hrGridPcbOn(g)) out.push({employee_id:e.id,kind:'pcb_set',amount:Number(g.pcbSet)||0,epf_subject:false});
@@ -4338,6 +4464,75 @@ function hrPickPeriod(){
   }
   HR.pay.month=m; HR.pay.year=y; HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null; HR.pay.dirty=false; HR.pay.editFinal=false; HR.submitPack=null; hrRender();
 }
+// ── 📋 All payroll runs — the process list AutoCount opens on ─────────────────────────────────────────
+// The month picker could only answer "show me this month". It could not answer "which months exist",
+// "is anything still draft", or "what did March actually pay" — and a month saved but never finalised
+// looked exactly like a month nobody had touched. One read, cached per company.
+async function hrRunsLoad(){
+  var t=HR.tenant; if(!t || HR.pay.runsFor===t) return;
+  HR.pay.runsFor=t;                                   // claim it first, so a re-render mid-flight does not refetch
+  try{
+    var r=await call({api:'hr_payroll_runs_list', tenant:t});
+    if(HR.tenant!==t) return;                         // company switched while in flight — drop the answer
+    HR.pay.runs=(r&&r.ok)?(r.runs||[]):[];
+  }catch(_e){ if(HR.tenant===t) HR.pay.runs=[]; }
+  // Only repaint if this is still the screen being looked at. A late answer that redraws a view the
+  // operator has already left is at best a flicker and at worst — with the payroll grid — a repaint over
+  // half-typed entries. (It also throws outright under the offline render harness, where the document is
+  // gone by the time the promise settles, which is how this got noticed.)
+  if(HR.tenant===t && HR.view==='payroll' && typeof document!=='undefined' && document) hrRender();
+}
+function hrRunsToggle(){ HR.pay.runsOpen=!HR.pay.runsOpen; hrRender(); }
+function hrRunOpen(mo,yr){
+  var m=Number(mo), y=Number(yr);
+  // Same guard hrPickPeriod() uses: opening another month from this list must not silently throw away
+  // entries the operator has typed and not saved. A second way into the same state change is a second
+  // way to lose their work.
+  if((m!==HR.pay.month||y!==HR.pay.year) && !hrGridConfirmDiscard()) return;
+  HR.pay.runsOpen=false;
+  HR.pay.month=m; HR.pay.year=y; HR.pay.data=null; HR.pay.grid=null; HR.pay.adjEmp=null; HR.pay.dedEmp=null;
+  HR.pay.dirty=false; HR.pay.editFinal=false; HR.submitPack=null; hrRender();
+}
+function hrRunsPanel(){
+  var runs=HR.pay.runs;
+  if(runs===null){ hrRunsLoad(); return ''; }         // first paint kicks the load; the reload paints it
+  if(!runs.length) return '';
+  var open=HR.pay.runsOpen;
+  var fin=runs.filter(function(r){return r.status==='finalised';}).length;
+  var draft=runs.length-fin;
+  var hd='<div class="panel-hd" style="cursor:pointer" onclick="hrRunsToggle()"><h3>📋 All payroll runs</h3>'+
+    '<span class="muted" style="font-size:11.5px">'+runs.length+' run'+(runs.length===1?'':'s')+
+    ' · '+fin+' finalised'+(draft?(' · <span style="color:var(--amber)">'+draft+' draft</span>'):'')+
+    ' <span style="opacity:.6">'+(open?'▲':'▼')+'</span></span></div>';
+  if(!open) return '<div class="panel" style="margin-bottom:14px">'+hd+'</div>';
+  var MON=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var dt=function(s){ if(!s) return '<span class="muted">—</span>'; var d=new Date(s); if(isNaN(d)) return '<span class="muted">—</span>';
+    return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'2-digit'}); };
+  var rows=runs.map(function(r){
+    var cur=(Number(r.period_month)===Number(HR.pay.month) && Number(r.period_year)===Number(HR.pay.year));
+    var pill=r.status==='finalised'
+      ? '<span class="pill pill-green" style="font-size:10px">✓ Finalised</span>'
+      : '<span class="pill pill-amber" style="font-size:10px">● Draft</span>';
+    return '<tr'+(cur?' style="background:var(--panel-2)"':'')+'>'+
+      '<td style="white-space:nowrap"><b>'+MON[Number(r.period_month)||0]+' '+esc(String(r.period_year))+'</b>'+(cur?' <span class="muted" style="font-size:10px">· open</span>':'')+'</td>'+
+      '<td class="amt">'+(r.employees||0)+'</td>'+
+      '<td>'+pill+'</td>'+
+      '<td class="amt">'+M(r.gross)+'</td><td class="amt" style="font-weight:700;color:var(--green-soft)">'+M(r.net)+'</td>'+
+      '<td class="amt">'+M(r.epf)+'</td><td class="amt">'+M(r.socso)+'</td><td class="amt">'+M(r.eis)+'</td><td class="amt">'+M(r.pcb)+'</td>'+
+      '<td class="muted" style="font-size:11px">'+dt(r.entries_saved_at)+'</td>'+
+      '<td class="muted" style="font-size:11px">'+dt(r.finalised_at)+'</td>'+
+      '<td class="muted" style="font-size:11px">'+(r.xero_journal_id?dt(r.posted_at):'<span class="muted">—</span>')+'</td>'+
+      '<td><button class="btn xs" onclick="hrRunOpen('+Number(r.period_month)+','+Number(r.period_year)+')">Open</button></td></tr>';
+  }).join('');
+  return '<div class="panel" style="margin-bottom:14px">'+hd+
+    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead><tr>'+
+      '<th>Period</th><th class="amt">Staff</th><th>Status</th>'+
+      '<th class="amt">Gross</th><th class="amt">Net pay</th>'+
+      '<th class="amt" title="Employee + employer">EPF</th>'+
+      '<th class="amt" title="Employee + employer + LINDUNG 24">SOCSO</th>'+
+      '<th class="amt" title="Employee + employer">EIS</th><th class="amt">PCB</th>'+
+      '<th>Saved</th><th>Finalised</th><th>Posted</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
 async function hrLoadPayroll(){
   if(HR.pay.loading) return; HR.pay.loading=true;
   // Capture the request identity: if the operator switches company or period while this request is in
@@ -4349,7 +4544,7 @@ async function hrLoadPayroll(){
     HR.pay.loading=false;
     if(HR.tenant!==req.t || HR.pay.month!==req.m || HR.pay.year!==req.y){ hrLoadPayroll(); return; } // stale — reload for the current selection
     // Fresh server data replaces the grid entirely, so nothing on screen is unsaved any more.
-    if(r&&r.ok){ HR.pay.data=r; HR.pay.dirty=false; HR.pay.err=null; hrRender(); }
+    if(r&&r.ok){ HR.pay.data=r; HR.pay.dirty=false; HR.pay.err=null; HR.pay.runsFor=''; HR.pay.runs=null; hrRender(); }
     else { HR.pay.err=(r&&r.error)||'Load failed'; toast(HR.pay.err,true); hrRender(); }
   }
   // v206: this catch also swallows anything hrRender() throws. When it did, the page kept the spinner it
@@ -4370,7 +4565,7 @@ async function hrFinalise(){ return hrOnce('hrFinalise', async function(){
   if(HR.pay.dirty){ toast('Save your entries first — click 💾 Save entries, then finalise',true); return; }
   if(!confirm('Finalise payroll for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' ('+rows.length+' employees)? Saves payslips for the period.')) return;
   var r=await call({api:'hr_payroll_finalise',month:HR.pay.month,year:HR.pay.year,rows:rows,tenant:HR.tenant});
-  if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.dirty=false; HR.pay.editFinal=false; HR.pay.data=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
+  if(r&&r.ok){ toast('Payroll finalised ✓'); HR.pay.dirty=false; HR.pay.editFinal=false; HR.pay.data=null; HR.pay.runsFor=''; HR.pay.runs=null; hrRender(); } else toast((r&&r.error)||'Finalise failed',true);
 }); }
 function hrAdjOpen(id){ HR.pay.adjEmp=(HR.pay.adjEmp===id?null:id); hrRender(); if(HR.pay.adjEmp){ setTimeout(function(){var el=document.getElementById('hr_adjpanel'); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'});},50); } }
 function hrAdjPanel(empId){
@@ -4800,5 +4995,8 @@ function hrExpCp8d(fmt){
   } else { showLogin(); }
 })();
 </script>
+
+<!-- CTG SHELL (added 2026-08-29) -->
+<link rel="stylesheet" href="ctg-shell.css">
 </body>
 </html>

@@ -155,6 +155,54 @@ export default function HrEmployeesPage() {
     })();
   }, [company, employees, load]);
 
+  /**
+   * `hrSendLogin()` — v228. `hr_send_logins` has existed since v146 and no client ever called it, so
+   * "create a login" and "tell them about it" were two jobs and the product only did the first.
+   *
+   * The password IS reset by the time this returns, so the credentials are shown whatever happened to
+   * the email — the one outcome that must never be silent is "reset succeeded, delivery did not".
+   */
+  const onSendLogin = useCallback((id: string) => {
+    const e = (employees || []).find((x) => x.id === id) || {} as Employee;
+    if (!e.user_id) { setErr('No login yet — use Enable login first'); return; }
+    if (!e.email) { setErr('This employee has no email on file'); return; }
+    void (async () => {
+      if (!await showConfirm('Email login details',
+        `Email login details to ${e.name || 'this employee'}?\n\n${e.email}\n\n⚠️ This RESETS their password. If they are already using HR OS, the password they have now stops working.\n\nYou will be shown the new temporary password afterwards, so a failed email cannot lock them out.`,
+        'Send', 'p')) return;
+      try {
+        const r = await call<{ emailed?: number; results?: { name?: string; email?: string; temp_password?: string; emailed?: boolean; error?: string }[] }>(
+          { api: 'hr_send_logins', tenant: company?.tenant_id, emails: [e.email] });
+        const res = r.results || [];
+        if (res.length) setCreds({
+          rows: res.map((x) => ({ name: x.name || '', email: x.email, temp_password: x.temp_password })),
+          // PR #114's second half, and it is exactly this case: the password IS reset by now, so a
+          // send that failed must be NAMED rather than dropped, or somebody is locked out with a
+          // credential nobody has.
+          skipped: res.filter((x) => !x.emailed).map((x) => ({ name: x.name || x.email || '', reason: 'email failed: ' + (x.error || 'unknown') })),
+        });
+        setNotice(r.emailed
+          ? `Emailed ✓ — ${e.name || e.email}`
+          : 'Password reset, but the EMAIL failed — pass the password on yourself');
+        await load(company?.tenant_id);
+      } catch (er) {
+        setErr(er instanceof Error ? er.message : String(er));
+      }
+    })();
+  }, [company, employees, load]);
+
+  /** The probe hr_send_logins' own comment says to run first: caller's inbox, no passwords touched. */
+  const onSendLoginTest = useCallback(() => {
+    void (async () => {
+      try {
+        const r = await call<{ sent_to?: string }>({ api: 'hr_send_logins', tenant: company?.tenant_id, test: true });
+        setNotice(`Test email sent to ${r.sent_to || 'your inbox'} — no passwords changed`);
+      } catch (er) {
+        setErr('Test email FAILED: ' + (er instanceof Error ? er.message : String(er)) + ' — fix delivery before sending logins');
+      }
+    })();
+  }, [company]);
+
   /** `hrEnableLoginBulk()` — hros.html:2762. */
   const onEnableLoginBulk = useCallback(() => {
     void (async () => {
@@ -251,6 +299,8 @@ export default function HrEmployeesPage() {
               onDeleteEmp={onDeleteEmp}
               onEnableLogin={onEnableLogin}
               onEnableLoginBulk={onEnableLoginBulk}
+              onSendLogin={onSendLogin}
+              onSendLoginTest={onSendLoginTest}
               onClose={() => setEditEmp(null)}
               onSave={onSave}
               onBankInput={onBankInput}

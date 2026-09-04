@@ -386,9 +386,12 @@ describe('the branches no golden reaches', () => {
   });
 
   it('the busy flag disables exactly the control that is in flight', () => {
-    const approver = renderToStaticMarkup(detail({ busy: 'decide' }));
+    // v226: the approver panel is behind `can_act`, so a busy check on its buttons has to render a
+    // viewer who may actually act — otherwise the panel is absent and this passes on nothing.
+    const able = { ...D, can_act: true };
+    const approver = renderToStaticMarkup(detail({ busy: 'decide', detail: able }));
     expect(approver).toMatch(/<button class="btn p sm" disabled[^>]*>✓ Approve/);
-    expect(renderToStaticMarkup(detail({ busy: null }))).not.toMatch(/disabled/);
+    expect(renderToStaticMarkup(detail({ busy: null, detail: able }))).not.toMatch(/disabled/);
   });
 });
 
@@ -420,17 +423,33 @@ describe('turning a claim back into a form', () => {
 
 /** Mirrored legacy behaviour that is worth pinning because it looks like a bug and is not being fixed. */
 describe('the legacy gaps this port mirrors rather than fixes', () => {
-  it('renders the approver panel from the STATUS alone, so a claim owner sees it too', () => {
-    // hros.html:2516. `hr_rc_decide` (hr.ts:2261) refuses them, so it is a button that errors on click
-    // rather than a hole — `hrClaims()` not wrapping its decisions in `hrRW()` is the same class. Fixing
-    // it is a behaviour change, not a migration detail.
+  it('gates the approver panel on can_act, and names the step owner when it is somebody else', () => {
+    // WAS "renders the approver panel from the STATUS alone, so a claim owner sees it too" — a legacy
+    // gap this port deliberately mirrored. v226 fixed it in hros.html: `hr_rc_get` has RETURNED
+    // `can_act` since the module shipped (its own comment says "so the Approve button hides instead of
+    // erroring on click") and no client read it, so every viewer got four live buttons and
+    // `hr_rc_decide` refused them. The legacy leads and the golden moved, so this pins the FIX.
     const src = HROS.slice(HROS.indexOf('function hrRCDetail()'), HROS.indexOf('async function hrRCDecide('));
     expect(src).toContain("var pending=['Pending Manager Approval','Pending HR Approval','Pending Finance Approval','Pending Director Approval','Submitted'].indexOf(c.status)>=0;");
-    expect(src).toMatch(/if\(pending\)\{ actions=/);
+    // v226: the panel is gated on the SERVER's own `can_act`, not on the status. This used to pin
+    // `if(pending){` — the defect — because the port mirrored it; the legacy leads, so the pin moves
+    // with it. A revert to status-only fails here, which is the direction that matters.
+    expect(src).toMatch(/if\(pending && d\.can_act\)\{ actions=/);
+    expect(src).toContain('⏳ Waiting for another approver');
     expect(PENDING_STATUSES).toEqual(['Pending Manager Approval', 'Pending HR Approval', 'Pending Finance Approval', 'Pending Director Approval', 'Submitted']);
     expect(isPending('Submitted')).toBe(true);
     expect(isPending('Approved')).toBe(false);
-    expect(renderToStaticMarkup(detail())).toContain('Approver actions');
+    // The fixture's claim sits on step 1, which belongs to AHMAD BIN ISMAIL, and `can_act` is absent
+    // (falsy) — so the viewer cannot act and must be told WHOSE step it is rather than handed buttons.
+    const shown = renderToStaticMarkup(detail());
+    expect(shown).toContain('⏳ Waiting for another approver');
+    expect(shown).toContain('This step belongs to');
+    expect(shown).not.toContain('Approver actions');
+    // …and the other direction, which is what stops this passing vacuously: with can_act the four
+    // controls come back.
+    const able = renderToStaticMarkup(detail({ detail: { ...D, can_act: true } }));
+    expect(able).toContain('Approver actions');
+    expect(able).not.toContain('⏳ Waiting for another approver');
   });
 
   it('a resubmit re-confirms all four declarations in one dialog, and sends all four', () => {

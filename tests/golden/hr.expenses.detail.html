@@ -155,16 +155,11 @@
 </div>
 <div class="panel">
 <div class="panel-hd">
-<h3>Approver actions</h3>
+<h3>⏳ Waiting for another approver</h3>
 </div>
-<textarea id="rc_com" placeholder="Comment / reason / message…" style="width:100%;min-height:52px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px">
-</textarea>
-<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-<button class="btn p sm" onclick="hrRCDecide('approve')">✓ Approve</button>
-<button class="btn sm d" onclick="hrRCDecide('reject')">✕ Reject</button>
-<button class="btn sm" onclick="hrRCDecide('request_info')">↩ Request info</button>
-<button class="btn xs" onclick="hrRCOverride()">Override amount</button>
-</div>
+<div style="font-size:13px">This step belongs to <b>AHMAD BIN ISMAIL</b> <span class="muted">· step 1 “Manager”</span>.</div>
+<div class="muted" style="font-size:11.5px;margin-top:6px">Only the assigned approver can act on it. An admin is <b>not</b> an override — that is deliberate (segregation of duties): nobody approves two levels of one request, and nobody approves their own.</div>
+<div class="muted" style="font-size:11.5px;margin-top:4px">Changing the approval workflow in Claim settings affects <b>new</b> claims only — this claim&rsquo;s steps were fixed when it was submitted.</div>
 </div>
 <div style="margin-top:4px">
 <button class="btn xs" onclick="hrRCFormAndReceipts()">📄 Form + receipts (PDF)</button> <button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> <button class="btn xs" onclick="hrRCAdjustAmount()" title="Correct the payable amount on this claim. A reason is required and is written to the audit trail.">✏️ Adjust amount</button> <button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>

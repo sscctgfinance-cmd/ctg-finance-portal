@@ -18,7 +18,7 @@ import HrPayroll, {
   dueInfo, employerBody, employerInit, finaliseRows, gridAll, gridInit, gridSaveAdjustments, gridState,
   logoDataRefusal, logoFileRefusal, logoScale, ratesBody, statIdsBody, statIdsRows, tp1Body,
   type CellField, type EmployerEdit, type GridRow, type HubKey, type PayData, type PayEmployee,
-  type RatesCfg, type StatFile, type StatIdField, type StatIdRow, type StatIdsState,
+  type PayrollRun, type RatesCfg, type StatFile, type StatIdField, type StatIdRow, type StatIdsState,
   type SubmitPack, type Tp1Line, type Tp1State, type UobCfg,
 } from '../../../src/hr-payroll';
 import {
@@ -90,6 +90,11 @@ export default function HrPayrollPage() {
   const [dedEmp, setDedEmp] = useState<string | null>(null);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [editFinal, setEditFinal] = useState(false);
+  // `HR.pay.runs` / `HR.pay.runsFor` / `HR.pay.runsOpen`. `null` is "not read yet" and renders
+  // nothing; `runsFor` is what stops a repaint refetching, and what makes a company switch refetch.
+  const [runs, setRuns] = useState<PayrollRun[] | null>(null);
+  const [runsFor, setRunsFor] = useState('');
+  const [runsOpen, setRunsOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -118,6 +123,42 @@ export default function HrPayrollPage() {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  /**
+   * `hrRunsLoad()` — one read per company, cached. The legacy kicks it from the RENDERER and guards
+   * the repaint; here the effect is the guard, and `runsFor` is the same claim-it-first flag: without
+   * it a re-render mid-flight fires a second read.
+   *
+   * A company switched while the read is in flight DROPS the answer rather than showing another
+   * company's payroll history — the tenant hole v225 closed on the server, kept shut on the client.
+   */
+  useEffect(() => {
+    const t = company ? company.tenant_id : '';
+    if (!t || runsFor === t) return;
+    setRunsFor(t);
+    let live = true;
+    void (async () => {
+      try {
+        const r = await call<{ ok?: boolean; runs?: PayrollRun[] }>({ api: 'hr_payroll_runs_list', tenant: t });
+        if (live) setRuns(r && r.ok ? (r.runs || []) : []);
+      } catch { if (live) setRuns([]); }
+    })();
+    return () => { live = false; };
+  }, [company, runsFor]);
+
+  const onRunsToggle = useCallback(() => setRunsOpen((o) => !o), []);
+
+  /**
+   * `hrRunOpen()` — the same discard guard `hrPickPeriod()` uses. A second way into the same state
+   * change is a second way to lose entries the operator typed and has not saved.
+   */
+  const onRunOpen = useCallback(async (m: number, y: number) => {
+    if ((m !== month || y !== year) && dirty && !await showConfirm('Unsaved payroll entries',
+      `You have unsaved payroll entries for ${HR_MONTHS[month]} ${year}.\n\nLeave without saving? The figures you typed will be lost.`, 'Discard')) return;
+    setRunsOpen(false);
+    setMonth(m); setYear(y);
+    void load(m, y);
+  }, [dirty, month, year, load]);
 
   useEffect(() => {
     // localStorage is not readable during prerender, so the session check runs on mount, not on render.
@@ -199,6 +240,7 @@ export default function HrPayrollPage() {
       await call({ api: 'hr_payroll_grid_save', month, year, adjustments: gridSaveAdjustments(data, grid), tenant: company ? company.tenant_id : null });
       setNotice('Payroll entries saved ✓ — not final until you finalise');
       setDirty(false);
+      setRuns(null); setRunsFor('');     // the 📋 list still shows this month as "never saved"
       await load(month, year);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -225,6 +267,7 @@ export default function HrPayrollPage() {
       await call({ api: 'hr_payroll_finalise', month, year, rows, tenant: company ? company.tenant_id : null });
       setNotice('Payroll finalised ✓');
       setEditFinal(false);
+      setRuns(null); setRunsFor('');     // draft → finalised, and every total in the 📋 list moves
       await load(month, year);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -685,7 +728,11 @@ export default function HrPayrollPage() {
             dedEmp={dedEmp}
             rowMenu={rowMenu}
             today={todayLocalISO()}
+            runs={runs}
+            runsOpen={runsOpen}
             onPickPeriod={onPickPeriod}
+            onRunsToggle={onRunsToggle}
+            onRunOpen={onRunOpen}
             rates={rates}
             savingRates={savingRates}
             onRatesToggle={onRatesToggle}
