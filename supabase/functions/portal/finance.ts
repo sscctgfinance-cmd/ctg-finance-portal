@@ -27,7 +27,15 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "cron_sync") {
       const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
       if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
-      const work = (async ()=>{ try { const access = await xeroAccessToken(); const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+      const work = (async ()=>{ try { const access = await xeroAccessToken();
+        // v227: only companies that ARE connected to Xero. `xero_tenants` is also how HR OS and the
+        // company pickers enumerate the group (hr.ts's `hr_companies` reads it directly), so a group
+        // entity whose books are NOT in Xero — Yuan Chuan Tang CTG4U, which runs on AutoCount — has to
+        // live in this table to be usable at all. Without the filter every Xero job below would call
+        // the API with a tenant id Xero has never heard of, once per company per run, and
+        // cron_drift_repair writes each failure into portal_audit — permanent noise in front of the
+        // cron health alarm, which is where a REAL failure has to be visible.
+        const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name").eq("xero_connected", true);
         // v129: keep display names tracking the live Xero Organisation Name (renames propagate overnight)
         try { for (const t of (tenants||[])) { const on = await xeroOrgName(access, t.tenant_id); if (on && on !== t.tenant_name) await sb.from("xero_tenants").update({ tenant_name: on }).eq("tenant_id", t.tenant_id); } } catch(_e){}
         const bf = await runBackfill(access, tenants||[]); const pr = await processPending(500); // v28: auto drift-repair after nightly backfill; up to 50 extras/tenant per run
@@ -501,7 +509,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       const work = (async ()=>{
         try {
           const access = await xeroAccessToken();
-          const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+          // v227: Xero-connected companies only — see the note in cron_sync above.
+          const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name").eq("xero_connected", true);
           const results = [];
           for (const t of (tenants||[])){
             try { const dr = await runDriftCheck(access, t.tenant_id); results.push({ tenant: t.tenant_name, ...dr }); }
@@ -517,7 +526,9 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "cron_delta") {
       const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
       if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
-      const work = (async ()=>{ try { const access = await xeroAccessToken(); const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+      const work = (async ()=>{ try { const access = await xeroAccessToken();
+        // v227: Xero-connected companies only — see the note in cron_sync above.
+        const { data: tenants } = await sb.from("xero_tenants").select("tenant_id,tenant_name").eq("xero_connected", true);
         // v28: per-tenant since = max(last_delta_sync_at, last_full_sync_at) - 15-min overlap. Falls back to 6h if no state yet — long enough to absorb one missed cycle.
         const { data: states } = await sb.from("xero_sync_state").select("tenant_id,last_delta_sync_at,last_full_sync_at").in("tenant_id", (tenants||[]).map(t=>t.tenant_id));
         const stMap = {}; (states||[]).forEach(s=>{ stMap[s.tenant_id] = s; });
@@ -975,7 +986,7 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // v67: use explicit \u escapes — the previous literal invisible chars in the regex
       // range broke the Supabase deploy build silently (each attempt fast-failed at ~19s).
       const clean = (s: string) => String(s||"").replace(/[​‌‍⁠﻿]/g, "").trim();
-      const { data: existing } = await sb.from("xero_tenants").select("tenant_id,tenant_name");
+      const { data: existing } = await sb.from("xero_tenants").select("tenant_id,tenant_name,xero_connected");
       const before = new Map((existing||[]).map((r: any)=>[r.tenant_id, r.tenant_name]));
       const seen = new Set<string>();
       const renamed: any[] = []; const added: any[] = [];
@@ -993,7 +1004,12 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
         else if (prev !== name) renamed.push({ tenant_id:id, from:prev, to:name });
         try { await sb.from("xero_tenants").upsert({ tenant_id:id, tenant_name:name }, { onConflict:"tenant_id" }); } catch(_e){}
       }
-      const removed = (existing||[]).filter((r: any)=>!seen.has(r.tenant_id)).map((r: any)=>({ tenant_id:r.tenant_id, tenant_name:r.tenant_name }));
+      // v227: a company that was never in Xero cannot have been REMOVED from it. Nothing here deletes —
+      // `removed` is reported only — but listing Yuan Chuan Tang CTG4U every time an admin pressed
+      // "refresh company names" reads as "a company vanished", which is the alarm this panel exists to
+      // raise. Judge disappearance only for rows that claim to be Xero-connected.
+      const removed = (existing||[]).filter((r: any)=>r.xero_connected !== false && !seen.has(r.tenant_id))
+        .map((r: any)=>({ tenant_id:r.tenant_id, tenant_name:r.tenant_name }));
       await logAudit(me, "tenants_refresh", "xero_connections", { total: conns.length, renamed: renamed.length, added: added.length, removed: removed.length });
       const { data: after } = await sb.from("xero_tenants").select("tenant_id,tenant_name").order("tenant_name");
       return j({ ok:true, total: conns.length, renamed, added, removed, companies: after||[] });
