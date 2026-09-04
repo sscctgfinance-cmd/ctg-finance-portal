@@ -91,6 +91,45 @@ unauthenticated caller on purpose, regenerate it:
 deno run -A tools/route_probe.ts supabase/functions/portal/index.ts tests/route_parity.golden.jsonl
 ```
 
+## `xero_tenants` is the GROUP list, not only Xero's — `xero_connected` (v227)
+
+Every company picker in both apps enumerates the group from `xero_tenants`; `hr_companies` (hr.ts)
+reads it directly. Nothing writes that table except the Xero OAuth flow (`lib.ts:88` upserts from
+Xero's own `/connections`; `finance.ts:32` only refreshes names), and there is **no "add a company"
+action or screen anywhere**. So a group entity with no Xero organisation — YUAN CHUAN TANG CTG4U SDN
+BHD, whose books are in AutoCount — exists only as a hand-inserted row with `xero_connected = false`.
+
+**The asymmetry is the design, and `tests/non_xero_tenant_test.ts` pins it:**
+
+| a handler that… | must |
+|---|---|
+| calls the Xero API per tenant (`cron_sync`, `cron_drift_repair`, `cron_delta`) | filter `xero_connected` |
+| lists companies for a human (`hr_companies`, the pickers) | NOT filter — or the company vanishes from the picker it was added for |
+
+Unfiltered, each cron fails on that company on EVERY run, and `cron_drift_repair` writes the failure
+into `portal_audit` — a permanent daily error in front of the cron health alarm. `xero-delta-hourly`
+is `1-56/5 * * * *`, so the window between inserting such a row and the first failure is five minutes:
+**deploy the filter BEFORE inserting the row.** `tenants_refresh` is the fourth caller and a different
+failure — nothing there deletes, but a company that was never in Xero was reported as `removed` every
+time an admin refreshed company names, which reads as "a company vanished".
+
+⚠️ **Adding ANY sixth company — Xero or not — silently demotes every full-scope admin.**
+`portal_allowed_tenants` treats an admin as unrestricted on 0 assignments **or** assignments >= the
+company count. All six full-scope admins here hold exactly the five that existed, so a sixth company
+drops them to 5/6: they lose the new company AND the group-wide view of the other five (Dashboard,
+consolidated P&L, CFO Cockpit). Grant the new tenant to them in the SAME transaction as the insert.
+The check before you add one:
+
+```sql
+select u.email, count(uc.tenant_id) assigned, (select count(*) from xero_tenants) total
+from portal_users u left join portal_user_companies uc on uc.user_id = u.id
+group by u.id, u.email having count(uc.tenant_id) >= (select count(*) from xero_tenants);
+```
+
+A non-Xero company still needs `hr_employer_info` (its `doc_code` prefixes claim numbers and is
+globally UNIQUE — DRS / IPC / ZRO / SCH / SKD / YCT are taken; absent falls back to `CLM`). Every
+Xero-fed Finance screen is legitimately EMPTY for it, which is the data, not a fault.
+
 ## Shared frontend code lives in the root `.js` files
 
 `app.html` and `hros.html` are ~500 KB single-file apps that duplicated code freely. Code that is not UI
