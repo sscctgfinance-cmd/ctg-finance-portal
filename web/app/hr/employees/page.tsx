@@ -174,7 +174,13 @@ export default function HrEmployeesPage() {
         const r = await call<{ emailed?: number; results?: { name?: string; email?: string; temp_password?: string; emailed?: boolean; error?: string }[] }>(
           { api: 'hr_send_logins', tenant: company?.tenant_id, emails: [e.email] });
         const res = r.results || [];
-        if (res.length) setCreds(res.map((x) => ({ name: x.name || '', email: x.email, temp_password: x.temp_password })));
+        if (res.length) setCreds({
+          rows: res.map((x) => ({ name: x.name || '', email: x.email, temp_password: x.temp_password })),
+          // PR #114's second half, and it is exactly this case: the password IS reset by now, so a
+          // send that failed must be NAMED rather than dropped, or somebody is locked out with a
+          // credential nobody has.
+          skipped: res.filter((x) => !x.emailed).map((x) => ({ name: x.name || x.email || '', reason: 'email failed: ' + (x.error || 'unknown') })),
+        });
         setNotice(r.emailed
           ? `Emailed ✓ — ${e.name || e.email}`
           : 'Password reset, but the EMAIL failed — pass the password on yourself');

@@ -80,7 +80,8 @@ function screen(over: Partial<Props> = {}) {
       uob={{}}
       due={dueInfo(PERIOD.month, PERIOD.year, NOW)}
       onPickPeriod={noop}
-<<<<<<< HEAD
+      onRunsToggle={noop}
+      onRunOpen={noop}
       onRatesToggle={noop}
       onRatesSave={noop}
       onEmployerToggle={noop}
@@ -91,11 +92,6 @@ function screen(over: Partial<Props> = {}) {
       onStatIdsClose={noop}
       onStatIdsCell={noop}
       onStatIdsSave={noop}
-=======
-      onRunsToggle={noop}
-      onRunOpen={noop}
-      onLegacyPanel={noop}
->>>>>>> origin/main
       onGridSave={noop}
       onFinalise={noop}
       onEditFinalised={noop}
@@ -198,19 +194,13 @@ describe('HR Payroll — React vs the legacy golden', () => {
  */
 const LEGACY_TO_PROP: Record<string, string> = {
   hrPickPeriod: 'pickPeriod',
-<<<<<<< HEAD
+  hrRunsToggle: 'runsToggle',
   // v225: all three record editors are migrated, so these are real openers rather than handoffs — the
   // same change v222 made for TP1. A Company button that reverted to the notice, or that opened the
   // rates editor, fails here and nowhere else: neither carries an argument.
   hrEmployerToggle: 'employerToggle',
   hrRatesToggle: 'ratesToggle',
   hrStatIdsOpen: 'statIdsOpen',
-=======
-  hrRunsToggle: 'runsToggle',
-  hrEmployerToggle: 'legacy:employer',
-  hrRatesToggle: 'legacy:rates',
-  hrStatIdsOpen: 'legacy:statids',
->>>>>>> origin/main
   hrTp1Open: 'tp1Open',   // v222: the TP1 panel is migrated, so this is no longer a legacy handoff
   hrGridSave: 'gridSave',
   hrFinalise: 'finalise',
@@ -242,17 +232,11 @@ function assertHandlerParity(over: Partial<Props> = {}) {
 
   const got = reactHandlers(screen({
     onPickPeriod: record('pickPeriod') as never,
-<<<<<<< HEAD
+    onRunsToggle: record('runsToggle') as never,
+    onRunOpen: record('runOpen') as never,
     onRatesToggle: record('ratesToggle') as never,
     onEmployerToggle: record('employerToggle') as never,
     onStatIdsOpen: record('statIdsOpen') as never,
-=======
-    onRunsToggle: record('runsToggle') as never,
-    onRunOpen: record('runOpen') as never,
-    // The panel key travels in the ATTR, not the args: the golden's `hrEmployerToggle()` carries no
-    // argument, so putting 'employer' in the args would be comparing against something that is not there.
-    onLegacyPanel: ((k: string) => calls.push({ attr: 'legacy:' + k, args: [] })) as never,
->>>>>>> origin/main
     onGridSave: record('gridSave') as never,
     onFinalise: record('finalise') as never,
     onRowMenu: record('rowMenu') as never,

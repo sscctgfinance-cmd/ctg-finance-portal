@@ -2087,7 +2087,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 264 cases, incl. all 51 render goldens
+deno test --allow-read tests/          # 300 cases, incl. all 51 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 

@@ -46,7 +46,7 @@ function legacy(from: string, to: string): string {
 }
 
 const row = (over: Partial<GridRow>): GridRow => ({
-  basic: 0, allow: 0, bonus: 0, ot: 0, allowance: 0, deductions: [], unpaid: 0,
+  basic: 0, allow: 0, bonus: 0, ot: 0, allowance: 0, allowanceNs: 0, deductions: [], unpaid: 0,
   pcbSet: null, skip: false, _att: {}, _autoBasic: null, _payType: 'monthly', ...over,
 });
 
