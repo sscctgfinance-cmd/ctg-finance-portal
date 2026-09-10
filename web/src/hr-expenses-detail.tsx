@@ -50,15 +50,15 @@ const RC_SEL = 'width:100%;padding:8px 10px;background:var(--panel-2);border:1px
 /** `rcStatusPill()` — hros.html:1781. The same table `src/hr-expenses.tsx` holds for the list. */
 const STATUS: Record<string, [string, string]> = {
   'Draft': ['#95a3ba', 'rgba(107,122,147,.18)'],
-  'Submitted': ['var(--sky-soft)', 'rgba(91,155,213,.16)'],
-  'Pending Manager Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending HR Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending Finance Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending Director Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Approved': ['var(--green-soft)', 'rgba(22,185,122,.16)'],
-  'Paid': ['var(--green-soft)', 'rgba(22,185,122,.24)'],
-  'Rejected': ['var(--coral-soft)', 'rgba(232,93,60,.16)'],
-  'Need More Info': ['var(--sky-soft)', 'rgba(91,155,213,.18)'],
+  'Submitted': ['var(--sky-soft)', 'rgba(var(--sky-rgb),.16)'],
+  'Pending Manager Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending HR Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending Finance Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending Director Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Approved': ['var(--green-soft)', 'rgba(var(--green-rgb),.16)'],
+  'Paid': ['var(--green-soft)', 'rgba(var(--green-rgb),.24)'],
+  'Rejected': ['var(--coral-soft)', 'rgba(var(--coral-rgb),.16)'],
+  'Need More Info': ['var(--sky-soft)', 'rgba(var(--sky-rgb),.18)'],
   'Cancelled': ['var(--muted)', 'rgba(107,122,147,.14)'],
 };
 
@@ -244,7 +244,7 @@ export default function HrExpensesDetail(p: HrExpensesDetailProps) {
 
       {/* warnings — hros.html:2518 */}
       {(c.warnings && c.warnings.length) ? (
-        <div className="panel" style={{ borderColor: 'rgba(245,158,11,.4)' }}>
+        <div className="panel" style={{ borderColor: 'rgba(var(--amber-rgb),.4)' }}>
           <div style={{ fontWeight: 700, color: 'var(--amber)', fontSize: '13px', marginBottom: '6px' }}>⚠ Validation warnings</div>
           {c.warnings.map((w, i) => <div key={i} style={{ fontSize: '12.5px', color: 'var(--text-soft)' }}>{'• ' + w}</div>)}
         </div>

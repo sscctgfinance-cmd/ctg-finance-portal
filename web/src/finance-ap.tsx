@@ -458,8 +458,8 @@ export function ApDetailPane(p: ApDetailProps) {
   const confPill = confidence === 'high'
     ? <span className="pill pill-green" style={st('font-size:10px')}>high confidence</span>
     : confidence === 'low'
-      ? <span className="pill" style={st('background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px')}>low confidence</span>
-      : <span className="pill" style={st('background:rgba(245,158,11,.16);color:var(--amber);font-size:10px')}>medium confidence</span>;
+      ? <span className="pill" style={st('background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:10px')}>low confidence</span>
+      : <span className="pill" style={st('background:rgba(var(--amber-rgb),.16);color:var(--amber);font-size:10px')}>medium confidence</span>;
 
   const routingStatus = ai.company_routing_status || '';
   const routingColor = routingStatus === 'company_matched_high_confidence' ? 'var(--green-soft)'
@@ -558,7 +558,7 @@ export function ApDetailPane(p: ApDetailProps) {
 
           {/* dupBox — app.html:6917. The row that means "we already have this bill". */}
           {dup ? (
-            <div style={st('background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:12px;margin-bottom:10px;color:var(--red-soft)')}>
+            <div style={st('background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.4);border-radius:8px;padding:12px;margin-bottom:10px;color:var(--red-soft)')}>
               <b>🚫 Duplicate detected</b>
               <div style={st('font-size:12px;margin-top:5px;color:var(--text)')}>
                 {'Matches an existing bill '}<b>{dup.number || dup.invoice_id || ''}</b>
@@ -571,7 +571,7 @@ export function ApDetailPane(p: ApDetailProps) {
 
           {/* taxBox — app.html:6907 */}
           {taxVals.length ? (
-            <div style={st('background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--amber)')}>
+            <div style={st('background:rgba(var(--amber-rgb),.08);border:1px solid rgba(var(--amber-rgb),.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--amber)')}>
               <b>Tax/accounting review:</b>{' ' + taxVals.map((k) => k.replace(/_/g, ' ') + ': ' + taxReview[k]).join(' · ')}
             </div>
           ) : null}
@@ -602,7 +602,7 @@ export function ApDetailPane(p: ApDetailProps) {
           ) : null}
 
           {issues.length ? (
-            <div style={st('background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px')}>
+            <div style={st('background:rgba(var(--amber-rgb),.08);border:1px solid rgba(var(--amber-rgb),.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px')}>
               <b>⚠ Issues:</b>{' ' + issues.join(' · ')}
             </div>
           ) : null}
@@ -719,7 +719,7 @@ export function ApPreviewModal({ r, onClose, onPostAnyway }: { r: ApPreview; onC
   const anyFail = previewAnyFail(r);
   return (
     <div style={st('position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px')} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={st('background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:16px;width:min(900px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column')}>
+      <div style={st('background:linear-gradient(180deg,rgba(var(--surface-rgb),.98),rgba(var(--bg-rgb),.97));border:1px solid var(--border-strong);border-radius:16px;width:min(900px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column')}>
         <div style={st('padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center')}>
           <div>
             <div style={st('font-size:15px;font-weight:700')}>🔍 Xero payload preview</div>
@@ -729,13 +729,13 @@ export function ApPreviewModal({ r, onClose, onPostAnyway }: { r: ApPreview; onC
         </div>
         <div style={st('padding:16px 20px;overflow:auto;flex:1')}>
           {(r.warnings || []).length ? (
-            <div style={st('background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)')}>
+            <div style={st('background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)')}>
               {'⚠ '}
               {(r.warnings || []).map((w, i) => <span key={i}>{i ? <br /> : null}{w}</span>)}
             </div>
           ) : null}
           {dupes.length ? (
-            <div style={st('background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:10px 12px;margin-bottom:12px')}>
+            <div style={st('background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.35);border-radius:8px;padding:10px 12px;margin-bottom:12px')}>
               <div style={st('font-size:12.5px;font-weight:600;color:var(--red-soft);margin-bottom:6px')}>{'🚨 Xero already has ' + dupes.length + ' bill' + (dupes.length > 1 ? 's' : '') + ' that may be duplicates:'}</div>
               <table style={st('width:100%;border-collapse:collapse;font-size:11.5px')}>
                 <thead><tr style={st('color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.04em')}>
@@ -749,7 +749,7 @@ export function ApPreviewModal({ r, onClose, onPostAnyway }: { r: ApPreview; onC
                 <tbody>
                   {dupes.map((x, i) => (
                     <tr key={i}>
-                      <td style={st('padding:4px')}><span className="pill" style={st('background:rgba(239,68,68,.15);color:var(--red-soft);font-size:10px;padding:2px 6px;border-radius:4px')}>{x.match_type || ''}</span></td>
+                      <td style={st('padding:4px')}><span className="pill" style={st('background:rgba(var(--red-rgb),.15);color:var(--red-soft);font-size:10px;padding:2px 6px;border-radius:4px')}>{x.match_type || ''}</span></td>
                       <td style={st('padding:4px;font-family:ui-monospace,Menlo,monospace')}>{x.invoice_number || '—'}</td>
                       <td style={st('padding:4px')}>{x.contact_name || ''}</td>
                       <td style={st('padding:4px;text-align:right;font-variant-numeric:tabular-nums')}>{'RM ' + Number(x.total || 0).toFixed(2)}</td>
@@ -1028,7 +1028,7 @@ export default function FinanceAp(p: FinanceApProps) {
                 return (
                   // The row id is the ONLY thing binding these cells to a document: `apOpen(m.id)`
                   // fetches the email whose bill the operator will post. Handler parity is what checks it.
-                  <tr key={m.id} onClick={() => p.onOpen(m.id)} style={st('cursor:pointer' + (p.activeId === m.id ? ';background:rgba(232,93,60,.06)' : ''))}>
+                  <tr key={m.id} onClick={() => p.onOpen(m.id)} style={st('cursor:pointer' + (p.activeId === m.id ? ';background:rgba(var(--coral-rgb),.06)' : ''))}>
                     <td><StatusPill status={m.status || 'received'} /></td>
                     <td className="muted" style={st('font-size:11.5px;white-space:nowrap')}>{apWhen(m.received_at)}</td>
                     <td>

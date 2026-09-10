@@ -47,13 +47,15 @@
 <span style="display:flex;gap:6px;flex-wrap:wrap">
 <button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>
 <button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>
+<span id="hr_payact">
 <button class="btn sm" onclick="hrGridSave()">💾 Save entries</button>
 <button class="btn p sm" onclick="hrFinalise()">Finalise payroll</button>
+</span>
 </span>
 </div>
 <div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee's EPF rate / SOCSO category / age rules come from their profile.</div>
 <div class="tbl-wrap">
-<table class="bigtable" style="font-size:12px">
+<table class="bigtable pay-grid" style="font-size:12px">
 <thead>
 <tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em">
 <th>
@@ -123,11 +125,11 @@
 <td class="amt" id="lin_e1">RM 0.00</td>
 <td class="amt">
 <span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">
-<input type="number" step="0.01" min="0" id="pcb_e1" value="126.85" oninput="hrGridPcbCell('e1',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
+<input type="number" step="0.01" min="0" id="pcb_e1" value="126.90" oninput="hrGridPcbCell('e1',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
 <button id="pcbu_e1" onclick="hrGridPcbAuto('e1')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:none">↺</button>
 </span>
 </td>
-<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e1">RM 4,668.30</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e1">RM 4,668.25</td>
 </tr>
 <tr>
 <td style="white-space:nowrap">
@@ -169,11 +171,11 @@
 <td class="amt" id="lin_e2">RM 27.35</td>
 <td class="amt">
 <span style="display:inline-flex;align-items:center;gap:3px;justify-content:flex-end">
-<input type="number" step="0.01" min="0" id="pcb_e2" value="89.00" oninput="hrGridPcbCell('e2',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
+<input type="number" step="0.01" min="0" id="pcb_e2" value="89.15" oninput="hrGridPcbCell('e2',this.value)" onfocus="this.select()" title="Calculated from the MTD tables. Type over it to set the real figure for this month." style="width:92px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right;font-weight:400">
 <button id="pcbu_e2" onclick="hrGridPcbAuto('e2')" title="Back to the calculated figure" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:12px;padding:0 1px;line-height:1;display:none">↺</button>
 </span>
 </td>
-<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e2">RM 3,550.10</td>
+<td class="amt" style="font-weight:700;color:var(--green-soft)" id="net_e2">RM 3,549.95</td>
 </tr>
 <tr>
 <td style="white-space:nowrap">
@@ -229,8 +231,8 @@
 <td class="amt" id="t_soc">RM 52.25</td>
 <td class="amt" id="t_eis">RM 20.90</td>
 <td class="amt" id="t_lin">RM 27.35</td>
-<td class="amt" id="t_pcb">RM 215.85</td>
-<td class="amt" style="color:var(--green-soft)" id="t_net">RM 9,280.90</td>
+<td class="amt" id="t_pcb">RM 216.05</td>
+<td class="amt" style="color:var(--green-soft)" id="t_net">RM 9,280.70</td>
 </tr>
 </tbody>
 </table>
@@ -251,7 +253,7 @@
 </div>
 <div class="panel" style="padding:12px;margin:0">
 <div class="muted" style="font-size:11px">PCB (LHDN) payable</div>
-<div style="font-size:16px;font-weight:700;margin-top:2px">RM 215.85</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">RM 216.05</div>
 </div>
 <div class="panel" style="padding:12px;margin:0">
 <div class="muted" style="font-size:11px">Employer total cost</div>
@@ -273,7 +275,7 @@
 <div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
 <div>
 <div style="font-weight:700;font-size:13px">🏦 Salaries — UOB Infinity</div>
-<div style="font-size:15px;font-weight:750;margin-top:2px">RM 9,280.90 <span class="muted" style="font-size:10px">net pay</span>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 9,280.70 <span class="muted" style="font-size:10px">net pay</span>
 </div>
 <div style="margin-top:2px">
 <span class="muted" style="font-size:10.5px">pay on your payday</span>
@@ -348,7 +350,7 @@
 <div style="display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(240px,1.7fr) auto;gap:10px;align-items:start;padding:12px 2px;border-bottom:1px solid var(--border)">
 <div>
 <div style="font-weight:700;font-size:13px">🏛️ PCB — LHDN</div>
-<div style="font-size:15px;font-weight:750;margin-top:2px">RM 215.85</div>
+<div style="font-size:15px;font-weight:750;margin-top:2px">RM 216.05</div>
 <div style="margin-top:2px">
 <span style="font-size:10.5px;color:var(--muted)">due 15 September 2026 · 28 days left</span>
 </div>

@@ -280,7 +280,7 @@ export default function FinanceWht(props: FinanceWhtProps) {
     const pill = s.status === 'filed'
       ? <span className="pill" style={st('background:rgba(45,180,120,.15);color:#2db478')}>Filed</span>
       : s.status === 'final'
-        ? <span className="pill" style={st('background:rgba(91,155,213,.15);color:#5b9bd5')}>Final</span>
+        ? <span className="pill" style={st('background:rgba(var(--sky-rgb),.15);color:#5b9bd5')}>Final</span>
         : <span className="pill">Draft</span>;
     // Built as ONE string, exactly as the legacy concatenation reads it: adjacent JSX text expressions
     // are two text nodes, and the legacy side is one.

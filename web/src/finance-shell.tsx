@@ -100,7 +100,7 @@ export default function FinanceShell(p: FinanceShellProps) {
               style={{
                 display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
                 background: p.online ? 'var(--green-soft)' : 'var(--red-soft)',
-                boxShadow: p.online ? '0 0 0 3px rgba(126,224,160,.12)' : '0 0 0 3px rgba(239,68,68,.18)',
+                boxShadow: p.online ? '0 0 0 3px rgba(126,224,160,.12)' : '0 0 0 3px rgba(var(--red-rgb),.18)',
                 transition: 'background .2s,box-shadow .2s',
               }} />
             <span className="who" id="who-name"><b>{p.who}</b></span>
@@ -149,7 +149,7 @@ export default function FinanceShell(p: FinanceShellProps) {
         {/* No data-cat — a launcher, always visible (app.html:1440). */}
         <a className="tab-cat" href={`${BASE_PATH}/hros.html`}
           title="Open HR OS — payroll, leave & claims (separate app, same login)"
-          style={{ marginLeft: 'auto', color: '#8FB8DC', boxShadow: '0 0 0 1px rgba(91,155,213,.32) inset' }}>👥 HR OS →</a>
+          style={{ marginLeft: 'auto', color: '#8FB8DC', boxShadow: '0 0 0 1px rgba(var(--sky-rgb),.32) inset' }}>👥 HR OS →</a>
       </div>
       <div className="tabs" id="sub-tabs">
         {p.tabs.map((t) => (

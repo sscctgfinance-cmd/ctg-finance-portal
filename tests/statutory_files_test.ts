@@ -26,7 +26,12 @@ const src = inlineScript(await Deno.readTextFile(new URL("../hros.html", import.
 const HELPERS = ["hrCsv", "hrPadL", "hrPadR", "hrCents", "hrAscii", "hrMissingIds", "hrEmpView",
   "hrCurRows", "hrPeriod", "hrBankCode", "hrSwift", "hrFitReset", "hrFitNote",
   "hrBuildStatutory", "hrBuildKwsp", "hrBuildAssist", "hrBuildCp39", "hrBuildGiro", "hrBuildBank",
-  "hrExpStatutory", "hrExpKwsp", "hrExpCp39", "hrExpBank"];
+  "hrExpStatutory", "hrExpKwsp", "hrExpCp39", "hrExpBank",
+  // v231: every outward-facing export now asks hrDraftOk() first when the month is not finalised, so the
+  // helper has to come across too. The prelude below stubs confirm() to YES — these tests are about the
+  // BYTES a file carries, and a run captured mid-draft is exactly the case v231 warns about, not a
+  // different one. hrBankFileOk carries the blocker refusal that hrExpBank/hrExpGiro now share.
+  "hrDraftOk", "hrBankFileOk", "hrSalaryExclusions", "hrPayable", "hrUnpayable", "hrNames"];
 
 // Two employees: an ordinary one, and one at an Islamic subsidiary whose name contains the parent's.
 const EMPS = [
@@ -56,6 +61,8 @@ export const TOASTS: {msg:string,err:boolean}[] = [];
 function hrDownload(name:string,text:string,_m?:any){ DOWNLOADS.push({name,text}); }
 function toast(msg:string,err?:boolean){ TOASTS.push({msg:String(msg),err:!!err}); }
 function hrUobCfg(){ return { acct:'1234567890', cd:'2026-07-31' }; }
+export const CONFIRMS: string[] = [];
+function confirm(msg:string){ CONFIRMS.push(String(msg)); return true; }
 function M(n:any){ return (Number(n)||0).toFixed(2); }
 const HR_MONTHS=['','January','February','March','April','May','June','July','August','September','October','November','December'];
 let HR_FIT_ERR:string[]=[];

@@ -19,6 +19,21 @@
    Palette matched to CTG Finance Hub (coral/sky)
    ════════════════════════════════════════════ */
 :root{
+  /* v233 — rgb companions. A tint has to come from the same value as the solid colour or the
+     palette forks, which is exactly what had happened: 120 hardcoded rgba(var(--coral-rgb),…) kept the
+     PRE-redesign coral on screen next to the --coral (#C4492A) the buttons use. Every translucent
+     colour below is now derived from a token, so the palette has one source again.
+     --coral-rgb is the SOFT coral in dark and the solid one in light: a tint has to be visible
+     against the ground it sits on, and #C4492A at .05 on #161A21 is not. */
+  --bg-rgb:14,17,22;
+  --surface-rgb:22,26,33;
+  --surface2-rgb:28,33,42;
+  --text-rgb:232,234,237;
+  --coral-rgb:245,140,109;
+  --sky-rgb:127,170,240;
+  --green-rgb:78,205,160;
+  --red-rgb:240,119,107;
+  --amber-rgb:224,164,74;
   color-scheme:dark;
   --bg-deep:#090C11;
   --bg:#0E1116;
@@ -28,7 +43,7 @@
   --border-strong:#333B47;
   --text:#E8EAED;
   --text-soft:#A0A8B4;
-  --muted:#727B88;
+  --muted:#808894;
   --coral:#C4492A;
   --coral-deep:#A93C22;
   --coral-soft:#F58C6D;
@@ -55,8 +70,8 @@ body{
   font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   background:
     radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(31,58,95,.45), transparent 55%),
-    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(232,93,60,.22), transparent 60%),
-    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(91,155,213,.14), transparent 60%),
+    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(var(--coral-rgb),.22), transparent 60%),
+    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(var(--sky-rgb),.14), transparent 60%),
     linear-gradient(180deg,#070D17 0%,#0C1421 100%);
   background-attachment:fixed;min-height:100vh;
 }
@@ -73,29 +88,29 @@ body::before{
 /* ── Header ── */
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px}
 .brand{display:flex;align-items:center;gap:13px}
-.brand-logo{width:42px;height:42px;flex-shrink:0;filter:drop-shadow(0 4px 12px rgba(232,93,60,.5)) drop-shadow(0 0 20px rgba(91,155,213,.3))}
+.brand-logo{width:42px;height:42px;flex-shrink:0;filter:drop-shadow(0 4px 12px rgba(var(--coral-rgb),.5)) drop-shadow(0 0 20px rgba(var(--sky-rgb),.3))}
 h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.3px;color:#fff}
 .sub{color:var(--muted);font-size:11px;margin-top:2px;letter-spacing:.3px}
 .who{font-size:12.5px;color:var(--text-soft)}
 .who b{color:#fff}
-.role-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.4px;background:rgba(232,93,60,.14);color:var(--coral-soft);border:1px solid rgba(232,93,60,.28);margin-left:6px}
+.role-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.4px;background:rgba(var(--coral-rgb),.14);color:var(--coral-soft);border:1px solid rgba(var(--coral-rgb),.28);margin-left:6px}
 
 /* ── Buttons ── */
 .btn{padding:8px 15px;border:1px solid var(--border-strong);background:rgba(255,255,255,.03);border-radius:9px;font-size:12.5px;cursor:pointer;color:var(--text-soft);transition:.16s;font-weight:600;font-family:inherit}
 .btn:hover{background:rgba(255,255,255,.07);color:#fff;border-color:rgba(255,255,255,.18)}
-.btn.p{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;box-shadow:0 4px 14px rgba(232,93,60,.32)}
-.btn.p:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 18px rgba(232,93,60,.42)}
-.btn.d{color:var(--red-soft);border-color:rgba(239,68,68,.3)}
-.btn.d:hover{background:rgba(239,68,68,.12);color:#fff;border-color:rgba(239,68,68,.5)}
+.btn.p{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;box-shadow:0 4px 14px rgba(var(--coral-rgb),.32)}
+.btn.p:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 18px rgba(var(--coral-rgb),.42)}
+.btn.d{color:var(--red-soft);border-color:rgba(var(--red-rgb),.3)}
+.btn.d:hover{background:rgba(var(--red-rgb),.12);color:#fff;border-color:rgba(var(--red-rgb),.5)}
 .btn:disabled{opacity:.5;cursor:default;transform:none}
 .btn.sm{padding:6px 12px;font-size:12px}
 
 /* ── Toolbar ── */
-.bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:16px 0;padding:12px 16px;background:linear-gradient(180deg,rgba(19,28,45,.7),rgba(12,20,33,.6));border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(10px)}
+.bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:16px 0;padding:12px 16px;background:linear-gradient(180deg,rgba(var(--surface-rgb),.7),rgba(var(--bg-rgb),.6));border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(10px)}
 
 /* ── Inputs ── */
 select,input:not([type=file]){padding:9px 12px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;background:rgba(7,13,23,.7);color:var(--text);transition:.16s;font-family:inherit}
-select:focus,input:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
+select:focus,input:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(var(--coral-rgb),.18)}
 /* Dropdown options — native popup needs an explicit solid background per theme, else text is invisible. */
 select option, optgroup{ background:#0e1621; color:#E8EEF7; }
 select option:checked, select option:hover{ background:#1b2942; }
@@ -103,40 +118,56 @@ select option:checked, select option:hover{ background:#1b2942; }
 :root[data-theme="light"] select option:checked, :root[data-theme="light"] select option:hover{ background:#E6EEF8; }
 input::placeholder, textarea::placeholder{ color:var(--muted); opacity:.8; }
 textarea{padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;font-family:inherit;min-height:74px;background:rgba(7,13,23,.7);color:var(--text);resize:vertical;width:100%;transition:.16s}
-textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
+textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(var(--coral-rgb),.18)}
 
 /* ── Tabs ── */
 .tabs{display:flex;gap:3px;margin:4px 0 22px;border-bottom:1px solid var(--border-strong);flex-wrap:wrap}
 .tab{padding:11px 17px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:7px 7px 0 0;transition:.16s;font-weight:600}
 .tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
-.tab.active{color:var(--coral-soft);border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(232,93,60,.08),transparent)}
+.tab.active{color:var(--coral-soft);border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(var(--coral-rgb),.08),transparent)}
 .tab.hide{display:none}
 
 /* ── Cards ── */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:20px}
-.card{background:linear-gradient(180deg,rgba(19,28,45,.85),rgba(12,20,33,.75));border:1px solid var(--border-strong);border-radius:14px;padding:17px;position:relative;overflow:hidden;transition:.18s}
-.card::after{content:'';position:absolute;inset:0;border-radius:14px;background:radial-gradient(120% 90% at 0% 0%,rgba(232,93,60,.05),transparent 55%);pointer-events:none}
+.card{background:linear-gradient(180deg,rgba(var(--surface-rgb),.85),rgba(var(--bg-rgb),.75));border:1px solid var(--border-strong);border-radius:14px;padding:17px;position:relative;overflow:hidden;transition:.18s}
+.card::after{content:'';position:absolute;inset:0;border-radius:14px;background:radial-gradient(120% 90% at 0% 0%,rgba(var(--coral-rgb),.05),transparent 55%);pointer-events:none}
 .card:hover{border-color:rgba(255,255,255,.14);transform:translateY(-2px)}
 .card .c-ico{font-size:22px;margin-bottom:9px;opacity:.95}
 .card .n{font-size:23px;font-weight:750;letter-spacing:-.5px}
 .card .l{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.2px}
-.card.green .n{color:var(--green-soft)}.card.red .n{color:var(--red-soft)}.card.blue .n{color:var(--sky-soft)}.card.amber .n{color:var(--amber)}
+/* v233 — the KPI number is INK. The colour classes still mark the CARD (icon tint, and
+   whatever a future card wants), but the figure itself no longer takes a hue from its
+   category: 'Total Revenue' is not good news and 'Total Expenses' is not bad news, so a
+   green and an amber there only make the one number that IS a signal — a negative net,
+   coloured from the renderer's own `net>=0` test — compete with decoration. */
+.card.green .n,.card.red .n,.card.blue .n,.card.amber .n{color:var(--text)}
 
 /* ── Tables ── */
 .tbl-wrap{overflow-x:auto;border-radius:13px;border:1px solid var(--border-strong)}
-.bigtable{width:100%;border-collapse:collapse;background:linear-gradient(180deg,rgba(19,28,45,.6),rgba(12,20,33,.5));overflow:hidden}
+/* v231 — TARGET SIZE, the same rule hros.html carries. WCAG 2.5.8 asks for 24x24 CSS px; measured on
+   the signed-in Finance app, Company Info's 24 copy buttons are 29x21 and the shell's collapse arrow is
+   20x22. The pseudo-element grows the HIT AREA only — the glyph does not move, no layout changes, and
+   no golden moves because nothing about the markup changes. Controls already 24px or larger get a
+   100%-sized overlay, which is a no-op.
+   NOT applied to <input>: a pseudo-element is not rendered on a void element, so the bare 13x13
+   checkboxes on Close and Gateway need their own fix (wrap the label) and are not silently half-done. */
+#app button, #app a[onclick], .ctg-side button, .ctg-side a[onclick]{position:relative}
+#app button::after, #app a[onclick]::after, .ctg-side button::after, .ctg-side a[onclick]::after{
+  content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:100%;height:100%;min-width:24px;min-height:24px;pointer-events:auto}
+.bigtable{width:100%;border-collapse:collapse;background:linear-gradient(180deg,rgba(var(--surface-rgb),.6),rgba(var(--bg-rgb),.5));overflow:hidden}
 .bigtable th,.bigtable td{padding:12px 15px;border-bottom:1px solid var(--border);font-size:13px;text-align:left}
 .bigtable th{color:var(--muted);font-size:10.5px;text-transform:uppercase;font-weight:700;letter-spacing:.6px;background:rgba(7,13,23,.5)}
 .bigtable tr:last-child td{border-bottom:none}
 .bigtable tbody tr{transition:background .14s}
-.bigtable tbody tr:hover td{background:rgba(232,93,60,.04)}
+.bigtable tbody tr:hover td{background:rgba(var(--coral-rgb),.04)}
 td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600}
 
 /* ── P&L Analysis — premium financial-statement styling ── */
 
 /* KPI cards: quiet numbers, a thin coloured top-accent bar per card, refined delta pill. */
 .pnl-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:2px}
-.pnl-kpi{position:relative;background:linear-gradient(180deg,rgba(19,28,45,.82),rgba(12,20,33,.72));border:1px solid var(--border-strong);border-radius:14px;padding:17px 18px 15px;overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.pnl-kpi{position:relative;background:linear-gradient(180deg,rgba(var(--surface-rgb),.82),rgba(var(--bg-rgb),.72));border:1px solid var(--border-strong);border-radius:14px;padding:17px 18px 15px;overflow:hidden;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
 .pnl-kpi:hover{transform:translateY(-3px);border-color:rgba(255,255,255,.16);box-shadow:0 14px 34px rgba(0,0,0,.30)}
 .pnl-kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--kpi-accent,var(--border-strong));opacity:.92}
 .pnl-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:18px;margin-bottom:11px}
@@ -151,7 +182,7 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .pnl-seg{display:inline-flex;background:rgba(255,255,255,.035);border:1px solid var(--border-strong);border-radius:10px;padding:3px}
 .pnl-seg button{border:none;background:transparent;color:var(--text-soft);font-size:12px;font-weight:600;padding:5px 14px;border-radius:7px;cursor:pointer;font-family:inherit;transition:.15s;letter-spacing:.2px}
 .pnl-seg button:hover{color:#fff}
-.pnl-seg button.on{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;box-shadow:0 3px 10px rgba(232,93,60,.34)}
+.pnl-seg button.on{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;box-shadow:0 3px 10px rgba(var(--coral-rgb),.34)}
 .pnl-zero{font-size:11.5px;color:var(--text-soft);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 .pnl-zero input{width:auto;margin:0;accent-color:var(--coral);cursor:pointer}
 
@@ -162,7 +193,7 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 
 /* The grid (statement look): hairline separators, generous cells, sticky frozen column. */
 .pnl-wrap{overflow:auto;max-height:72vh;border-radius:13px;border:1px solid var(--border-strong);position:relative}
-.pnl-grid{border-collapse:separate;border-spacing:0;background:linear-gradient(180deg,rgba(19,28,45,.6),rgba(12,20,33,.5));min-width:100%}
+.pnl-grid{border-collapse:separate;border-spacing:0;background:linear-gradient(180deg,rgba(var(--surface-rgb),.6),rgba(var(--bg-rgb),.5));min-width:100%}
 .pnl-grid th,.pnl-grid td{padding:10px 15px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;white-space:nowrap;line-height:1.35}
 .pnl-grid td.pnl-num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
 .pnl-grid .pnl-pct{display:block;font-size:9.5px;font-weight:400;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
@@ -179,7 +210,7 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .pnl-grid tr.pnl-key td{font-weight:800;font-size:13.5px;border-top:1px solid var(--border-strong)}
 .pnl-grid tr.pnl-key.gp  td{background:rgba(255,255,255,.05)}
 .pnl-grid tr.pnl-key.pos td{background:rgba(14,157,103,.12)}
-.pnl-grid tr.pnl-key.neg td{background:rgba(232,93,60,.12)}
+.pnl-grid tr.pnl-key.neg td{background:rgba(var(--coral-rgb),.12)}
 .pnl-grid tbody tr:hover td{background:rgba(255,255,255,.035)}
 /* Sticky header row, sticky account column, and the corner where they meet.
    Every sticky background MUST be fully opaque — a translucent tint lets the
@@ -198,7 +229,7 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 @media(max-width:440px){ .pnl-kpis{grid-template-columns:1fr} }
 
 /* ── Panel ── */
-.panel{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
+.panel{background:linear-gradient(180deg,rgba(var(--surface-rgb),.78),rgba(var(--bg-rgb),.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
 .panel-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
 .panel h3{font-size:14.5px;margin:0;font-weight:700;color:#fff}
 .muted{color:var(--muted)}
@@ -206,10 +237,10 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 /* ── Pills ── */
 .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
 .pill-draft{background:rgba(107,122,147,.18);color:var(--text-soft)}
-.pill-submit{background:rgba(245,158,11,.16);color:var(--amber)}
-.pill-blue{background:rgba(91,155,213,.16);color:var(--sky-soft)}
-.pill-green{background:rgba(22,185,122,.16);color:var(--green-soft)}
-.pill-coral{background:rgba(232,93,60,.16);color:var(--coral-soft)}
+.pill-submit{background:rgba(var(--amber-rgb),.16);color:var(--amber)}
+.pill-blue{background:rgba(var(--sky-rgb),.16);color:var(--sky-soft)}
+.pill-green{background:rgba(var(--green-rgb),.16);color:var(--green-soft)}
+.pill-coral{background:rgba(var(--coral-rgb),.16);color:var(--coral-soft)}
 
 /* ── Empty / Loading ── */
 .empty{text-align:center;color:var(--muted);padding:48px 20px}
@@ -223,38 +254,38 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 /* ── Row actions / status ── */
 .row-act{display:flex;gap:6px}
 .status-bar{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);margin-top:12px;letter-spacing:.2px}
-.dot-green{width:6px;height:6px;border-radius:50%;background:var(--green-soft);flex-shrink:0;box-shadow:0 0 8px rgba(61,220,151,.7)}
+.dot-green{width:6px;height:6px;border-radius:50%;background:var(--green-soft);flex-shrink:0;box-shadow:0 0 8px rgba(var(--green-rgb),.7)}
 
 /* ════ LOGIN GATE ════ */
 #login{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;position:relative;z-index:1}
 .lbox{
   width:100%;max-width:420px;text-align:center;
-  background:linear-gradient(180deg,rgba(19,28,45,.92),rgba(12,20,33,.88));
+  background:linear-gradient(180deg,rgba(var(--surface-rgb),.92),rgba(var(--bg-rgb),.88));
   border:1px solid var(--border-strong);border-radius:20px;padding:42px 38px;
   box-shadow:var(--shadow),0 0 0 1px rgba(255,255,255,.02);backdrop-filter:blur(20px);
 }
-.lbox-logo{width:84px;height:84px;margin:0 auto 18px;display:block;filter:drop-shadow(0 6px 18px rgba(232,93,60,.5)) drop-shadow(0 0 30px rgba(91,155,213,.35))}
+.lbox-logo{width:84px;height:84px;margin:0 auto 18px;display:block;filter:drop-shadow(0 6px 18px rgba(var(--coral-rgb),.5)) drop-shadow(0 0 30px rgba(var(--sky-rgb),.35))}
 .lbox-mark{font-size:11px;font-weight:800;letter-spacing:5px;color:var(--coral-soft);text-transform:uppercase;margin-bottom:14px}
 .lbox h1{margin:0 0 7px;font-size:22px;font-weight:700;color:#fff;letter-spacing:-.2px}
 .lbox-sub{margin:0 0 30px;font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:2px;line-height:1.7}
 .lfield{text-align:left;margin-bottom:15px}
 .lfield label{display:block;font-size:10.5px;font-weight:700;color:var(--sky-soft);margin-bottom:7px;text-transform:uppercase;letter-spacing:.7px}
 .lfield input{width:100%;padding:13px 16px;font-size:14px}
-.lbtn{width:100%;background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;padding:14px;border-radius:11px;cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.3px;box-shadow:0 4px 14px rgba(232,93,60,.35);margin-top:12px;transition:.18s;font-family:inherit}
-.lbtn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 20px rgba(232,93,60,.48)}
+.lbtn{width:100%;background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;padding:14px;border-radius:11px;cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.3px;box-shadow:0 4px 14px rgba(var(--coral-rgb),.35);margin-top:12px;transition:.18s;font-family:inherit}
+.lbtn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 20px rgba(var(--coral-rgb),.48)}
 .lbtn:disabled{opacity:.6;cursor:wait;transform:none}
-.lerr{font-size:12.5px;color:var(--red-soft);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);padding:11px 14px;border-radius:9px;margin:6px 0 14px;text-align:left}
-.pw-forced-note{font-size:12.5px;color:var(--coral-soft);background:rgba(232,93,60,.1);border:1px solid rgba(232,93,60,.28);padding:10px 13px;border-radius:9px;margin-bottom:14px;line-height:1.5}
+.lerr{font-size:12.5px;color:var(--red-soft);background:rgba(var(--red-rgb),.1);border:1px solid rgba(var(--red-rgb),.25);padding:11px 14px;border-radius:9px;margin:6px 0 14px;text-align:left}
+.pw-forced-note{font-size:12.5px;color:var(--coral-soft);background:rgba(var(--coral-rgb),.1);border:1px solid rgba(var(--coral-rgb),.28);padding:10px 13px;border-radius:9px;margin-bottom:14px;line-height:1.5}
 .pw-meter{height:5px;border-radius:4px;background:rgba(7,13,23,.6);overflow:hidden;margin:7px 0 3px}
 .pw-meter>span{display:block;height:100%;width:0;border-radius:4px;transition:width .25s,background .25s}
 .pw-hint{font-size:11px;color:var(--muted);min-height:14px}
 .bell{position:relative}
-.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--coral);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:17px;text-align:center;box-shadow:0 2px 8px rgba(232,93,60,.5)}
-.notif-panel{position:fixed;top:62px;right:20px;width:344px;max-width:92vw;max-height:72vh;overflow:auto;background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow);z-index:90;padding:14px}
+.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--coral);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:17px;text-align:center;box-shadow:0 2px 8px rgba(var(--coral-rgb),.5)}
+.notif-panel{position:fixed;top:62px;right:20px;width:344px;max-width:92vw;max-height:72vh;overflow:auto;background:linear-gradient(180deg,rgba(var(--surface-rgb),.98),rgba(var(--bg-rgb),.97));border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow);z-index:90;padding:14px}
 .notif-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .notif-hd h4{font-size:13px;color:#fff;margin:0}
 .notif-item{padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--coral);border-radius:9px;margin-bottom:8px;cursor:pointer;background:rgba(7,13,23,.4);transition:background .14s}
-.notif-item:hover{background:rgba(232,93,60,.09)}
+.notif-item:hover{background:rgba(var(--coral-rgb),.09)}
 .notif-item .nt{font-weight:700;font-size:12.5px;color:#fff}
 .notif-item .nd{font-size:11.5px;color:var(--muted);margin-top:2px}
 @media(max-width:560px){.notif-panel{top:56px;right:8px;left:8px;width:auto}}
@@ -265,12 +296,12 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .hide{display:none!important}
 
 /* ── Toast ── */
-.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:linear-gradient(180deg,rgba(19,28,45,.97),rgba(12,20,33,.97));color:var(--text);border:1px solid var(--border-strong);padding:11px 20px;border-radius:11px;font-size:13px;font-weight:500;opacity:0;transition:opacity .22s,transform .22s;z-index:200;box-shadow:var(--shadow);white-space:nowrap;backdrop-filter:blur(10px)}
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:linear-gradient(180deg,rgba(var(--surface-rgb),.97),rgba(var(--bg-rgb),.97));color:var(--text);border:1px solid var(--border-strong);padding:11px 20px;border-radius:11px;font-size:13px;font-weight:500;opacity:0;transition:opacity .22s,transform .22s;z-index:200;box-shadow:var(--shadow);white-space:nowrap;backdrop-filter:blur(10px)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ── Modal ── */
 .overlay{position:fixed;inset:0;background:rgba(3,7,14,.72);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);padding:20px}
-.modal{background:linear-gradient(180deg,rgba(19,28,45,.97),rgba(12,20,33,.95));border:1px solid var(--border-strong);border-radius:16px;padding:26px;width:400px;box-shadow:var(--shadow);max-width:100%}
+.modal{background:linear-gradient(180deg,rgba(var(--surface-rgb),.97),rgba(var(--bg-rgb),.95));border:1px solid var(--border-strong);border-radius:16px;padding:26px;width:400px;box-shadow:var(--shadow);max-width:100%}
 .modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
 .modal h3{margin:0;font-size:16px;font-weight:700;color:#fff}
 .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;padding:0;line-height:1;transition:color .15s}
@@ -283,7 +314,7 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .fld select,.fld input:not([type=file]),.fld textarea{width:100%}
 input[type=file]{color:var(--text-soft);font-size:12.5px;padding:8px 0}
 input[type=file]::file-selector-button{background:rgba(255,255,255,.05);color:var(--text-soft);border:1px solid var(--border-strong);border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;margin-right:11px;font-family:inherit;transition:.15s}
-input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);color:#fff;border-color:rgba(232,93,60,.4)}
+input[type=file]::file-selector-button:hover{background:rgba(var(--coral-rgb),.12);color:#fff;border-color:rgba(var(--coral-rgb),.4)}
 
 /* ── Responsive ── */
 @media(max-width:760px){
@@ -319,18 +350,18 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .tabs::-webkit-scrollbar{display:none}
 .tab{white-space:nowrap;padding:11px 16px;font-weight:600;letter-spacing:.1px}
 .tab:hover{color:var(--text);background:rgba(255,255,255,.035)}
-.tab.active{color:#fff;border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(232,93,60,.12),transparent)}
+.tab.active{color:#fff;border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(var(--coral-rgb),.12),transparent)}
 .card{transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
-.card:hover{transform:translateY(-2px);border-color:rgba(232,93,60,.28);box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.card:hover{transform:translateY(-2px);border-color:rgba(var(--coral-rgb),.28);box-shadow:0 10px 30px rgba(0,0,0,.22)}
 .btn{transition:transform .12s ease,filter .12s ease,background .14s ease}
 .btn:active{transform:scale(.97)}
-.btn.p{box-shadow:0 4px 16px rgba(232,93,60,.32)}
-.btn.p:hover{box-shadow:0 7px 22px rgba(232,93,60,.45)}
+.btn.p{box-shadow:0 4px 16px rgba(var(--coral-rgb),.32)}
+.btn.p:hover{box-shadow:0 7px 22px rgba(var(--coral-rgb),.45)}
 .panel{box-shadow:0 6px 24px rgba(0,0,0,.16)}
 .bigtable tbody tr{transition:background .12s}
-.bigtable tbody tr:hover td{background:rgba(232,93,60,.05)}
-input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)}
-::selection{background:rgba(232,93,60,.35)}
+.bigtable tbody tr:hover td{background:rgba(var(--coral-rgb),.05)}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(var(--coral-rgb),.16)}
+::selection{background:rgba(var(--coral-rgb),.35)}
 
 /* skeleton loading */
 .sk-card{height:88px;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:shimmer 1.3s infinite}
@@ -359,8 +390,8 @@ input[type="number"], input[type="date"], input[type="month"],
 .panel{
   border-color: rgba(255,255,255,.06);
   background:
-    linear-gradient(180deg, rgba(20,30,48,.85), rgba(11,18,30,.78)),
-    radial-gradient(120% 60% at 50% 0%, rgba(91,155,213,.04), transparent 70%);
+    linear-gradient(180deg, rgba(var(--surface-rgb),.85), rgba(var(--bg-rgb),.78)),
+    radial-gradient(120% 60% at 50% 0%, rgba(var(--sky-rgb),.04), transparent 70%);
   box-shadow:
     0 1px 0 rgba(255,255,255,.04) inset,
     0 24px 60px -28px rgba(0,0,0,.55);
@@ -370,7 +401,7 @@ input[type="number"], input[type="date"], input[type="month"],
 /* Premium KPI cards: discreet inner highlight + soft outer glow on hover. */
 .card{
   background:
-    linear-gradient(180deg, rgba(22,32,52,.92), rgba(12,20,33,.82));
+    linear-gradient(180deg, rgba(var(--surface2-rgb),.92), rgba(var(--bg-rgb),.82));
   border: 1px solid rgba(255,255,255,.05);
   box-shadow:
     0 1px 0 rgba(255,255,255,.05) inset,
@@ -388,7 +419,7 @@ input[type="number"], input[type="date"], input[type="month"],
   box-shadow:
     0 1px 0 rgba(255,255,255,.06) inset,
     0 28px 60px -30px rgba(0,0,0,.7),
-    0 0 0 1px rgba(232,93,60,.10);
+    0 0 0 1px rgba(var(--coral-rgb),.10);
 }
 .card .n{
   font-size: 26px;
@@ -427,7 +458,7 @@ input[type="number"], input[type="date"], input[type="month"],
   padding: 12px 15px;
 }
 .bigtable tbody tr:nth-child(even) td{ background: rgba(255,255,255,.012); }
-.bigtable tbody tr:hover td{ background: rgba(232,93,60,.05); }
+.bigtable tbody tr:hover td{ background: rgba(var(--coral-rgb),.05); }
 .bigtable td.amt{
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -457,13 +488,13 @@ input[type="number"], input[type="date"], input[type="month"],
   border: 1px solid rgba(255,255,255,.12);
   box-shadow:
     0 1px 0 rgba(255,255,255,.18) inset,
-    0 8px 24px -8px rgba(232,93,60,.5);
+    0 8px 24px -8px rgba(var(--coral-rgb),.5);
 }
 .btn.p:hover{
   filter: brightness(1.05);
   box-shadow:
     0 1px 0 rgba(255,255,255,.22) inset,
-    0 12px 28px -8px rgba(232,93,60,.6);
+    0 12px 28px -8px rgba(var(--coral-rgb),.6);
 }
 
 /* Brand title: tighter, more confident. */
@@ -486,7 +517,7 @@ input[type="number"], input[type="date"], input[type="month"],
 .tab:hover{ color: #cdd6e4; background: rgba(255,255,255,.022); }
 .tab.active{
   color: #ffffff;
-  background: linear-gradient(180deg, rgba(232,93,60,.10), transparent 80%);
+  background: linear-gradient(180deg, rgba(var(--coral-rgb),.10), transparent 80%);
   border-bottom: 2px solid var(--coral);
 }
 
@@ -499,14 +530,14 @@ input:not([type=file]), select, textarea{
   transition: border-color .15s, box-shadow .15s, background .15s;
 }
 input:focus, select:focus, textarea:focus{
-  border-color: rgba(232,93,60,.55);
+  border-color: rgba(var(--coral-rgb),.55);
   background: rgba(7,13,23,.75);
-  box-shadow: 0 0 0 3px rgba(232,93,60,.14);
+  box-shadow: 0 0 0 3px rgba(var(--coral-rgb),.14);
 }
 
 /* Top bar: refined company/refresh control. */
 .bar{
-  background: linear-gradient(180deg, rgba(20,30,48,.7), rgba(11,18,30,.55));
+  background: linear-gradient(180deg, rgba(var(--surface-rgb),.7), rgba(var(--bg-rgb),.55));
   border: 1px solid rgba(255,255,255,.05);
   border-radius: 12px;
   padding: 12px 14px;
@@ -532,15 +563,15 @@ input:focus, select:focus, textarea:focus{
   border: 2px solid transparent;
   background-clip: content-box;
 }
-*::-webkit-scrollbar-thumb:hover{ background: rgba(232,93,60,.3); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover{ background: rgba(var(--coral-rgb),.3); background-clip: content-box; }
 
 /* Top user widget: refined avatar/role pill. */
 .role-chip{
   font-size: 10px;
   letter-spacing: .8px;
   padding: 2px 9px;
-  background: linear-gradient(180deg, rgba(232,93,60,.18), rgba(232,93,60,.10));
-  border: 1px solid rgba(232,93,60,.32);
+  background: linear-gradient(180deg, rgba(var(--coral-rgb),.18), rgba(var(--coral-rgb),.10));
+  border: 1px solid rgba(var(--coral-rgb),.32);
   color: #ffb59c;
 }
 
@@ -593,7 +624,7 @@ input:focus, select:focus, textarea:focus{
 .tab-cats{
   display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px;
   padding:6px; border-radius:12px;
-  background:linear-gradient(180deg, rgba(22,32,52,.6), rgba(11,18,30,.45));
+  background:linear-gradient(180deg, rgba(var(--surface2-rgb),.6), rgba(var(--bg-rgb),.45));
   border:1px solid rgba(255,255,255,.06);
   box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px -16px rgba(0,0,0,.5);
 }
@@ -608,8 +639,8 @@ input:focus, select:focus, textarea:focus{
 .tab-cat:active{ transform:scale(.985); }
 .tab-cat.active{
   color:#ffffff;
-  background:linear-gradient(180deg, rgba(232,93,60,.22), rgba(232,93,60,.10));
-  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 1px rgba(232,93,60,.32), 0 4px 12px -4px rgba(232,93,60,.4);
+  background:linear-gradient(180deg, rgba(var(--coral-rgb),.22), rgba(var(--coral-rgb),.10));
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 1px rgba(var(--coral-rgb),.32), 0 4px 12px -4px rgba(var(--coral-rgb),.4);
 }
 .tab-cat.hide{ display:none; }
 @media(max-width:560px){ .tab-cat{ padding:8px 11px; font-size:12px; } }
@@ -641,7 +672,7 @@ input:focus, select:focus, textarea:focus{
   width: 70%; height: 2px;
   background: var(--coral);
   border-radius: 2px;
-  box-shadow: 0 0 12px rgba(232,93,60,.6);
+  box-shadow: 0 0 12px rgba(var(--coral-rgb),.6);
 }
 
 /* Modal — scale-in entrance + sharper backdrop blur. */
@@ -692,7 +723,7 @@ input:focus, select:focus, textarea:focus{
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px rgba(232,93,60,.6);
+    0 0 0 4px rgba(var(--coral-rgb),.6);
 }
 
 /* Inputs — refined focus, more polished baseline. */
@@ -715,7 +746,7 @@ textarea:hover:not(:focus):not(:disabled){
 }
 
 /* Status indicators — pulsing dot for "live" connection feel. */
-@keyframes ctgPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(61,220,151,.45); } 50% { box-shadow: 0 0 0 6px rgba(61,220,151,0); } }
+@keyframes ctgPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--green-rgb),.45); } 50% { box-shadow: 0 0 0 6px rgba(var(--green-rgb),0); } }
 .dot-green{ animation: ctgPulse 2.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce){ .dot-green{ animation: none; } }
 
@@ -740,13 +771,13 @@ hr, .divider{ border: 0; border-top: 1px solid rgba(255,255,255,.05); margin: 18
 
 /* Empty states — more breathing room, premium feel. */
 .empty{ padding: 60px 28px; }
-.empty-ico{ opacity: .7; filter: drop-shadow(0 8px 16px rgba(232,93,60,.15)); }
+.empty-ico{ opacity: .7; filter: drop-shadow(0 8px 16px rgba(var(--coral-rgb),.15)); }
 
 /* Bell badge — refined with subtle ring. */
 .bell-badge{
   box-shadow:
     0 0 0 2px var(--bg),
-    0 2px 8px rgba(232,93,60,.5);
+    0 2px 8px rgba(var(--coral-rgb),.5);
   font-weight: 720;
 }
 
@@ -776,8 +807,8 @@ hr, .divider{ border: 0; border-top: 1px solid rgba(255,255,255,.05); margin: 18
 #conn-indicator{ transition: background .35s, box-shadow .35s; }
 
 /* Subtle text selection accent — coral, not blue. */
-::selection{ background: rgba(232,93,60,.32); color: #fff; }
-::-moz-selection{ background: rgba(232,93,60,.32); color: #fff; }
+::selection{ background: rgba(var(--coral-rgb),.32); color: #fff; }
+::-moz-selection{ background: rgba(var(--coral-rgb),.32); color: #fff; }
 
 /* Number-heavy elements get unambiguous tabular figures. */
 .amt, td.amt, .card .n, .pill,
@@ -828,20 +859,23 @@ table[data-list] tbody tr:hover input[type=text]{
 #cobar[data-scope="one"] .co-scope{background:var(--coral);color:#fff;border-color:var(--coral)}
 @media (max-width:640px){.co-scope{display:none}}
 :root[data-theme="light"]{
+  --bg-rgb:251,251,252; --surface-rgb:255,255,255; --surface2-rgb:246,247,249;
+  --text-rgb:16,24,39; --coral-rgb:196,73,42; --sky-rgb:30,94,184;
+  --green-rgb:15,123,90; --red-rgb:180,35,24; --amber-rgb:180,83,9;
   color-scheme:light;
   --bg-deep:#F1F3F7; --bg:#FBFBFC; --surface:#FFFFFF; --surface2:#F6F7F9;
   --border:#E4E7EC; --border-strong:#D3D8E0;
   --text:#101827; --text-soft:#5B6472; --muted:#646C7A;
   --coral:#C4492A; --coral-deep:#A93C22; --coral-soft:#C4492A;
-  --sky:#1E5EB8; --sky-soft:#3B78CE; --green:#0F7B5A; --green-soft:#0F7B5A;
+  --sky:#1E5EB8; --sky-soft:#3271C9; --green:#0F7B5A; --green-soft:#0F7B5A;
   --red:#B42318; --red-soft:#B42318; --amber:#B45309;
   --shadow:0 1px 2px rgba(16,24,39,.05), 0 1px 3px rgba(16,24,39,.04);
 }
 :root[data-theme="light"] body{
   background:
-    radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(91,155,213,.16), transparent 55%),
-    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(232,93,60,.10), transparent 60%),
-    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(91,155,213,.09), transparent 60%),
+    radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(var(--sky-rgb),.16), transparent 55%),
+    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(var(--coral-rgb),.10), transparent 60%),
+    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(var(--sky-rgb),.09), transparent 60%),
     linear-gradient(180deg,#F3F6FB 0%,#E7EDF5 100%);
 }
 :root[data-theme="light"] body::before{ opacity:.045; mix-blend-mode:multiply; }
@@ -853,12 +887,10 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] input:not([type=file]),
 :root[data-theme="light"] textarea{ background:#fff; color:var(--text); border-color:var(--border-strong); }
 :root[data-theme="light"] .card{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
-:root[data-theme="light"] .card:hover{ border-color:rgba(21,35,63,.16); }
+:root[data-theme="light"] .card:hover{ border-color:rgba(var(--text-rgb),.16); }
 :root[data-theme="light"] .card .n{ background:none; -webkit-text-fill-color:var(--text); color:var(--text); }
-:root[data-theme="light"] .card.green .n{ -webkit-text-fill-color:var(--green); color:var(--green); }
-:root[data-theme="light"] .card.red .n{ -webkit-text-fill-color:var(--red); color:var(--red); }
-:root[data-theme="light"] .card.blue .n{ -webkit-text-fill-color:var(--sky); color:var(--sky); }
-:root[data-theme="light"] .card.amber .n{ -webkit-text-fill-color:var(--amber); color:var(--amber); }
+/* v233 — see the note by the dark rule: the figure is ink in both themes. The base
+   `.card .n` rule above already sets it, so these four only had to stop overriding it. */
 :root[data-theme="light"] .panel{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
 :root[data-theme="light"] .panel h3{ color:var(--text); }
 /* Light-mode: elements hard-set to white text must flip to dark so they stay legible. */
@@ -871,7 +903,7 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .bigtable{ background:linear-gradient(180deg,#ffffff,#FAFCFE); }
 :root[data-theme="light"] .bigtable th{ background:var(--surface2); color:var(--muted); }
 :root[data-theme="light"] .tbl-wrap{ border-color:var(--border); }
-:root[data-theme="light"] .tab:hover{ background:rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab:hover{ background:rgba(var(--text-rgb),.05); }
 :root[data-theme="light"] .modal{ background:#fff; border-color:var(--border-strong); }
 :root[data-theme="light"] .toast{ background:#fff; color:var(--text); border-color:var(--border-strong); }
 :root[data-theme="light"] .notif-panel{ background:#fff; border-color:var(--border-strong); }
@@ -880,13 +912,13 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] input[type=file]::file-selector-button{ background:var(--surface2); color:var(--text-soft); border-color:var(--border-strong); }
 :root[data-theme="light"] .brand h1{ background:linear-gradient(90deg,#15233F 0%,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
 :root[data-theme="light"] .lbox h1{ background:linear-gradient(90deg,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
-:root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(21,35,63,.20); background-clip:content-box; }
-:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(232,93,60,.42); background-clip:content-box; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(var(--text-rgb),.20); background-clip:content-box; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(var(--coral-rgb),.42); background-clip:content-box; }
 .theme-btn{ font-size:15px; line-height:1; }
 /* Light-mode: category nav bar + inactive sub-tabs (base uses hardcoded dark). */
-:root[data-theme="light"] .tab-cats{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border); box-shadow:0 1px 2px rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab-cats{ background:linear-gradient(180deg,#ffffff,#F4F7FB); border-color:var(--border); box-shadow:0 1px 2px rgba(var(--text-rgb),.05); }
 :root[data-theme="light"] .tab-cat{ color:var(--text-soft); }
-:root[data-theme="light"] .tab-cat:hover{ color:var(--text); background:rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab-cat:hover{ color:var(--text); background:rgba(var(--text-rgb),.05); }
 /* ── Light-mode navigation weight ──────────────────────────────────────────────────────────────
    The active category was a filled coral gradient with a coral glow — the single heaviest element
    on a screen whose real content is financial figures. Navigation should say "you are here", not
@@ -917,7 +949,7 @@ table[data-list] tbody tr:hover input[type=text]{
   box-shadow:none; font-weight:620;
 }
 :root[data-theme="light"] .bar .btn.p:hover{ background:var(--surface2); }
-:root[data-theme="light"] .tab-cat.active{ color:#fff; background:linear-gradient(135deg,var(--coral),var(--coral-deep)); box-shadow:0 2px 8px -2px rgba(224,78,43,.45); }
+:root[data-theme="light"] .tab-cat.active{ color:#fff; background:linear-gradient(135deg,var(--coral),var(--coral-deep)); box-shadow:0 2px 8px -2px rgba(var(--coral-rgb),.45); }
 :root[data-theme="light"] .tab{ color:var(--muted); }
 :root[data-theme="light"] .sub{ color:var(--muted); }
 
@@ -1180,7 +1212,7 @@ document.addEventListener('DOMContentLoaded', syncThemeBtn);
     <button class="tab-cat"        data-cat="operations" onclick="tabCat('operations')" id="cat-operations">🧠 Finance OS</button>
     <button class="tab-cat"        data-cat="data"       onclick="tabCat('data')"       id="cat-data">🏢 Master Data</button>
     <button class="tab-cat"        data-cat="admin"      onclick="tabCat('admin')"      id="cat-admin">⚙ Admin</button>
-    <button class="tab-cat" id="cat-hros" onclick="location.href='hros.html'" title="Open HR OS — payroll, leave &amp; claims (separate app, same login)" style="margin-left:auto;color:#8FB8DC;box-shadow:0 0 0 1px rgba(91,155,213,.32) inset">👥 HR OS →</button>
+    <button class="tab-cat" id="cat-hros" onclick="location.href='hros.html'" title="Open HR OS — payroll, leave &amp; claims (separate app, same login)" style="margin-left:auto;color:#8FB8DC;box-shadow:0 0 0 1px rgba(var(--sky-rgb),.32) inset">👥 HR OS →</button>
   </div>
   <div class="tabs" id="sub-tabs">
     <!-- Dashboard -->
@@ -1404,7 +1436,7 @@ function updateConnIndicator(){
   const online=navigator.onLine;
   dot.title = online ? 'Online' : 'Offline — changes will be queued until connection returns';
   dot.style.background = online ? 'var(--green-soft)' : 'var(--red-soft)';
-  dot.style.boxShadow = online ? '0 0 0 3px rgba(126,224,160,.12)' : '0 0 0 3px rgba(239,68,68,.18)';
+  dot.style.boxShadow = online ? '0 0 0 3px rgba(126,224,160,.12)' : '0 0 0 3px rgba(var(--red-rgb),.18)';
   if(WAS_ONLINE && !online) toast('⚠ You are offline', true);
   else if(!WAS_ONLINE && online) toast('✓ Back online');
   WAS_ONLINE = online;
@@ -1418,6 +1450,10 @@ window.addEventListener('offline', updateConnIndicator);
 // duplicated button (e.g. Quick Invoice form-button + preview-button) both freeze.
 async function runOnce(idOrSelector, busyText, fn){
   const sel = String(idOrSelector||'');
+  // v232: the disabled button is the visible half; ctgOnce is the half that actually holds. A node
+  // this cannot find -- a re-rendered row, a keyboard activation, a call by name -- used to walk
+  // straight through. Keyed by the selector, which is one action per call site.
+  return ctgOnce('btn:'+sel, async function(){
   const nodes = sel.charAt(0)==='.' || sel.charAt(0)==='#'
     ? Array.from(document.querySelectorAll(sel))
     : Array.from(document.querySelectorAll('#'+sel+', .'+sel));
@@ -1425,6 +1461,7 @@ async function runOnce(idOrSelector, busyText, fn){
   nodes.forEach(b=>{ b.disabled=true; b.textContent=busyText||'Working…'; });
   try { return await fn(); }
   finally { originals.forEach(o=>{ o.el.disabled=o.disabled; o.el.textContent=o.text; }); }
+  });
 }
 // Show a modal explaining the session ended, with one button to sign back in.
 function handleSessionExpired(){
@@ -1936,7 +1973,7 @@ function cfoRender(){
   // ── Alerts ──
   var alertHtml='';
   if(alerts.length){
-    alertHtml='<div class="panel" style="margin-bottom:16px;border-color:rgba(245,158,11,.25)"><div class="panel-hd"><h3>⚠ Analyst alerts</h3></div>'+
+    alertHtml='<div class="panel" style="margin-bottom:16px;border-color:rgba(var(--amber-rgb),.25)"><div class="panel-hd"><h3>⚠ Analyst alerts</h3></div>'+
       alerts.map(function(a){ var col=a.severity==='high'?'var(--red-soft)':'var(--amber)'; return '<div style="display:flex;gap:9px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--border)"><span style="color:'+col+'">'+(a.severity==='high'?'🔴':'🟠')+'</span><span>'+esc(a.text)+'</span></div>'; }).join('')+
     '</div>';
   }
@@ -2093,7 +2130,7 @@ function cfoAnalyticsRender(){
       '<td class="amt" style="color:'+(Number(c.overdue)>0?'var(--amber)':'var(--muted)')+'">'+M(c.overdue)+'</td>'+
       '<td class="amt" style="font-size:11.5px;color:'+(wd>60?'var(--red-soft)':wd>0?'var(--amber)':'var(--muted)')+'">'+(wd>0?wd+'d':'—')+'</td>'+
       '<td class="amt" style="color:var(--red-soft)">'+M(c.provision)+'</td>'+
-      '<td><span class="pill" style="background:rgba(232,93,60,.14);color:'+rc+';font-size:10px">'+risk+'%</span></td>'+
+      '<td><span class="pill" style="background:rgba(var(--coral-rgb),.14);color:'+rc+';font-size:10px">'+risk+'%</span></td>'+
     '</tr>';
   }).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No open receivables.</td></tr>';
   var riskHtml='<div class="panel" style="margin-bottom:16px"><div class="panel-hd"><h3>🎯 Customer credit risk</h3><span class="muted" style="font-size:11px">Sorted by overdue exposure · Risk% = est. bad debt &divide; that customer\'s AR</span></div>'+
@@ -2466,7 +2503,11 @@ function showConfirm(title,msg,okTxt,okCls){
 }
 function cfResolve(v){document.getElementById('cf-overlay').classList.add('hide');if(_cfRes){_cfRes(v);_cfRes=null;}}
 
-async function approve(tenant,invoice,action,i){
+// v232: keyed on the BILL, so a queue can be cleared at speed but one bill cannot be approved
+// twice. The row's pointer-events:none never covered a keyboard activation, and covers nothing
+// once the approvals list has re-rendered underneath it — which the `if(row)` below allows for.
+async function approve(tenant,invoice,action,i){ return ctgOnce('approve:'+tenant+':'+invoice, function(){ return _approve(tenant,invoice,action,i); }); }
+async function _approve(tenant,invoice,action,i){
   if(action==='reject'){
     const ok=await showConfirm('Reject Bill','Reject and void this bill? This action cannot be undone.','Reject','d');
     if(!ok)return;
@@ -2494,7 +2535,10 @@ function renderCollections(){
     '<div id="collres" style="margin-top:18px"></div></div>';
 }
 
-async function trigColl(btn){
+// v232: this sends the collections email. Disabling the button it was handed covers that click
+// and nothing else — the HR sweep found the same shape and it sent five approval emails.
+async function trigColl(btn){ return ctgOnce('trigColl', function(){ return _trigColl(btn); }); }
+async function _trigColl(btn){
   btn.disabled=true;btn.textContent='Generating…';
   let r;try{r=await call({api:'collections'});}catch(x){r=null;}
   btn.disabled=false;btn.textContent='📨 Generate Preview';
@@ -2710,7 +2754,7 @@ function showHrOnlyGate(){
   if(!g){ g=document.createElement('div'); g.id='hr-only-gate';
     g.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg,#12100f)';
     document.body.appendChild(g); }
-  g.innerHTML='<div style="max-width:440px;width:100%;text-align:center;background:var(--card,#1b1817);border:1px solid rgba(232,93,60,.28);border-radius:18px;padding:38px 32px;box-shadow:0 24px 60px rgba(0,0,0,.45)">'+
+  g.innerHTML='<div style="max-width:440px;width:100%;text-align:center;background:var(--card,#1b1817);border:1px solid rgba(var(--coral-rgb),.28);border-radius:18px;padding:38px 32px;box-shadow:0 24px 60px rgba(0,0,0,.45)">'+
     '<div style="font-size:44px;line-height:1;margin-bottom:14px">🔒</div>'+
     '<h2 style="margin:0 0 8px;font-size:20px;color:var(--text,#f5f0ee)">HR OS access only</h2>'+
     '<p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:var(--text-soft,#b7aca7)">Hi '+esc(nm)+', your login is for the <b>HR OS</b> — it doesn’t include the Finance Portal. Head over to HR OS to manage leave, claims, payslips and your profile.</p>'+
@@ -3159,7 +3203,7 @@ async function o2oDownloadPdfs(retryOnly){
         }).join('');
         var more = bad.length>20 ? '<div class="muted" style="font-size:11.5px;margin:6px 0 0">…and '+(bad.length-20)+' more</div>' : '';
         panel.innerHTML =
-          '<div style="padding:12px 14px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.06);border-radius:11px">'+
+          '<div style="padding:12px 14px;border:1px solid rgba(var(--red-rgb),.35);background:rgba(var(--red-rgb),.06);border-radius:11px">'+
             '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'+
               '<span style="color:var(--red-soft);font-weight:600;font-size:13px">⚠ '+bad.length+' PDF'+(bad.length>1?'s':'')+' failed'+(ok.length?(' · '+ok.length+' downloaded'):'')+'</span>'+
               '<button class="btn" onclick="o2oDownloadPdfs(true)" style="padding:5px 11px;font-size:12px">↻ Retry failed only</button>'+
@@ -3312,7 +3356,7 @@ function whtListHtml(){
   var rows=(WHT.list||[]).map(function(s){
     var c=whtCompute(s,[{amount:s.fee_total}]);
     var pill=s.status==='filed'?'<span class="pill" style="background:rgba(45,180,120,.15);color:#2db478">Filed</span>'
-           :s.status==='final'?'<span class="pill" style="background:rgba(91,155,213,.15);color:#5b9bd5">Final</span>'
+           :s.status==='final'?'<span class="pill" style="background:rgba(var(--sky-rgb),.15);color:#5b9bd5">Final</span>'
            :'<span class="pill">Draft</span>';
     return '<tr style="cursor:pointer" onclick="whtOpen('+s.id+')">'+
       '<td><b>'+esc(s.doc_no||'—')+'</b></td>'+
@@ -3386,7 +3430,8 @@ async function whtSavePayee(){
   var r=await call({api:'wht_payee_save',payee:payee});
   if(r&&r.ok){ toast('Payee saved'); WHT.editPayee=null; WHT.cfg=null; renderWht(); } else toast((r&&r.error)||'Failed',true);
 }
-async function whtDelPayee(id){
+async function whtDelPayee(id){ return ctgOnce('whtDelPayee:'+id, function(){ return _whtDelPayee(id); }); }
+async function _whtDelPayee(id){
   if(!confirm('Remove this payee from the list?\n\nPast computations keep their own copy of the name, TIN and rate, so nothing already filed changes.')) return;
   var r=await call({api:'wht_payee_delete',id:id});
   if(r&&r.ok){ toast('Payee removed'); WHT.editPayee=null; WHT.cfg=null; renderWht(); } else toast((r&&r.error)||'Failed',true);
@@ -3520,7 +3565,9 @@ function whtDocHtml(){
     '</div>';
 }
 
-async function whtSave(status){
+// v232: a computation with no id yet is an INSERT, so five clicks are five LHDN documents.
+async function whtSave(status){ return ctgOnce('whtSave:'+((WHT.doc&&WHT.doc.id)||'new'), function(){ return _whtSave(status); }); }
+async function _whtSave(status){
   whtSync();
   var d=WHT.doc;
   if(!d.tenant_id){ toast('Pick the paying company',true); return; }
@@ -3751,9 +3798,9 @@ function srRenderResult(){
       var pill=function(txt,col,bg){ return '<span style="padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:700;color:'+col+';background:'+bg+'">'+txt+'</span>'; };
       var head='<div style="font-size:12px;font-weight:600;margin:6px 0">SO amount tally — Order Form (Grand Total) vs payments received</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
-        pill('✓ Tally: '+ok,'var(--green-soft)','rgba(22,185,122,.14)')+
-        pill('⚠ Short-paid: '+sh,'var(--amber)','rgba(245,158,11,.14)')+
-        pill('⚠ Over-paid: '+ov,'var(--coral-soft)','rgba(232,93,60,.14)')+
+        pill('✓ Tally: '+ok,'var(--green-soft)','rgba(var(--green-rgb),.14)')+
+        pill('⚠ Short-paid: '+sh,'var(--amber)','rgba(var(--amber-rgb),.14)')+
+        pill('⚠ Over-paid: '+ov,'var(--coral-soft)','rgba(var(--coral-rgb),.14)')+
         (nt?pill('No order total: '+nt,'var(--muted)','rgba(255,255,255,.05)'):'')+'</div>';
       var mism=tl.filter(function(x){return x.st==='short'||x.st==='over';});
       var body;
@@ -3864,8 +3911,8 @@ function renderGateway(){
         '<div><label class="muted" style="font-size:11px">Date format</label><select id="gw-datefmt" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)"><option value="ymd" selected>YYYY-MM-DD (recommended for Xero import)</option><option value="dmy">DD/MM/YYYY</option></select></div>'+
         '<div><label class="muted" style="font-size:11px">Money-in Reference</label><select id="gw-ref" style="width:100%;padding:8px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text)"></select></div>'+
         '<div><label class="muted" style="font-size:11px">Settlement / payout lines</label>'+
-          '<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0"><input type="checkbox" id="gw-payout" checked style="accent-color:var(--coral)"><span>Payout to bank (−net)</span></div>'+
-          '<div style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="gw-fee" checked style="accent-color:var(--coral)"><span>Merchant fees (MDR / Atome)</span></div>'+
+          '<label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0;cursor:pointer"><input type="checkbox" id="gw-payout" checked style="accent-color:var(--coral)"><span>Payout to bank (−net)</span></label>'+
+          '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="gw-fee" checked style="accent-color:var(--coral)"><span>Merchant fees (MDR / Atome)</span></label>'+
         '</div>'+
       '</div>'+
       '<button class="btn p" id="gw-convert" style="margin-top:14px" onclick="gwConvert()" disabled>Convert →</button>'+
@@ -3944,7 +3991,7 @@ function gwRenderResult(){
   var cards=[['Money-in (sales)',T.cIn+' lines',gwMoney(T.sIn),'var(--green-soft)'],['Payout to bank',T.cOut+' lines',gwMoney(T.sOut),'var(--coral-soft)'],['Merchant fees','',gwMoney(T.sFee),'var(--amber)'],['Net movement',rows.length+' rows',gwMoney(T.net),T.net>=0?'var(--green-soft)':'var(--coral-soft)']];
   document.getElementById('gw-cards').innerHTML=cards.map(function(c){return '<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:12px 14px"><div class="muted" style="font-size:11px">'+c[0]+(c[1]?(' \u00b7 '+c[1]):'')+'</div><div style="font-size:18px;font-weight:700;margin-top:2px;color:'+c[3]+'">'+c[2]+'</div></div>';}).join('');
   var warn=gwWarning(GW.provider,GW[GW.provider]), CHK=gwAuditLines(GW.provider,GW.audit), chk=CHK.lines, allOk=CHK.allOk;   // gateway.js
-  var chkHtml='<div style="background:'+(allOk?'rgba(61,220,151,.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(61,220,151,.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'\u2713 Data check passed \u2014 every input row accounted for':'\u26a0 Data check \u2014 please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
+  var chkHtml='<div style="background:'+(allOk?'rgba(var(--green-rgb),.08)':'rgba(242,180,92,.1)')+';border:1px solid '+(allOk?'rgba(var(--green-rgb),.3)':'rgba(242,180,92,.35)')+';border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)"><b style="color:'+(allOk?'var(--green-soft)':'var(--amber)')+'">'+(allOk?'\u2713 Data check passed \u2014 every input row accounted for':'\u26a0 Data check \u2014 please review below')+'</b><div style="margin-top:4px;line-height:1.65">'+chk.map(function(x){return esc(x);}).join('<br>')+'</div></div>';
   var warnHtml=warn?('<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px">\u26a0 '+esc(warn)+'</div>'):'';
   document.getElementById('gw-balbox').innerHTML=chkHtml+warnHtml;
   var show=rows.slice(0,200);
@@ -4149,9 +4196,12 @@ async function sbiSaveOnce(){ if(SBI_SAVING) return; SBI_SAVING=true;
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{ await sbiSave(); } finally { SBI_SAVING=false; if(btn){ btn.disabled=false; btn.textContent=old; } }
 }
-async function sbiApprove(id){ if(!confirm('Approve this invoice for payment?'))return; var r=await call({api:'sbi_approve',id:id}); if(r&&r.ok){toast('Approved');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
-async function sbiVoid(id){ if(!confirm('Void this draft?'))return; var r=await call({api:'sbi_void',id:id}); if(r&&r.ok){toast('Voided');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }
-async function sbiPostXero(id,posted){
+async function sbiApprove(id){ return ctgOnce('sbiApprove:'+id, async function(){ if(!confirm('Approve this invoice for payment?'))return; var r=await call({api:'sbi_approve',id:id}); if(r&&r.ok){toast('Approved');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }); }
+async function sbiVoid(id){ return ctgOnce('sbiVoid:'+id, async function(){ if(!confirm('Void this draft?'))return; var r=await call({api:'sbi_void',id:id}); if(r&&r.ok){toast('Voided');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }); }
+// v232: keyed per RECORD, so two different self-billed invoices can post at once and one cannot
+// post twice. This is the action the five-click test caught; see ctgOnce in common.js.
+async function sbiPostXero(id,posted){ return ctgOnce('sbiPostXero:'+id, function(){ return _sbiPostXero(id,posted); }); }
+async function _sbiPostXero(id,posted){
   var msg=posted?'Set the Reference and attach the invoice PDF to the existing Xero bill?':'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
   if(!confirm(msg))return;
   var r=await call({api:'sbi_post_xero',id:id});
@@ -4467,7 +4517,7 @@ function pnlChip(cur,prev,inverse){
   if(cur===null||prev===null||cur===undefined||prev===undefined||!prev) return '';
   var p=(cur-prev)/Math.abs(prev)*100; if(!isFinite(p)) return '';
   var up=p>=0, good=inverse?!up:up;
-  var bg=good?'rgba(14,157,103,.13)':'rgba(232,93,60,.13)', bd=good?'rgba(14,157,103,.30)':'rgba(232,93,60,.30)', fg=good?'var(--green-soft)':'var(--coral-soft)';
+  var bg=good?'rgba(14,157,103,.13)':'rgba(var(--coral-rgb),.13)', bd=good?'rgba(14,157,103,.30)':'rgba(var(--coral-rgb),.30)', fg=good?'var(--green-soft)':'var(--coral-soft)';
   return '<span class="pnl-chip" style="background:'+bg+';border-color:'+bd+';color:'+fg+'">'+(up?'▲':'▼')+Math.abs(p).toFixed(1)+'%</span>';
 }
 
@@ -4791,7 +4841,8 @@ async function sessionsLoad(){
     document.getElementById('sess_out').innerHTML='<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>User</th><th>Role</th><th>Token</th><th>Started</th><th>Last seen</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.7">Green dot = active in the last 5 minutes. Revoking a session logs that user out immediately. Sessions auto-expire after 30 days, or 14 days of inactivity.</div>';
   }catch(e){ document.getElementById('sess_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-async function sessionRevoke(sid, who){
+async function sessionRevoke(sid, who){ return ctgOnce('sessionRevoke:'+sid, function(){ return _sessionRevoke(sid,who); }); }
+async function _sessionRevoke(sid, who){
   if(!confirm('Revoke session for '+who+'? They will be signed out immediately.')) return;
   try{ var r=await call({api:'session_revoke', sid:sid});
     if(r&&r.ok!==false){ toast('Session revoked'); sessionsLoad(); }
@@ -4976,7 +5027,8 @@ async function roleSave(){
   }catch(e){ err.textContent=e.message; err.classList.remove('hide'); }
   btn.disabled=false; btn.textContent='Save';
 }
-async function roleDelete(i){
+async function roleDelete(i){ return ctgOnce('roleDelete:'+i, function(){ return _roleDelete(i); }); }
+async function _roleDelete(i){
   var ro=ROLES[i]; if(!confirm('Delete role "'+(ro.label||ro.name)+'"? Users must be reassigned first.')) return;
   try{ var r=await call({api:'role_delete',name:ro.name});
     if(r&&r.ok!==false){ toast('Role deleted'); rolesLoad(); } else toast((r&&r.error)||'Delete failed',true);
@@ -5027,8 +5079,8 @@ async function xeroSyncLoad(){
       '<div id="rsync_out" style="margin-top:12px;font-size:13px"></div>'+
     '</div>'+
     // v40+: Nuclear rebuild — wipes one tenant's cache and triggers an unrestricted backfill from 2015.
-    '<div class="panel" style="margin-top:16px;border-color:rgba(239,68,68,.18)"><div class="panel-hd"><h3>🧨 Emergency rebuild <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· when the cache is catastrophically out of sync</span></h3></div>'+
-      '<div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18);border-radius:8px;padding:11px 14px;font-size:12.5px;color:var(--red-soft);margin-bottom:12px;line-height:1.6">⚠ This wipes one company\'s entire cached invoice history then re-pulls from Xero starting from 2015. Use ONLY when incremental drift repair can\'t catch up. The rebuild runs in the background (2–5 minutes). All operations are audited.</div>'+
+    '<div class="panel" style="margin-top:16px;border-color:rgba(var(--red-rgb),.18)"><div class="panel-hd"><h3>🧨 Emergency rebuild <span class="muted" style="font-size:11px;text-transform:none;letter-spacing:0">· when the cache is catastrophically out of sync</span></h3></div>'+
+      '<div style="background:rgba(var(--red-rgb),.06);border:1px solid rgba(var(--red-rgb),.18);border-radius:8px;padding:11px 14px;font-size:12.5px;color:var(--red-soft);margin-bottom:12px;line-height:1.6">⚠ This wipes one company\'s entire cached invoice history then re-pulls from Xero starting from 2015. Use ONLY when incremental drift repair can\'t catch up. The rebuild runs in the background (2–5 minutes). All operations are audited.</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'+
         '<div style="flex:1;min-width:200px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Company to rebuild</label>'+
           '<select id="rebuild_tenant" style="width:100%">'+(COMPANIES||[]).map(function(c){return '<option value="'+esc(c.tenant_id)+'">'+esc(c.tenant_name)+'</option>';}).join('')+'</select>'+
@@ -5134,10 +5186,10 @@ async function xeroDriftCheck(){
       var res=r.results||[];
       var rows=res.map(function(x){
         var nm=esc(x.tenant_name||x.tenant||'');
-        if(x.error) return '<tr><td><b>'+nm+'</b></td><td colspan="4" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td><td><span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">error</span></td></tr>';
+        if(x.error) return '<tr><td><b>'+nm+'</b></td><td colspan="4" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td><td><span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:9.5px">error</span></td></tr>';
         if(x.skipped) return '<tr><td><b>'+nm+'</b></td><td colspan="4" class="muted" style="font-size:11.5px">⏳ Xero rate-limit cooldown — will auto-retry shortly</td><td><span class="pill" style="font-size:9.5px">skipped</span></td></tr>';
         var miss=x.missing||0, ex=x.extra||0, okv=(Math.abs(x.drift||0)===0 && miss===0 && ex===0);
-        var verdict=okv?'<span class="pill pill-green" style="font-size:9.5px">✓ in sync</span>':'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ drift '+(x.drift>0?'+':'')+(x.drift||0)+'</span>';
+        var verdict=okv?'<span class="pill pill-green" style="font-size:9.5px">✓ in sync</span>':'<span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:9.5px">✗ drift '+(x.drift>0?'+':'')+(x.drift||0)+'</span>';
         return '<tr><td><b>'+nm+'</b></td>'+
           '<td class="amt">'+(x.xero_open!=null?x.xero_open:'—')+'</td>'+
           '<td class="amt">'+(x.cache_open!=null?x.cache_open:'—')+'</td>'+
@@ -5168,7 +5220,7 @@ async function syncAudit(){
         if(x.error) return '<tr><td><b>'+esc(x.tenant)+'</b></td><td colspan="5" style="color:var(--red-soft);font-size:11.5px">⚠ '+esc(x.error)+'</td></tr>';
         var verdictPill = x.ok
           ? '<span class="pill pill-green" style="font-size:9.5px">✓ in sync</span>'
-          : '<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">✗ drift</span>';
+          : '<span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:9.5px">✗ drift</span>';
         var deltaColor = Math.abs(x.delta_amount) < 1 ? 'var(--green-soft)' : 'var(--red-soft)';
         var countColor = x.count_diff === 0 ? 'var(--green-soft)' : 'var(--red-soft)';
         return '<tr><td><b>'+esc(x.tenant)+'</b></td>'+
@@ -5278,13 +5330,13 @@ async function syncHealthLoad(){
       var freshColor = color[staleness(t.cache_last_updated)];
       var driftPill = (t.cache_drift_count===null||t.cache_drift_count===undefined)
         ? '<span class="muted" style="font-size:11px">not checked</span>'
-        : (Math.abs(t.cache_drift_count)===0 ? '<span class="pill pill-green" style="font-size:9px">in sync</span>' : '<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:9.5px">drift '+(t.cache_drift_count>0?'+':'')+t.cache_drift_count+'</span>');
+        : (Math.abs(t.cache_drift_count)===0 ? '<span class="pill pill-green" style="font-size:9px">in sync</span>' : '<span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:9.5px">drift '+(t.cache_drift_count>0?'+':'')+t.cache_drift_count+'</span>');
       var errCell = t.last_error ? '<span style="color:var(--red-soft);font-size:11px" title="'+esc(t.last_error)+'">⚠ '+esc((t.last_error||'').slice(0,60))+'…</span>' : '<span class="muted" style="font-size:11px">—</span>';
       // v37: per-tenant freshness column — oldest open invoice's last_synced_at + stale count.
       var stale = Number(t.records_stale_24h||0);
       var oldest = t.oldest_record_synced_at ? rel(t.oldest_record_synced_at) : '—';
       var staleCell = stale > 0
-        ? '<span class="pill" style="background:rgba(245,158,11,.14);color:var(--amber);font-size:9.5px">'+stale+' stale</span><div class="muted" style="font-size:10.5px;margin-top:2px">oldest: '+oldest+'</div>'
+        ? '<span class="pill" style="background:rgba(var(--amber-rgb),.14);color:var(--amber);font-size:9.5px">'+stale+' stale</span><div class="muted" style="font-size:10.5px;margin-top:2px">oldest: '+oldest+'</div>'
         : '<span class="pill pill-green" style="font-size:9.5px">all fresh</span><div class="muted" style="font-size:10.5px;margin-top:2px">oldest: '+oldest+'</div>';
       return '<tr><td><b style="font-size:12.5px">'+esc(t.tenant_name||'')+'</b></td>'+
         '<td class="amt muted" style="font-size:11.5px">'+(t.cached_invoices||0).toLocaleString()+'</td>'+
@@ -5339,7 +5391,9 @@ async function arBucket(key,label){
     d.scrollIntoView({behavior:'smooth',block:'nearest'});
   }catch(e){ d.innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-async function arRunCollections(){
+// v232: this SENDS MAIL. The HR sweep found the same shape and it sent five approval emails.
+async function arRunCollections(){ return ctgOnce('arRunCollections', function(){ return _arRunCollections(); }); }
+async function _arRunCollections(){
   if(!confirm('Generate the collections preview for overdue receivables and send it to the finance inbox? (Customers are NOT contacted directly.)')) return;
   try{ var r=await call({api:'collections'});
     if(r&&r.ok!==false){ var x=(r.result)||{}; toast('Collections preview sent · '+(x.reachable_due_count||0)+' due'); }
@@ -5405,8 +5459,9 @@ async function closeLoad(){
     document.getElementById('close_out').innerHTML=bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th></th><th>Task</th><th>Status</th><th>Assignee</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   }catch(e){ document.getElementById('close_out').innerHTML='<div style="color:var(--red-soft)">'+esc(e.message)+'</div>'; }
 }
-async function closeSet(id,status){ try{ var r=await call({api:'close_update',id:id,status:status}); if(r&&r.ok!==false) closeLoad(); else toast((r&&r.error)||'failed',true); }catch(e){ toast(e.message,true); } }
-async function closeAssign(id,assignee){ try{ await call({api:'close_update',id:id,assignee:assignee}); }catch(e){} }
+async function closeSet(id,status){ return ctgOnce('closeSet:'+id, function(){ return _closeSet(id,status); }); }
+async function _closeSet(id,status){ try{ var r=await call({api:'close_update',id:id,status:status}); if(r&&r.ok!==false) closeLoad(); else toast((r&&r.error)||'failed',true); }catch(e){ toast(e.message,true); } }
+async function closeAssign(id,assignee){ return ctgOnce('closeAssign:'+id, async function(){ try{ await call({api:'close_update',id:id,assignee:assignee}); }catch(e){} }); }
 
 
 /* ---- Bank reconciliation ---- */
@@ -5682,7 +5737,7 @@ function infoSecDocsBody(c){
       const delBtn = editing
         ? '<button class="btn" style="padding:1px 6px;font-size:10px" onclick="event.stopPropagation();infoFolderDelete('+f.id+')" title="Delete folder">🗑</button>'
         : '';
-      return '<li><div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:'+(isActive?'rgba(232,93,60,.10)':'transparent')+'" onclick="infoFolderOpen('+f.id+')" onmouseover="this.style.background=\''+(isActive?'rgba(232,93,60,.14)':'rgba(255,255,255,.04)')+'\'" onmouseout="this.style.background=\''+(isActive?'rgba(232,93,60,.10)':'transparent')+'\'">'+
+      return '<li><div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;background:'+(isActive?'rgba(var(--coral-rgb),.10)':'transparent')+'" onclick="infoFolderOpen('+f.id+')" onmouseover="this.style.background=\''+(isActive?'rgba(var(--coral-rgb),.14)':'rgba(255,255,255,.04)')+'\'" onmouseout="this.style.background=\''+(isActive?'rgba(var(--coral-rgb),.10)':'transparent')+'\'">'+
         '<span style="font-size:14px">'+(isActive?'📂':'📁')+'</span>'+
         '<span style="font-size:13px;color:var(--text);flex:1">'+esc(f.name)+'</span>'+
         countTag + delBtn +
@@ -5697,7 +5752,7 @@ function infoSecDocsBody(c){
         '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:660;flex:1">Folders</div>'+
         (editing?'<button class="btn" style="padding:3px 8px;font-size:11px" onclick="infoFolderCreate('+JSON.stringify(activeFolderId).replace(/"/g,'&quot;')+')">+ New folder</button>':'')+
       '</div>'+
-      '<div onclick="infoFolderOpen(null)" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:'+(rootIsActive?'rgba(232,93,60,.10)':'transparent')+';margin-bottom:4px">'+
+      '<div onclick="infoFolderOpen(null)" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:'+(rootIsActive?'rgba(var(--coral-rgb),.10)':'transparent')+';margin-bottom:4px">'+
         '<span style="font-size:14px">'+(rootIsActive?'📂':'📁')+'</span>'+
         '<span style="font-size:13px;color:var(--text);flex:1">All documents</span>'+
         '<span class="muted" style="font-size:10px">'+allDocs.length+' total · '+rootCount+' in root</span>'+
@@ -6595,7 +6650,8 @@ async function pharmSave(){
   });
 }
 
-async function pharmDelete(){
+async function pharmDelete(){ return ctgOnce('pharmDelete:'+PHARM_ACTIVE, function(){ return _pharmDelete(); }); }
+async function _pharmDelete(){
   if(!PHARM_EDITABLE || !PHARM_ACTIVE) return;
   const p = PHARM_DATA.find(x=>x.id===PHARM_ACTIVE); if(!p) return;
   if(!confirm('Delete pharmacy "'+p.name+'"? Any past O2O invoices in Xero are unaffected, but this pharmacy will no longer appear in the master list.')) return;
@@ -6628,10 +6684,10 @@ function calRender(){
   d.forEach(x=>{ (by[x.urgency]||by.distant).push(x); });
   function icon(kind){ return kind==='statutory'?'⚖':kind==='licence'?'📜':kind==='lease'?'🔑':kind==='insurance'?'🛡':'📌'; }
   function urgPill(u, days){
-    if(u==='overdue') return '<span class="pill" style="background:rgba(239,68,68,.18);color:var(--red-soft);font-size:10px">⚠ '+Math.abs(days)+'d overdue</span>';
-    if(u==='critical') return '<span class="pill" style="background:rgba(245,158,11,.18);color:var(--amber);font-size:10px">⏰ '+days+'d</span>';
+    if(u==='overdue') return '<span class="pill" style="background:rgba(var(--red-rgb),.18);color:var(--red-soft);font-size:10px">⚠ '+Math.abs(days)+'d overdue</span>';
+    if(u==='critical') return '<span class="pill" style="background:rgba(var(--amber-rgb),.18);color:var(--amber);font-size:10px">⏰ '+days+'d</span>';
     if(u==='warning') return '<span class="pill" style="background:rgba(255,165,89,.16);color:var(--coral-soft);font-size:10px">'+days+'d</span>';
-    if(u==='upcoming') return '<span class="pill" style="background:rgba(91,155,213,.14);color:var(--sky-soft);font-size:10px">'+days+'d</span>';
+    if(u==='upcoming') return '<span class="pill" style="background:rgba(var(--sky-rgb),.14);color:var(--sky-soft);font-size:10px">'+days+'d</span>';
     return '<span class="muted" style="font-size:10.5px">'+days+'d</span>';
   }
   const filterBtns = [30,90,365,'all'].map(n=>{
@@ -6666,10 +6722,10 @@ function calRender(){
     (d.length === 0
       ? '<div class="empty"><div class="empty-ico">📅</div><div>No deadlines on file.</div><div class="muted" style="font-size:12.5px;margin-top:8px">Fill in Compliance dates / Licences / Leases / Insurance under each company in Company Info to populate this calendar.</div></div>'
       : '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th style="width:40px"></th><th>Company</th><th>Item</th><th>Due</th><th>Urgency</th></tr></thead><tbody>'+
-        (by.overdue.length?'<tr><td colspan="5" style="background:rgba(239,68,68,.06);font-size:10.5px;color:var(--red-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">⚠ OVERDUE</td></tr>'+rows(by.overdue):'')+
-        (by.critical.length?'<tr><td colspan="5" style="background:rgba(245,158,11,.06);font-size:10.5px;color:var(--amber);font-weight:700;letter-spacing:.08em;padding:7px 14px">⏰ ≤ 14 DAYS</td></tr>'+rows(by.critical):'')+
+        (by.overdue.length?'<tr><td colspan="5" style="background:rgba(var(--red-rgb),.06);font-size:10.5px;color:var(--red-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">⚠ OVERDUE</td></tr>'+rows(by.overdue):'')+
+        (by.critical.length?'<tr><td colspan="5" style="background:rgba(var(--amber-rgb),.06);font-size:10.5px;color:var(--amber);font-weight:700;letter-spacing:.08em;padding:7px 14px">⏰ ≤ 14 DAYS</td></tr>'+rows(by.critical):'')+
         (by.warning.length?'<tr><td colspan="5" style="background:rgba(255,165,89,.05);font-size:10.5px;color:var(--coral-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 30 DAYS</td></tr>'+rows(by.warning):'')+
-        (by.upcoming.length?'<tr><td colspan="5" style="background:rgba(91,155,213,.05);font-size:10.5px;color:var(--sky-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 90 DAYS</td></tr>'+rows(by.upcoming):'')+
+        (by.upcoming.length?'<tr><td colspan="5" style="background:rgba(var(--sky-rgb),.05);font-size:10.5px;color:var(--sky-soft);font-weight:700;letter-spacing:.08em;padding:7px 14px">≤ 90 DAYS</td></tr>'+rows(by.upcoming):'')+
         (by.distant.length?'<tr><td colspan="5" style="background:rgba(255,255,255,.02);font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.08em;padding:7px 14px">LATER</td></tr>'+rows(by.distant):'')+
         '</tbody></table></div>');
 }
@@ -6736,7 +6792,7 @@ async function ocrExtract(){
 function ocrRenderResult(){
   const r=OCR_RESULT||{};
   const conf=r.confidence||'medium';
-  const confPill = conf==='high'?'<span class="pill pill-green" style="font-size:10px">high confidence</span>':conf==='low'?'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px">low — please review</span>':'<span class="pill" style="background:rgba(245,158,11,.16);color:var(--amber);font-size:10px">medium</span>';
+  const confPill = conf==='high'?'<span class="pill pill-green" style="font-size:10px">high confidence</span>':conf==='low'?'<span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:10px">low — please review</span>':'<span class="pill" style="background:rgba(var(--amber-rgb),.16);color:var(--amber);font-size:10px">medium</span>';
   function fld(label, key, val, type){
     return '<div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px">'+esc(label)+'</label><input type="'+(type||'text')+'" data-k="'+esc(key)+'" value="'+esc(val==null?'':val)+'" style="width:100%"/></div>';
   }
@@ -6864,7 +6920,7 @@ function apRender(){
     const aiTotal = m.ai_verdict && m.ai_verdict.total;
     const dt = m.ai_verdict && m.ai_verdict.doc_type;
     const dtBadge = dt==='reimbursement'?'<span class="muted" style="font-size:10px">🧾 claim</span>':dt==='invoice'?'<span class="muted" style="font-size:10px">📄 invoice</span>':'';
-    return '<tr onclick="apOpen('+m.id+')" style="cursor:pointer'+(AP_ACTIVE_ID===m.id?';background:rgba(232,93,60,.06)':'')+'">'+
+    return '<tr onclick="apOpen('+m.id+')" style="cursor:pointer'+(AP_ACTIVE_ID===m.id?';background:rgba(var(--coral-rgb),.06)':'')+'">'+
       '<td>'+apStatusPill(m.status||'received')+'</td>'+
       '<td class="muted" style="font-size:11.5px;white-space:nowrap">'+esc(when)+'</td>'+
       '<td><b style="font-size:12.5px">'+esc(m.from_name||m.from_email||'')+'</b><div class="muted" style="font-size:10.5px">'+esc(m.from_email||'')+'</div></td>'+
@@ -6964,7 +7020,7 @@ function apRenderDetail(){
   const billLines = (ai.line_items||[]).map((l,i)=>'<tr><td><input data-li-i="'+i+'" data-li-k="description" value="'+esc(l.description||'')+'" style="width:100%;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="quantity" type="number" value="'+esc(l.quantity||1)+'" style="width:55px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="unit_amount" type="number" step="0.01" value="'+esc(l.unit_amount||0)+'" style="width:90px;font-size:12px"/></td><td><input data-li-i="'+i+'" data-li-k="account_code" value="'+esc(l.account_code||ai.suggested_gl_account||'904-2200')+'" style="width:95px;font-size:12px"/>'+(l.gl_matched_keyword?'<div class="muted" style="font-size:9px">via "'+esc(l.gl_matched_keyword)+'"</div>':'<div style="font-size:9px;color:var(--amber)">no rule — set manually</div>')+'</td></tr>').join('');
   const atts = (d.attachments||[]).map(a=>'<a href="'+esc(a.download_url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 11px;background:var(--panel-2);border:1px solid var(--panel-border);border-radius:8px;font-size:12px;color:var(--text);text-decoration:none;margin:4px 6px 4px 0">📎 '+esc(a.name||'file')+' <span class="muted" style="font-size:10.5px">'+((a.size||0)/1024).toFixed(0)+' KB</span></a>').join('');
   const confidence = ai.confidence || 'medium';
-  const confPill = confidence==='high'?'<span class="pill pill-green" style="font-size:10px">high confidence</span>':confidence==='low'?'<span class="pill" style="background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px">low confidence</span>':'<span class="pill" style="background:rgba(245,158,11,.16);color:var(--amber);font-size:10px">medium confidence</span>';
+  const confPill = confidence==='high'?'<span class="pill pill-green" style="font-size:10px">high confidence</span>':confidence==='low'?'<span class="pill" style="background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:10px">low confidence</span>':'<span class="pill" style="background:rgba(var(--amber-rgb),.16);color:var(--amber);font-size:10px">medium confidence</span>';
   const routingStatus = ai.company_routing_status || '';
   const routingColor = routingStatus==='company_matched_high_confidence' ? 'var(--green-soft)' : routingStatus==='company_matched_medium_confidence' ? 'var(--amber)' : 'var(--red-soft)';
   const routingBox = routingStatus ? '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px">'+
@@ -6974,7 +7030,7 @@ function apRenderDetail(){
     (ai.company_conflict_reason?'<div style="color:var(--red-soft);margin-top:3px">'+esc(ai.company_conflict_reason)+'</div>':'')+
   '</div>' : '';
   const taxVals = ['sst_risk','wht_risk','imported_service_tax_risk','capitalisation_risk','prepayment_risk'].filter(k=>taxReview[k] && taxReview[k]!=='none');
-  const taxBox = taxVals.length ? '<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--amber)"><b>Tax/accounting review:</b> '+taxVals.map(k=>esc(k.replace(/_/g,' ')+': '+taxReview[k])).join(' · ')+'</div>' : '';
+  const taxBox = taxVals.length ? '<div style="background:rgba(var(--amber-rgb),.08);border:1px solid rgba(var(--amber-rgb),.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--amber)"><b>Tax/accounting review:</b> '+taxVals.map(k=>esc(k.replace(/_/g,' ')+': '+taxReview[k])).join(' · ')+'</div>' : '';
   const auditBox = (ai.audit_notes&&ai.audit_notes.length) ? '<details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--muted);cursor:pointer;text-transform:uppercase;letter-spacing:.05em">Controller audit notes</summary><ul style="margin:8px 0 0 17px;padding:0;font-size:11.5px;color:var(--text-soft);line-height:1.5">'+ai.audit_notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul></details>' : '';
   // Compliance checklist
   let checklist='';
@@ -6999,7 +7055,7 @@ function apRenderDetail(){
     '</div>';
   }
   // Duplicate warning
-  const dupBox = dup ? '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:12px;margin-bottom:10px;color:var(--red-soft)"><b>🚫 Duplicate detected</b><div style="font-size:12px;margin-top:5px;color:var(--text)">Matches an existing bill <b>'+esc(dup.number||dup.invoice_id||'')+'</b> · '+esc(dup.inv_date||'')+' · RM '+esc(dup.total||'')+' · status <b>'+esc(dup.status||'')+'</b> (amount due RM '+esc(dup.amount_due||'0')+'). No new bill was created.</div></div>' : '';
+  const dupBox = dup ? '<div style="background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.4);border-radius:8px;padding:12px;margin-bottom:10px;color:var(--red-soft)"><b>🚫 Duplicate detected</b><div style="font-size:12px;margin-top:5px;color:var(--text)">Matches an existing bill <b>'+esc(dup.number||dup.invoice_id||'')+'</b> · '+esc(dup.inv_date||'')+' · RM '+esc(dup.total||'')+' · status <b>'+esc(dup.status||'')+'</b> (amount due RM '+esc(dup.amount_due||'0')+'). No new bill was created.</div></div>' : '';
   // Decision summary
   const decBox = decision ? '<div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px"><b>🤖 System decision:</b> '+apStatusPill(status)+'<div class="muted" style="margin-top:4px;line-height:1.5">'+esc(reasoning||'')+'</div></div>' : '';
   // Decision log timeline
@@ -7025,7 +7081,7 @@ function apRenderDetail(){
     /* RIGHT — AI verdict + decision + bill / reply */
     '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">AI verdict</div>'+confPill+apStatusPill(status)+'</div>'+
       routingBox+ decBox+ dupBox+ taxBox+ auditBox+ logBox+
-      (issues.length?'<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px"><b>⚠ Issues:</b> '+esc(issues.join(' · '))+'</div>':'')+
+      (issues.length?'<div style="background:rgba(var(--amber-rgb),.08);border:1px solid rgba(var(--amber-rgb),.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--amber);margin-bottom:10px"><b>⚠ Issues:</b> '+esc(issues.join(' · '))+'</div>':'')+
       (isDone ? (
         (status==='posted'||status==='auto_posted') ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✅ Posted to Xero</b> as '+esc(d.xero_invoice_number||d.xero_invoice_id||'')+'<div class="muted" style="font-size:11.5px;margin-top:4px">Source files attached automatically. Nothing more to do.</div></div>'
         : (status==='reply_sent'||status==='duplicate_rejected_replied') ? '<div style="background:rgba(126,224,160,.08);border:1px solid var(--green-soft);border-radius:8px;padding:14px;color:var(--green-soft)"><b>✉ Auto-replied</b> to '+esc(d.from_email)+'<div class="muted" style="font-size:11.5px;margin-top:4px;color:var(--text);white-space:pre-wrap">'+esc((d.reply_body||'').slice(0,500))+'</div></div>'
@@ -7135,18 +7191,18 @@ function apShowPreviewModal(r){
            '<td style="padding:6px 8px;font-size:11.5px;color:var(--muted)">'+esc(c.detail||'')+'</td></tr>';
   }).join('');
   var warns = (r.warnings||[]).length
-    ? '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)">⚠ '+(r.warnings||[]).map(esc).join('<br>')+'</div>'
+    ? '<div style="background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--red-soft)">⚠ '+(r.warnings||[]).map(esc).join('<br>')+'</div>'
     : '';
   // v68 (Wave 1b): existing Xero bills that could be dups
   var dupes = (r.xero_dupes||[]);
   var dupesBlock = dupes.length ? (
-    '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:10px 12px;margin-bottom:12px">'+
+    '<div style="background:rgba(var(--red-rgb),.08);border:1px solid rgba(var(--red-rgb),.35);border-radius:8px;padding:10px 12px;margin-bottom:12px">'+
       '<div style="font-size:12.5px;font-weight:600;color:var(--red-soft);margin-bottom:6px">🚨 Xero already has '+dupes.length+' bill'+(dupes.length>1?'s':'')+' that may be duplicates:</div>'+
       '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'+
       '<thead><tr style="color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.04em"><th style="text-align:left;padding:4px">Match</th><th style="text-align:left;padding:4px">Invoice #</th><th style="text-align:left;padding:4px">Contact</th><th style="text-align:right;padding:4px">Total</th><th style="text-align:left;padding:4px">Date</th><th style="text-align:left;padding:4px">Status</th></tr></thead>'+
       '<tbody>'+
       dupes.map(function(d){
-        return '<tr><td style="padding:4px"><span class="pill" style="background:rgba(239,68,68,.15);color:var(--red-soft);font-size:10px;padding:2px 6px;border-radius:4px">'+esc(d.match_type||'')+'</span></td>'+
+        return '<tr><td style="padding:4px"><span class="pill" style="background:rgba(var(--red-rgb),.15);color:var(--red-soft);font-size:10px;padding:2px 6px;border-radius:4px">'+esc(d.match_type||'')+'</span></td>'+
                '<td style="padding:4px;font-family:ui-monospace,Menlo,monospace">'+esc(d.invoice_number||'—')+'</td>'+
                '<td style="padding:4px">'+esc(d.contact_name||'')+'</td>'+
                '<td style="padding:4px;text-align:right;font-variant-numeric:tabular-nums">RM '+Number(d.total||0).toFixed(2)+'</td>'+
@@ -7160,7 +7216,7 @@ function apShowPreviewModal(r){
   if(!host){ host = document.createElement('div'); host.id='ap_preview_modal'; document.body.appendChild(host); }
   host.innerHTML =
     '<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)apPreviewClose()">'+
-      '<div style="background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:16px;width:min(900px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column">'+
+      '<div style="background:linear-gradient(180deg,rgba(var(--surface-rgb),.98),rgba(var(--bg-rgb),.97));border:1px solid var(--border-strong);border-radius:16px;width:min(900px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column">'+
         '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">'+
           '<div><div style="font-size:15px;font-weight:700">🔍 Xero payload preview</div>'+
           '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">This is the EXACT JSON that will POST to Xero. Nothing has been sent yet.</div></div>'+

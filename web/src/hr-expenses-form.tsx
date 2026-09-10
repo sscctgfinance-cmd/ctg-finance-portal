@@ -32,6 +32,7 @@
 // reimbursement form" title (`f.id`) all render in no golden. Each is mirrored from the legacy source
 // and asserted in the screen's own test.
 
+import * as React from 'react';
 import type { CSSProperties } from 'react';
 
 /** `RC_SEL` — hros.html:1782. One string, reused; kept as one string so the golden matches byte for byte. */
@@ -338,9 +339,21 @@ export function sizeLabel(bytes?: number): string {
 
 // ── The markup ─────────────────────────────────────────────────────────────────────────────────────
 
+/** v231: the caption is WIRED to the control — the legacy reads the id out of its markup string, this
+ *  reads it off the child's props. A BLANK caption claims nothing (the legacy guards the same way): a
+ *  `for` on a spacer points a screen reader at a non-breaking space, and the controls that sit under one
+ *  carry their own wrapping label already. */
+function childId(children: React.ReactNode): string | undefined {
+  const c = Array.isArray(children) ? children[0] : children;
+  if (!React.isValidElement(c)) return undefined;
+  const id = (c.props as { id?: unknown }).id;
+  return typeof id === 'string' && id ? id : undefined;
+}
+const captionClaims = (label: string) => String(label ?? '').replace(/&nbsp;/g, '').trim() !== '';
+
 /** `g()` — hros.html:2008. */
 function G({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="muted" style={{ fontSize: '11px' }}>{label}</label>{children}</div>;
+  return <div><label htmlFor={captionClaims(label) ? childId(children) : undefined} className="muted" style={{ fontSize: '11px' }}>{label}</label>{children}</div>;
 }
 /** `dg()` — hros.html:2010. */
 function Dg({ label, children }: { label: string; children: React.ReactNode }) {

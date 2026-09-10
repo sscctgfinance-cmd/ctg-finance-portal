@@ -334,7 +334,7 @@ function DriftTable({ r }: { r: DriftResponse }) {
 function DriftRow({ x }: { x: DriftResult }) {
   const nm = x.tenant_name || x.tenant || '';
   if (x.error) return (
-    <tr><td><b>{nm}</b></td><td colSpan={4} style={{ color: 'var(--red-soft)', fontSize: '11.5px' }}>⚠ {x.error}</td><td><span className="pill" style={{ background: 'rgba(239,68,68,.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>error</span></td></tr>
+    <tr><td><b>{nm}</b></td><td colSpan={4} style={{ color: 'var(--red-soft)', fontSize: '11.5px' }}>⚠ {x.error}</td><td><span className="pill" style={{ background: 'rgba(var(--red-rgb),.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>error</span></td></tr>
   );
   if (x.skipped) return (
     <tr><td><b>{nm}</b></td><td colSpan={4} className="muted" style={{ fontSize: '11.5px' }}>⏳ Xero rate-limit cooldown — will auto-retry shortly</td><td><span className="pill" style={{ fontSize: '9.5px' }}>skipped</span></td></tr>
@@ -352,7 +352,7 @@ function DriftRow({ x }: { x: DriftResult }) {
       <td>
         {okv
           ? <span className="pill pill-green" style={{ fontSize: '9.5px' }}>✓ in sync</span>
-          : <span className="pill" style={{ background: 'rgba(239,68,68,.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>✗ drift {(x.drift || 0) > 0 ? '+' : ''}{x.drift || 0}</span>}
+          : <span className="pill" style={{ background: 'rgba(var(--red-rgb),.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>✗ drift {(x.drift || 0) > 0 ? '+' : ''}{x.drift || 0}</span>}
       </td>
     </tr>
   );
@@ -409,7 +409,7 @@ function HealthRow({ t }: { t: SyncHealthTenant }) {
     ? <span className="muted" style={{ fontSize: '11px' }}>not checked</span>
     : Math.abs(t.cache_drift_count) === 0
       ? <span className="pill pill-green" style={{ fontSize: '9px' }}>in sync</span>
-      : <span className="pill" style={{ background: 'rgba(239,68,68,.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>drift {t.cache_drift_count > 0 ? '+' : ''}{t.cache_drift_count}</span>;
+      : <span className="pill" style={{ background: 'rgba(var(--red-rgb),.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>drift {t.cache_drift_count > 0 ? '+' : ''}{t.cache_drift_count}</span>;
   const errCell = t.last_error
     ? <span style={{ color: 'var(--red-soft)', fontSize: '11px' }} title={t.last_error}>⚠ {(t.last_error || '').slice(0, 60)}…</span>
     : <span className="muted" style={{ fontSize: '11px' }}>—</span>;
@@ -421,7 +421,7 @@ function HealthRow({ t }: { t: SyncHealthTenant }) {
       <td style={{ fontSize: '11.5px', color: freshColor }}>{relTime(t.cache_last_updated)}</td>
       <td style={{ fontSize: '11.5px' }}>
         {stale > 0
-          ? <><span className="pill" style={{ background: 'rgba(245,158,11,.14)', color: 'var(--amber)', fontSize: '9.5px' }}>{stale} stale</span><div className="muted" style={{ fontSize: '10.5px', marginTop: '2px' }}>oldest: {oldest}</div></>
+          ? <><span className="pill" style={{ background: 'rgba(var(--amber-rgb),.14)', color: 'var(--amber)', fontSize: '9.5px' }}>{stale} stale</span><div className="muted" style={{ fontSize: '10.5px', marginTop: '2px' }}>oldest: {oldest}</div></>
           : <><span className="pill pill-green" style={{ fontSize: '9.5px' }}>all fresh</span><div className="muted" style={{ fontSize: '10.5px', marginTop: '2px' }}>oldest: {oldest}</div></>}
       </td>
       <td style={{ fontSize: '11.5px' }}><span className="muted">F:</span> {relTime(t.last_full_sync_at)} · <span className="muted">Δ:</span> {relTime(t.last_delta_sync_at)}</td>
@@ -492,7 +492,7 @@ function AuditResultTable({ r }: { r: AuditResponse }) {
                   <td className="amt">{x.xero_count} / RM {fmtRM(x.xero_sum || 0)}</td>
                   <td className="amt" style={{ color: countColor }}>{(x.count_diff || 0) > 0 ? '+' : ''}{x.count_diff || 0}</td>
                   <td className="amt" style={{ color: deltaColor }}><b>RM {fmtRM(x.delta_amount || 0)}</b></td>
-                  <td>{x.ok ? <span className="pill pill-green" style={{ fontSize: '9.5px' }}>✓ in sync</span> : <span className="pill" style={{ background: 'rgba(239,68,68,.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>✗ drift</span>}</td>
+                  <td>{x.ok ? <span className="pill pill-green" style={{ fontSize: '9.5px' }}>✓ in sync</span> : <span className="pill" style={{ background: 'rgba(var(--red-rgb),.16)', color: 'var(--red-soft)', fontSize: '9.5px' }}>✗ drift</span>}</td>
                 </tr>
               );
             })}
@@ -570,11 +570,11 @@ export function RebuildPanel(props: RebuildProps) {
   const co = props.companies.find((c) => c.tenant_id === props.selectedTenant);
   const selectedName = co ? co.tenant_name : '';
   return (
-    <div className="panel" style={{ marginTop: '16px', borderColor: 'rgba(239,68,68,.18)' }}>
+    <div className="panel" style={{ marginTop: '16px', borderColor: 'rgba(var(--red-rgb),.18)' }}>
       <div className="panel-hd">
         <h3>🧨 Emergency rebuild <span className="muted" style={{ fontSize: '11px', textTransform: 'none', letterSpacing: '0' }}>· when the cache is catastrophically out of sync</span></h3>
       </div>
-      <div style={{ background: 'rgba(239,68,68,.06)', border: '1px solid rgba(239,68,68,.18)', borderRadius: '8px', padding: '11px 14px', fontSize: '12.5px', color: 'var(--red-soft)', marginBottom: '12px', lineHeight: '1.6' }}>
+      <div style={{ background: 'rgba(var(--red-rgb),.06)', border: '1px solid rgba(var(--red-rgb),.18)', borderRadius: '8px', padding: '11px 14px', fontSize: '12.5px', color: 'var(--red-soft)', marginBottom: '12px', lineHeight: '1.6' }}>
         ⚠ This wipes one company&apos;s entire cached invoice history then re-pulls from Xero starting from 2015. Use ONLY when incremental drift repair can&apos;t catch up. The rebuild runs in the background (2–5 minutes). All operations are audited.
       </div>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>

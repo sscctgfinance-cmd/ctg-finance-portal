@@ -298,7 +298,11 @@ describe('the comparison still bites', () => {
 
   it('catches a PCB figure that changed on one row only', () => {
     const all = gridAll(DATA, GRID, PERIOD);
-    const rows = all.rows.map((r, i) => (i === 0 ? { ...r, p: { ...r.p, pcb: 126.9 } } : r));
+    // A RELATIVE nudge, not a magic constant: this used to pin 126.9, and when v230 moved the PCB
+    // figures the real value BECAME 126.9 — the mutation turned into a no-op and the guard stopped
+    // guarding while still passing. One 5-sen step is also the smallest change that can reach a
+    // payslip, so it is a stricter check than the arbitrary number was.
+    const rows = all.rows.map((r, i) => (i === 0 ? { ...r, p: { ...r.p, pcb: r.p.pcb + 0.05 } } : r));
     expect(rendered({ rows, tot: all.tot })).not.toBe(want);
   });
 

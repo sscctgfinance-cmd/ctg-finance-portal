@@ -110,8 +110,8 @@ function Chip({ cur, prev, inverse }: { cur: number | null; prev: number | null;
   const p = (cur - prev) / Math.abs(prev) * 100;
   if (!isFinite(p)) return null;
   const up = p >= 0, good = inverse ? !up : up;
-  const bg = good ? 'rgba(14,157,103,.13)' : 'rgba(232,93,60,.13)';
-  const bd = good ? 'rgba(14,157,103,.30)' : 'rgba(232,93,60,.30)';
+  const bg = good ? 'rgba(14,157,103,.13)' : 'rgba(var(--coral-rgb),.13)';
+  const bd = good ? 'rgba(14,157,103,.30)' : 'rgba(var(--coral-rgb),.30)';
   const fg = good ? 'var(--green-soft)' : 'var(--coral-soft)';
   return (
     <span className="pnl-chip" style={{ background: bg, borderColor: bd, color: fg }}>

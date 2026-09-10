@@ -34,7 +34,7 @@ import { ALL_SCREENS, HR_NAV, href, hrNavFor, hrRole, financeNavFor, type Perms 
 import { PasswordModal, pwError, pwMeter, pwScore, pwValid } from '../src/password-modal';
 import { spaTarget, appOf } from '../src/spa-nav';
 import { THEME_KEYS, asTheme, themeBootScript } from '../src/theme';
-import { Toast, toastStyle } from '../src/toast';
+import { Toast, toastInsertAt, toastStyle } from '../src/toast';
 import { REPO } from './parity';
 
 const HROS = readFileSync(join(REPO, 'hros.html'), 'utf8');
@@ -163,7 +163,7 @@ describe('toast() — common.js:29', () => {
   });
 
   it('an error toast is visibly an error — common.js:36-37', () => {
-    expect(toastStyle(true)).toEqual({ borderColor: 'rgba(239,68,68,.45)', color: 'var(--red-soft)' });
+    expect(toastStyle(true)).toEqual({ borderColor: 'rgba(var(--red-rgb),.45)', color: 'var(--red-soft)' });
     expect(toastStyle(false)).toEqual({ borderColor: '', color: '' });
     // THE defect this exists to catch: `isErr` silently dropped. "Failed: Xero rejected" would then be
     // rendered in exactly the same calm grey as "Saved", and every other assertion here would pass.
@@ -174,13 +174,58 @@ describe('toast() — common.js:29', () => {
     expect(html(<Toast msg="Saved" show />)).not.toContain('style');
   });
 
-  // A legacy defect, mirrored the other way round — see src/toast.tsx's header. hros.html's toast div
-  // has no `class="toast"`, so in HR OS today the notice is unstyled text at the bottom of the document.
-  // Both stylesheets carry the rule; neither carries an `#toast` selector. Pinned so that a fix in
-  // hros.html shows up here as a disagreement rather than as two apps quietly differing.
-  it('hros.html’s own toast div still carries no class — the defect this port does not copy', () => {
-    expect(HROS).toContain('<div id="toast"></div>');
+  // v231: the same priority rule common.js carries, driven against the same cases as
+  // tests/toast_priority_test.ts. The React half has one extra obligation: its queue[0] is the message
+  // ON SCREEN, so the insert must start at index 1 or an arriving error swaps out the toast the operator
+  // is mid-way through reading.
+  it('an error jumps ahead of pending advice, and errors keep their own order', () => {
+    const e = (msg: string) => ({ msg, isErr: true });
+    const t = (msg: string) => ({ msg, isErr: false });
+    const push = (q: { msg: string; isErr: boolean }[], m: { msg: string; isErr: boolean }) => {
+      const out = q.slice(); out.splice(toastInsertAt(out, m), 0, m); return out;
+    };
+    // the measured case: two tips queued, then the failure
+    let q = push(push(push([], t('tip A')), t('tip B')), e('blocked'));
+    expect(q.map((x) => x.msg)).toEqual(['blocked', 'tip A', 'tip B']);
+    // a second failure must not overtake the first
+    q = push(q, e('second'));
+    expect(q.map((x) => x.msg)).toEqual(['blocked', 'second', 'tip A', 'tip B']);
+    // advice is still FIFO
+    expect(push(push([], t('one')), t('two')).map((x) => x.msg)).toEqual(['one', 'two']);
+  });
+
+  it('the toast ON SCREEN is never displaced — the host holds index 0 back', () => {
+    // Mirrors what ToastHost's sink does. queue[0] is displayed; only the tail may be reordered.
+    const sink = (q: { msg: string; isErr?: boolean }[], m: { msg: string; isErr?: boolean }) => {
+      if (!q.length) return [m];
+      const rest = q.slice(1);
+      const at = toastInsertAt(rest as { msg: string; isErr?: boolean }[], m);
+      return [q[0], ...rest.slice(0, at), m, ...rest.slice(at)];
+    };
+    const showing = { msg: 'saving…', isErr: false };
+    const out = sink([showing, { msg: 'tip', isErr: false }], { msg: 'FAILED', isErr: true });
+    expect(out[0]).toBe(showing);
+    expect(out.map((x) => x.msg)).toEqual(['saving…', 'FAILED', 'tip']);
+    // …and the source really is written that way, not just this test's idea of it
+    // …and the source really is written that way, not just this test's idea of it.
+    const src = readFileSync(join(import.meta.dirname, '..', 'src', 'toast.tsx'), 'utf8');
+    expect(src).toContain('q.slice(1)');
+  });
+
+  // v231: FIXED, and this pin is what surfaced it. hros.html's toast div carried no `class="toast"`,
+  // so every notice in HR OS was unstyled text at the bottom of the DOCUMENT — off-screen in practice,
+  // and the `.show` transition never ran. Neither stylesheet has an `#toast` selector, so the class is
+  // the only thing that positions it. The React port had always rendered the class, which is why this
+  // assertion had to be inverted rather than deleted: the two apps now AGREE, and the test says so.
+  //
+  // Why it mattered enough to change live markup: HR OS reports save/finalise/upload/email results
+  // ONLY through toast(). A refusal an operator cannot see reads as a dead button — which is exactly
+  // how the v231 payroll-export blockers would have landed.
+  it('both apps' + ' toast div carries the class that positions it', () => {
+    expect(HROS).toContain('<div class="toast" id="toast"></div>');
     expect(APP).toContain('<div class="toast" id="toast"></div>');
+    // Still no `#toast` selector in either stylesheet — so the class remains the only thing that
+    // styles it, and removing it again silently reinstates the defect.
     expect(HROS).not.toContain('#toast{');
     expect(APP).not.toContain('#toast{');
   });

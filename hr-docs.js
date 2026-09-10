@@ -404,26 +404,71 @@ function hrBuildCp39(rows, period){
   if(HR_FIT_ERR.length) return { error:'CP39 blocked — a value does not fit the layout, and a trimmed one would be filed against the wrong person: '+HR_FIT_ERR.join(' · ') };
   return { name:'LHDN_CP39_'+period.label.replace(' ','')+'.txt', text:lines.join('\r\n')+'\r\n', mime:'text/plain;charset=utf-8;', count:lines.length, total:total };
 }
-// Generic IBG salary CSV (net pay). No blockers/error mode — the caller checks for empty rows.
+// v231: who belongs in a SALARY file. A bank credit line is a positive, finite amount of money; anything
+// else is not a payment and must never be written as one. The two builders below disagreed about this for
+// six versions — hrBuildBank dropped the row, hrBuildGiro wrote it — so the same payroll produced one file
+// naming three staff and another naming two, both reported as "downloaded". Answer it in ONE place.
+//
+// The realistic input is not a hostile one: recovering a salary advance larger than the month's net pay is
+// an ordinary instruction, and it lands here as net < 0. `isFinite` and not `!isNaN` because
+// isNaN(Infinity) is false — the money-rounding lesson in CLAUDE.md, in a file that writes payment lines.
+function hrPayable(net){ return isFinite(net) && Number(net) > 0; }
+// Rows that are NOT payable, split by whether a human has to act. RM 0.00 net is legitimate (a full month
+// of unpaid leave) and only needs saying out loud; below zero, or not a number at all, is a payroll that
+// cannot be run and must stop the file — capping the deduction and carrying the balance forward is a
+// decision only the operator can make.
+function hrUnpayable(rows){
+  var out={ zero:[], bad:[] };
+  (rows||[]).forEach(function(x){
+    var n=Number(x.p.net);
+    if(hrPayable(n)) return;
+    (isFinite(n) && n===0 ? out.zero : out.bad).push(x);
+  });
+  return out;
+}
+function hrNames(rows){ var n=rows.map(function(x){ return x.e.name; }); return n.slice(0,5).join(', ')+(n.length>5?', …':''); }
+// The blockers/tips BOTH salary builders raise, so a person cannot be dropped from one file and paid a
+// negative amount by the other. v157's own comment on the blank-account blocker — "silently leaves that
+// person unpaid" — is exactly this failure, and it could never fire for these rows because the net>0
+// filter removed them BEFORE the blocker looked.
+// `fatal` is a STRICTER list than `blockers`, and the split is deliberate. hrSubmissionSpecs refuses the
+// ZIP on any blocker, and has since v157; the ⬇ buttons have always shipped the file and warned. Widening
+// the buttons to refuse on a blank bank account would be a change to what happens on payday, not a bug
+// fix, so it is left alone and raised separately. A net pay of zero or less is different in kind: there is
+// no amount to credit, so there is no file to hand over, and refusing cannot make anyone later than the
+// silent omission already did.
+function hrSalaryExclusions(rows){
+  var u=hrUnpayable(rows), fatal=[], tips=[];
+  if(u.bad.length) fatal.push(u.bad.length+' staff have a net pay of zero or less and are NOT in this file ('+hrNames(u.bad)+') — cap the deduction and carry the balance forward');
+  if(u.zero.length) tips.push(u.zero.length+' staff have RM 0.00 net this month and are not in this file ('+hrNames(u.zero)+').');
+  return { fatal:fatal, blockers:fatal.slice(), tips:tips };
+}
+// Generic IBG salary CSV (net pay). v231: carries `blockers`/`tips` like hrBuildBank — the caller refuses
+// on a blocker. It used to map EVERY row, so a negative net was written as a credit line in an IBG file.
 function hrBuildGiro(rows, period){
   var tag=period.label.replace(' ',''); var ref='SALARY '+tag.toUpperCase(); var f2=function(n){return Number(n).toFixed(2);};
+  var pay=rows.filter(function(x){ return hrPayable(x.p.net); });
+  var ex=hrSalaryExclusions(rows);
   var head=['No','Payee Name','Bank','Bank Code (BIC)','Account No','IC (New)','Amount (RM)','Payment Ref','Email'];
-  var body=rows.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
+  var body=pay.map(function(x,i){ var e=x.e,p=x.p; return [i+1,(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',e.ic||'',f2(p.net),ref+' '+e.empNo,e.email||'']; });
   // v157 CRITICAL: never append a "TOTAL" trailer to a BANK file — the trailer becomes a real credit line.
-  var total=rows.reduce(function(s,x){return s+x.p.net;},0);
-  return { name:'Bank_Giro_'+tag+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:rows.length, total:total };
+  var total=pay.reduce(function(s,x){return s+x.p.net;},0);
+  return { name:'Bank_Giro_'+tag+'.csv', text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:pay.length, total:total, fatal:ex.fatal, blockers:ex.blockers, tips:ex.tips };
 }
 // Bank-specific salary bulk-payment file (net pay). `tips` are non-blocking UOB reminders the caller toasts.
 function hrBuildBank(rows, period, bank, uobCfg){
   if(!rows.length) return null;
   var tag=period.label.replace(' ',''); var f2=function(n){return Number(n).toFixed(2);};
   var refBase=('SAL'+period.label.replace(/[^A-Za-z0-9]/g,'').toUpperCase()).slice(0,14);
-  var pay=rows.filter(function(x){ return x.p.net>0; });
+  var pay=rows.filter(function(x){ return hrPayable(x.p.net); });
   if(!pay.length) return null;
   var noAcct=pay.filter(function(x){ return !x.e.bankAccount; }).length;
   var total=pay.reduce(function(s,x){ return s+x.p.net; },0);
   // v157: real blockers — a salary file with a blank beneficiary account silently leaves that person unpaid.
-  var blockers=[], tips=[];
+  // v231: and so does the payable filter above, which runs FIRST — so the excluded rows are reported here
+  // rather than disappearing before this check can see them. Same wording, same consequence.
+  var ex=hrSalaryExclusions(rows);
+  var blockers=ex.blockers.slice(), tips=ex.tips.slice(), fatal=ex.fatal;
   if(noAcct){ var whoNo=pay.filter(function(x){ return !x.e.bankAccount; }).map(function(x){ return x.e.name; }).slice(0,5).join(', ');
     blockers.push(noAcct+' staff have no bank account ('+whoNo+(noAcct>5?', …':'')+')'); }
   var head,body,name;
@@ -441,7 +486,7 @@ function hrBuildBank(rows, period, bank, uobCfg){
     head=['Crediting Date','Debit Account','Beneficiary Name','Beneficiary Bank','SWIFT/BIC','Beneficiary Account No','Amount (RM)','Payment Reference','Beneficiary ID (New IC)','Payment Advice Email','Payment Type'];
     body=pay.map(function(x){ var e=x.e; var own=/uob|united overseas/i.test(e.bankName||''); return [cd,u.acct||'',(e.bankHolder||e.name),e.bankName||'',hrSwift(e),e.bankAccount||'',f2(x.p.net),('SALARY '+period.label+' '+(e.empNo||'')).toUpperCase().slice(0,30),e.ic||'',e.email||'',own?'Internal':'IBG']; });
   }
-  return { name:name, text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:pay.length, total:total, noAcct:noAcct, blockers:blockers, tips:tips };
+  return { name:name, text:hrCsv([head].concat(body)), mime:'text/csv;charset=utf-8;', count:pay.length, total:total, noAcct:noAcct, fatal:fatal, blockers:blockers, tips:tips };
 }
 // ── Dependency-free STORE-method ZIP for the one-click submission pack (no compression needed for text) ──
 var HR_CRC_TBL=(function(){ var t=[],c,n,k; for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; } return t; })();

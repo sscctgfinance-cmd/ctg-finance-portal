@@ -142,7 +142,7 @@ export default function HrEmpLeave(props: HrEmpLeaveProps) {
       {/* hros.html:3097 — the approver queue is rendered ONLY when something is waiting. An empty card
           would tell a manager they have an inbox they do not. */}
       {pending.length ? (
-        <div className="panel" style={{ marginBottom: '14px', borderColor: 'rgba(245,158,11,.35)' }}>
+        <div className="panel" style={{ marginBottom: '14px', borderColor: 'rgba(var(--amber-rgb),.35)' }}>
           <div className="panel-hd">
             <h3>🔔 Pending your approval <span className="pill" style={{ color: 'var(--amber)', fontSize: '10px' }}>{pending.length}</span></h3>
           </div>

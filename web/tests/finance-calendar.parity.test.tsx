@@ -300,7 +300,7 @@ describe('the comparison still bites', () => {
     // decides the section — a genuinely-not-overdue row arrives with a different `urgency`, which the
     // case above catches.
     expect(withRow(0, { days_until: 19 })).toBe(want);
-    expect(APP).toContain("'<span class=\"pill\" style=\"background:rgba(239,68,68,.18);color:var(--red-soft);font-size:10px\">⚠ '+Math.abs(days)+'d overdue</span>'");
+    expect(APP).toContain("'<span class=\"pill\" style=\"background:rgba(var(--red-rgb),.18);color:var(--red-soft);font-size:10px\">⚠ '+Math.abs(days)+'d overdue</span>'");
   });
 
   it('catches a deadline demoted to a quieter urgency — and the count card that follows it', () => {

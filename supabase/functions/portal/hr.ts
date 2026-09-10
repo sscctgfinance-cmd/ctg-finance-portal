@@ -121,7 +121,12 @@ export async function rcValidate(claim, type, empId){
   } catch(_e){}
   return { errors: errs, warnings: warns };
 }
-export async function rcMe(me){
+export // v231: one claim line, to the sen, never negative and never non-finite. See hr_rc_save's call site.
+function rcAmt(n: unknown): number {
+  const v = Number(n);
+  return isFinite(v) ? Math.max(0, Math.round(v*100)/100) : 0;
+}
+async function rcMe(me){
   const isAdmin = hrManage(me); let employee:any=null, roles:string[]=[], is_manager=false;   // admin OR hr_admin = full HR admin
   let roleRows:{role:string,tenant_id:any}[]=[];
   const uid = me && me.user && me.user.id;
@@ -719,7 +724,16 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   else {
     const ms=String(emp.marital_status||'single').toLowerCase();
     const cat2=(ms==='married' && emp.spouse_working===false);
-    const rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
+    const rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpfMth=cfg.reliefEpfMonthlyMax!=null?cfg.reliefEpfMonthlyMax:333;
+    // v230: the EPF relief in MTD is capped at RM333 A MONTH, not RM4,000 a year. LHDN's MTD
+    // specification states the limit per month; 333 x 12 = 3,996, so a full-year employee gets FOUR
+    // ringgit less relief than the annual figure suggests. On RM15,000/month that is RM1 of annual tax,
+    // which lands as exactly one 5-sen step on the monthly MTD — small, but it is the whole reason
+    // HR OS sat 5 sen under Kakitangan on every clean case measured:
+    //     Loong Ming Haow 15,000 -> 2,179.20 vs 2,179.25   Elaine Lam 13,000 -> 1,679.20 vs 1,679.25
+    // Both reproduce exactly once the cap is 333 x N. `reliefEpfMax` is still honoured when a config
+    // sets it explicitly, so an operator who has pinned an annual figure keeps it.
+    const rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:rEpfMth*N;
     const kids=Number(emp.num_children||0);
     const projGross=yg + statWageNormal*remain;   // prior-actual + (current + future estimated) months
     const projEpf=ye + epfEe*remain;
@@ -1735,7 +1749,14 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);
       { const { data: rec } = await sb.from("hr_claims").select("tenant_id").eq("id",String(b.id)).maybeSingle();
         const alw = await allowedTenants(b.token); if (rec && alw.length && rec.tenant_id && alw.indexOf(rec.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
-      const { error } = await sb.from("hr_claims").update({ status:String(b.status||"") }).eq("id",String(b.id));
+      // v231: this wrote `String(b.status||"")` — ANY string, unvalidated, into the column the Claims
+      // screen filters on. A request that omitted `status` stored the EMPTY STRING, which matches no
+      // filter, so the claim vanished from the screen with `ok:true` reported. Its sibling two handlers
+      // up, hr_claim_decide's leave equivalent, has always validated its decision; this is the same rule.
+      // `Approved` / `Rejected` are the only values any caller sends (hros.html:3791).
+      const status = String(b.status||"");
+      if (["Approved","Rejected"].indexOf(status) < 0) return j({ ok:false, error:"invalid decision" });
+      const { error } = await sb.from("hr_claims").update({ status }).eq("id",String(b.id));
       if (error) return j({ ok:false, error:error.message });
       await logAudit(me,"hr_claim_decide",String(b.id),{ status:b.status });
       return j({ ok:true });
@@ -2086,9 +2107,13 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
           // through toFixed(2), and rolled into a header total that Math.round()s the sum — three
           // roundings of one figure, and the header is what the bank file pays. Must stay identical to
           // hrRCItemAmt() in hros.html, which is the same line on the other side of the wire.
+          // v231: `rcAmt` clamps and rejects non-finite. `Number('1e400')||0` is Infinity — isNaN(Infinity)
+          // is false — and a claim line is money that ends up on a bank payment file; a NEGATIVE line is
+          // a credit in that file. Same class as the payroll grid's, in the second place it appears.
+          // Must stay identical to hrRCItemAmt() in hros.html, the same line on the other side of the wire.
           const amt = t.is_mileage
-            ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100
-            : Math.round((Number(it.amount)||0)*100)/100;
+            ? rcAmt((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))
+            : rcAmt(Number(it.amount));
           amount+=amt; if(t.taxable) anyTaxable=true;
           normItems.push({ claim_type_id:it.claim_type_id||null, item_date:it.item_date||c.claim_date||null, amount:amt, description:it.description||"",
             vendor_name:it.vendor_name||null, receipt_no:(String(it.receipt_no||"").trim()||null), invoice_no:(String(it.invoice_no||"").trim()||null),
@@ -2104,7 +2129,8 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         headerType = distinct.length===1 ? distinct[0] : null;
       } else {
         const t=typeMap[c.claim_type_id]||{}; headerType=c.claim_type_id||null; anyTaxable=!!t.taxable;
-        amount = (t.is_mileage && c.mileage) ? Math.round(((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)+(Number(c.mileage.parking_amount)||0)+(Number(c.mileage.toll_amount)||0))*100)/100 : Math.round((Number(c.amount)||0)*100)/100;
+        // v231: the single-claim path, through the same rcAmt() the items path uses.
+        amount = (t.is_mileage && c.mileage) ? rcAmt((Number(c.mileage.total_km)||0)*(Number(c.mileage.mileage_rate)||0)+(Number(c.mileage.parking_amount)||0)+(Number(c.mileage.toll_amount)||0)) : rcAmt(c.amount);
       }
       const row:any = { tenant_id:tenant, employee_id:empId, claim_type_id:headerType, claim_date:c.claim_date||null, amount, description:c.description||"", project:c.project||"", department:c.department||"", remarks:c.remarks||"", taxable:anyTaxable, payroll_applicable:false,
         claim_month:(String(c.claim_month||"").trim() || String(c.claim_date||"").slice(0,7) || null), cost_center:(String(c.cost_center||"").trim()||null), updated_at:new Date().toISOString() };

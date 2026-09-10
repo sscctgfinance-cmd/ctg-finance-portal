@@ -832,7 +832,7 @@ export default function FinanceCfo(p: CfoProps) {
       {/* Analyst alerts — absent entirely when the server sent none, which is what the empty-alerts
           case in the screen's test pins. */}
       {alerts.length
-        ? <div className="panel" style={{ marginBottom: '16px', borderColor: 'rgba(245,158,11,.25)' }}>
+        ? <div className="panel" style={{ marginBottom: '16px', borderColor: 'rgba(var(--amber-rgb),.25)' }}>
             <div className="panel-hd"><h3>⚠ Analyst alerts</h3></div>
             {alerts.map((a, i) => (
               <div key={i} style={{ display: 'flex', gap: '9px', padding: '7px 0', fontSize: '13px', borderBottom: '1px solid var(--border)' }}>
@@ -1078,7 +1078,7 @@ export function Analytics({ data }: AnalyticsProps) {
                         <td className="amt" style={{ color: Number(c.overdue) > 0 ? 'var(--amber)' : 'var(--muted)' }}>{M(c.overdue)}</td>
                         <td className="amt" style={{ fontSize: '11.5px', color: wd > 60 ? 'var(--red-soft)' : wd > 0 ? 'var(--amber)' : 'var(--muted)' }}>{wd > 0 ? wd + 'd' : '—'}</td>
                         <td className="amt" style={{ color: 'var(--red-soft)' }}>{M(c.provision)}</td>
-                        <td><span className="pill" style={{ background: 'rgba(232,93,60,.14)', color: rc, fontSize: '10px' }}>{risk + '%'}</span></td>
+                        <td><span className="pill" style={{ background: 'rgba(var(--coral-rgb),.14)', color: rc, fontSize: '10px' }}>{risk + '%'}</span></td>
                       </tr>
                     );
                   })

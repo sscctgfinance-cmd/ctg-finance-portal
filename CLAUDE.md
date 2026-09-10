@@ -2102,7 +2102,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 300 cases, incl. all 51 render goldens
+deno test --allow-read tests/          # 340 cases, incl. all 51 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
@@ -2113,6 +2113,101 @@ live for every user today, and it must not start needing npm to be reachable in 
 CI additionally parses `hros.html`, `app.html` and `index.html` fail-closed (a syntax error in one of
 those single-file apps is a white screen for every user), lints every module in
 `supabase/functions/portal/`, and holds the `no-redeclare` baseline at 6.
+
+### A second click must not send a second request — and the list of buttons is DERIVED
+
+The other half of "a golden never presses a button". Five clicks in one tick, on real DOM buttons of
+the signed-in apps, produced five requests from controls that create documents in a live Xero ledger:
+
+    hrDecideLeave('lv1','approve') x5  ->  5 x hr_leave_decide   (five "your leave was approved" emails)
+    sbiPostXero(12,false)          x5  ->  5 x sbi_post_xero     (five ACCPAY bills, SUBMITTED)
+
+**The server cannot save you.** `sbi_post_xero`'s dedupe is `if (v.xero_bill_id)` read BEFORE the write,
+so five concurrent requests all read null and all create; `hr_leave_decide`'s "Already handled" refusal
+loses the same race. `o2o_issue` (finance.ts) and `hr_rc_post_xero` (hr.ts) are the two that do it
+properly — they ask XERO for an existing non-VOIDED document first. The client guard is the first line
+either way, never a substitute.
+
+**`ctgOnce(key, fn)` in `common.js` is the one implementation**, and it is a FLAG, not a disabled button.
+`hrOnce` delegates to it; `runOnce` (app.html) now holds it as well as disabling the trigger node. That
+distinction is the whole point: a disabled BUTTON protects a mouse click on a node the guard can find,
+and a keyboard activation, a re-rendered row, or a handler called by name all walk straight past it. Key
+on the ROW (`'sbiPostXero:'+id`) — a constant key refuses the next claim a second after the first, which
+is how an operator clears a queue, so the guard gets removed again within a week. Release in `finally`;
+without it one failed fetch leaves that control dead for the session.
+
+**`tests/outward_action_guard_test.ts` is the gate, and it types no function names.** It reads every
+`onclick=` out of both apps, follows the call chain to the `{api:"..."}` the click sends, and demands a
+guard wherever that set meets the `OUTWARD` list — so a button written tomorrow is covered the day it is
+written. That matters more than it sounds: `tests/double_submit_test.ts`'s hand-typed lists were correct
+and complete when written, and the derived sweep immediately found **seven** more (`approve`, `trigColl`,
+`whtDelPayee`, `sbiApprove`, `sbiVoid` and the three `hrRCBulk*` claim decisions) — including the one that
+approves or VOIDS a supplier bill. `OUTWARD` stays hand-curated on purpose: "does this leave the
+building?" is a judgement, and it is checked against the actions the server implements so a rename cannot
+silently stop covering one.
+
+⚠️ **Two traps that made that sweep lie, both worth knowing before writing any scanner over these files.**
+A quote scanner desyncs on a REGEX LITERAL — `srCsv`'s `/[",\n\r]/` (salesrecon.js) swallowed everything
+up to the next quote and reported the CSV download button as posting invoices to Xero; app.html's
+`/['\\]/g` is the same rock, already recorded against `finance-users-subviews.test.tsx`. And following
+every `name(` in a body walks into HTML STRINGS, so a renderer that writes `onclick="sbiSave()"` hands
+that action to whatever merely OPENED the form. Both are fixed in that file (`tokenEnd`, `stripStrings`)
+and both produced confident, wrong findings first.
+
+### Colour: every tint comes from a token, and a hue has to MEAN something
+
+**A palette that ships as token values changes nothing if the CSS never used tokens.** The 2026-07-30
+redesign set new values for `--coral`, the surfaces and the semantic colours — and the apps went on
+looking like the old design, because ~180 declarations across the two files hardcoded the PRE-redesign
+palette as raw `rgba()` triples. Measured before the fix: `#E85D3C` (the old coral) **120 times**, next
+to the `--coral` `#C4492A` the buttons actually use — a third orange on screen; the old navy surfaces
+`#131C2D`/`#0C1421`/`#0B121E`/`#141E30`/`#162034` ~55 times; plus the old sky, red and green. It was
+visible without a colour picker: the KPI cards were navy-tinted while the canvas behind them was
+neutral grey, because the cards were hardcoded and the canvas was a token.
+
+**`--x-rgb` companions are what make a tint derivable.** `--bg-rgb` / `--surface-rgb` / `--surface2-rgb`
+/ `--text-rgb` / `--coral-rgb` / `--sky-rgb` / `--green-rgb` / `--red-rgb` / `--amber-rgb`, per theme,
+so `rgba(var(--red-rgb),.18)` and `var(--red)` cannot drift apart. 292 legacy triples now resolve
+through them. One deliberate asymmetry: **`--coral-rgb` is the SOFT coral in dark and the solid one in
+light** — a tint has to be visible against its own ground, and `#C4492A` at 5% on `#161A21` is not.
+
+⚠️ **Substituting a colour touches MARKUP, not only CSS** — both apps build inline `style=` strings in
+their renderers, so six goldens moved. That is fine and it is the documented flow (regenerate, then
+read the diff), but check the diff is a pure substitution: 16 lines, each differing only by the rgb
+triple, nothing else. `web/` carries its own copies of the same inline styles and needs the identical
+pass or the parity tests go red — including two test files that legitimately pin the literal.
+
+**Colour marks the exception, not the category.** The KPI figures were coloured by which metric they
+were — Total Cash blue, Total Revenue green, Total Expenses amber — and none of that is information:
+revenue of RM 2.2M is not good news. The cost was paid one row down, where `RM -67,691.90` IS a signal
+(from the renderer's own `net>=0 ? green : red`) and had to compete with four decorative hues. So the
+figure is ink, and the semantic tokens are left to the places that test a VALUE. In `hrDCard`'s options
+the distinction is mechanical and worth copying: a CONSTANT `{color:'var(--sky-soft)'}` is decoration,
+a CONDITIONAL `{color: late_rate>15 ? 'var(--amber)' : 'var(--text)'}` is the signal — and note the
+ternaries already fall back to `var(--text)`, so ink was always the renderer's own idea of "nothing to
+report". 15 constants removed in `hros.html`, 8 conditionals and 8 chart-SERIES colours untouched (a
+legend needs distinct hues; that is what series colour is for).
+
+**Not yet done, and it cannot be swept.** ~216 unconditional `color:var(--green|red|sky|amber…)` remain
+in inline styles against 44 sign-driven ternaries. They are NOT all decoration: an unconditional red on
+a **conditionally rendered** element — `<span class="pill">⚠ 19d overdue</span>` — is a real signal,
+because the pill only exists when the row is overdue. Each site needs the identity-vs-signal judgement
+above; a mechanical pass would delete working signals.
+
+**Contrast is measured against the surfaces a token actually sits on, not assumed.** Three failures were
+live and are fixed: dark `--muted` 3.77 (it is every table sub-label and KPI caption — small text, so
+4.5, not 3.0), light `--sky-soft` 4.11, light `--warn-soft` 3.48. `hros.html` also carried a whole
+duplicate accent family (`--accent` `#E85D3C` dark / `#E04E2B` light, `--accent-soft`, a second
+`--coral-tint`) used twice against `--coral`'s 46 — dead tokens keeping a second orange alive; they now
+point at the coral ramp. The ramp itself was already right and is worth knowing: `--coral` `#C4492A` is
+the FILL (white text 4.85), `--coral-soft` is the accent AS TEXT on dark (6.81) — one value cannot do
+both jobs, which is the trap recorded in the design notes.
+
+**`tests/colour_contrast_test.ts` is the gate**, and it is six checks rather than a script somebody has
+to remember to run: no coloured triple hardcoded three or more times (that is a palette forking, as
+opposed to a one-off shadow tint), every `--x-rgb` equal to the solid token it tints, the deliberate
+`--coral-rgb` exception, AA for every text/surface pairing, white-on-`--coral`, and no `--accent*` token
+declaring an orange of its own. All six were verified by introducing the defect.
 
 ### Money: round where it is STORED, not where it is printed
 

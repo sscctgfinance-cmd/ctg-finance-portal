@@ -27,7 +27,7 @@ export default function HrOnlyGate({ name, onSignOut }: { name?: string; onSignO
     }}>
       <div style={{
         maxWidth: '440px', width: '100%', textAlign: 'center', background: 'var(--card,#1b1817)',
-        border: '1px solid rgba(232,93,60,.28)', borderRadius: '18px', padding: '38px 32px',
+        border: '1px solid rgba(var(--coral-rgb),.28)', borderRadius: '18px', padding: '38px 32px',
         boxShadow: '0 24px 60px rgba(0,0,0,.45)',
       }}>
         <div style={{ fontSize: '44px', lineHeight: 1, marginBottom: '14px' }}>🔒</div>

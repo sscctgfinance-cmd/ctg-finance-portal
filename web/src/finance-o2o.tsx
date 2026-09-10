@@ -480,7 +480,7 @@ function Issued({ o, props }: { o: Extract<O2OOut, { kind: 'issued' }>; props: F
       ) : null}
       {failures && failures.length ? (
         <div id="o2o-dl-panel" style={st('margin:10px 0 14px')}>
-          <div style={st('padding:12px 14px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.06);border-radius:11px')}>
+          <div style={st('padding:12px 14px;border:1px solid rgba(var(--red-rgb),.35);background:rgba(var(--red-rgb),.06);border-radius:11px')}>
             <div style={st('display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px')}>
               <span style={st('color:var(--red-soft);font-weight:600;font-size:13px')}>
                 {'⚠ ' + failures.length + ' PDF' + (failures.length > 1 ? 's' : '') + ' failed' + (o.downloaded ? ' · ' + o.downloaded + ' downloaded' : '')}

@@ -67,11 +67,11 @@ export function DashLoading() {
 export default function HrExpensesDash({ dash: d }: { dash: RcDash }) {
   const cards = hrCardGrid([
     hrDCard('Total Claims', d.total_claims, { icon: '🧾' }),
-    hrDCard('Total Amount', M(d.total_amount), { color: 'var(--sky-soft)', icon: '💰' }),
+    hrDCard('Total Amount', M(d.total_amount), { icon: '💰' }),
     hrDCard('Pending', d.pending, { color: d.pending > 0 ? 'var(--amber)' : 'var(--text)', icon: '⏳' }),
-    hrDCard('Approved', d.approved, { color: 'var(--green-soft)', icon: '✅' }),
+    hrDCard('Approved', d.approved, { icon: '✅' }),
     hrDCard('Rejected', d.rejected, { color: d.rejected > 0 ? 'var(--coral)' : 'var(--text)', icon: '✖' }),
-    hrDCard('Paid', d.paid, { color: 'var(--green-soft)', icon: '💵', sub: M(d.paid_amount) }),
+    hrDCard('Paid', d.paid, { icon: '💵', sub: M(d.paid_amount) }),
   ]);
 
   // `.slice(0,10)` on by_employee is the legacy's own cap — a company with 400 staff would otherwise

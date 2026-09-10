@@ -184,9 +184,9 @@ function Tally({ tally }: { tally: SrTallyRow[] | null }) {
     <>
       <div style={st('font-size:12px;font-weight:600;margin:6px 0')}>SO amount tally — Order Form (Grand Total) vs payments received</div>
       <div style={st('display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px')}>
-        {pill('✓ Tally: ' + ok, 'var(--green-soft)', 'rgba(22,185,122,.14)')}
-        {pill('⚠ Short-paid: ' + sh, 'var(--amber)', 'rgba(245,158,11,.14)')}
-        {pill('⚠ Over-paid: ' + ov, 'var(--coral-soft)', 'rgba(232,93,60,.14)')}
+        {pill('✓ Tally: ' + ok, 'var(--green-soft)', 'rgba(var(--green-rgb),.14)')}
+        {pill('⚠ Short-paid: ' + sh, 'var(--amber)', 'rgba(var(--amber-rgb),.14)')}
+        {pill('⚠ Over-paid: ' + ov, 'var(--coral-soft)', 'rgba(var(--coral-rgb),.14)')}
         {nt ? pill('No order total: ' + nt, 'var(--muted)', 'rgba(255,255,255,.05)') : null}
       </div>
       {!mism.length

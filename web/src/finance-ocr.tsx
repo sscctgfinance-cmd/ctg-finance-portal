@@ -197,8 +197,8 @@ function Extracted({ result, onDiscard, onPostBill }: { result: OcrExtract; onDi
   const confPill = conf === 'high'
     ? <span className="pill pill-green" style={st('font-size:10px')}>high confidence</span>
     : conf === 'low'
-      ? <span className="pill" style={st('background:rgba(239,68,68,.16);color:var(--red-soft);font-size:10px')}>low — please review</span>
-      : <span className="pill" style={st('background:rgba(245,158,11,.16);color:var(--amber);font-size:10px')}>medium</span>;
+      ? <span className="pill" style={st('background:rgba(var(--red-rgb),.16);color:var(--red-soft);font-size:10px')}>low — please review</span>
+      : <span className="pill" style={st('background:rgba(var(--amber-rgb),.16);color:var(--amber);font-size:10px')}>medium</span>;
   return (
     <>
       <div style={st('background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;padding:18px;margin-bottom:14px')}>

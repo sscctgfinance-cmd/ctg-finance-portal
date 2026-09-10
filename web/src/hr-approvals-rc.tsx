@@ -401,11 +401,11 @@ export default function HrApprovalsRc(props: HrApprovalsRcProps) {
         <div className="panel-hd"><h3>Reimbursement approval workflows</h3>
           <button className="btn p sm" onClick={props.onWfNew}>+ New workflow</button></div>
         {warn && warn.kind === 'all-off'
-          ? <div style={st('background:rgba(245,158,11,.14);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)')}>
+          ? <div style={st('background:rgba(var(--amber-rgb),.14);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)')}>
               <b>⚠ No workflow is active.</b> You have {warn.count} workflow(s) configured but all are switched <b>off</b>, so every new claim uses a <b>single-approver fallback</b> — your multi-level chain is not being applied. Switch one on below.
             </div>
           : warn && warn.kind === 'none'
-            ? <div style={st('background:rgba(245,158,11,.10);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)')}>
+            ? <div style={st('background:rgba(var(--amber-rgb),.10);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)')}>
                 <b>⚠ No approval workflow.</b> Claims use a single-approver fallback. Add a workflow to require more than one approver.
               </div>
             : null}

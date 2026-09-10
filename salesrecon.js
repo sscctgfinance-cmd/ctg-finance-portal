@@ -210,11 +210,18 @@ function srYrdzPeriods(lines){ var pers=[]; (lines||[]).forEach(function(l){ if(
 // by the same 'YRDZ_'+per+'_' prefix. An empty/absent base restarts at 0001, which is what the legacy
 // falls back to only after the operator confirms the duplicate risk. Mutates `l.inv`; returns the
 // human-readable "continues from" notes the caller toasts.
+// v231: pad by GROWING, never by truncating. `('000'+n).slice(-4)` is fixed-width, so the 10,000th
+// number in a period came out as `_0000` and the 10,001st as `_0001` — a DUPLICATE invoice number in
+// Xero, which rejects the batch or, worse, half-imports it. Below 10,000 this is byte-identical, so
+// nothing about today's numbering moves. o2o.js's `o2oInvoiceNumbers` already does it this way
+// (`while (s.length < pad) s = '0' + s`) and grows 9999 → 10000 correctly; this is the same idea, and
+// the two files should not disagree about how an invoice number is spelled.
+function srPad4(n){ var s=String(n); while(s.length<4) s='0'+s; return s; }
 function srApplyYrdz(lines, base){
   base = base || {};
   var seq={};
-  (lines||[]).forEach(function(l){ if(!l.matched && l.per!=null){ var pfx='YRDZ_'+l.per+'_'; if(seq[l.per]==null) seq[l.per]=Number(base[pfx])||0; seq[l.per]++; l.inv=pfx+('000'+seq[l.per]).slice(-4); } });
-  return srYrdzPeriods(lines).filter(function(p){return (Number(base['YRDZ_'+p+'_'])||0)>0;}).map(function(p){return p+' continues from '+('000'+(Number(base['YRDZ_'+p+'_'])+1)).slice(-4);});
+  (lines||[]).forEach(function(l){ if(!l.matched && l.per!=null){ var pfx='YRDZ_'+l.per+'_'; if(seq[l.per]==null) seq[l.per]=Number(base[pfx])||0; seq[l.per]++; l.inv=pfx+srPad4(seq[l.per]); } });
+  return srYrdzPeriods(lines).filter(function(p){return (Number(base['YRDZ_'+p+'_'])||0)>0;}).map(function(p){return p+' continues from '+srPad4(Number(base['YRDZ_'+p+'_'])+1);});
 }
 
 // ── PASS 3 ──────────────────────────────────────────────────────────────────────────────────────

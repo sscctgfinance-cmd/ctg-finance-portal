@@ -44,6 +44,10 @@ var GW_REFOPTS={
   hitpay:[['ID','Payment ID (unique per sale)'],['Order ID','Order ID'],['Additional Reference','Additional Reference']],
   nttdata:[['gateway_tx_id','Gateway Txn ID (unique per sale)'],['mah_ref','Merchant Ref (mah_ref)']]
 };
+// v231: the widest a DERIVED HitPay fee rate may be and still be treated as a rate. See the long note
+// in gwConvertHitpay — outside this band the figure is not a discount rate, it is a bad export, and
+// grossing a payout up by it writes an invented fee into a bank-statement import.
+var GW_HP_RATE_MAX = 0.25;
 function gwMoney(n){ n=Number(n)||0; return (n<0?'-':'')+'RM '+Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // isFinite, not !isNaN: `isNaN(Infinity)` is FALSE, so a cell holding 1e400 — which a spreadsheet can
 // carry and Number() turns into Infinity — walked straight through the old guard and into a CSV that
@@ -115,8 +119,29 @@ function gwConvertHitpay(f,A,fmt,refField,wantPayout,wantFee){
     var ref=String(gwPick(r,refField)||gwPick(r,'ID')||gwPick(r,'Order ID')||'').trim();
     rows.push({d:d,date:gwFmtDate(d,fmt),amount:gross,payee:'HitPay',desc:method+(oid?(' '+oid):(id?(' '+id):'')),ref:ref,kind:gross<0?'out':'in'});
   });
-  var feeRate = grossSum>0 ? (feeSum/grossSum) : 0.015;   // effective HitPay rate; fallback 1.5% if no txn file
-  A.hpFeeRate=feeRate;
+  // v231: the derived rate is only usable if it looks like a MERCHANT DISCOUNT RATE. It is the one
+  // figure on this screen that is inferred rather than read, and it multiplies EVERY payout, so a bad
+  // transaction export does not produce a slightly wrong fee — it produces a fee of a different order:
+  //
+  //     payout RM1,000, derived rate 99%  ->  net/(1-0.99)  ->  a fee line of RM 999,000
+  //     payout RM1,000, derived rate -3%  ->  net/(1.03)    ->  a fee line of +RM 29.13, a CREDIT
+  //
+  // and both went into the CSV under the label "HitPay MDR fee", imported into a real Xero ledger, with
+  // the data-check block below reporting ✓. The old guard was `feeRate<1`, which is a divide-by-zero
+  // check, not a plausibility one. Real Malaysian gateway MDR is ~0.5–4%; the band is deliberately far
+  // wider than that, so it rejects nonsense and never argues with a genuine repricing.
+  //
+  // The reachable input is not exotic: `gross` is Amount − Refunded per row, so a large refund landing
+  // in an export window whose original charge sits outside it shrinks grossSum while feeSum stays put.
+  // One such row against a quiet month is all it takes.
+  var derived = grossSum>0 ? (feeSum/grossSum) : null;
+  var usable = derived!==null && isFinite(derived) && derived>=0 && derived<GW_HP_RATE_MAX;
+  var feeRate = usable ? derived : 0.015;   // documented HitPay fallback
+  A.hpFeeRate=feeRate; A.hpFeeDerived=derived;
+  // Two different reasons to be on the fallback, and only one of them is normal. No transaction file is
+  // the documented case gwWarning() already names; a rate that WAS derived and is not a rate is a bad
+  // export, and the operator has to know before importing.
+  A.hpFeeRejected = (derived!==null && !usable);
   // Payout + MDR fee, BOTH consolidated per Payout Date and dated on the settlement date. Payout net
   // comes straight from the settlement report; the fee = grossed-up net − net (what HitPay deducted).
   if(f.payout){
@@ -130,7 +155,9 @@ function gwConvertHitpay(f,A,fmt,refField,wantPayout,wantFee){
     Object.keys(poByDate).forEach(function(k){ var b=poByDate[k], net=Math.round(b.net*100)/100;
       if(wantPayout && net){ A.poConv++; rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-net,payee:'HitPay',desc:'HitPay settlement payout to bank'+(b.n>1?(' ('+b.n+' payouts)'):''),ref:'HITPAY-PAYOUT-'+k,kind:'out'}); }
       if(wantFee){ var gross=(feeRate<1)? net/(1-feeRate) : net; var fee=Math.round((gross-net)*100)/100;
-        if(fee) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay MDR fee ('+(feeRate*100).toFixed(2)+'% of settled gross)',ref:'HITPAY-MDR-'+k,kind:'fee'}); }
+        // `fee>0`, not `fee`: a negative fee is a CREDIT in a bank import. Also drops the fee on a
+        // negative settlement, where there is no MDR to charge.
+        if(fee>0) rows.push({d:b.d,date:gwFmtDate(b.d,fmt),amount:-fee,payee:'HitPay',desc:'HitPay MDR fee ('+(feeRate*100).toFixed(2)+'% of settled gross)',ref:'HITPAY-MDR-'+k,kind:'fee'}); }
     });
   }
   return rows;
@@ -286,8 +313,14 @@ function gwAuditLines(provider,A){
   chk.push('Transactions: read '+(A.txnRead||0)+' → converted '+(A.txnConv||0)+(txnSkip?(' · skipped '+txnSkip+' ('+(A.txnNoDate||0)+' no date, '+(A.txnZero||0)+' zero amount)'):' · none skipped'));
   if(A.poRead) chk.push((provider==='payex'?'Settlement rows':'Payout rows')+': read '+A.poRead+' → '+(A.poConv||0)+' payout line(s)'+(A.poNoDate?(' · '+A.poNoDate+' skipped (no date)'):''));
   if(A.reconTot) chk.push((provider==='nttdata'?'NTT Data row self-check (gross + MDR = net): ':'Atome payout self-check (Total Sales + fees = Payout): ')+(A.reconOk||0)+'/'+A.reconTot+(A.reconOk===A.reconTot?' reconcile ✓':(' — worst gap RM'+(A.reconMax||0).toFixed(2))));
+  // v231: HitPay is the ONLY gateway whose fee is DERIVED, and it was the only one with no self-check
+  // line here — so a rate of -3% or 99% multiplied every payout while this block reported ✓.
+  if(provider==='hitpay') chk.push('HitPay fee rate: '+((A.hpFeeRate||0)*100).toFixed(2)+'% — '+(
+    A.hpFeeRejected ? ('⚠ DERIVED RATE REJECTED ('+((A.hpFeeDerived||0)*100).toFixed(2)+'% is not a discount rate) — using the 1.5% fallback. Check the Transaction file covers the same period as the payouts.')
+    : A.hpFeeDerived===null ? 'the 1.5% fallback (no Transaction file, so no rate could be derived)'
+    : 'derived from the Transaction file'));
   if(provider==='payex' && (A.pxSettled||A.pxUnsettled)) chk.push('Settlement status: '+(A.pxSettled||0)+' settled + '+(A.pxUnsettled||0)+' not yet settled (RM'+(A.pxUnsettledAmt||0).toFixed(2)+' unsettled float — normal for Payex; clears in a later export)');
-  var allOk = txnSkip===0 && !A.poNoDate && (A.reconTot? A.reconOk===A.reconTot : true);
+  var allOk = txnSkip===0 && !A.poNoDate && !A.hpFeeRejected && (A.reconTot? A.reconOk===A.reconTot : true);
   return {lines:chk, allOk:allOk};
 }
 function gwCSV(rows){

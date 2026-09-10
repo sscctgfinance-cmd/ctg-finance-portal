@@ -148,7 +148,16 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     var ms=String(emp.marital_status||'single').toLowerCase();
     var cat2=(ms==='married' && emp.spouse_working===false);   // married, spouse not working -> spouse relief + rebate
     pcbCat=cat2?2:( ms==='married'?3:1 );
-    var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:4000;
+    var rPers=cfg.reliefPersonal!=null?cfg.reliefPersonal:9000, rSp=cfg.reliefSpouse!=null?cfg.reliefSpouse:4000, rCh=cfg.reliefChild!=null?cfg.reliefChild:2000, rEpfMth=cfg.reliefEpfMonthlyMax!=null?cfg.reliefEpfMonthlyMax:333;
+    // v230: the EPF relief in MTD is capped at RM333 A MONTH, not RM4,000 a year. LHDN's MTD
+    // specification states the limit per month; 333 x 12 = 3,996, so a full-year employee gets FOUR
+    // ringgit less relief than the annual figure suggests. On RM15,000/month that is RM1 of annual tax,
+    // which lands as exactly one 5-sen step on the monthly MTD — small, but it is the whole reason
+    // HR OS sat 5 sen under Kakitangan on every clean case measured:
+    //     Loong Ming Haow 15,000 -> 2,179.20 vs 2,179.25   Elaine Lam 13,000 -> 1,679.20 vs 1,679.25
+    // Both reproduce exactly once the cap is 333 x N. `reliefEpfMax` is still honoured when a config
+    // sets it explicitly, so an operator who has pinned an annual figure keeps it.
+    var rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:rEpfMth*N;
     var kids=Number(emp.num_children||0);
     var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
     // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year.

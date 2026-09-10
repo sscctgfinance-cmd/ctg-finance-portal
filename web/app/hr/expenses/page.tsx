@@ -238,6 +238,8 @@ export default function HrExpensesPage() {
   const onExportBank = useCallback(() => {
     const f = bankFile(claims || [], selectedIds(sel), today());
     if (!f) return setErr('Select Approved claims first');
+    // v231: a batch carrying a non-positive amount is refused, not silently trimmed — see bankFile().
+    if (f.blocked) return setErr('Bank file blocked — ' + f.blocked);
     download(f.name, f.text);
     setNote(`Bank file: ${f.count} claim(s) · RM${f.total.toFixed(2)}`);
   }, [claims, sel]);

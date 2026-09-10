@@ -18,6 +18,21 @@
    Palette matched to CTG Finance Hub (coral/sky)
    ════════════════════════════════════════════ */
 :root{
+  /* v233 — rgb companions. A tint has to come from the same value as the solid colour or the
+     palette forks, which is exactly what had happened: 120 hardcoded rgba(var(--coral-rgb),…) kept the
+     PRE-redesign coral on screen next to the --coral (#C4492A) the buttons use. Every translucent
+     colour below is now derived from a token, so the palette has one source again.
+     --coral-rgb is the SOFT coral in dark and the solid one in light: a tint has to be visible
+     against the ground it sits on, and #C4492A at .05 on #161A21 is not. */
+  --bg-rgb:14,17,22;
+  --surface-rgb:22,26,33;
+  --surface2-rgb:28,33,42;
+  --text-rgb:232,234,237;
+  --coral-rgb:245,140,109;
+  --sky-rgb:127,170,240;
+  --green-rgb:78,205,160;
+  --red-rgb:240,119,107;
+  --amber-rgb:224,164,74;
   color-scheme:dark;
   --bg-deep:#090C11;
   --bg:#0E1116;
@@ -31,12 +46,12 @@
   --panel-2:#0E1826;
   --text:#E8EAED;
   --text-soft:#A0A8B4;
-  --muted:#727B88;
+  --muted:#808894;
   --coral:#C4492A;
   --coral-deep:#A93C22;
   --coral-soft:#F58C6D;
-  --coral-tint:rgba(232,93,60,.14);
-  --accent:#E85D3C; --accent-soft:#F08570;
+  --coral-tint:rgba(var(--coral-rgb),.14);
+  --accent:var(--coral); --accent-soft:var(--coral-soft);
   --sky:#7FAAF0;
   --sky-soft:#A8C4F5;
   --green:#4ECDA0;
@@ -45,10 +60,10 @@
   --red-soft:#F5A29A;
   --amber:#E0A44A;
   /* semantic status — alias to the theme colors (auto-follow light/dark) + paired translucent bg */
-  --ok:var(--green); --ok-soft:var(--green-soft); --ok-bg:rgba(22,185,122,.16);
-  --warn:var(--amber); --warn-soft:#fbbf24; --warn-bg:rgba(245,158,11,.16);
-  --err:var(--red); --err-soft:var(--red-soft); --err-bg:rgba(239,68,68,.15);
-  --info:var(--sky); --info-soft:var(--sky-soft); --info-bg:rgba(91,155,213,.16);
+  --ok:var(--green); --ok-soft:var(--green-soft); --ok-bg:rgba(var(--green-rgb),.16);
+  --warn:var(--amber); --warn-soft:var(--amber); --warn-bg:rgba(var(--amber-rgb),.16);
+  --err:var(--red); --err-soft:var(--red-soft); --err-bg:rgba(var(--red-rgb),.15);
+  --info:var(--sky); --info-soft:var(--sky-soft); --info-bg:rgba(var(--sky-rgb),.16);
   --neu:var(--muted); --neu-bg:rgba(132,148,174,.16);
   --shadow:0 6px 20px rgba(0,0,0,.45);
   --elev-1:0 1px 0 rgba(255,255,255,.04) inset,0 8px 24px -16px rgba(0,0,0,.5);
@@ -59,7 +74,7 @@
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
   --r-sm:8px; --r-md:12px; --r-lg:16px; --r-pill:999px;
   --dur-fast:120ms; --dur:160ms; --dur-slow:240ms; --ease:cubic-bezier(.2,.7,.2,1);
-  --focus:0 0 0 2px var(--bg),0 0 0 4px rgba(232,93,60,.55);
+  --focus:0 0 0 2px var(--bg),0 0 0 4px rgba(var(--coral-rgb),.55);
   --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
 }
 *{box-sizing:border-box}
@@ -68,8 +83,8 @@ body{
   font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   background:
     radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(31,58,95,.45), transparent 55%),
-    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(232,93,60,.22), transparent 60%),
-    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(91,155,213,.14), transparent 60%),
+    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(var(--coral-rgb),.22), transparent 60%),
+    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(var(--sky-rgb),.14), transparent 60%),
     linear-gradient(180deg,#070D17 0%,#0C1421 100%);
   background-attachment:fixed;min-height:100vh;
 }
@@ -86,30 +101,30 @@ body::before{
 /* ── Header ── */
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px}
 .brand{display:flex;align-items:center;gap:13px}
-.brand-logo{width:42px;height:42px;flex-shrink:0;filter:drop-shadow(0 4px 12px rgba(232,93,60,.5)) drop-shadow(0 0 20px rgba(91,155,213,.3))}
+.brand-logo{width:42px;height:42px;flex-shrink:0;filter:drop-shadow(0 4px 12px rgba(var(--coral-rgb),.5)) drop-shadow(0 0 20px rgba(var(--sky-rgb),.3))}
 h1{font-size:18px;margin:0;font-weight:700;letter-spacing:-.3px;color:#fff}
 .sub{color:var(--muted);font-size:11px;margin-top:2px;letter-spacing:.3px}
 .who{font-size:12.5px;color:var(--text-soft)}
 .who b{color:#fff}
-.role-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.4px;background:rgba(232,93,60,.14);color:var(--coral-soft);border:1px solid rgba(232,93,60,.28);margin-left:6px}
+.role-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.4px;background:rgba(var(--coral-rgb),.14);color:var(--coral-soft);border:1px solid rgba(var(--coral-rgb),.28);margin-left:6px}
 
 /* ── Buttons ── */
 .btn{padding:8px 15px;border:1px solid var(--border-strong);background:rgba(255,255,255,.03);border-radius:9px;font-size:12.5px;cursor:pointer;color:var(--text-soft);transition:.16s;font-weight:600;font-family:inherit}
 .btn:hover{background:rgba(255,255,255,.07);color:#fff;border-color:rgba(255,255,255,.18)}
-.btn.p{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;box-shadow:0 4px 14px rgba(232,93,60,.32)}
-.btn.p:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 18px rgba(232,93,60,.42)}
-.btn.d{color:var(--red-soft);border-color:rgba(239,68,68,.3)}
-.btn.d:hover{background:rgba(239,68,68,.12);color:#fff;border-color:rgba(239,68,68,.5)}
+.btn.p{background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;box-shadow:0 4px 14px rgba(var(--coral-rgb),.32)}
+.btn.p:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 18px rgba(var(--coral-rgb),.42)}
+.btn.d{color:var(--red-soft);border-color:rgba(var(--red-rgb),.3)}
+.btn.d:hover{background:rgba(var(--red-rgb),.12);color:#fff;border-color:rgba(var(--red-rgb),.5)}
 .btn:disabled{opacity:.5;cursor:default;transform:none}
 .btn.sm{padding:6px 12px;font-size:12px}
 .btn.xs{padding:5px 11px;font-size:11.5px;border-radius:8px}
 
 /* ── Toolbar ── */
-.bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:16px 0;padding:12px 16px;background:linear-gradient(180deg,rgba(19,28,45,.7),rgba(12,20,33,.6));border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(10px)}
+.bar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:16px 0;padding:12px 16px;background:linear-gradient(180deg,rgba(var(--surface-rgb),.7),rgba(var(--bg-rgb),.6));border:1px solid var(--border-strong);border-radius:12px;backdrop-filter:blur(10px)}
 
 /* ── Inputs ── */
 select,input:not([type=file]){padding:9px 12px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;background:rgba(7,13,23,.7);color:var(--text);transition:.16s;font-family:inherit}
-select:focus,input:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
+select:focus,input:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(var(--coral-rgb),.18)}
 /* Dropdown options — native popup needs an explicit solid background per theme, else text is invisible. */
 select option, optgroup{ background:#0e1621; color:#E8EEF7; }
 select option:checked, select option:hover{ background:#1b2942; }
@@ -117,37 +132,80 @@ select option:checked, select option:hover{ background:#1b2942; }
 :root[data-theme="light"] select option:checked, :root[data-theme="light"] select option:hover{ background:#E6EEF8; }
 input::placeholder, textarea::placeholder{ color:var(--muted); opacity:.8; }
 textarea{padding:10px 13px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;font-family:inherit;min-height:74px;background:rgba(7,13,23,.7);color:var(--text);resize:vertical;width:100%;transition:.16s}
-textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(232,93,60,.18)}
+textarea:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(var(--coral-rgb),.18)}
 
 /* ── Tabs ── */
 .tabs{display:flex;gap:3px;margin:4px 0 22px;border-bottom:1px solid var(--border-strong);flex-wrap:wrap}
 .tab{padding:11px 17px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:7px 7px 0 0;transition:.16s;font-weight:600}
 .tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
-.tab.active{color:var(--coral-soft);border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(232,93,60,.08),transparent)}
+.tab.active{color:var(--coral-soft);border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(var(--coral-rgb),.08),transparent)}
 .tab.hide{display:none}
 
 /* ── Cards ── */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:20px}
-.card{background:linear-gradient(180deg,rgba(19,28,45,.85),rgba(12,20,33,.75));border:1px solid var(--border-strong);border-radius:14px;padding:17px;position:relative;overflow:hidden;transition:.18s}
-.card::after{content:'';position:absolute;inset:0;border-radius:14px;background:radial-gradient(120% 90% at 0% 0%,rgba(232,93,60,.05),transparent 55%);pointer-events:none}
+.card{background:linear-gradient(180deg,rgba(var(--surface-rgb),.85),rgba(var(--bg-rgb),.75));border:1px solid var(--border-strong);border-radius:14px;padding:17px;position:relative;overflow:hidden;transition:.18s}
+.card::after{content:'';position:absolute;inset:0;border-radius:14px;background:radial-gradient(120% 90% at 0% 0%,rgba(var(--coral-rgb),.05),transparent 55%);pointer-events:none}
 .card:hover{border-color:rgba(255,255,255,.14);transform:translateY(-2px)}
 .card .c-ico{font-size:22px;margin-bottom:9px;opacity:.95}
 .card .n{font-size:23px;font-weight:750;letter-spacing:-.5px}
 .card .l{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.2px}
-.card.green .n{color:var(--green-soft)}.card.red .n{color:var(--red-soft)}.card.blue .n{color:var(--sky-soft)}.card.amber .n{color:var(--amber)}
+/* v233 — the KPI number is INK. The colour classes still mark the CARD (icon tint, and
+   whatever a future card wants), but the figure itself no longer takes a hue from its
+   category: 'Total Revenue' is not good news and 'Total Expenses' is not bad news, so a
+   green and an amber there only make the one number that IS a signal — a negative net,
+   coloured from the renderer's own `net>=0` test — compete with decoration. */
+.card.green .n,.card.red .n,.card.blue .n,.card.amber .n{color:var(--text)}
 
 /* ── Tables ── */
 .tbl-wrap{overflow-x:auto;border-radius:13px;border:1px solid var(--border-strong)}
-.bigtable{width:100%;border-collapse:collapse;background:linear-gradient(180deg,rgba(19,28,45,.6),rgba(12,20,33,.5));overflow:hidden}
+:root{--sticky-bg:#0F1826;--sticky-bg-hover:#16202f}
+.bigtable{width:100%;border-collapse:collapse;background:linear-gradient(180deg,rgba(var(--surface-rgb),.6),rgba(var(--bg-rgb),.5));overflow:hidden}
 .bigtable th,.bigtable td{padding:12px 15px;border-bottom:1px solid var(--border);font-size:13px;text-align:left}
 .bigtable th{color:var(--muted);font-size:10.5px;text-transform:uppercase;font-weight:700;letter-spacing:.6px;background:rgba(7,13,23,.5)}
 .bigtable tr:last-child td{border-bottom:none}
 .bigtable tbody tr{transition:background .14s}
-.bigtable tbody tr:hover td{background:rgba(232,93,60,.04)}
+.bigtable tbody tr:hover td{background:rgba(var(--coral-rgb),.04)}
+/* v231: the Payroll grid is 16 columns wide and the two an operator actually checks — PCB and Net —
+   are the last two, so reading them means scrolling right, which scrolls the NAME off the screen. The
+   employee column is frozen instead. Scoped to .pay-grid, not .bigtable, because every other table in
+   the app fits and a frozen column on a 4-column table is only a seam. The cell needs an OPAQUE
+   background of its own: .bigtable paints a gradient on the TABLE and leaves cells transparent, so a
+   sticky cell without one has the scrolling figures sliding visibly underneath it. */
+/* .bigtable sets overflow:hidden to clip its own rounded corners. An ancestor with overflow:hidden
+   BETWEEN a sticky element and its scroll container makes the table the containing block, so `left:0`
+   resolves against the table's own box and the column does not stick at all — measured: left:-657px,
+   position:sticky, and no visible effect. .tbl-wrap already carries the radius and the border, so
+   letting this one table overflow costs nothing. Found in the browser; computed style alone said
+   "sticky" and looked correct. */
+/* v231 — TARGET SIZE. Measured across all ten HR screens at 375px: four controls sit below WCAG
+   2.5.8's 24x24 CSS-px minimum, and the two smallest are DESTRUCTIVE:
+       <a>del</a>      16x14  Attendance  — deletes a punch, i.e. somebody's paid hours
+       <a>remove</a>   40x17  Leave / Approvals — removes an approval level
+       <a>edit</a>     20x14  Attendance
+       <button>...</button>  16x14  Payroll row menu (skip / resign / delete)
+   They are inline text links with no class, so the hit area is grown with a pseudo-element instead:
+   the box the finger lands on becomes 24x24 while the TEXT stays exactly where and what it was. No
+   layout moves, no markup changes, so no golden moves either. Controls already 24px or larger get a
+   100%-sized overlay, which is a no-op. */
+#hr a[onclick],#hr button[onclick]{position:relative}
+#hr a[onclick]::after,#hr button[onclick]::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:100%;height:100%;min-width:24px;min-height:24px}
+.pay-grid{overflow:visible}
+/* The class is REPEATED (.pay-grid.pay-grid) purely to raise specificity to (0,3,3). Two later
+   .bigtable rules — the zebra stripe at :nth-child(even) and the hover tint — are (0,2,3) and win a
+   plain selector on source order, and both set `background`, so the frozen cell inherited a 1.2%-white
+   fill and the scrolling figures showed straight through it. Measured, not guessed: the even rows read
+   back rgba(255,255,255,0.01). Doubling the class is order-independent, so a THIRD .bigtable rule added
+   later cannot reopen this. The two tints are re-applied below as an IMAGE over the opaque colour,
+   which keeps the stripe and the hover exactly as they look on every other table. */
+.pay-grid.pay-grid thead th:first-child,.pay-grid.pay-grid tbody tr td:first-child{position:sticky;left:0;background:var(--sticky-bg);box-shadow:1px 0 0 var(--border)}
+.pay-grid.pay-grid tbody tr td:first-child{z-index:2}
+.pay-grid.pay-grid thead th:first-child{z-index:3}
+.pay-grid.pay-grid tbody tr:nth-child(even) td:first-child{background:linear-gradient(rgba(255,255,255,.012),rgba(255,255,255,.012)),var(--sticky-bg)}
+.pay-grid.pay-grid tbody tr:hover td:first-child{background:linear-gradient(rgba(var(--coral-rgb),.05),rgba(var(--coral-rgb),.05)),var(--sticky-bg)}
 td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600}
 
 /* ── Panel ── */
-.panel{background:linear-gradient(180deg,rgba(19,28,45,.78),rgba(12,20,33,.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
+.panel{background:linear-gradient(180deg,rgba(var(--surface-rgb),.78),rgba(var(--bg-rgb),.68));border:1px solid var(--border-strong);border-radius:14px;padding:20px;margin-bottom:16px;backdrop-filter:blur(10px)}
 .panel-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
 .panel h3{font-size:14.5px;margin:0;font-weight:700;color:#fff}
 .muted{color:var(--muted)}
@@ -155,10 +213,10 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 /* ── Pills ── */
 .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
 .pill-draft{background:rgba(107,122,147,.18);color:var(--text-soft)}
-.pill-submit{background:rgba(245,158,11,.16);color:var(--amber)}
-.pill-blue{background:rgba(91,155,213,.16);color:var(--sky-soft)}
-.pill-green{background:rgba(22,185,122,.16);color:var(--green-soft)}
-.pill-coral{background:rgba(232,93,60,.16);color:var(--coral-soft)}
+.pill-submit{background:rgba(var(--amber-rgb),.16);color:var(--amber)}
+.pill-blue{background:rgba(var(--sky-rgb),.16);color:var(--sky-soft)}
+.pill-green{background:rgba(var(--green-rgb),.16);color:var(--green-soft)}
+.pill-coral{background:rgba(var(--coral-rgb),.16);color:var(--coral-soft)}
 
 /* ── Empty / Loading ── */
 .empty{text-align:center;color:var(--muted);padding:48px 20px}
@@ -170,38 +228,38 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 /* ── Row actions / status ── */
 .row-act{display:flex;gap:6px}
 .status-bar{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);margin-top:12px;letter-spacing:.2px}
-.dot-green{width:6px;height:6px;border-radius:50%;background:var(--green-soft);flex-shrink:0;box-shadow:0 0 8px rgba(61,220,151,.7)}
+.dot-green{width:6px;height:6px;border-radius:50%;background:var(--green-soft);flex-shrink:0;box-shadow:0 0 8px rgba(var(--green-rgb),.7)}
 
 /* ════ LOGIN GATE ════ */
 #login{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;position:relative;z-index:1}
 .lbox{
   width:100%;max-width:420px;text-align:center;
-  background:linear-gradient(180deg,rgba(19,28,45,.92),rgba(12,20,33,.88));
+  background:linear-gradient(180deg,rgba(var(--surface-rgb),.92),rgba(var(--bg-rgb),.88));
   border:1px solid var(--border-strong);border-radius:20px;padding:42px 38px;
   box-shadow:var(--shadow),0 0 0 1px rgba(255,255,255,.02);backdrop-filter:blur(20px);
 }
-.lbox-logo{width:84px;height:84px;margin:0 auto 18px;display:block;filter:drop-shadow(0 6px 18px rgba(232,93,60,.5)) drop-shadow(0 0 30px rgba(91,155,213,.35))}
+.lbox-logo{width:84px;height:84px;margin:0 auto 18px;display:block;filter:drop-shadow(0 6px 18px rgba(var(--coral-rgb),.5)) drop-shadow(0 0 30px rgba(var(--sky-rgb),.35))}
 .lbox-mark{font-size:11px;font-weight:800;letter-spacing:5px;color:var(--coral-soft);text-transform:uppercase;margin-bottom:14px}
 .lbox h1{margin:0 0 7px;font-size:22px;font-weight:700;color:#fff;letter-spacing:-.2px}
 .lbox-sub{margin:0 0 30px;font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:2px;line-height:1.7}
 .lfield{text-align:left;margin-bottom:15px}
 .lfield label{display:block;font-size:10.5px;font-weight:700;color:var(--sky-soft);margin-bottom:7px;text-transform:uppercase;letter-spacing:.7px}
 .lfield input{width:100%;padding:13px 16px;font-size:14px}
-.lbtn{width:100%;background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;padding:14px;border-radius:11px;cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.3px;box-shadow:0 4px 14px rgba(232,93,60,.35);margin-top:12px;transition:.18s;font-family:inherit}
-.lbtn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 20px rgba(232,93,60,.48)}
+.lbtn{width:100%;background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;border:none;padding:14px;border-radius:11px;cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.3px;box-shadow:0 4px 14px rgba(var(--coral-rgb),.35);margin-top:12px;transition:.18s;font-family:inherit}
+.lbtn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 20px rgba(var(--coral-rgb),.48)}
 .lbtn:disabled{opacity:.6;cursor:wait;transform:none}
-.lerr{font-size:12.5px;color:var(--red-soft);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);padding:11px 14px;border-radius:9px;margin:6px 0 14px;text-align:left}
-.pw-forced-note{font-size:12.5px;color:var(--coral-soft);background:rgba(232,93,60,.1);border:1px solid rgba(232,93,60,.28);padding:10px 13px;border-radius:9px;margin-bottom:14px;line-height:1.5}
+.lerr{font-size:12.5px;color:var(--red-soft);background:rgba(var(--red-rgb),.1);border:1px solid rgba(var(--red-rgb),.25);padding:11px 14px;border-radius:9px;margin:6px 0 14px;text-align:left}
+.pw-forced-note{font-size:12.5px;color:var(--coral-soft);background:rgba(var(--coral-rgb),.1);border:1px solid rgba(var(--coral-rgb),.28);padding:10px 13px;border-radius:9px;margin-bottom:14px;line-height:1.5}
 .pw-meter{height:5px;border-radius:4px;background:rgba(7,13,23,.6);overflow:hidden;margin:7px 0 3px}
 .pw-meter>span{display:block;height:100%;width:0;border-radius:4px;transition:width .25s,background .25s}
 .pw-hint{font-size:11px;color:var(--muted);min-height:14px}
 .bell{position:relative}
-.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--coral);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:17px;text-align:center;box-shadow:0 2px 8px rgba(232,93,60,.5)}
-.notif-panel{position:fixed;top:62px;right:20px;width:344px;max-width:92vw;max-height:72vh;overflow:auto;background:linear-gradient(180deg,rgba(19,28,45,.98),rgba(12,20,33,.97));border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow);z-index:90;padding:14px}
+.bell-badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--coral);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:17px;text-align:center;box-shadow:0 2px 8px rgba(var(--coral-rgb),.5)}
+.notif-panel{position:fixed;top:62px;right:20px;width:344px;max-width:92vw;max-height:72vh;overflow:auto;background:linear-gradient(180deg,rgba(var(--surface-rgb),.98),rgba(var(--bg-rgb),.97));border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow);z-index:90;padding:14px}
 .notif-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .notif-hd h4{font-size:13px;color:#fff;margin:0}
 .notif-item{padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--coral);border-radius:9px;margin-bottom:8px;cursor:pointer;background:rgba(7,13,23,.4);transition:background .14s}
-.notif-item:hover{background:rgba(232,93,60,.09)}
+.notif-item:hover{background:rgba(var(--coral-rgb),.09)}
 .notif-item .nt{font-weight:700;font-size:12.5px;color:#fff}
 .notif-item .nd{font-size:11.5px;color:var(--muted);margin-top:2px}
 @media(max-width:560px){.notif-panel{top:56px;right:8px;left:8px;width:auto}}
@@ -212,12 +270,12 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .hide{display:none!important}
 
 /* ── Toast ── */
-.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:linear-gradient(180deg,rgba(19,28,45,.97),rgba(12,20,33,.97));color:var(--text);border:1px solid var(--border-strong);padding:11px 20px;border-radius:11px;font-size:13px;font-weight:500;opacity:0;transition:opacity .22s,transform .22s;z-index:200;box-shadow:var(--shadow);white-space:nowrap;backdrop-filter:blur(10px)}
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:linear-gradient(180deg,rgba(var(--surface-rgb),.97),rgba(var(--bg-rgb),.97));color:var(--text);border:1px solid var(--border-strong);padding:11px 20px;border-radius:11px;font-size:13px;font-weight:500;opacity:0;transition:opacity .22s,transform .22s;z-index:200;box-shadow:var(--shadow);white-space:nowrap;backdrop-filter:blur(10px)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ── Modal ── */
 .overlay{position:fixed;inset:0;background:rgba(3,7,14,.72);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);padding:20px}
-.modal{background:linear-gradient(180deg,rgba(19,28,45,.97),rgba(12,20,33,.95));border:1px solid var(--border-strong);border-radius:16px;padding:26px;width:400px;box-shadow:var(--shadow);max-width:100%}
+.modal{background:linear-gradient(180deg,rgba(var(--surface-rgb),.97),rgba(var(--bg-rgb),.95));border:1px solid var(--border-strong);border-radius:16px;padding:26px;width:400px;box-shadow:var(--shadow);max-width:100%}
 .modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
 .modal h3{margin:0;font-size:16px;font-weight:700;color:#fff}
 .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;padding:0;line-height:1;transition:color .15s}
@@ -230,14 +288,14 @@ td.amt{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;fon
 .fld select,.fld input:not([type=file]),.fld textarea{width:100%}
 input[type=file]{color:var(--text-soft);font-size:12.5px;padding:8px 0}
 input[type=file]::file-selector-button{background:rgba(255,255,255,.05);color:var(--text-soft);border:1px solid var(--border-strong);border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;margin-right:11px;font-family:inherit;transition:.15s}
-input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);color:#fff;border-color:rgba(232,93,60,.4)}
+input[type=file]::file-selector-button:hover{background:rgba(var(--coral-rgb),.12);color:#fff;border-color:rgba(var(--coral-rgb),.4)}
 
 /* ══ Sidebar (professional) ══ */
 .side{width:248px;flex-shrink:0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
   background:linear-gradient(180deg,var(--surface),var(--surface2));border-right:1px solid var(--border)}
 .side-brand{display:flex;align-items:center;gap:11px;padding:19px 18px 15px;border-bottom:1px solid var(--border)}
 .side-brand-mark{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:19px;
-  background:linear-gradient(135deg,var(--coral),var(--coral-deep));box-shadow:0 5px 15px rgba(232,93,60,.34),inset 0 1px 0 rgba(255,255,255,.18)}
+  background:linear-gradient(135deg,var(--coral),var(--coral-deep));box-shadow:0 5px 15px rgba(var(--coral-rgb),.34),inset 0 1px 0 rgba(255,255,255,.18)}
 .side-brand-name{font-weight:800;font-size:15.5px;letter-spacing:-.01em;color:#fff;line-height:1.1}
 .side-brand-sub{color:var(--muted);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;margin-top:3px;font-weight:600}
 .side-company{padding:14px 15px 10px}
@@ -249,15 +307,15 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
   font:600 13px Inter,-apple-system,sans-serif;color:var(--text-soft);background:transparent;transition:background .14s,color .14s;position:relative}
 .side-link:hover{background:rgba(255,255,255,.045);color:var(--text)}
 .side-link .ic{width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:15px;opacity:.85;transition:opacity .14s}
-.side-link.on{background:linear-gradient(90deg,rgba(232,93,60,.17),rgba(232,93,60,.045));color:#fff}
+.side-link.on{background:linear-gradient(90deg,rgba(var(--coral-rgb),.17),rgba(var(--coral-rgb),.045));color:#fff}
 .side-link.on .ic{opacity:1}
-.side-link.on::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:19px;border-radius:0 3px 3px 0;background:var(--coral);box-shadow:0 0 10px rgba(232,93,60,.6)}
+.side-link.on::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:19px;border-radius:0 3px 3px 0;background:var(--coral);box-shadow:0 0 10px rgba(var(--coral-rgb),.6)}
 .side-foot{padding:11px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
 .side-foot-btn{text-align:left;padding:9px 12px;font:600 12.5px Inter,sans-serif;border-radius:9px;border:1px solid var(--border-strong);
   background:rgba(255,255,255,.02);color:var(--text-soft);cursor:pointer;transition:.14s}
 .side-foot-btn:hover{background:rgba(255,255,255,.06);color:#fff}
-.side-foot-btn.accent{color:var(--coral-soft);border-color:rgba(232,93,60,.3)}
-.side-foot-btn.accent:hover{background:rgba(232,93,60,.12);color:#fff;border-color:rgba(232,93,60,.5)}
+.side-foot-btn.accent{color:var(--coral-soft);border-color:rgba(var(--coral-rgb),.3)}
+.side-foot-btn.accent:hover{background:rgba(var(--coral-rgb),.12);color:#fff;border-color:rgba(var(--coral-rgb),.5)}
 
 /* ══ Page header (professional) ══ */
 .page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:22px;padding-bottom:17px;border-bottom:1px solid var(--border)}
@@ -266,12 +324,12 @@ input[type=file]::file-selector-button:hover{background:rgba(232,93,60,.12);colo
 .page-sub{color:var(--text-soft);font-size:12.5px;margin-top:6px;max-width:600px;line-height:1.5}
 .page-meta{display:flex;align-items:center;gap:9px;flex-shrink:0}
 .page-chip{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:var(--text-soft);background:rgba(255,255,255,.03);border:1px solid var(--border-strong);border-radius:999px;padding:7px 13px;white-space:nowrap}
-.page-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);box-shadow:0 0 8px rgba(61,220,151,.7)}
+.page-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);box-shadow:0 0 8px rgba(var(--green-rgb),.7)}
 
 /* ══ Employee card list ══ */
 .emp-list{display:flex;flex-direction:column;gap:9px}
-.emp-card{display:flex;align-items:center;gap:14px;padding:13px 16px;background:linear-gradient(180deg,rgba(19,28,45,.7),rgba(12,20,33,.6));border:1px solid var(--border-strong);border-radius:13px;transition:transform .15s,border-color .15s}
-.emp-card:hover{border-color:rgba(232,93,60,.32);transform:translateY(-1px)}
+.emp-card{display:flex;align-items:center;gap:14px;padding:13px 16px;background:linear-gradient(180deg,rgba(var(--surface-rgb),.7),rgba(var(--bg-rgb),.6));border:1px solid var(--border-strong);border-radius:13px;transition:transform .15s,border-color .15s}
+.emp-card:hover{border-color:rgba(var(--coral-rgb),.32);transform:translateY(-1px)}
 .emp-av{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;letter-spacing:.02em;text-transform:uppercase}
 .emp-main{flex:1;min-width:0}
 .emp-name{font-weight:700;font-size:14px;color:#fff;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -350,18 +408,18 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .tabs::-webkit-scrollbar{display:none}
 .tab{white-space:nowrap;padding:11px 16px;font-weight:600;letter-spacing:.1px}
 .tab:hover{color:var(--text);background:rgba(255,255,255,.035)}
-.tab.active{color:#fff;border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(232,93,60,.12),transparent)}
+.tab.active{color:#fff;border-bottom-color:var(--coral);background:linear-gradient(180deg,rgba(var(--coral-rgb),.12),transparent)}
 .card{transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
-.card:hover{transform:translateY(-2px);border-color:rgba(232,93,60,.28);box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.card:hover{transform:translateY(-2px);border-color:rgba(var(--coral-rgb),.28);box-shadow:0 10px 30px rgba(0,0,0,.22)}
 .btn{transition:transform .12s ease,filter .12s ease,background .14s ease}
 .btn:active{transform:scale(.97)}
-.btn.p{box-shadow:0 4px 16px rgba(232,93,60,.32)}
-.btn.p:hover{box-shadow:0 7px 22px rgba(232,93,60,.45)}
+.btn.p{box-shadow:0 4px 16px rgba(var(--coral-rgb),.32)}
+.btn.p:hover{box-shadow:0 7px 22px rgba(var(--coral-rgb),.45)}
 .panel{box-shadow:0 6px 24px rgba(0,0,0,.16)}
 .bigtable tbody tr{transition:background .12s}
-.bigtable tbody tr:hover td{background:rgba(232,93,60,.05)}
-input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(232,93,60,.16)}
-::selection{background:rgba(232,93,60,.35)}
+.bigtable tbody tr:hover td{background:rgba(var(--coral-rgb),.05)}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px rgba(var(--coral-rgb),.16)}
+::selection{background:rgba(var(--coral-rgb),.35)}
 
 /* skeleton loading */
 .sk-card{height:88px;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:shimmer 1.3s infinite}
@@ -390,8 +448,8 @@ input[type="number"], input[type="date"], input[type="month"],
 .panel{
   border-color: rgba(255,255,255,.06);
   background:
-    linear-gradient(180deg, rgba(20,30,48,.85), rgba(11,18,30,.78)),
-    radial-gradient(120% 60% at 50% 0%, rgba(91,155,213,.04), transparent 70%);
+    linear-gradient(180deg, rgba(var(--surface-rgb),.85), rgba(var(--bg-rgb),.78)),
+    radial-gradient(120% 60% at 50% 0%, rgba(var(--sky-rgb),.04), transparent 70%);
   box-shadow:
     0 1px 0 rgba(255,255,255,.04) inset,
     0 24px 60px -28px rgba(0,0,0,.55);
@@ -401,7 +459,7 @@ input[type="number"], input[type="date"], input[type="month"],
 /* Premium KPI cards: discreet inner highlight + soft outer glow on hover. */
 .card{
   background:
-    linear-gradient(180deg, rgba(22,32,52,.92), rgba(12,20,33,.82));
+    linear-gradient(180deg, rgba(var(--surface2-rgb),.92), rgba(var(--bg-rgb),.82));
   border: 1px solid rgba(255,255,255,.05);
   box-shadow:
     0 1px 0 rgba(255,255,255,.05) inset,
@@ -419,7 +477,7 @@ input[type="number"], input[type="date"], input[type="month"],
   box-shadow:
     0 1px 0 rgba(255,255,255,.06) inset,
     0 28px 60px -30px rgba(0,0,0,.7),
-    0 0 0 1px rgba(232,93,60,.10);
+    0 0 0 1px rgba(var(--coral-rgb),.10);
 }
 .card .n{
   font-size: 26px;
@@ -458,7 +516,7 @@ input[type="number"], input[type="date"], input[type="month"],
   padding: 12px 15px;
 }
 .bigtable tbody tr:nth-child(even) td{ background: rgba(255,255,255,.012); }
-.bigtable tbody tr:hover td{ background: rgba(232,93,60,.05); }
+.bigtable tbody tr:hover td{ background: rgba(var(--coral-rgb),.05); }
 .bigtable td.amt{
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -488,13 +546,13 @@ input[type="number"], input[type="date"], input[type="month"],
   border: 1px solid rgba(255,255,255,.12);
   box-shadow:
     0 1px 0 rgba(255,255,255,.18) inset,
-    0 8px 24px -8px rgba(232,93,60,.5);
+    0 8px 24px -8px rgba(var(--coral-rgb),.5);
 }
 .btn.p:hover{
   filter: brightness(1.05);
   box-shadow:
     0 1px 0 rgba(255,255,255,.22) inset,
-    0 12px 28px -8px rgba(232,93,60,.6);
+    0 12px 28px -8px rgba(var(--coral-rgb),.6);
 }
 
 /* Brand title: tighter, more confident. */
@@ -517,7 +575,7 @@ input[type="number"], input[type="date"], input[type="month"],
 .tab:hover{ color: #cdd6e4; background: rgba(255,255,255,.022); }
 .tab.active{
   color: #ffffff;
-  background: linear-gradient(180deg, rgba(232,93,60,.10), transparent 80%);
+  background: linear-gradient(180deg, rgba(var(--coral-rgb),.10), transparent 80%);
   border-bottom: 2px solid var(--coral);
 }
 
@@ -530,14 +588,14 @@ input:not([type=file]), select, textarea{
   transition: border-color .15s, box-shadow .15s, background .15s;
 }
 input:focus, select:focus, textarea:focus{
-  border-color: rgba(232,93,60,.55);
+  border-color: rgba(var(--coral-rgb),.55);
   background: rgba(7,13,23,.75);
-  box-shadow: 0 0 0 3px rgba(232,93,60,.14);
+  box-shadow: 0 0 0 3px rgba(var(--coral-rgb),.14);
 }
 
 /* Top bar: refined company/refresh control. */
 .bar{
-  background: linear-gradient(180deg, rgba(20,30,48,.7), rgba(11,18,30,.55));
+  background: linear-gradient(180deg, rgba(var(--surface-rgb),.7), rgba(var(--bg-rgb),.55));
   border: 1px solid rgba(255,255,255,.05);
   border-radius: 12px;
   padding: 12px 14px;
@@ -563,15 +621,15 @@ input:focus, select:focus, textarea:focus{
   border: 2px solid transparent;
   background-clip: content-box;
 }
-*::-webkit-scrollbar-thumb:hover{ background: rgba(232,93,60,.3); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover{ background: rgba(var(--coral-rgb),.3); background-clip: content-box; }
 
 /* Top user widget: refined avatar/role pill. */
 .role-chip{
   font-size: 10px;
   letter-spacing: .8px;
   padding: 2px 9px;
-  background: linear-gradient(180deg, rgba(232,93,60,.18), rgba(232,93,60,.10));
-  border: 1px solid rgba(232,93,60,.32);
+  background: linear-gradient(180deg, rgba(var(--coral-rgb),.18), rgba(var(--coral-rgb),.10));
+  border: 1px solid rgba(var(--coral-rgb),.32);
   color: #ffb59c;
 }
 
@@ -624,7 +682,7 @@ input:focus, select:focus, textarea:focus{
 .tab-cats{
   display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px;
   padding:6px; border-radius:12px;
-  background:linear-gradient(180deg, rgba(22,32,52,.6), rgba(11,18,30,.45));
+  background:linear-gradient(180deg, rgba(var(--surface2-rgb),.6), rgba(var(--bg-rgb),.45));
   border:1px solid rgba(255,255,255,.06);
   box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px -16px rgba(0,0,0,.5);
 }
@@ -639,8 +697,8 @@ input:focus, select:focus, textarea:focus{
 .tab-cat:active{ transform:scale(.985); }
 .tab-cat.active{
   color:#ffffff;
-  background:linear-gradient(180deg, rgba(232,93,60,.22), rgba(232,93,60,.10));
-  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 1px rgba(232,93,60,.32), 0 4px 12px -4px rgba(232,93,60,.4);
+  background:linear-gradient(180deg, rgba(var(--coral-rgb),.22), rgba(var(--coral-rgb),.10));
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 1px rgba(var(--coral-rgb),.32), 0 4px 12px -4px rgba(var(--coral-rgb),.4);
 }
 .tab-cat.hide{ display:none; }
 @media(max-width:560px){ .tab-cat{ padding:8px 11px; font-size:12px; } }
@@ -672,7 +730,7 @@ input:focus, select:focus, textarea:focus{
   width: 70%; height: 2px;
   background: var(--coral);
   border-radius: 2px;
-  box-shadow: 0 0 12px rgba(232,93,60,.6);
+  box-shadow: 0 0 12px rgba(var(--coral-rgb),.6);
 }
 
 /* Modal — scale-in entrance + sharper backdrop blur. */
@@ -723,7 +781,7 @@ input:focus, select:focus, textarea:focus{
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px rgba(232,93,60,.6);
+    0 0 0 4px rgba(var(--coral-rgb),.6);
 }
 
 /* Inputs — refined focus, more polished baseline. */
@@ -746,7 +804,7 @@ textarea:hover:not(:focus):not(:disabled){
 }
 
 /* Status indicators — pulsing dot for "live" connection feel. */
-@keyframes ctgPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(61,220,151,.45); } 50% { box-shadow: 0 0 0 6px rgba(61,220,151,0); } }
+@keyframes ctgPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--green-rgb),.45); } 50% { box-shadow: 0 0 0 6px rgba(var(--green-rgb),0); } }
 .dot-green{ animation: ctgPulse 2.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce){ .dot-green{ animation: none; } }
 
@@ -771,13 +829,13 @@ hr, .divider{ border: 0; border-top: 1px solid rgba(255,255,255,.05); margin: 18
 
 /* Empty states — more breathing room, premium feel. */
 .empty{ padding: 60px 28px; }
-.empty-ico{ opacity: .7; filter: drop-shadow(0 8px 16px rgba(232,93,60,.15)); }
+.empty-ico{ opacity: .7; filter: drop-shadow(0 8px 16px rgba(var(--coral-rgb),.15)); }
 
 /* Bell badge — refined with subtle ring. */
 .bell-badge{
   box-shadow:
     0 0 0 2px var(--bg),
-    0 2px 8px rgba(232,93,60,.5);
+    0 2px 8px rgba(var(--coral-rgb),.5);
   font-weight: 720;
 }
 
@@ -807,8 +865,8 @@ hr, .divider{ border: 0; border-top: 1px solid rgba(255,255,255,.05); margin: 18
 #conn-indicator{ transition: background .35s, box-shadow .35s; }
 
 /* Subtle text selection accent — coral, not blue. */
-::selection{ background: rgba(232,93,60,.32); color: #fff; }
-::-moz-selection{ background: rgba(232,93,60,.32); color: #fff; }
+::selection{ background: rgba(var(--coral-rgb),.32); color: #fff; }
+::-moz-selection{ background: rgba(var(--coral-rgb),.32); color: #fff; }
 
 /* Number-heavy elements get unambiguous tabular figures. */
 .amt, td.amt, .card .n, .pill,
@@ -845,30 +903,33 @@ table[data-list] tbody tr:hover input[type=text]{
    Dark stays the default; nothing here touches the dark cascade.
    ════════════════════════════════════════════ */
 :root[data-theme="light"]{
+  --bg-rgb:251,251,252; --surface-rgb:255,255,255; --surface2-rgb:246,247,249;
+  --text-rgb:16,24,39; --coral-rgb:196,73,42; --sky-rgb:30,94,184;
+  --green-rgb:15,123,90; --red-rgb:180,35,24; --amber-rgb:180,83,9;
   color-scheme:light;
   --bg-deep:#F1F3F7; --bg:#FBFBFC; --surface:#FFFFFF; --surface2:#F6F7F9;
   --panel:#FFFFFF; --panel-2:#F4F7FB;
   --border:#E4E7EC; --border-strong:#D3D8E0;
   --text:#101827; --text-soft:#5B6472; --muted:#646C7A;
   --coral:#C4492A; --coral-deep:#A93C22; --coral-soft:#C4492A;
-  --sky:#1E5EB8; --sky-soft:#3B78CE; --green:#0F7B5A; --green-soft:#0F7B5A;
+  --sky:#1E5EB8; --sky-soft:#3271C9; --green:#0F7B5A; --green-soft:#0F7B5A;
   --red:#B42318; --red-soft:#B42318; --amber:#B45309;
   --shadow:0 1px 2px rgba(16,24,39,.05), 0 1px 3px rgba(16,24,39,.04);
   /* v9 tokens — light values */
   --surface-1:#FFFFFF; --surface-2:#F6F9FC; --surface-3:#EDF2F9;
-  --hairline:rgba(21,35,63,.09);
-  --accent:#E04E2B; --accent-soft:#CF4A28; --coral-tint:rgba(224,78,43,.10);
-  --warn-soft:#C2700A; --neu-bg:rgba(21,35,63,.06);
-  --ok-bg:rgba(14,157,103,.12); --warn-bg:rgba(194,112,10,.12); --err-bg:rgba(220,38,38,.10); --info-bg:rgba(58,124,192,.12);
-  --elev-1:0 1px 0 rgba(255,255,255,.6) inset,0 6px 18px -12px rgba(21,35,63,.22);
-  --elev-2:0 1px 0 rgba(255,255,255,.7) inset,0 14px 34px -18px rgba(21,35,63,.26);
-  --elev-3:0 1px 0 rgba(255,255,255,.8) inset,0 30px 60px -16px rgba(21,35,63,.30);
+  --hairline:rgba(var(--text-rgb),.09);
+  --accent:var(--coral); --accent-soft:var(--coral-soft); --coral-tint:rgba(var(--coral-rgb),.10);
+  --warn-soft:#A76009; --neu-bg:rgba(var(--text-rgb),.06);
+  --ok-bg:rgba(var(--green-rgb),.12); --warn-bg:rgba(var(--amber-rgb),.12); --err-bg:rgba(var(--red-rgb),.10); --info-bg:rgba(var(--sky-rgb),.12);
+  --elev-1:0 1px 0 rgba(255,255,255,.6) inset,0 6px 18px -12px rgba(var(--text-rgb),.22);
+  --elev-2:0 1px 0 rgba(255,255,255,.7) inset,0 14px 34px -18px rgba(var(--text-rgb),.26);
+  --elev-3:0 1px 0 rgba(255,255,255,.8) inset,0 30px 60px -16px rgba(var(--text-rgb),.30);
 }
 :root[data-theme="light"] body{
   background:
-    radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(91,155,213,.16), transparent 55%),
-    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(232,93,60,.10), transparent 60%),
-    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(91,155,213,.09), transparent 60%),
+    radial-gradient(ellipse 1000px 700px at 12% 6%, rgba(var(--sky-rgb),.16), transparent 55%),
+    radial-gradient(ellipse 900px 600px at 92% 8%, rgba(var(--coral-rgb),.10), transparent 60%),
+    radial-gradient(ellipse 800px 550px at 50% 100%, rgba(var(--sky-rgb),.09), transparent 60%),
     linear-gradient(180deg,#F3F6FB 0%,#E7EDF5 100%);
 }
 :root[data-theme="light"] body::before{ opacity:.045; mix-blend-mode:multiply; }
@@ -880,12 +941,10 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] input:not([type=file]),
 :root[data-theme="light"] textarea{ background:#fff; color:var(--text); border-color:var(--border-strong); }
 :root[data-theme="light"] .card{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
-:root[data-theme="light"] .card:hover{ border-color:rgba(21,35,63,.16); }
+:root[data-theme="light"] .card:hover{ border-color:rgba(var(--text-rgb),.16); }
 :root[data-theme="light"] .card .n{ background:none; -webkit-text-fill-color:var(--text); color:var(--text); }
-:root[data-theme="light"] .card.green .n{ -webkit-text-fill-color:var(--green); color:var(--green); }
-:root[data-theme="light"] .card.red .n{ -webkit-text-fill-color:var(--red); color:var(--red); }
-:root[data-theme="light"] .card.blue .n{ -webkit-text-fill-color:var(--sky); color:var(--sky); }
-:root[data-theme="light"] .card.amber .n{ -webkit-text-fill-color:var(--amber); color:var(--amber); }
+/* v233 — see the note by the dark rule: the figure is ink in both themes. The base
+   `.card .n` rule above already sets it, so these four only had to stop overriding it. */
 :root[data-theme="light"] .panel{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
 :root[data-theme="light"] .panel h3{ color:var(--text); }
 /* Light-mode: elements hard-set to white text must flip to dark so they stay legible. */
@@ -895,10 +954,11 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] .notif-item .nt,
 :root[data-theme="light"] .modal h3,
 :root[data-theme="light"] .tab.active{ color:var(--text); }
+:root[data-theme="light"]{ --sticky-bg:#ffffff; --sticky-bg-hover:#FDF6F4; }
 :root[data-theme="light"] .bigtable{ background:linear-gradient(180deg,#ffffff,#FAFCFE); }
 :root[data-theme="light"] .bigtable th{ background:var(--surface2); color:var(--muted); }
 :root[data-theme="light"] .tbl-wrap{ border-color:var(--border); }
-:root[data-theme="light"] .tab:hover{ background:rgba(21,35,63,.05); }
+:root[data-theme="light"] .tab:hover{ background:rgba(var(--text-rgb),.05); }
 :root[data-theme="light"] .modal{ background:#fff; border-color:var(--border-strong); }
 :root[data-theme="light"] .toast{ background:#fff; color:var(--text); border-color:var(--border-strong); }
 :root[data-theme="light"] .notif-panel{ background:#fff; border-color:var(--border-strong); }
@@ -907,14 +967,14 @@ table[data-list] tbody tr:hover input[type=text]{
 :root[data-theme="light"] input[type=file]::file-selector-button{ background:var(--surface2); color:var(--text-soft); border-color:var(--border-strong); }
 :root[data-theme="light"] .brand h1{ background:linear-gradient(90deg,#15233F 0%,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
 :root[data-theme="light"] .lbox h1{ background:linear-gradient(90deg,#15233F 52%,var(--coral) 100%); -webkit-background-clip:text; background-clip:text; }
-:root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(21,35,63,.20); background-clip:content-box; }
-:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(232,93,60,.42); background-clip:content-box; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb{ background:rgba(var(--text-rgb),.20); background-clip:content-box; }
+:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{ background:rgba(var(--coral-rgb),.42); background-clip:content-box; }
 :root[data-theme="light"] .emp-card{ background:linear-gradient(180deg,#ffffff,#FAFCFE); border-color:var(--border); }
-:root[data-theme="light"] .emp-card:hover{ border-color:rgba(232,93,60,.32); }
+:root[data-theme="light"] .emp-card:hover{ border-color:rgba(var(--coral-rgb),.32); }
 :root[data-theme="light"] .emp-name{ color:var(--text); }
 :root[data-theme="light"] .page-title{ color:var(--text); }
 :root[data-theme="light"] .side-brand-name{ color:var(--text); }
-:root[data-theme="light"] .side-link.on{ background:linear-gradient(90deg,rgba(232,93,60,.13),rgba(232,93,60,.03)); color:var(--coral-deep); }
+:root[data-theme="light"] .side-link.on{ background:linear-gradient(90deg,rgba(var(--coral-rgb),.13),rgba(var(--coral-rgb),.03)); color:var(--coral-deep); }
 :root[data-theme="light"] .btn.p{ background:linear-gradient(135deg,var(--coral),var(--coral-deep)); color:#fff; border:none; }
 .theme-btn{ font-size:15px; line-height:1; }
 /* ============ v9 professional layer (2026-07 overhaul · token-driven, works in light + dark) ============ */
@@ -1064,7 +1124,7 @@ h1,.page-title,.lbox h1{ text-wrap:balance; }
 /* Buttons: premium easing + a subtle press so taps feel physical */
 .btn{ transition:all var(--dur) var(--ease-out); }
 .btn:active{ transform:translateY(0) scale(.98); }
-.btn.p:active{ filter:brightness(.96); box-shadow:0 2px 8px rgba(232,93,60,.3); }
+.btn.p:active{ filter:brightness(.96); box-shadow:0 2px 8px rgba(var(--coral-rgb),.3); }
 /* Inputs: calm, rounded, responsive on hover */
 select,input:not([type=file]),textarea{ border-radius:9px; }
 select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--muted); }
@@ -1137,7 +1197,7 @@ select:hover,input:not([type=file]):hover,textarea:hover{ border-color:var(--mut
   <nav id="emp-mobnav"></nav>
 </div>
 
-<div id="toast"></div>
+<div class="toast" id="toast"></div>
 
 <!-- Shared with app.html — must load before the inline script below (classic script: these are globals). -->
 <script src="myt.js"></script>
@@ -1694,7 +1754,7 @@ function hrInvEmpPick(id){
   var e=(((HRA.data&&HRA.data.employee_candidates)||[]).find(function(x){return x.id===id;}))||{};
   HRA.emp=id||''; HRA.email=e.email||''; HRA.name=e.name||''; hrRender();
 }
-async function hrUserInvite(){
+async function hrUserInvite(){ return hrOnce('hrUserInvite:'+(''), async function(){
   var email=((document.getElementById('hra_email')||{}).value||'').trim();
   var name=((document.getElementById('hra_name')||{}).value||'').trim();
   var role=(document.getElementById('hra_role')||{}).value||'viewer';
@@ -1716,7 +1776,7 @@ async function hrUserInvite(){
   if(!email){ toast('Enter an email',true); return; }
   var r=await call({api:'hr_user_invite',email:email,name:name,role:role});
   if(r&&r.ok){ hrShowCreds([{name:name||email,email:r.email,temp_password:r.temp_password}]); HRA.email=''; HRA.name=''; HRA.data=null; hrAccessLoad(); } else toast((r&&r.error)||'Failed',true);
-}
+}); }
 // ===== 📊 HR OS Analytics Dashboard (Overview / Headcount / Payroll / Attendance / Cost) =====
 var HR_DASH={ month:0, year:0, page:'overview', data:null, loading:false, steps:0, tenant:'' };
 function hrKfmt(v){ v=Number(v)||0; var a=Math.abs(v); if(a>=1000000) return (v/1000000).toFixed(1)+'M'; if(a>=1000) return (v/1000).toFixed(0)+'k'; return (Math.round(v*10)/10).toString(); }
@@ -1763,25 +1823,25 @@ function hrDashRankTable(list,hd){ if(!list||!list.length) return '<div class="m
 function hrDashOverview(d){ var o=d.overview;
   var gD=hrTrendDelta(d.payroll.trend,'gross',null), nD=hrTrendDelta(d.payroll.trend,'net',null), cD=hrTrendDelta(d.cost.trend,'value',false), aD=hrTrendDelta(d.attendance.trend,'value',true);
   return hrCardGrid([
-    hrDCard('Total Employees',o.total_employees,{color:'var(--sky-soft)',icon:'👥'}),hrDCard('Active Employees',o.active_employees,{color:'var(--green-soft)',icon:'✅'}),
+    hrDCard('Total Employees',o.total_employees,{icon:'👥'}),hrDCard('Active Employees',o.active_employees,{icon:'✅'}),
     hrDCard('New Hires (mo)',o.new_hires,{icon:'➕'}),hrDCard('Resigned (mo)',o.resigned,{color:o.resigned>0?'var(--coral)':'var(--text)',icon:'🚪'}),
-    hrDCard('Monthly Gross',M(o.gross),{color:'var(--sky-soft)',icon:'💵',delta:gD}),hrDCard('Monthly Net',M(o.net),{color:'var(--green-soft)',icon:'💰',delta:nD}),
-    hrDCard('Employer Statutory',M(o.employer_statutory),{icon:'🏛️'}),hrDCard('Total HR Cost',M(o.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),
-    hrDCard('Attendance Rate',o.attendance_rate+'%',{color:'var(--green-soft)',icon:'🕐',delta:aD}),hrDCard('Late Rate',o.late_rate+'%',{color:o.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),
+    hrDCard('Monthly Gross',M(o.gross),{icon:'💵',delta:gD}),hrDCard('Monthly Net',M(o.net),{icon:'💰',delta:nD}),
+    hrDCard('Employer Statutory',M(o.employer_statutory),{icon:'🏛️'}),hrDCard('Total HR Cost',M(o.total_hr_cost),{icon:'📊',delta:cD}),
+    hrDCard('Attendance Rate',o.attendance_rate+'%',{icon:'🕐',delta:aD}),hrDCard('Late Rate',o.late_rate+'%',{color:o.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),
     hrDCard('Absenteeism',o.absenteeism_rate+'%',{color:o.absenteeism_rate>10?'var(--coral)':'var(--text)',icon:'🚫'}),hrDCard('OT Cost',M(o.ot_cost),{icon:'⏱️'}) ])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('📈 Payroll trend (6 mo)',hrDashLine(d.payroll.trend,[{k:'gross',color:'var(--sky-soft)',name:'Gross'},{k:'net',color:'var(--green-soft)',name:'Net'}]))+hrPanel('🏢 Headcount by department',hrDashBars(d.headcount.by_dept,{color:'var(--coral)'}))+'</div>'+hrDashInsights(d.insights); }
-function hrDashHeadcount(d){ var h=d.headcount; return hrCardGrid([hrDCard('Total',h.total,{icon:'👥'}),hrDCard('Active',h.active,{color:'var(--green-soft)',icon:'✅'}),hrDCard('Inactive',h.inactive,{icon:'💤'}),hrDCard('New Hires',h.new_hires,{icon:'➕'}),hrDCard('Resigned',h.resigned,{color:h.resigned>0?'var(--coral)':'var(--text)',icon:'🚪'})])+
+function hrDashHeadcount(d){ var h=d.headcount; return hrCardGrid([hrDCard('Total',h.total,{icon:'👥'}),hrDCard('Active',h.active,{icon:'✅'}),hrDCard('Inactive',h.inactive,{icon:'💤'}),hrDCard('New Hires',h.new_hires,{icon:'➕'}),hrDCard('Resigned',h.resigned,{color:h.resigned>0?'var(--coral)':'var(--text)',icon:'🚪'})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly headcount trend',hrDashLine(h.trend,[{k:'value',color:'var(--sky-soft)',name:'Headcount'}]))+hrPanel('By department',hrDashBars(h.by_dept,{color:'var(--coral)'}))+hrPanel('By position',hrDashBars(h.by_position,{color:'var(--sky-soft)'}))+hrPanel('By employment type',hrDashBars(h.by_type,{color:'var(--green-soft)'}))+'</div>'+hrPanel('Employees',hrDashEmpTable())+hrDashInsights(d.insights); }
 function hrDashPayroll(d){ var p=d.payroll,vp=p.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)';
   var gD=hrTrendDelta(p.trend,'gross',null), nD=hrTrendDelta(p.trend,'net',null);
   return hrCardGrid([
-    hrDCard('Gross',M(p.gross),{color:'var(--sky-soft)',icon:'💵',delta:gD}),hrDCard('Net',M(p.net),{color:'var(--green-soft)',icon:'💰',delta:nD}),hrDCard('Basic',M(p.basic),{icon:'🧾'}),hrDCard('Allowance',M(p.allowance),{icon:'➕'}),hrDCard('Claim',M(p.claim),{icon:'🧾'}),hrDCard('Bonus / Comm',M(p.bonus),{icon:'🎁'}),
+    hrDCard('Gross',M(p.gross),{icon:'💵',delta:gD}),hrDCard('Net',M(p.net),{icon:'💰',delta:nD}),hrDCard('Basic',M(p.basic),{icon:'🧾'}),hrDCard('Allowance',M(p.allowance),{icon:'➕'}),hrDCard('Claim',M(p.claim),{icon:'🧾'}),hrDCard('Bonus / Comm',M(p.bonus),{icon:'🎁'}),
     hrDCard('EPF EE',M(p.epf_ee),{icon:'🏦'}),hrDCard('EPF ER',M(p.epf_er),{icon:'🏦'}),hrDCard('SOCSO EE',M(p.socso_ee),{icon:'🛡️'}),hrDCard('SOCSO ER',M(p.socso_er),{icon:'🛡️'}),hrDCard('EIS EE',M(p.eis_ee),{icon:'🧯'}),hrDCard('EIS ER',M(p.eis_er),{icon:'🧯'}),hrDCard('PCB',M(p.pcb),{icon:'🧮'}),
     hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(p.variance.delta)}) ])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Payroll trend (Gross vs Net)',hrDashLine(p.trend,[{k:'gross',color:'var(--sky-soft)',name:'Gross'},{k:'net',color:'var(--green-soft)',name:'Net'}]))+hrPanel('Payroll cost by department',hrDashBars(p.by_dept.map(function(x){return {label:x.label,value:x.cost};}),{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Payroll by employee',hrDashPayEmpTable(p.by_employee))+hrDashInsights(d.insights); }
-function hrDashAttendance(d){ var a=d.attendance; var aD=hrTrendDelta(a.trend,'value',true); return hrCardGrid([hrDCard('Attendance Rate',a.attendance_rate+'%',{color:'var(--green-soft)',icon:'🕐',delta:aD}),hrDCard('Late Rate',a.late_rate+'%',{color:a.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),hrDCard('Absenteeism',a.absenteeism_rate+'%',{color:a.absenteeism_rate>10?'var(--coral)':'var(--text)',icon:'🚫'}),hrDCard('Missing Clock In/Out',a.missing_clock,{icon:'❓'}),hrDCard('Total OT Hours',a.ot_hours,{icon:'⏱️'}),hrDCard('OT Cost',M(a.ot_cost),{icon:'💸'})])+
+function hrDashAttendance(d){ var a=d.attendance; var aD=hrTrendDelta(a.trend,'value',true); return hrCardGrid([hrDCard('Attendance Rate',a.attendance_rate+'%',{icon:'🕐',delta:aD}),hrDCard('Late Rate',a.late_rate+'%',{color:a.late_rate>15?'var(--amber)':'var(--text)',icon:'⏰'}),hrDCard('Absenteeism',a.absenteeism_rate+'%',{color:a.absenteeism_rate>10?'var(--coral)':'var(--text)',icon:'🚫'}),hrDCard('Missing Clock In/Out',a.missing_clock,{icon:'❓'}),hrDCard('Total OT Hours',a.ot_hours,{icon:'⏱️'}),hrDCard('OT Cost',M(a.ot_cost),{icon:'💸'})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly attendance trend',hrDashLine(a.trend,[{k:'value',color:'var(--green-soft)',name:'Attendance %'}]))+hrPanel('Department attendance rate',hrDashBars(a.by_dept,{color:'var(--sky-soft)',fmt:function(v){return v+'%';}}))+hrPanel('Late ranking',hrDashRankTable(a.late_rank,'Late days'))+hrPanel('Absence ranking',hrDashRankTable(a.absence_rank,'Absent days'))+'</div>'+hrDashInsights(d.insights); }
-function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; var cD=hrTrendDelta(c.trend,'value',false); return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{color:'var(--coral-soft)',icon:'📊',delta:cD}),hrDCard('Salary Cost',M(c.salary_cost),{icon:'💵'}),hrDCard('Employer EPF',M(c.epf_er),{icon:'🏦'}),hrDCard('Employer SOCSO',M(c.socso_er),{icon:'🛡️'}),hrDCard('Employer EIS',M(c.eis_er),{icon:'🧯'}),hrDCard('Claim Cost',M(c.claim_cost),{icon:'🧾'}),hrDCard('OT Cost',M(c.ot_cost),{icon:'⏱️'}),hrDCard('Cost / Employee',M(c.cost_per_employee),{color:'var(--sky-soft)',icon:'👤'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(c.variance.delta)})])+
+function hrDashCost(d){ var c=d.cost,vp=c.variance.pct,vc=vp>0?'var(--coral)':'var(--green-soft)'; var cD=hrTrendDelta(c.trend,'value',false); return hrCardGrid([hrDCard('Total HR Cost',M(c.total_hr_cost),{icon:'📊',delta:cD}),hrDCard('Salary Cost',M(c.salary_cost),{icon:'💵'}),hrDCard('Employer EPF',M(c.epf_er),{icon:'🏦'}),hrDCard('Employer SOCSO',M(c.socso_er),{icon:'🛡️'}),hrDCard('Employer EIS',M(c.eis_er),{icon:'🧯'}),hrDCard('Claim Cost',M(c.claim_cost),{icon:'🧾'}),hrDCard('OT Cost',M(c.ot_cost),{icon:'⏱️'}),hrDCard('Cost / Employee',M(c.cost_per_employee),{icon:'👤'}),hrDCard('vs Last Month',(vp>0?'+':'')+vp+'%',{color:vc,icon:'📈',sub:'Δ '+M(c.variance.delta)})])+
    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly cost trend',hrDashLine(c.trend,[{k:'value',color:'var(--coral)',name:'Employer cost'}]))+hrPanel('Cost by department',hrDashBars(c.by_dept,{color:'var(--coral)',fmt:M}))+'</div>'+hrPanel('Cost by employee',hrDashValTable(c.by_employee,'Employer cost'))+hrDashInsights(d.insights); }
 function hrDashboard(){
   if(!HR_DASH.year){ var dd=mytYMD(); HR_DASH.month=dd.month; HR_DASH.year=dd.year; }
@@ -1838,7 +1898,7 @@ function hrDashExportCsv(){
 // ===== 💳 Reimbursement / Claim module =====
 var RC={ page:'list', scope:'pending', tenant:'', cfg:null, list:[], detail:null, form:null, dash:null, setTab:'types', loading:false };
 function rcHash(s){ var h=0; for(var i=0;i<s.length;i+=101){ h=(h*31+s.charCodeAt(i))|0; } return 'h'+(h>>>0).toString(16)+'_'+s.length; }
-function rcStatusPill(s){ var m={'Draft':['#95a3ba','rgba(107,122,147,.18)'],'Submitted':['var(--sky-soft)','rgba(91,155,213,.16)'],'Pending Manager Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending HR Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending Finance Approval':['var(--amber)','rgba(245,158,11,.16)'],'Pending Director Approval':['var(--amber)','rgba(245,158,11,.16)'],'Approved':['var(--green-soft)','rgba(22,185,122,.16)'],'Paid':['var(--green-soft)','rgba(22,185,122,.24)'],'Rejected':['var(--coral-soft)','rgba(232,93,60,.16)'],'Need More Info':['var(--sky-soft)','rgba(91,155,213,.18)'],'Cancelled':['var(--muted)','rgba(107,122,147,.14)']}; var c=m[s]||['var(--muted)','rgba(255,255,255,.06)']; return '<span class="pill" style="color:'+c[0]+';background:'+c[1]+'">'+esc(s)+'</span>'; }
+function rcStatusPill(s){ var m={'Draft':['#95a3ba','rgba(107,122,147,.18)'],'Submitted':['var(--sky-soft)','rgba(var(--sky-rgb),.16)'],'Pending Manager Approval':['var(--amber)','rgba(var(--amber-rgb),.16)'],'Pending HR Approval':['var(--amber)','rgba(var(--amber-rgb),.16)'],'Pending Finance Approval':['var(--amber)','rgba(var(--amber-rgb),.16)'],'Pending Director Approval':['var(--amber)','rgba(var(--amber-rgb),.16)'],'Approved':['var(--green-soft)','rgba(var(--green-rgb),.16)'],'Paid':['var(--green-soft)','rgba(var(--green-rgb),.24)'],'Rejected':['var(--coral-soft)','rgba(var(--coral-rgb),.16)'],'Need More Info':['var(--sky-soft)','rgba(var(--sky-rgb),.18)'],'Cancelled':['var(--muted)','rgba(107,122,147,.14)']}; var c=m[s]||['var(--muted)','rgba(255,255,255,.06)']; return '<span class="pill" style="color:'+c[0]+';background:'+c[1]+'">'+esc(s)+'</span>'; }
 var RC_SEL='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
 function hrRC(){
   if((!RC.cfg || RC.tenant!==HR.tenant) && !RC.loading){ RC.tenant=HR.tenant; RC.loading=true; setTimeout(hrRCBoot,0); }
@@ -1908,11 +1968,16 @@ function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(func
 function hrRCSelToggle(id,on){ RC.sel=RC.sel||{}; if(on)RC.sel[id]=true; else delete RC.sel[id]; hrRender(); }
 function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.sel[c.id]=true;}); hrRender(); }
 function hrRCSelClear(){ RC.sel={}; hrRender(); }
-async function hrRCBulkApprove(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
-async function hrRCBulkReject(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
-async function hrRCBulkInfo(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCBulkApprove(){ return hrOnce('hrRCBulkApprove', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
+async function hrRCBulkReject(){ return hrOnce('hrRCBulkReject', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
+async function hrRCBulkInfo(){ return hrOnce('hrRCBulkInfo', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCBulkPay(){ return hrOnce('hrRCBulkPay', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
-function hrRCExportBank(){ var ids=hrRCSelIds(); var list=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!list.length){ toast('Select Approved claims first',true); return; } var head=['No','Payee Name','Bank','SWIFT/BIC','Account No','IC','Amount (RM)','Payment Ref','Email']; var body=list.map(function(c,i){ var e=c.hr_employees||{}; return [i+1,e.name||'',e.bank_name||'',(e.bank_code||hrBankCode(e.bank_name)),e.bank_account||'',e.ic_no||'',(Number(c.amount)||0).toFixed(2),c.claim_no||'',e.email||'']; }); var total=list.reduce(function(s,c){return s+(Number(c.amount)||0);},0); /* v157 CRITICAL: no TOTAL trailer in a BANK file — it was a payment row (Payee "TOTAL", full amount). */ hrDownload('Reimbursement_Payments_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('Bank file: '+list.length+' claim(s) · RM'+total.toFixed(2)); }
+function hrRCExportBank(){ var ids=hrRCSelIds(); var all=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!all.length){ toast('Select Approved claims first',true); return; }
+  // v231: hrBuildBank's rule (hr-docs.js), in the second file that pays people. An amount that is not a
+  // positive finite number is not a payment, and writing it as one puts a CREDIT line in a bank import.
+  var list=all.filter(function(c){ return hrPayable(Number(c.amount)); });
+  var bad=all.filter(function(c){ return !hrPayable(Number(c.amount)); });
+  if(bad.length){ toast('Bank file blocked — '+bad.length+' approved claim(s) have an amount of zero or less ('+bad.map(function(c){return c.claim_no||'?';}).slice(0,5).join(', ')+') — fix or cancel them first',true); return; } var head=['No','Payee Name','Bank','SWIFT/BIC','Account No','IC','Amount (RM)','Payment Ref','Email']; var body=list.map(function(c,i){ var e=c.hr_employees||{}; return [i+1,e.name||'',e.bank_name||'',(e.bank_code||hrBankCode(e.bank_name)),e.bank_account||'',e.ic_no||'',(Number(c.amount)||0).toFixed(2),c.claim_no||'',e.email||'']; }); var total=list.reduce(function(s,c){return s+(Number(c.amount)||0);},0); /* v157 CRITICAL: no TOTAL trailer in a BANK file — it was a payment row (Payee "TOTAL", full amount). */ hrDownload('Reimbursement_Payments_'+hrToday()+'.csv',hrCsv([head].concat(body))); toast('Bank file: '+list.length+' claim(s) · RM'+total.toFixed(2)); }
 async function hrRCExportAcct(){
   var month=prompt('Claim month to export (YYYY-MM), or leave blank for ALL Approved/Paid:',''); if(month==null)return;
   toast('Building accounting export…');
@@ -2055,7 +2120,10 @@ function hrRCCcOpts(sel){ var cfg=RC.cfg||{}; return '<option value="">— cost 
 // line on the other side of the wire. A typed amount carrying a third decimal was stored raw on the
 // item, printed through toFixed(2), and rolled into a header total that rounds the SUM: three roundings
 // of one figure, and the header is what the bank file pays.
-function hrRCItemAmt(it,mile){ return mile ? Math.round(((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0))*100)/100 : Math.round((Number(it.amount)||0)*100)/100; }
+// v231: clamped and finite — the mirror of rcAmt() in hr.ts, which is what actually STORES the figure.
+// A claim line reaches a bank payment file, so a negative one is a credit and Infinity is a NULL amount.
+function hrRCAmt(n){ var v=Number(n); return isFinite(v)?Math.max(0,Math.round(v*100)/100):0; }
+function hrRCItemAmt(it,mile){ return mile ? hrRCAmt((Number(it.total_km)||0)*(Number(it.mileage_rate)||0)+(Number(it.parking_amount)||0)+(Number(it.toll_amount)||0)) : hrRCAmt(it.amount); }
 function hrRCItemMore(i){ hrRCSyncItems(); RC.form.items[i]._open=!RC.form.items[i]._open; hrRender(); }
 function hrRCForm(){
   var f=RC.form||{}; var cfg=RC.cfg||{};
@@ -2064,7 +2132,13 @@ function hrRCForm(){
   var typeOptsFor=function(sel){ return '<option value="">— type —</option>'+(cfg.claim_types||[]).filter(function(t){return t.active;}).map(function(t){return '<option value="'+t.id+'"'+(sel===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join(''); };
   var rateOptsFor=function(sel){ return (cfg.mileage_rates||[]).filter(function(r){return r.active;}).map(function(r){return '<option value="'+r.rate+'"'+(Number(sel)===Number(r.rate)?' selected':'')+'>'+esc('RM'+r.rate)+'</option>';}).join(''); };
   var inp=function(id,ph,val,extra){return '<input id="rc_'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="'+RC_SEL+'">';};
-  var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  // v231: derive the label's `for` from the control's own id, so tapping the CAPTION focuses the
+  // field. Measured on the employee Profile at 375px: 18 <label> captions, NOT ONE with `for` — so
+  // the big easy target sitting directly above every small input was dead space on a phone, and a
+  // screen reader announced each field unnamed. Reading the id out of the markup fixes every call
+  // site at once and changes none of them. Ids are unique here (checked across all ten screens).
+  var _lf=function(el,lbl){ if(lbl!=null && String(lbl).replace(/&nbsp;/g,'').trim()==='') return ''; var m=/ id="([^"]+)"/.exec(el); return m?(' for="'+m[1]+'"'):''; };
+  var g=function(lbl,el){return '<div><label'+_lf(el,lbl)+' class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
   var di=function(i,k,ph,val,extra){return '<input id="rc_it_'+i+'_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;'+RC_TD+'">';};
   var dg=function(lbl,el){return '<div><label class="muted" style="font-size:10px">'+lbl+'</label>'+el+'</div>';};
   var total=0;
@@ -2575,7 +2649,7 @@ function hrRCDetail(){
   var c=d.claim; var emp=c.hr_employees; var typ=c.hr_claim_types;
   var pending=['Pending Manager Approval','Pending HR Approval','Pending Finance Approval','Pending Director Approval','Submitted'].indexOf(c.status)>=0;
   var head='<div class="panel"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px"><div><div style="font-size:18px;font-weight:750">'+esc(c.claim_no)+' '+rcStatusPill(c.status)+'</div><div class="muted" style="font-size:12.5px;margin-top:4px">'+esc((emp&&emp.name)||'—')+' · '+esc((typ&&typ.name)||'—')+' · '+esc(c.claim_date||'')+(c.claim_month?(' | month '+esc(c.claim_month)):'')+(c.cost_center?(' | CC '+esc(c.cost_center)):'')+((emp&&emp.bank_name)?(' | '+esc(emp.bank_name)+' '+esc(emp.bank_account||'')):'')+'</div></div><div style="text-align:right"><div style="font-size:24px;font-weight:750;color:var(--green-soft)">'+M(c.amount)+'</div>'+(c.override_amount!=null?'<div class="muted" style="font-size:10.5px">overridden: '+esc(c.override_reason||'')+'</div>':'')+'</div></div><div style="margin-top:9px;font-size:13px">'+esc(c.description||'')+(c.department?' · <span class="muted">'+esc(c.department)+'</span>':'')+(c.project?' · <span class="muted">'+esc(c.project)+'</span>':'')+'</div><button class="btn sm" onclick="hrRCNav(\'list\')" style="margin-top:10px">← Back to claims</button></div>';
-  var warns=(c.warnings&&c.warnings.length)?'<div class="panel" style="border-color:rgba(245,158,11,.4)"><div style="font-weight:700;color:var(--amber);font-size:13px;margin-bottom:6px">⚠ Validation warnings</div>'+c.warnings.map(function(w){return '<div style="font-size:12.5px;color:var(--text-soft)">• '+esc(w)+'</div>';}).join('')+'</div>':'';
+  var warns=(c.warnings&&c.warnings.length)?'<div class="panel" style="border-color:rgba(var(--amber-rgb),.4)"><div style="font-weight:700;color:var(--amber);font-size:13px;margin-bottom:6px">⚠ Validation warnings</div>'+c.warnings.map(function(w){return '<div style="font-size:12.5px;color:var(--text-soft)">• '+esc(w)+'</div>';}).join('')+'</div>':'';
   var by=d.buyer||{};
   var buyerPanel='<div class="panel"><div class="panel-hd"><h3>🧾 e-Invoice buyer <span class="muted" style="font-weight:400;font-size:11px">· the claimer, pulled from HR OS</span></h3></div>'+
     (by.complete?'':'<div style="background:rgba(242,180,92,.1);border:1px solid rgba(242,180,92,.35);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--amber);margin-bottom:8px">⚠ Missing IC — update this employee&rsquo;s HR OS profile so the e-invoice buyer is complete.</div>')+
@@ -2651,8 +2725,8 @@ function hrRCDetail(){
   if(['Paid','Cancelled','Rejected'].indexOf(c.status)<0) editRow+='<button class="btn xs d" onclick="hrRCCancel()">Cancel claim</button>';
   return head+warns+buyerPanel+mile+decPanel+timeline+recs+coms+actions+xeroBlock+(editRow?('<div style="margin-top:4px">'+editRow+'</div>'):'');
 }
-async function hrRCDecide(dec){ var com=(document.getElementById('rc_com')||{}).value||''; if((dec==='reject'||dec==='request_info')&&!com.trim()){ toast('Please enter a reason / message',true); return; } var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:dec,comment:com}); if(r&&r.ok){ toast('Done → '+(r.status||'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
-async function hrRCMarkPaid(){ var pm=(document.getElementById('rc_pm')||{}).value||''; var pr=(document.getElementById('rc_pr')||{}).value||''; var r=await call({api:'hr_rc_mark_paid',id:RC.detail.claim.id,payment_method:pm,payment_reference:pr}); if(r&&r.ok){ toast('Marked paid ✓'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCDecide(dec){ return hrOnce('hrRCDecide:'+(dec), async function(){ var com=(document.getElementById('rc_com')||{}).value||''; if((dec==='reject'||dec==='request_info')&&!com.trim()){ toast('Please enter a reason / message',true); return; } var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:dec,comment:com}); if(r&&r.ok){ toast('Done → '+(r.status||'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
+async function hrRCMarkPaid(){ return hrOnce('hrRCMarkPaid:'+(''), async function(){ var pm=(document.getElementById('rc_pm')||{}).value||''; var pr=(document.getElementById('rc_pr')||{}).value||''; var r=await call({api:'hr_rc_mark_paid',id:RC.detail.claim.id,payment_method:pm,payment_reference:pr}); if(r&&r.ok){ toast('Marked paid ✓'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCSetGl(itemId){
   var gl=prompt('New GL account code (from this company’s Xero chart), e.g. 800-1000:'); if(gl==null||!gl.trim())return;
   var reason=prompt('Reason for changing the GL account (required, audited):'); if(reason==null||!reason.trim()){ toast('A reason is required',true); return; }
@@ -2660,7 +2734,7 @@ async function hrRCSetGl(itemId){
   if(r&&r.ok){ toast('GL updated ('+r.updated+' line'+(r.updated>1?'s':'')+') ✓'); await hrRCOpen(RC.detail.claim.id); } else toast((r&&r.error)||'Failed',true);
 }
 async function hrRCPostXero(){ return hrOnce('hrRCPostXero', async function(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }); }
-async function hrRCCancel(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCCancel(){ return hrOnce('hrRCCancel:'+(''), async function(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 // v193: correct the amount on a claim that is past the approval step. Deliberately separate from
 // hrRCOverride, which approves at the same time and so only makes sense while a decision is pending.
 async function hrRCAdjustAmount(){ return hrOnce('hrRCAdjustAmount', async function(){
@@ -2679,7 +2753,7 @@ async function hrRCAdjustAmount(){ return hrOnce('hrRCAdjustAmount', async funct
   if(r&&r.ok){ toast('Amount adjusted: RM '+Number(r.from).toFixed(2)+' → RM '+Number(r.to).toFixed(2)); await hrRCOpen(c.id); hrRCLoadList(); }
   else toast((r&&r.error)||'Could not adjust the amount',true);
 }); }
-async function hrRCOverride(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+async function hrRCOverride(){ return hrOnce('hrRCOverride:'+(''), async function(){ var amt=prompt('Override amount (RM):', RC.detail.claim.amount); if(amt==null)return; var reason=prompt('Reason for override (required):'); if(!reason||!reason.trim()){ toast('A reason is required',true); return; } var com=(document.getElementById('rc_com')||{}).value||'Amount overridden'; var r=await call({api:'hr_rc_decide',id:RC.detail.claim.id,decision:'approve',override_amount:Number(amt),override_reason:reason,comment:com}); if(r&&r.ok){ toast('Overridden + approved'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 function hrRCEdit(){ var c=RC.detail.claim;
   var items=(RC.detail.items||[]).map(function(it){ return { claim_type_id:it.claim_type_id, item_date:it.item_date?String(it.item_date).slice(0,10):'', description:it.description, amount:it.amount, total_km:it.total_km, mileage_rate:it.mileage_rate,
     vendor_name:it.vendor_name, receipt_no:it.receipt_no, invoice_no:it.invoice_no, tax_amount:it.tax_amount, sst_amount:it.sst_amount, gl_account:it.gl_account, cost_center:it.cost_center, project:it.project, remarks:it.remarks,
@@ -2688,14 +2762,14 @@ function hrRCEdit(){ var c=RC.detail.claim;
   if(!items.length){ items=[{ claim_type_id:c.claim_type_id||'', item_date:c.claim_date?String(c.claim_date).slice(0,10):'', description:c.description, amount:c.amount, total_km:(RC.detail.mileage&&RC.detail.mileage.total_km)||'', mileage_rate:(RC.detail.mileage&&RC.detail.mileage.mileage_rate)||'' }]; }
   RC.form={ id:c.id, employee_id:c.employee_id, claim_date:c.claim_date?String(c.claim_date).slice(0,10):'', claim_month:c.claim_month||'', cost_center:c.cost_center||'', department:c.department, project:c.project, remarks:c.remarks, description:c.description, items:items, _existingAtts:(RC.detail.attachments||[]) };
   RC.page='form'; hrRender(); }
-async function hrRCResubmit(){
+async function hrRCResubmit(){ return hrOnce('hrRCResubmit:'+(''), async function(){
   if(!confirm('By resubmitting you re-confirm ALL of these:\n\n• This claim is for business purpose.\n• It has not been claimed before.\n• All receipts / invoices attached are valid.\n• False claims may result in disciplinary action.\n\nOK = I confirm all four.'))return;
   var dec={business_purpose:true,not_claimed_before:true,receipts_valid:true,understand_disciplinary:true};
-  var r=await call({api:'hr_rc_submit',tenant:HR.tenant,id:RC.detail.claim.id,declarations:dec}); if(r&&r.ok){ toast('Submitted → '+r.status); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }
+  var r=await call({api:'hr_rc_submit',tenant:HR.tenant,id:RC.detail.claim.id,declarations:dec}); if(r&&r.ok){ toast('Submitted → '+r.status); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCLoadDash(){ var r=await call({api:'hr_rc_dashboard',tenant:HR.tenant}); if(r&&r.ok){ RC.dash=r.data; if(HR.view==='expenses') hrRender(); } }
 function hrRCDash(){
   var d=RC.dash; if(!d) return '<div class="panel" style="padding:40px;text-align:center"><span class="spin"></span> <span class="muted">Loading…</span></div>';
-  var cards=hrCardGrid([ hrDCard('Total Claims',d.total_claims,{icon:'🧾'}), hrDCard('Total Amount',M(d.total_amount),{color:'var(--sky-soft)',icon:'💰'}), hrDCard('Pending',d.pending,{color:d.pending>0?'var(--amber)':'var(--text)',icon:'⏳'}), hrDCard('Approved',d.approved,{color:'var(--green-soft)',icon:'✅'}), hrDCard('Rejected',d.rejected,{color:d.rejected>0?'var(--coral)':'var(--text)',icon:'✖'}), hrDCard('Paid',d.paid,{color:'var(--green-soft)',icon:'💵',sub:M(d.paid_amount)}) ]);
+  var cards=hrCardGrid([ hrDCard('Total Claims',d.total_claims,{icon:'🧾'}), hrDCard('Total Amount',M(d.total_amount),{icon:'💰'}), hrDCard('Pending',d.pending,{color:d.pending>0?'var(--amber)':'var(--text)',icon:'⏳'}), hrDCard('Approved',d.approved,{icon:'✅'}), hrDCard('Rejected',d.rejected,{color:d.rejected>0?'var(--coral)':'var(--text)',icon:'✖'}), hrDCard('Paid',d.paid,{icon:'💵',sub:M(d.paid_amount)}) ]);
   var charts='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+hrPanel('Monthly claim trend',hrDashLine(d.trend||[],[{k:'value',color:'var(--coral)',name:'Claim RM'}]))+hrPanel('By claim type',hrDashBars(d.by_type||[],{color:'var(--sky-soft)',fmt:M}))+hrPanel('By department',hrDashBars(d.by_department||[],{color:'var(--coral)',fmt:M}))+hrPanel('By employee',hrDashBars((d.by_employee||[]).slice(0,10),{color:'var(--green-soft)',fmt:M}))+'</div>';
   var alerts=(d.alerts&&d.alerts.length)?hrPanel('⚠ Abnormal claim alerts ('+d.alerts.length+')',d.alerts.map(function(a){return '<div style="border-left:3px solid var(--amber);background:var(--panel-2);border-radius:0 8px 8px 0;padding:8px 12px;margin-bottom:8px"><div style="font-weight:700;font-size:12.5px">'+esc(a.claim_no)+' · '+esc(a.name||'')+' · '+M(a.amount)+'</div>'+(a.warnings||[]).map(function(w){return '<div class="muted" style="font-size:11.5px">• '+esc(w)+'</div>';}).join('')+'</div>';}).join('')):hrPanel('⚠ Abnormal claim alerts','<div class="muted" style="padding:12px;font-size:12.5px">No anomalies flagged ✓</div>');
   return cards+charts+alerts;
@@ -2710,7 +2784,7 @@ function hrRCSettings(){
     else {
     var rows=(cfg.claim_types||[]).map(function(t){ var glCell=t.gl_account?('<span style="font-variant-numeric:tabular-nums">'+esc(t.gl_account)+'</span>'):(t.active?'<span style="color:var(--amber)">— set —</span>':'<span class="muted">—</span>'); return '<tr><td><b>'+esc(t.name)+'</b>'+(t.is_mileage?' 🚗':'')+'</td><td>'+glCell+'</td><td>'+(t.requires_receipt?'Yes':'—')+'</td><td class="amt">'+(t.max_amount_per_claim!=null?M(t.max_amount_per_claim):'—')+'</td><td class="amt">'+(t.max_amount_per_month!=null?M(t.max_amount_per_month):'—')+'</td><td>'+(t.taxable?'Taxable':'—')+'</td><td>'+(t.active?'<span class="pill pill-green">active</span>':'<span class="pill pill-draft">off</span>')+'</td><td><button class="btn xs" onclick="hrRCEditType(\''+t.id+'\')">Edit</button></td></tr>';}).join('');
     var anyMissing=(cfg.claim_types||[]).some(function(t){return t.active&&!t.gl_account;});
-    body='<div class="panel"><div class="panel-hd"><h3>Claim Types</h3><button class="btn p sm" onclick="hrRCTypeNew()">+ New type</button></div>'+(anyMissing?'<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 11px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ Some active types have no GL account — claims of those types can’t post to Xero until you set one (click Edit).</div>':'')+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Xero GL</th><th>Receipt</th><th class="amt">Per-claim cap</th><th class="amt">Monthly cap</th><th>Tax</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">All types are reimbursement-only and do NOT affect EPF / SOCSO / EIS / PCB. The <b>Xero GL</b> is where an approved claim of this type posts (ACCPAY bill, SUBMITTED).</div></div>';
+    body='<div class="panel"><div class="panel-hd"><h3>Claim Types</h3><button class="btn p sm" onclick="hrRCTypeNew()">+ New type</button></div>'+(anyMissing?'<div style="background:rgba(var(--amber-rgb),.12);border:1px solid rgba(var(--amber-rgb),.35);border-radius:8px;padding:8px 11px;font-size:12px;color:var(--amber);margin-bottom:10px">⚠ Some active types have no GL account — claims of those types can’t post to Xero until you set one (click Edit).</div>':'')+'<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Name</th><th>Xero GL</th><th>Receipt</th><th class="amt">Per-claim cap</th><th class="amt">Monthly cap</th><th>Tax</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div><div class="muted" style="font-size:11px;margin-top:8px">All types are reimbursement-only and do NOT affect EPF / SOCSO / EIS / PCB. The <b>Xero GL</b> is where an approved claim of this type posts (ACCPAY bill, SUBMITTED).</div></div>';
     }
   } else if(tab==='rates'){
     var rows=(cfg.mileage_rates||[]).map(function(r){return '<tr><td><b>RM'+r.rate+' / km</b>'+(r.is_default?' <span class="pill pill-blue">default</span>':'')+'</td><td class="muted">'+esc(r.label||'')+'</td><td>'+(r.active?'active':'off')+'</td></tr>';}).join('');
@@ -2748,7 +2822,13 @@ function hrRCTypeForm(){
   if(t.gl_account && accs.every(function(a){return String(a.code)!==String(t.gl_account);})) glOpts+='<option value="'+esc(t.gl_account)+'" selected>'+esc(t.gl_account)+' (current)</option>';
   var inp=function(id,ph,val,extra){return '<input id="rct_'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="'+RC_SEL+'">';};
   var chk=function(id,lbl,on){return '<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer"><input type="checkbox" id="rct_'+id+'"'+(on?' checked':'')+'> '+lbl+'</label>';};
-  var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  // v231: derive the label's `for` from the control's own id, so tapping the CAPTION focuses the
+  // field. Measured on the employee Profile at 375px: 18 <label> captions, NOT ONE with `for` — so
+  // the big easy target sitting directly above every small input was dead space on a phone, and a
+  // screen reader announced each field unnamed. Reading the id out of the markup fixes every call
+  // site at once and changes none of them. Ids are unique here (checked across all ten screens).
+  var _lf=function(el,lbl){ if(lbl!=null && String(lbl).replace(/&nbsp;/g,'').trim()==='') return ''; var m=/ id="([^"]+)"/.exec(el); return m?(' for="'+m[1]+'"'):''; };
+  var g=function(lbl,el){return '<div><label'+_lf(el,lbl)+' class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
   var glBlock=RC.accLoading?'<div class="muted" style="font-size:12px;padding:8px 0"><span class="spin"></span> Loading Xero chart of accounts…</div>':'<select id="rct_gl" style="'+RC_SEL+'">'+glOpts+'</select>';
   return '<div class="panel" style="max-width:660px"><div class="panel-hd"><h3>'+(t.id?'Edit claim type':'New claim type')+'</h3><button class="btn sm" onclick="hrRCTypeCancel()">✕ Close</button></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+
@@ -2845,7 +2925,7 @@ function hrEmployees(){
   var hd='<div class="panel-hd"><h3>Workforce</h3><div class="page-actions">'+hrRW((noLogin?'<button class="btn sm hr-write" onclick="hrEnableLoginBulk()" title="Create HR OS logins for every active employee with an email but no login yet">Enable all logins</button>':'')+'<button class="btn sm" onclick="hrSendLoginTest()" title="Send a test email to your own inbox. Touches no passwords \u2014 run it first if delivery is in doubt.">\u2709\uFE0F Test email</button><button class="btn p sm" onclick="hrEditEmp(0)">+ Add employee</button>')+'</div></div>';
   return '<div class="panel">'+hd+banner+toolbar+'<div id="hr_emp_results">'+hrEmpResultsHtml()+'</div></div>';
 }
-async function hrEnableLogin(id){
+async function hrEnableLogin(id){ return hrOnce('hrEnableLogin:'+(id), async function(){
   var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
   if(!e.email){ toast('Add an email on this employee first',true); return; }
   if(!confirm('Create an HR OS login for '+(e.name||'this employee')+' ('+e.email+')?\n\nThey’ll use it to apply leave, submit claims & clock in. You’ll get a one-time temporary password to share with them.')) return;
@@ -2855,8 +2935,8 @@ async function hrEnableLogin(id){
     hrShowCreds([{name:r.name||e.name,email:r.email,temp_password:r.temp_password}]);
     HR.data=null; renderHR();
   } else toast((r&&r.error)||'Failed',true);
-}
-async function hrEnableLoginBulk(){
+}); }
+async function hrEnableLoginBulk(){ return hrOnce('hrEnableLoginBulk:'+(''), async function(){
   if(!confirm('Create HR OS logins for ALL active employees who have an email but no login yet?\n\nEmployees without an email are skipped. You’ll get a list of one-time temporary passwords to share.')) return;
   var r=await call({api:'hr_rc_enable_login_bulk',tenant:HR.tenant});
   if(r&&r.ok){
@@ -2864,7 +2944,7 @@ async function hrEnableLoginBulk(){
     hrShowCreds(r.created, r.skipped);
     HR.data=null; renderHR();
   } else toast((r&&r.error)||'Failed',true);
-}
+}); }
 function hrShowCreds(created, skipped){
   var url=SITE_URL+'/hros.html';
   var rows=created.map(function(c){ return '<tr><td>'+esc(c.name||'')+'</td><td>'+esc(c.email||'')+'</td><td style="font-family:monospace"><b>'+esc(c.temp_password||'')+'</b></td></tr>'; }).join('');
@@ -2891,7 +2971,7 @@ function hrShowCreds(created, skipped){
 // correct for someone who has never signed in, and destructive for someone already using theirs.
 // The server hands every temp password back in `results`, precisely so a failed email does not leave
 // somebody locked out with a credential nobody has — so the modal is shown even when emailed is 0.
-async function hrSendLogin(id){
+async function hrSendLogin(id){ return hrOnce('hrSendLogin:'+(id), async function(){
   var e=(HR.data.employees||[]).find(function(x){return x.id===id;})||{};
   if(!e.user_id){ toast('No login yet — use Enable login first',true); return; }
   if(!e.email){ toast('This employee has no email on file',true); return; }
@@ -2907,7 +2987,7 @@ async function hrSendLogin(id){
                              res.filter(function(x){return !x.emailed;}).map(function(x){ return {name:x.name, reason:'email failed: '+(x.error||'unknown')}; }));
   toast(r.emailed ? ('Emailed ✓ — '+(e.name||e.email)) : 'Password reset, but the EMAIL failed — pass the password on yourself', !r.emailed);
   HR.data=null; renderHR();
-}
+}); }
 // The probe the handler's own comment says to run first. Sends to the caller's own inbox and touches
 // no passwords, so it is safe to press at any time.
 async function hrSendLoginTest(){
@@ -2918,7 +2998,7 @@ async function hrSendLoginTest(){
 function hrCredsCopy(){ var t=document.getElementById('hr_creds_txt'); if(t){ t.select(); try{ document.execCommand('copy'); toast('Copied ✓'); }catch(e){ toast('Copy failed — select manually',true); } } }
 function hrEditEmp(id){ HR.editEmp = id? ((HR.data.employees||[]).find(function(x){return x.id===id;})||{}) : {}; hrRender(); }
 function hrIsResigned(x){ var s=String((x&&x.status)||'').toLowerCase(); return s==='resigned'||s==='inactive'||s==='terminated'||s==='left'||!!(x&&x.resign_date); }
-async function hrEmpDelete(id){
+async function hrEmpDelete(id){ return hrOnce('hrEmpDelete:'+(id), async function(){
   // Callable from the Employees list AND from the payroll grid, which loads its own roster — look in both,
   // or a resigned employee reads as {} here and is told to go and resign themselves first.
   var e=(((HR.data&&HR.data.employees)||[]).find(function(x){return x.id===id;}))
@@ -2935,7 +3015,7 @@ async function hrEmpDelete(id){
     return;
   }
   toast((r&&r.error)||'Delete failed',true);
-}
+}); }
 // Default role/position list (operator's roster) — the Position field is a select-or-type combobox.
 // Any new position typed on an employee is auto-remembered (pulled from existing staff next time).
 var HR_POSITIONS=['Senior Executive','Senior Sales Advisor','Sales Executive','After Sales Service Representative','Customer Service','Channel Marketer','Content Creator','Graphic Designer','Multi Media Designer'];
@@ -2944,7 +3024,13 @@ function hrPositionList(){ var seen={}, out=[]; var add=function(p){ p=String(p|
 function hrEmpForm(){
   var x=HR.editEmp||{};
   var inp=function(k,ph,val,extra){return '<input id="hr_'+k+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">';};
-  var g=function(lbl,el){return '<div><label class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
+  // v231: derive the label's `for` from the control's own id, so tapping the CAPTION focuses the
+  // field. Measured on the employee Profile at 375px: 18 <label> captions, NOT ONE with `for` — so
+  // the big easy target sitting directly above every small input was dead space on a phone, and a
+  // screen reader announced each field unnamed. Reading the id out of the markup fixes every call
+  // site at once and changes none of them. Ids are unique here (checked across all ten screens).
+  var _lf=function(el,lbl){ if(lbl!=null && String(lbl).replace(/&nbsp;/g,'').trim()==='') return ''; var m=/ id="([^"]+)"/.exec(el); return m?(' for="'+m[1]+'"'):''; };
+  var g=function(lbl,el){return '<div><label'+_lf(el,lbl)+' class="muted" style="font-size:11px">'+lbl+'</label>'+el+'</div>';};
   var ck=function(k,lbl,on){return '<label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="hr_'+k+'" '+(on?'checked':'')+' style="accent-color:var(--coral)"> '+lbl+'</label>';};
   var sel=function(k,opts,val){return '<select id="hr_'+k+'" style="width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+((String(val==null?'':val)===String(o[0]))?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';};
   var etOpts=[['Full-time','Full-time'],['Part-time','Part-time'],['Contract','Contract'],['Intern','Intern'],['Probation','Probation']];
@@ -3199,7 +3285,7 @@ async function hrEmpLeaveLoad(){
   finally{ ELV.loading=false; }
   if(HR.view==='leave' && HR_EMP_MODE) hrRender();
 }
-async function hrEmpLeaveDecide(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Approved ✓':(r.advanced?'Approved → next level':'Done')); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }
+async function hrEmpLeaveDecide(id,decision){ return hrOnce('hrEmpLeaveDecide:'+(id), async function(){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Approved ✓':(r.advanced?'Approved → next level':'Done')); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 function hrEmpLeaveRender(){
   var d=ELV.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(ELV.err||'Could not load leave')+' — <a onclick="ELV.data=null;ELV.err=null;ELV.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
   var types=d.types||[], bals=d.balances||[], reqs=d.requests||[];
@@ -3226,7 +3312,7 @@ function hrEmpLeaveRender(){
   var pend=ELV.pending||[], apprCard='';
   if(pend.length){
     var pr=pend.map(function(x){ return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td class="muted" style="font-size:11px">'+esc(x.current_step_name||'')+'</td><td class="muted" style="font-size:11px">'+esc(x.reason||'')+'</td><td style="white-space:nowrap"><button class="btn xs" onclick="hrEmpLeaveDecide(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrEmpLeaveDecide(\''+x.id+'\',\'reject\')">Reject</button></td></tr>'; }).join('');
-    apprCard='<div class="panel" style="margin-bottom:14px;border-color:rgba(245,158,11,.35)"><div class="panel-hd"><h3>🔔 Pending your approval <span class="pill" style="color:var(--amber);font-size:10px">'+pend.length+'</span></h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Level</th><th>Reason</th><th></th></tr></thead><tbody>'+pr+'</tbody></table></div></div>';
+    apprCard='<div class="panel" style="margin-bottom:14px;border-color:rgba(var(--amber-rgb),.35)"><div class="panel-hd"><h3>🔔 Pending your approval <span class="pill" style="color:var(--amber);font-size:10px">'+pend.length+'</span></h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Level</th><th>Reason</th><th></th></tr></thead><tbody>'+pr+'</tbody></table></div></div>';
   }
   return apprCard+balCards+form+list;
 }
@@ -3243,7 +3329,7 @@ async function hrEmpLeaveApply(){
   }catch(e){ toast(e.message||e,true); }
   if(btn){btn.disabled=false;btn.textContent='Submit application';}
 }
-async function hrEmpLeaveCancel(id){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }
+async function hrEmpLeaveCancel(id){ return hrOnce('hrEmpLeaveCancel:'+(id), async function(){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 // Step-pills used by both admin + employee views (needs x.steps + x.current_step + x.status).
 function hrLeaveStepPills(x){
   var steps=x.steps||[]; if(!steps.length) return '<span class="muted" style="font-size:10.5px">—</span>';
@@ -3334,7 +3420,13 @@ function hrEmpProfile(){
   if(!emp) return hrEmpty('user','Your login isn’t linked to an employee profile yet — ask HR to enable your access.');
   if(EPRO.banks===null){ EPRO.banks=false; call({api:'hr_banks_list'}).then(function(r){ EPRO.banks=(r&&r.ok&&r.banks)?r.banks.filter(function(b){return b.active!==false;}):[]; if(HR.view==='profile') hrRender(); }).catch(function(){ EPRO.banks=[]; }); }
   var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
-  var g=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+  // v231: derive the label's `for` from the control's own id, so tapping the CAPTION focuses the
+  // field. Measured on the employee Profile at 375px: 18 <label> captions, NOT ONE with `for` — so
+  // the big easy target sitting directly above every small input was dead space on a phone, and a
+  // screen reader announced each field unnamed. Reading the id out of the markup fixes every call
+  // site at once and changes none of them. Ids are unique here (checked across all ten screens).
+  var _lf=function(el,lbl){ if(lbl!=null && String(lbl).replace(/&nbsp;/g,'').trim()==='') return ''; var m=/ id="([^"]+)"/.exec(el); return m?(' for="'+m[1]+'"'):''; };
+  var g=function(l,el){ return '<div><label'+_lf(el,l)+' class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
   var inp=function(id,val,ph){ return '<input id="'+id+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'" style="'+S+'">'; };
   var ro=function(l,v){ return '<div><div class="muted" style="font-size:11px;margin-bottom:2px">'+l+'</div><div style="font-size:13px;font-weight:600">'+esc(v==null||v===''?'—':v)+'</div></div>'; };
   // Read-only employment card — HR-managed master fields
@@ -3596,7 +3688,7 @@ function hrObWhoHtml(id){
   return '<div style="font-size:10.5px;margin-top:3px;color:var(--amber);font-weight:600">⚠ On behalf of '+esc(hrObName(id)||'another employee')+' — not you.</div>';
 }
 function hrObWhoPaint(){ var s=document.getElementById('lvob_emp'), w=document.getElementById('lvob_who'); if(s&&w) w.innerHTML=hrObWhoHtml(s.value); }
-async function hrLeaveApplyOnBehalf(){
+async function hrLeaveApplyOnBehalf(){ return hrOnce('hrLeaveApplyOnBehalf:'+(''), async function(){
   var emp=(document.getElementById('lvob_emp')||{}).value; if(!emp){ toast('Pick an employee',true); return; }
   // Filing against the wrong person is silent and expensive: the request, the balance deduction and the
   // approval email all carry that person's name. Confirm by name whenever it is not the admin themselves.
@@ -3609,7 +3701,7 @@ async function hrLeaveApplyOnBehalf(){
   // so a mis-picked employee looked exactly like a correct one.
   var forWho=hrObName(emp)||'employee';
   if(r&&r.ok){ toast(r.approved?('Recorded & approved for '+forWho+' ('+r.days+'d) ✓'):('Leave submitted for '+forWho+' ('+r.days+'d) → routed for approval')); LVA.applyOpen=false; LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true);
-}
+}); }
 function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return;
   if(v && v.indexOf('emp:')===0){ var id=v.slice(4); var e=((LVA.data&&LVA.data.employees)||[]).find(function(x){return x.id===id;}); LVA.flowEdit[i]={name:(e&&e.name)||'Employee',approver_type:'employee',approver_employee_id:id}; }
   else if(v==='manager'){ LVA.flowEdit[i]={name:'Direct Manager',approver_type:'manager',approver_role:'manager'}; }
@@ -3619,7 +3711,7 @@ function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return;
 function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; var emps=(LVA.data&&LVA.data.employees)||[]; if(emps.length){ LVA.flowEdit.push({name:emps[0].name,approver_type:'employee',approver_employee_id:emps[0].id}); } else { LVA.flowEdit.push({name:'HR',approver_type:'role',approver_role:'hr'}); } hrRender(); }
 function hrLeaveFlowDel(i){ LVA.flowEdit.splice(i,1); hrRender(); }
 async function hrLeaveFlowSave(){ var r=await call({api:'hr_leave_flow_save',tenant:HR.tenant,steps:LVA.flowEdit||[]}); if(r&&r.ok){ toast('Approval flow saved ✓'); LVA.data=null; LVA.flowEdit=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
-async function hrDecideLeave(id,decision){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
+async function hrDecideLeave(id,decision){ return hrOnce('hrDecideLeave:'+(id), async function(){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 // ===== 🔀 Approvals — unified multi-level approval control (leave + reimbursement) =====
 var APV={ tab:'leave', loading:false, err:null, leave:null, leaveFlow:null, rc:null, wfEdit:null };
 var APV_S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
@@ -3693,8 +3785,8 @@ function hrApvRc(){
   // new claim quietly drops to a ONE-approver fallback, no matter how many levels you designed.
   var wfAll=(cfg.workflows||[]), wfOn=wfAll.filter(function(w){return w.active;});
   var wfWarn = (wfAll.length && !wfOn.length)
-    ? '<div style="background:rgba(245,158,11,.14);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No workflow is active.</b> You have '+wfAll.length+' workflow(s) configured but all are switched <b>off</b>, so every new claim uses a <b>single-approver fallback</b> — your multi-level chain is not being applied. Switch one on below.</div>'
-    : (!wfAll.length ? '<div style="background:rgba(245,158,11,.10);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No approval workflow.</b> Claims use a single-approver fallback. Add a workflow to require more than one approver.</div>' : '');
+    ? '<div style="background:rgba(var(--amber-rgb),.14);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No workflow is active.</b> You have '+wfAll.length+' workflow(s) configured but all are switched <b>off</b>, so every new claim uses a <b>single-approver fallback</b> — your multi-level chain is not being applied. Switch one on below.</div>'
+    : (!wfAll.length ? '<div style="background:rgba(var(--amber-rgb),.10);border:1px solid var(--amber);border-radius:10px;padding:10px 13px;margin-bottom:10px;font-size:12.5px;color:var(--amber)"><b>⚠ No approval workflow.</b> Claims use a single-approver fallback. Add a workflow to require more than one approver.</div>' : '');
   var wfPanel='<div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Reimbursement approval workflows</h3>'+hrRW('<button class="btn p sm" onclick="hrApvWfNew()">+ New workflow</button>')+'</div>'+
     wfWarn+
     '<div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Workflow</th><th>Amount</th><th>Approval chain</th><th>Status</th><th></th></tr></thead><tbody>'+wfRows+'</tbody></table></div>'+
@@ -3792,7 +3884,7 @@ function hrClaims(){
     return '<tr><td>'+esc((x.employee&&x.employee.name)||'—')+'</td><td>'+esc(x.category)+'</td><td class="amt">'+M(x.amount)+'</td><td class="muted">'+esc(x.claim_date)+'</td><td class="muted" style="font-size:11px">'+esc(x.note||'')+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No claims</td></tr>';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Category</th><th class="amt">Amount</th><th>Date</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
-async function hrDecideClaim(id,status){ var r=await call({api:'hr_claim_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.claims||[]).find(function(c){return c.id===id;}); if(x)x.status=status; hrRender(); toast('Claim '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }
+async function hrDecideClaim(id,status){ return hrOnce('hrDecideClaim:'+(id), async function(){ var r=await call({api:'hr_claim_decide',id:id,status:status}); if(r&&r.ok){ var x=(HR.data.claims||[]).find(function(c){return c.id===id;}); if(x)x.status=status; hrRender(); toast('Claim '+status.toLowerCase()); } else toast((r&&r.error)||'Failed',true); }); }
 // ---- Payroll (Wave 2) ----
 // ---- Bulk payroll grid: fill every employee inline (editable basic + variable items), live calc ----
 function hrGridInit(){
@@ -3927,7 +4019,11 @@ function hrHubKey(){ return 'hr_hub_'+HR.tenant+'_'+HR.pay.month+'-'+HR.pay.year
 function hrHubGet(){ try{ return JSON.parse(storageGet(hrHubKey())||'{}')||{}; }catch(_e){ return {}; } }
 function hrHubTick(k,on){ var s=hrHubGet(); s[k]=!!on; storageSet(hrHubKey(), JSON.stringify(s)); hrRender(); }
 function hrUobCfg(){ try{ return JSON.parse(storageGet('hr_uob_'+HR.tenant)||'{}')||{}; }catch(_e){ return {}; } }
-function hrUobCfgSave(){ var a=(document.getElementById('hr_uob_acct')||{}).value||''; var c=(document.getElementById('hr_uob_cd')||{}).value||''; storageSet('hr_uob_'+HR.tenant, JSON.stringify({acct:String(a).replace(/[^0-9]/g,''), cd:c})); toast('UOB Infinity settings saved'); }
+function hrUobCfgSave(){ var a=(document.getElementById('hr_uob_acct')||{}).value||''; var c=(document.getElementById('hr_uob_cd')||{}).value||''; storageSet('hr_uob_'+HR.tenant, JSON.stringify({acct:String(a).replace(/[^0-9]/g,''), cd:c}));
+  // v231: say WHERE. This is storageSet — this browser only, not the server — so a colleague on another
+  // machine generates the UOB file with a BLANK debit account and the only sign is a tip they may not
+  // see. "Saved" reads as "saved for the company", which is the one thing it does not mean.
+  toast('UOB Infinity settings saved on this browser (not shared with other users)'); }
 function hrDueInfo(){ var p=HR.pay; var due=new Date(p.year, p.month, 15); var ty=mytYMD(); var t=new Date(ty.year, ty.month-1, ty.day); var days=Math.round((due-t)/86400000);   // v224: "today" is now MYT, not the machine's — the EPF/SOCSO deadline is a Malaysian date
   var nm=p.month===12?1:p.month+1, ny=p.month===12?p.year+1:p.year;
   var col=days<0?'var(--coral-soft)':(days<=7?'var(--amber)':'var(--muted)');
@@ -4199,14 +4295,12 @@ function hrPayroll(){
   // already written (and may have been emailed) — silently accepting edits over them is how a payslip and
   // its EA-form figure end up disagreeing with no record of which is right.
   var locked=finalised && !p.editFinal;
-  var actions = locked
-    ? hrRW('<button class="btn sm" onclick="hrEditFinalised()" title="Payslips are already written for this month. Unlock to change the entries; you must re-finalise afterwards for the payslips to match.">✏️ Edit entries</button>')
-    : hrRW('<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+(finalised?'Re-finalise':'Finalise payroll')+'</button>');
+  var actions = '<span id="hr_payact">'+hrGridActionsHtml()+'</span>';
   var table='<div class="panel"><div class="panel-hd"><h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Payroll grid — '+HR_MONTHS[p.month]+' '+p.year+hrGridStateHtml()+'</h3>'+
     '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+actions+'</span></div>'+
     (locked?'<div class="muted" style="font-size:11.5px;padding:0 2px 8px;color:var(--amber)">This month is finalised — payslips are written, so the entries are locked. Click <b>✏️ Edit entries</b> to change them, then re-finalise so the payslips match.</div>':'')+
     '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
-    '<div class="tbl-wrap"><table class="bigtable" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th><th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
+    '<div class="tbl-wrap"><table class="bigtable pay-grid" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th><th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var employerPanel = p.showEmployer ? hrEmployerPanel() : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
@@ -4220,7 +4314,13 @@ var HR_EMP_EDIT=null;   // working copy of the employer record while the panel i
 function hrEmployerToggle(){ HR.pay.showEmployer=!HR.pay.showEmployer; if(HR.pay.showEmployer){ var e=(HR.data&&HR.data.employer)||{}; HR_EMP_EDIT={ name:e.name||hrCompanyName(), reg_no:e.reg_no||'', doc_code:e.doc_code||'', employer_no:e.employer_no||'', epf_employer_no:e.epf_employer_no||'', socso_employer_no:e.socso_employer_no||'', address:e.address||'', phone:e.phone||'', email:e.email||'', logo:e.logo||null }; } hrRender(); }
 function hrEmployerPanel(){
   var e=HR_EMP_EDIT||{}; var S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';
-  var g=function(l,el){ return '<div><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
+  // v231: derive the label's `for` from the control's own id, so tapping the CAPTION focuses the
+  // field. Measured on the employee Profile at 375px: 18 <label> captions, NOT ONE with `for` — so
+  // the big easy target sitting directly above every small input was dead space on a phone, and a
+  // screen reader announced each field unnamed. Reading the id out of the markup fixes every call
+  // site at once and changes none of them. Ids are unique here (checked across all ten screens).
+  var _lf=function(el,lbl){ if(lbl!=null && String(lbl).replace(/&nbsp;/g,'').trim()==='') return ''; var m=/ id="([^"]+)"/.exec(el); return m?(' for="'+m[1]+'"'):''; };
+  var g=function(l,el){ return '<div><label'+_lf(el,l)+' class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>'; };
   var inp=function(id,val,ph){ return '<input id="emp_'+id+'" value="'+esc(val==null?'':val)+'" placeholder="'+esc(ph||'')+'" style="'+S+'">'; };
   var logoBox = e.logo
     ? '<div style="display:flex;align-items:center;gap:12px"><img src="'+esc(e.logo)+'" style="max-height:60px;max-width:180px;border:1px solid var(--border);border-radius:6px;background:#fff;padding:4px"><button class="btn xs d" onclick="hrEmployerLogoClear()">Remove logo</button></div>'
@@ -4299,12 +4399,9 @@ function hrRatesPanel(cfg){
 // request was in flight, so a double-click fired the call twice. hr_rc_post_xero only checked
 // xero_bill_id BEFORE its write, so two overlapping posts both saw null and created TWO Xero bills.
 // (hr_rc_mark_paid was already safe via its status precondition; hrRCSave already had RC._saving.)
-var HR_INFLIGHT={};
-async function hrOnce(key, fn){
-  if(HR_INFLIGHT[key]){ toast('Still working on that \u2014 one moment\u2026',true); return; }
-  HR_INFLIGHT[key]=1;
-  try { return await fn(); } finally { delete HR_INFLIGHT[key]; }
-}
+// v232: the implementation moved to common.js as ctgOnce, so app.html's money actions are guarded
+// by the same one. The name stays — 17 call sites below, and this file's comments all say hrOnce.
+async function hrOnce(key, fn){ return ctgOnce('hr:'+key, fn); }
 async function hrRatesSave(){ return hrOnce('hrRatesSave', async function(){
   var gv=function(id){ var el=document.getElementById(id); return el?el.value:''; };
   var p2=function(id){ var v=gv(id); return v===''?null:Number(v)/100; };   // % -> decimal
@@ -4322,7 +4419,15 @@ async function hrRatesSave(){ return hrOnce('hrRatesSave', async function(){
   var r=await call({api:'hr_rates_save',rates:rates});
   if(r&&r.ok){ toast('Statutory rates saved ✓'); HR.pay.data.rates=rates; HR.pay.showRates=false; hrRender(); } else toast((r&&r.error)||'Save failed',true);
 }); }
-function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return; g[field]=(val===''||val==null)?0:Number(val); if(isNaN(g[field]))g[field]=0; hrGridDirty(); hrGridRecalc(); }
+// v231: `isNaN` is NOT a number check — isNaN(Infinity) is false, so a pasted `1e400` was stored, and
+// `Infinity` reached the KWSP i-Akaun CSV as that literal word under a toast reading "EPF CSV
+// downloaded". CLAUDE.md's own money rule, in the one grid where the figures are contributions. And a
+// negative EARNING is not a thing — a negative allowance is a deduction, and the row below has a
+// Deduction box for it — so clamp, exactly as hrGridPcbCell two lines down already does.
+function hrGridCell(empId,field,val){ var g=HR.pay.grid[empId]; if(!g) return;
+  var n=(val===''||val==null)?0:Number(val);
+  g[field]=isFinite(n)?Math.max(0,n):0;
+  hrGridDirty(); hrGridRecalc(); }
 // v195: PCB override. Empty box = no override (fall back to the engine); everything else, INCLUDING 0,
 // is a real figure the operator entered.
 function hrGridPcbOn(g){ return !!g && g.pcbSet!=null && g.pcbSet!==''; }
@@ -4330,7 +4435,7 @@ function hrGridPcbCell(empId,val){ var g=HR.pay.grid[empId]; if(!g) return;
   // Touching the box IS the override — including clearing it to zero, which is a real MTD figure for a lot
   // of staff. Only the ↺ button goes back to the calculated number.
   if(val===''||val==null){ g.pcbSet=null; }
-  else { var n=Number(val); g.pcbSet=isNaN(n)?null:Math.max(0,n); }
+  else { var n=Number(val); g.pcbSet=isFinite(n)?Math.max(0,n):null; }   // v231: isNaN(Infinity) is false
   hrGridDirty(); hrGridRecalc(); }
 function hrGridPcbAuto(empId){ var g=HR.pay.grid[empId]; if(!g) return; g.pcbSet=null; hrGridDirty(); hrRender(); }
 // ── v205: per-row actions, so the whole month can be run from the grid ──────────────────────────────
@@ -4396,7 +4501,30 @@ function hrGridDirty(){
   HR.pay.dirty=true; hrGridStatePaint();
 }
 // Repaint the state chip in place — a full hrRender() here would tear down the input being typed in.
-function hrGridStatePaint(){ var el=document.getElementById('hr_paystate'); if(el) el.outerHTML=hrGridStateHtml(); }
+// v231: the Save / Finalise pair, so it can be repainted in place beside the state chip.
+//
+// While there are UNSAVED changes the primary (coral) button was FINALISE — the one action guaranteed
+// to refuse, because hrFinalise() stops on HR.pay.dirty. The operator presses the button the page
+// emphasises, is refused, and asks why the button does not work. That is the report this came from.
+// So the emphasis follows the action that can actually succeed: dirty ⇒ Save is primary and Finalise
+// carries the reason in its tooltip. Clean ⇒ byte-identical to before.
+function hrGridActionsHtml(){
+  var p=HR.pay, run=(p.data&&p.data.run)||null;
+  var finalised=!!run && run.status==='finalised';
+  if(finalised && !p.editFinal)
+    return hrRW('<button class="btn sm" onclick="hrEditFinalised()" title="Payslips are already written for this month. Unlock to change the entries; you must re-finalise afterwards for the payslips to match.">✏️ Edit entries</button>');
+  var fin=finalised?'Re-finalise':'Finalise payroll';
+  return hrRW(p.dirty
+    ? '<button class="btn p sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn sm" onclick="hrFinalise()" title="Save your entries first — the figures on screen are not stored yet.">'+fin+'</button>'
+    : '<button class="btn sm" onclick="hrGridSave()">💾 Save entries</button><button class="btn p sm" onclick="hrFinalise()">'+fin+'</button>');
+}
+// Repaint the chip AND the buttons in place. A full hrRender() here would tear down the input being
+// typed in, which is why the chip has always been done this way; the buttons now change on the same
+// signal, so they have to follow the same route or they only update on the next navigation.
+function hrGridStatePaint(){
+  var el=document.getElementById('hr_paystate'); if(el) el.outerHTML=hrGridStateHtml();
+  var ac=document.getElementById('hr_payact'); if(ac) ac.innerHTML=hrGridActionsHtml();
+}
 function hrGridStateHtml(){
   var p=HR.pay, run=(p.data&&p.data.run)||null;
   var fin=!!run && run.status==='finalised';
@@ -4625,6 +4753,7 @@ function hrExpStatutory(kind){
 // ── Statutory PORTAL upload files (documented layouts — do ONE test upload per portal to confirm; specs change) ──
 // EPF → KWSP i-Akaun bulk contribution text file (fixed-width; amounts in cents, no decimal point)
 function hrExpKwsp(){
+  if(!hrDraftOk('The KWSP i-Akaun file')) return;
   var f=hrBuildKwsp(hrCurRows(),hrPeriod());
   if(!f){ toast('No EPF contributions this period',true); return; }
   if(f.error){ toast(f.error,true); return; }
@@ -4633,6 +4762,7 @@ function hrExpKwsp(){
 }
 // SOCSO + EIS → PERKESO ASSIST combined contribution file (CSV)
 function hrExpAssist(){
+  if(!hrDraftOk('The PERKESO ASSIST file')) return;
   var f=hrBuildAssist(hrCurRows(),hrPeriod());
   if(!f){ toast('No SOCSO/EIS contributions this period',true); return; }
   if(f.error){ toast(f.error,true); return; }
@@ -4641,6 +4771,7 @@ function hrExpAssist(){
 }
 // PCB → LHDN CP39 / e-PCB text file (fixed-width; amounts in cents)
 function hrExpCp39(){
+  if(!hrDraftOk('The CP39 / e-PCB file')) return;
   var f=hrBuildCp39(hrCurRows(),hrPeriod());
   if(!f){ toast('No PCB payable this period',true); return; }
   if(f.error){ toast(f.error,true); return; }
@@ -4681,16 +4812,48 @@ function hrBankPick(code){ var b=hrBanksSorted().find(function(x){return x.code=
 function hrBankBlur(){ setTimeout(function(){ var b=document.getElementById('hr_bankList'); if(b) b.style.display='none'; },160); }
 function hrExpGiro(){
   var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;}
+  if(!hrDraftOk('The salary file')) return;
   var f=hrBuildGiro(rows,hrPeriod());
+  if(!hrBankFileOk(f,'Bank giro CSV')) return;
+  if(!f.count){ toast('No positive net pay to disburse',true); return; }
   hrDownload(f.name,f.text,f.mime); toast('Bank giro CSV — '+f.count+' staff, '+M(f.total));
+}
+// v231: a salary file with a blocker must not be handed over. hrSubmissionSpecs has always treated
+// `blockers` as an ERROR — "the one-click pack must never call itself complete while a file is broken" —
+// but the ⬇ buttons beside it downloaded the identical file with a ⚠ appended to a toast, and in HR OS a
+// toast is the thing nobody sees. Same file, same consequence, so the same answer for both routes.
+function hrBankFileOk(f,what){
+  if(!f) return false;
+  // v231: a TIP is advice, not a failure. Flagged as an error it was painted red — so a note about
+  // an optional UOB field read as something having gone wrong — and, once errors began jumping the
+  // queue, it also kept its place AHEAD of the message saying the file was blocked. Advice last.
+  (f.tips||[]).forEach(function(t){ toast(t,false); });
+  if(f.fatal && f.fatal.length){ toast(what+' blocked — '+f.fatal.join(' · '),true); return false; }
+  if(f.noAcct) toast(what+' — ⚠ '+f.noAcct+' staff have no bank account and will not be paid',true);
+  return true;
+}
+// v231: the v159 warning, which existed in ONE place. Its own words: "the grid is live and editable, so
+// generating before finalising (or after editing a finalised month) ships files that disagree with the
+// payslips already issued." That was true of hrSubmitAll's ZIP and equally true of every button beside
+// it — and `hrEmailAll` was the one it mattered most for, because an email is the only one of these that
+// cannot be recalled. Every OUTWARD-facing action asks the same question now, from one place, so the
+// next one added cannot quietly skip it.
+//
+// Deliberately NOT guarded: the raw EPF/SOCSO/EIS/PCB review CSVs, the payroll summary and the payslip
+// PDF. Those are what an operator opens WHILE drafting, and a confirm on each would train them to click
+// through the one that matters.
+function hrDraftOk(what){
+  if(HR.pay&&HR.pay.data&&HR.pay.data.run&&String(HR.pay.data.run.status||'')==='finalised') return true;
+  return confirm('This month is not finalised.\n\n'+what+' will use the figures currently on screen, which may differ from the payslips you issue after finalising.\n\nContinue anyway?');
 }
 // ---- Bank-specific salary bulk-payment files (net pay). Confirm exact column order in your bank's uploader on first use. ----
 function hrExpBank(bank){
+  if(!hrDraftOk('The salary file')) return;
   var f=hrBuildBank(hrCurRows(),hrPeriod(),bank,hrUobCfg());
   if(!f){ toast(bank==='maybank'?'No payroll rows':'No positive net pay to disburse',true); return; }
-  (f.tips||[]).forEach(function(t){ toast(t,true); });
+  if(!hrBankFileOk(f,(bank==='maybank'?'Maybank':'UOB Infinity')+' salary file')) return;
   hrDownload(f.name,f.text,f.mime);
-  toast((bank==='maybank'?'Maybank':'UOB Infinity')+' salary file — '+f.count+' staff, '+M(f.total)+(f.noAcct?(' · ⚠ '+f.noAcct+' missing bank a/c'):''), f.noAcct>0);
+  toast((bank==='maybank'?'Maybank':'UOB Infinity')+' salary file — '+f.count+' staff, '+M(f.total));
 }
 // ── One-click "Submit all": build every statutory + salary file (hrSubmissionSpecs in hr-docs.js),
 // bundle into one ZIP, guide the upload. The ZIP writer and the specs live in hr-docs.js so React
@@ -4729,8 +4892,10 @@ function hrExpSummary(){
 // v226: hrAbToB64 / hrIcPassword / hrPayslipEmailHtml are in hr-docs.js so React shares them; only
 // hrPayslipBase64 stays here — it needs window.jspdf. hrPayslipEmailHtml now takes the company name.
 function hrPayslipBase64(e,p,period,d){ var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4',encryption:{userPassword:hrIcPassword(e),ownerPassword:hrIcPassword(e)+'-o',userPermissions:['print','copy']}}); hrDrawPayslip(doc,e,p,period,d); return hrAbToB64(doc.output('arraybuffer')); }
-function hrEmailAll(){
+function hrEmailAll(){ return hrOnce('hrEmailAll:'+(''), async function(){
   var rows=hrCurRows(); if(!rows.length){ toast('No payroll rows',true); return; }
+  // The only action here that cannot be undone: a payslip in somebody's inbox stays there.
+  if(!hrDraftOk('The payslips you email')) return;
   var withEmail=rows.filter(function(r){ return r.e.email; });
   if(!withEmail.length){ toast('No employees have an email on file',true); return; }
   if(!confirm('Email password-protected payslips to '+withEmail.length+' employee(s) for '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+'? Each PDF is locked with the employee\'s IC number.')) return;
@@ -4746,15 +4911,16 @@ function hrEmailAll(){
         .catch(function(){ failed++; next(); });
     })();
   });
-}
+}); }
 // ---- Xero draft journal (Wave 3b): portal proxies to xero-post-payroll (DRAFT only) ----
-async function hrPostXero(runId){
+async function hrPostXero(runId){ return hrOnce('hrPostXero:'+(runId), async function(){
+  if(!hrDraftOk('The Xero journal')) return;
   if(!confirm('Post this payroll to Xero as a DRAFT manual journal? It will NOT be approved automatically — review and post it inside Xero.')) return;
   toast('Posting draft journal to Xero…');
   var r=await call({api:'hr_post_xero',runId:runId,tenantId:HR.tenant});
   if(r&&r.ok){ toast('Xero draft journal created ✓ — review it in Xero.'); }
   else toast((r&&r.error)||'Xero posting failed',true);
-}
+}); }
 
 // ===== 🧮 Malaysia Payroll Calculator — configurable per-item statutory flags + override + audit =====
 var HR_CALC={ empId:'', inp:{basic:'',allowance:'',claim:'',bonus:'',deduction:'',zakat:'',relief:''},

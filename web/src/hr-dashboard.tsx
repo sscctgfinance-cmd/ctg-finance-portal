@@ -423,15 +423,15 @@ function hrDashOverview(d: DashData) {
   return (
     <>
       {hrCardGrid([
-        hrDCard('Total Employees', o.total_employees, { color: 'var(--sky-soft)', icon: '👥' }),
-        hrDCard('Active Employees', o.active_employees, { color: 'var(--green-soft)', icon: '✅' }),
+        hrDCard('Total Employees', o.total_employees, { icon: '👥' }),
+        hrDCard('Active Employees', o.active_employees, { icon: '✅' }),
         hrDCard('New Hires (mo)', o.new_hires, { icon: '➕' }),
         hrDCard('Resigned (mo)', o.resigned, { color: o.resigned > 0 ? 'var(--coral)' : 'var(--text)', icon: '🚪' }),
-        hrDCard('Monthly Gross', M(o.gross), { color: 'var(--sky-soft)', icon: '💵', delta: gD }),
-        hrDCard('Monthly Net', M(o.net), { color: 'var(--green-soft)', icon: '💰', delta: nD }),
+        hrDCard('Monthly Gross', M(o.gross), { icon: '💵', delta: gD }),
+        hrDCard('Monthly Net', M(o.net), { icon: '💰', delta: nD }),
         hrDCard('Employer Statutory', M(o.employer_statutory), { icon: '🏛️' }),
-        hrDCard('Total HR Cost', M(o.total_hr_cost), { color: 'var(--coral-soft)', icon: '📊', delta: cD }),
-        hrDCard('Attendance Rate', o.attendance_rate + '%', { color: 'var(--green-soft)', icon: '🕐', delta: aD }),
+        hrDCard('Total HR Cost', M(o.total_hr_cost), { icon: '📊', delta: cD }),
+        hrDCard('Attendance Rate', o.attendance_rate + '%', { icon: '🕐', delta: aD }),
         hrDCard('Late Rate', o.late_rate + '%', { color: o.late_rate > 15 ? 'var(--amber)' : 'var(--text)', icon: '⏰' }),
         hrDCard('Absenteeism', o.absenteeism_rate + '%', { color: o.absenteeism_rate > 10 ? 'var(--coral)' : 'var(--text)', icon: '🚫' }),
         hrDCard('OT Cost', M(o.ot_cost), { icon: '⏱️' }),
@@ -452,7 +452,7 @@ function hrDashHeadcount(d: DashData, employees: DashEmployee[]) {
     <>
       {hrCardGrid([
         hrDCard('Total', h.total, { icon: '👥' }),
-        hrDCard('Active', h.active, { color: 'var(--green-soft)', icon: '✅' }),
+        hrDCard('Active', h.active, { icon: '✅' }),
         hrDCard('Inactive', h.inactive, { icon: '💤' }),
         hrDCard('New Hires', h.new_hires, { icon: '➕' }),
         hrDCard('Resigned', h.resigned, { color: h.resigned > 0 ? 'var(--coral)' : 'var(--text)', icon: '🚪' }),
@@ -475,8 +475,8 @@ function hrDashPayroll(d: DashData) {
   return (
     <>
       {hrCardGrid([
-        hrDCard('Gross', M(p.gross), { color: 'var(--sky-soft)', icon: '💵', delta: gD }),
-        hrDCard('Net', M(p.net), { color: 'var(--green-soft)', icon: '💰', delta: nD }),
+        hrDCard('Gross', M(p.gross), { icon: '💵', delta: gD }),
+        hrDCard('Net', M(p.net), { icon: '💰', delta: nD }),
         hrDCard('Basic', M(p.basic), { icon: '🧾' }),
         hrDCard('Allowance', M(p.allowance), { icon: '➕' }),
         hrDCard('Claim', M(p.claim), { icon: '🧾' }),
@@ -507,7 +507,7 @@ function hrDashAttendance(d: DashData) {
   return (
     <>
       {hrCardGrid([
-        hrDCard('Attendance Rate', a.attendance_rate + '%', { color: 'var(--green-soft)', icon: '🕐', delta: aD }),
+        hrDCard('Attendance Rate', a.attendance_rate + '%', { icon: '🕐', delta: aD }),
         hrDCard('Late Rate', a.late_rate + '%', { color: a.late_rate > 15 ? 'var(--amber)' : 'var(--text)', icon: '⏰' }),
         hrDCard('Absenteeism', a.absenteeism_rate + '%', { color: a.absenteeism_rate > 10 ? 'var(--coral)' : 'var(--text)', icon: '🚫' }),
         hrDCard('Missing Clock In/Out', a.missing_clock, { icon: '❓' }),
@@ -531,14 +531,14 @@ function hrDashCost(d: DashData) {
   return (
     <>
       {hrCardGrid([
-        hrDCard('Total HR Cost', M(c.total_hr_cost), { color: 'var(--coral-soft)', icon: '📊', delta: cD }),
+        hrDCard('Total HR Cost', M(c.total_hr_cost), { icon: '📊', delta: cD }),
         hrDCard('Salary Cost', M(c.salary_cost), { icon: '💵' }),
         hrDCard('Employer EPF', M(c.epf_er), { icon: '🏦' }),
         hrDCard('Employer SOCSO', M(c.socso_er), { icon: '🛡️' }),
         hrDCard('Employer EIS', M(c.eis_er), { icon: '🧯' }),
         hrDCard('Claim Cost', M(c.claim_cost), { icon: '🧾' }),
         hrDCard('OT Cost', M(c.ot_cost), { icon: '⏱️' }),
-        hrDCard('Cost / Employee', M(c.cost_per_employee), { color: 'var(--sky-soft)', icon: '👤' }),
+        hrDCard('Cost / Employee', M(c.cost_per_employee), { icon: '👤' }),
         hrDCard('vs Last Month', (vp > 0 ? '+' : '') + vp + '%', { color: vc, icon: '📈', sub: 'Δ ' + M(c.variance.delta) }),
       ])}
       <ChartRow>

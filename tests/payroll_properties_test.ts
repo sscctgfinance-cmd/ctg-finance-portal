@@ -31,6 +31,17 @@ const html = HROS;
 const ts = await Deno.readTextFile(new URL("../supabase/functions/portal/hr.ts", import.meta.url));
 const fe = await loadEngine(inlineScript(html), FRONTEND_ENGINE, FRONTEND_TABLES, ["hrCompute"]);
 const be = await loadEngine(ts, BACKEND_ENGINE, BACKEND_TABLES, ["computePayrollMY"]);
+
+// v231: hr-docs.js as a module, for the bank-file property below. Same shape as the loader in
+// tests/pcb_kakitangan_test.ts — replace the CommonJS tail with an ESM export and import it as data,
+// so the test exercises the file hros.html and web/ both load, not a copy of it.
+// deno-lint-ignore no-explicit-any
+async function load(file: string, names: string): Promise<any> {
+  const s = await Deno.readTextFile(new URL("../" + file, import.meta.url));
+  return await import("data:application/javascript," + encodeURIComponent(
+    s.replace(/if \(typeof module[\s\S]*$/, `export { ${names} };`),
+  ));
+}
 // deno-lint-ignore no-explicit-any
 const hrCompute = fe.hrCompute as any;
 // deno-lint-ignore no-explicit-any
@@ -167,15 +178,49 @@ Deno.test("net is never negative at any wage a person is actually paid", () => {
   assertEquals(hrCompute(emp(4), CFG, [], PERIOD, null).net >= 0, true);
 });
 
-Deno.test("the bank payment file never carries a non-positive amount", async () => {
-  // This is what stops the negative net above from ever becoming a payment instruction. hrBuildBank
-  // filters `x.p.net > 0` before it builds a row; that filter IS the guard, so it is read out of
-  // hr-docs.js rather than described. (It also means such an employee is silently absent from the file —
-  // a real gap, but the safe direction.) v226: the builder moved from hros.html to hr-docs.js.
-  const docs = await Deno.readTextFile(new URL("../hr-docs.js", import.meta.url));
-  const src = docs.slice(docs.indexOf("function hrBuildBank("), docs.indexOf("function hrBuildBank(") + 900);
-  assertEquals(/rows\.filter\(function\(x\)\{ return x\.p\.net>0; \}\)/.test(src), true,
-    "hrBuildBank no longer filters out non-positive net pay — a negative amount can now reach a bank file");
+Deno.test("the bank payment file never carries a non-positive amount — and SAYS WHO it left out", async () => {
+  // v231. This test used to pin the SOURCE TEXT of one filter, `rows.filter(...x.p.net>0...)`, and its
+  // own comment conceded the rest: "It also means such an employee is silently absent from the file — a
+  // real gap, but the safe direction." That gap was real and it was not safe, and driving the two
+  // builders is what showed it:
+  //
+  //   Recovering a RM5,000 salary advance from an employee whose net is RM3,549.95 — an ordinary payroll
+  //   instruction — put net at −1,450.05. hrBuildBank dropped her and reported "2 staff" as SUCCESS;
+  //   hrBuildGiro, the button beside it, had no filter at all and wrote −1450.05 as a CREDIT LINE. Two
+  //   exports of one payroll, disagreeing about whether a person is paid, both saying "downloaded".
+  //
+  // So this asserts the PROPERTY, on BOTH builders, over inputs that reach it — a source pin cannot see
+  // hrBuildGiro at all, and could not have. The silent-omission half is the second assertion: the person
+  // who is left out has to be NAMED, which is v157's own blank-account blocker applied to the rows its
+  // filter removed before that blocker could look at them.
+  const { hrBuildGiro, hrBuildBank } = await load("hr-docs.js", "hrBuildGiro, hrBuildBank");
+  const period = { month: 8, year: 2026, label: "August 2026" };
+  const row = (name: string, net: number) => ({
+    e: { name, empNo: "E1", bankAccount: "123", bankName: "Maybank", ic: "900101-01-1234", email: "" },
+    p: { net },
+  });
+  // Positive, zero, negative and non-finite in one batch — the last two are what used to get through.
+  const rows = [row("PAID", 3200.5), row("FULL UNPAID LEAVE", 0), row("ADVANCE RECOVERED", -1450.05), row("CORRUPT", Infinity)];
+
+  for (const [what, f] of [["giro", hrBuildGiro(rows, period)], ["uob", hrBuildBank(rows, period, "uob", {})]] as const) {
+    const amounts = String(f.text).trim().split("\n").slice(1)
+      .map((l: string) => l.split(",").map((c) => Number(c.replace(/"/g, ""))).filter((n) => isFinite(n) && n !== 0))
+      .flat();
+    assertEquals(amounts.some((n) => n < 0), false, `${what}: a negative amount reached a bank file`);
+    assertEquals(/Infinity|NaN/.test(String(f.text)), false, `${what}: a non-finite amount reached a bank file`);
+    assertEquals(f.count, 1, `${what}: only the payable row belongs in the file`);
+    // The person who was left out must be named, and it must BLOCK — not be a line in a toast nobody sees.
+    assertEquals((f.fatal || []).length > 0, true, `${what}: dropped a row from a salary file without saying so`);
+    assertEquals((f.fatal || []).join(" ").includes("ADVANCE RECOVERED"), true, `${what}: does not name who was left out`);
+    // RM 0.00 net is legitimate (a whole month of unpaid leave) — said out loud, but not a blocker.
+    assertEquals((f.tips || []).join(" ").includes("FULL UNPAID LEAVE"), true, `${what}: a zero-net employee is not mentioned`);
+  }
+
+  // Guard the guard: an all-payable batch must raise nothing, or the blocker is unconditional and means
+  // nothing. This is the side of the branch the old test never drove.
+  for (const [what, f] of [["giro", hrBuildGiro([row("A", 10)], period)], ["uob", hrBuildBank([row("A", 10)], period, "uob", {})]] as const) {
+    assertEquals((f.fatal || []).length, 0, `${what}: blocks a payroll with nothing wrong with it`);
+  }
 });
 
 Deno.test("SOCSO and EIS stop at the RM6,000 ceiling, and not one ringgit early", () => {

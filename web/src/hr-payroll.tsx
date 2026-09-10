@@ -505,6 +505,8 @@ export interface HrPayrollProps {
   runId?: string | null;
   /** `hrGridStateHtml()`'s chip — hros.html:4300. */
   state: GridStateChip;
+  /** v231: HR.pay.dirty. Drives which of Save / Finalise is the primary button — see the wrapper below. */
+  dirty?: boolean;
   /** `hrHubGet()` — hros.html:3827. localStorage, so it is read by the route. */
   ticks: Partial<Record<HubKey, boolean>>;
   /** `hrUobCfg()` — hros.html:3829. localStorage, so it is read by the route. */
@@ -769,13 +771,25 @@ export default function HrPayroll(p: HrPayrollProps) {
           <span style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             {rw(<button className="btn sm" onClick={() => p.onEmployerToggle()} title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>)}
             <button className="btn sm" onClick={() => p.onRatesToggle()} title="View / edit statutory rates">⚙️ Rates</button>
-            {/* v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it. */}
-            {p.locked
+            {/* v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it.
+                v231: the `hr_payact` wrapper is the legacy's repaint target — hrGridStatePaint() writes
+                the buttons into it in place, because a full hrRender() while typing would tear down the
+                cell being edited. React re-renders anyway and needs no such hook, but the id is part of
+                the markup the golden holds, so it is mirrored. */}
+            <span id="hr_payact">{p.locked
               ? rw(<button className="btn sm" onClick={() => p.onEditFinalised()} title="Payslips are already written for this month. Unlock to change the entries; you must re-finalise afterwards for the payslips to match.">✏️ Edit entries</button>)
-              : rw(<>
-                  <button className="btn sm" onClick={() => p.onGridSave()}>💾 Save entries</button>
-                  <button className="btn p sm" onClick={() => p.onFinalise()}>{p.finalised ? 'Re-finalise' : 'Finalise payroll'}</button>
-                </>)}
+              // v231: while there are UNSAVED changes the primary (coral) button used to be Finalise —
+              // the one action guaranteed to refuse, because it stops on `dirty`. The emphasis now
+              // follows the action that can succeed, and Finalise says why in its tooltip.
+              : p.dirty
+                ? rw(<>
+                    <button className="btn p sm" onClick={() => p.onGridSave()}>💾 Save entries</button>
+                    <button className="btn sm" onClick={() => p.onFinalise()} title="Save your entries first — the figures on screen are not stored yet.">{p.finalised ? 'Re-finalise' : 'Finalise payroll'}</button>
+                  </>)
+                : rw(<>
+                    <button className="btn sm" onClick={() => p.onGridSave()}>💾 Save entries</button>
+                    <button className="btn p sm" onClick={() => p.onFinalise()}>{p.finalised ? 'Re-finalise' : 'Finalise payroll'}</button>
+                  </>)}</span>
           </span>
         </div>
         {p.locked
@@ -783,7 +797,7 @@ export default function HrPayroll(p: HrPayrollProps) {
           : null}
         <div className="muted" style={{ fontSize: '11px', padding: '0 2px 8px' }}>Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee&#39;s EPF rate / SOCSO category / age rules come from their profile.</div>
         <div className="tbl-wrap">
-          <table className="bigtable" style={{ fontSize: '12px' }}>
+          <table className="bigtable pay-grid" style={{ fontSize: '12px' }}>
             <thead>
               <tr style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.03em' }}>
                 <th></th>

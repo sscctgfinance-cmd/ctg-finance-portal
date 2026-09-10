@@ -33,6 +33,7 @@
 //   • the signature PAD (`SIG.open` is false after every `hrNav()`).
 // Each is asserted separately in the test instead.
 
+import * as React from 'react';
 import type { CSSProperties } from 'react';
 
 /** One row of `hr_banks_list` — hros.html:3247. Only the active ones reach this component. */
@@ -111,11 +112,21 @@ const S: CSSProperties = {
   fontSize: '13px',
 };
 
-/** `g()` — hros.html:3249. A labelled form cell. */
+/** `g()` — hros.html:3249. A labelled form cell.
+ *  v231: the caption is WIRED to the control. The legacy reads the id out of the markup string; the
+ *  React equivalent reads it off the child's props, so neither side needs its call sites touched.
+ *  Measured before the fix: 18 captions on this screen, none with `for` — so on a phone the big easy
+ *  target directly above each small input did nothing, and a screen reader announced the field unnamed. */
+function childId(children: React.ReactNode): string | undefined {
+  const c = Array.isArray(children) ? children[0] : children;
+  if (!React.isValidElement(c)) return undefined;
+  const id = (c.props as { id?: unknown }).id;
+  return typeof id === 'string' && id ? id : undefined;
+}
 function G({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <label className="muted" style={{ fontSize: '11px', display: 'block', marginBottom: '3px' }}>{label}</label>
+      <label htmlFor={childId(children)} className="muted" style={{ fontSize: '11px', display: 'block', marginBottom: '3px' }}>{label}</label>
       {children}
     </div>
   );

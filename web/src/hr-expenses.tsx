@@ -109,15 +109,15 @@ const M = (n: unknown) =>
 /** `rcStatusPill()` — hros.html:1775. `[colour, background]` per status; anything unknown falls to muted. */
 const STATUS: Record<string, [string, string]> = {
   'Draft': ['#95a3ba', 'rgba(107,122,147,.18)'],
-  'Submitted': ['var(--sky-soft)', 'rgba(91,155,213,.16)'],
-  'Pending Manager Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending HR Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending Finance Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Pending Director Approval': ['var(--amber)', 'rgba(245,158,11,.16)'],
-  'Approved': ['var(--green-soft)', 'rgba(22,185,122,.16)'],
-  'Paid': ['var(--green-soft)', 'rgba(22,185,122,.24)'],
-  'Rejected': ['var(--coral-soft)', 'rgba(232,93,60,.16)'],
-  'Need More Info': ['var(--sky-soft)', 'rgba(91,155,213,.18)'],
+  'Submitted': ['var(--sky-soft)', 'rgba(var(--sky-rgb),.16)'],
+  'Pending Manager Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending HR Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending Finance Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Pending Director Approval': ['var(--amber)', 'rgba(var(--amber-rgb),.16)'],
+  'Approved': ['var(--green-soft)', 'rgba(var(--green-rgb),.16)'],
+  'Paid': ['var(--green-soft)', 'rgba(var(--green-rgb),.24)'],
+  'Rejected': ['var(--coral-soft)', 'rgba(var(--coral-rgb),.16)'],
+  'Need More Info': ['var(--sky-soft)', 'rgba(var(--sky-rgb),.18)'],
   'Cancelled': ['var(--muted)', 'rgba(107,122,147,.14)'],
 };
 
@@ -294,6 +294,8 @@ export interface BankFile {
   text: string;
   count: number;
   total: number;
+  /** v231: set when the batch cannot be paid — the caller must refuse and show this, not download. */
+  blocked?: string;
 }
 
 /**
@@ -317,8 +319,19 @@ export interface BankFile {
  *     carries the word TOTAL.
  */
 export function bankFile(claims: RcClaim[], ids: string[], today: string): BankFile | null {
-  const list = claims.filter((c) => c.status === 'Approved' && (!ids.length || ids.indexOf(c.id) >= 0));
-  if (!list.length) return null;
+  const all = claims.filter((c) => c.status === 'Approved' && (!ids.length || ids.indexOf(c.id) >= 0));
+  if (!all.length) return null;
+  // v231: the mirror of hrRCExportBank's guard, which is hrBuildBank's rule (hr-docs.js) in the second
+  // file that pays people. An amount that is not a positive finite number is not a payment; writing it
+  // as one puts a CREDIT line in a bank import, and dropping it silently leaves someone unpaid with the
+  // toast still reporting success. `unpayable` is non-empty ⇒ the route refuses and names them.
+  const unpayable = all.filter((c) => !(isFinite(Number(c.amount)) && Number(c.amount) > 0));
+  if (unpayable.length) {
+    return { name: '', text: '', count: 0, total: 0,
+      blocked: unpayable.length + ' approved claim(s) have an amount of zero or less ('
+        + unpayable.map((c) => c.claim_no || '?').slice(0, 5).join(', ') + ') — fix or cancel them first' };
+  }
+  const list = all;
   const head = ['No', 'Payee Name', 'Bank', 'SWIFT/BIC', 'Account No', 'IC', 'Amount (RM)', 'Payment Ref', 'Email'];
   const body = list.map((c, i) => {
     const e = c.hr_employees || {};

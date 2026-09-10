@@ -183,14 +183,24 @@ export default function HrPayrollPage() {
     setDirty(true);
   }, []);
 
+  // v231: mirrors hrGridCell (hros.html) exactly — isFinite, not !isNaN, because isNaN(Infinity) is
+  // false and a pasted 1e400 reached the statutory CSVs as the literal word `Infinity`; and clamped at
+  // zero because a negative earning is a deduction, which has its own box.
   const onCell = useCallback((id: string, field: CellField, v: string) => {
     const n = (v === '' || v == null) ? 0 : Number(v);
-    mutate(id, (g) => ({ ...g, [field]: isNaN(n) ? 0 : n }));
+    mutate(id, (g) => ({ ...g, [field]: isFinite(n) ? Math.max(0, n) : 0 }));
   }, [mutate]);
 
   // v195: blank goes back to the engine; 0 is a REAL override, so this stores '' rather than falsy.
+  // v231: this had DIVERGED from hrGridPcbCell — it pinned an unparseable entry to a real override of 0
+  // (the legacy falls back to the engine) and clamped nothing, so a negative PCB was accepted in React
+  // and refused in hros.html. Same expression as the legacy now.
   const onPcbCell = useCallback((id: string, v: string) => {
-    mutate(id, (g) => ({ ...g, pcbSet: (v === '' || v == null) ? null : (isNaN(Number(v)) ? 0 : Number(v)) }));
+    mutate(id, (g) => {
+      if (v === '' || v == null) return { ...g, pcbSet: null };
+      const n = Number(v);
+      return { ...g, pcbSet: isFinite(n) ? Math.max(0, n) : null };
+    });
   }, [mutate]);
   const onPcbAuto = useCallback((id: string) => mutate(id, (g) => ({ ...g, pcbSet: null })), [mutate]);
 
@@ -722,6 +732,7 @@ export default function HrPayrollPage() {
             finalised={finalised}
             runId={run?.id || null}
             state={gridState(run, dirty)}
+            dirty={dirty}
             ticks={ticks}
             uob={uob}
             due={dueInfo(month, year, new Date())}

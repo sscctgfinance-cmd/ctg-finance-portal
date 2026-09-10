@@ -44,7 +44,7 @@ export const TOAST_GAP_MS = 240;
  * grey as "Saved", and nothing about the markup would look wrong.
  */
 export function toastStyle(isErr?: boolean): { borderColor: string; color: string } {
-  return { borderColor: isErr ? 'rgba(239,68,68,.45)' : '', color: isErr ? 'var(--red-soft)' : '' };
+  return { borderColor: isErr ? 'rgba(var(--red-rgb),.45)' : '', color: isErr ? 'var(--red-soft)' : '' };
 }
 
 /** The `#toast` div itself. Pure: props in, markup out, so it can be diffed without a browser. */
@@ -56,10 +56,27 @@ export function Toast({ msg, isErr, show }: { msg: string; isErr?: boolean; show
 let sink: ((m: ToastMsg) => void) | null = null;
 const buffered: ToastMsg[] = [];
 
+/**
+ * v231 — where an incoming message belongs. `_toastInsertAt()` in common.js, same rule:
+ * an ERROR goes ahead of every advisory message, errors keep their own order among themselves, and
+ * advice queues behind everything. The queue plays at 2400ms + 240ms each and toast() is the only way
+ * either app reports the outcome of anything, so a failure sitting behind two "Tip:" lines reached the
+ * operator 5.3 seconds after the click that caused it.
+ *
+ * `pending` must NOT include the message currently on screen — swapping that one out mid-display is a
+ * flicker the operator never asked for. The host therefore holds index 0 back and inserts into the rest.
+ */
+export function toastInsertAt(pending: ToastMsg[], item: ToastMsg): number {
+  if (!item.isErr) return pending.length;
+  let i = 0;
+  while (i < pending.length && pending[i].isErr) i++;
+  return i;
+}
+
 /** `toast(msg, isErr)` — common.js:29. Same signature, same queueing. */
 export function toast(msg: string, isErr?: boolean): void {
   if (sink) sink({ msg, isErr });
-  else buffered.push({ msg, isErr });
+  else buffered.splice(toastInsertAt(buffered, { msg, isErr }), 0, { msg, isErr });
 }
 
 /** Mounted once per app layout. Renders the legacy `#toast` div and drives the legacy queue. */
@@ -74,7 +91,15 @@ export default function ToastHost() {
   if (head) last.current = head;
 
   useEffect(() => {
-    sink = (m) => setQueue((q) => [...q, m]);
+    // Index 0 is the message ON SCREEN and never moves; the priority rule applies to what is still
+    // waiting. That is the same arrangement common.js has by construction — there the showing message
+    // has already been shifted OFF the queue, so a plain insert cannot disturb it.
+    sink = (m) => setQueue((q) => {
+      if (!q.length) return [m];
+      const rest = q.slice(1);
+      const at = toastInsertAt(rest, m);
+      return [q[0], ...rest.slice(0, at), m, ...rest.slice(at)];
+    });
     if (buffered.length) { setQueue((q) => [...q, ...buffered]); buffered.length = 0; }
     return () => { sink = null; };
   }, []);

@@ -36,7 +36,10 @@ const CFG = {
   epf: { eeRate: 0.11, erRateLow: 0.13, erRateHigh: 0.12, threshold: 5000, erSenior: 0.04, eeSenior: 0 },
   socso: { eeRate: 0.005, erRate: 0.0175, erRate2: 0.0125, ceiling: 6000 },
   eis: { eeRate: 0.002, erRate: 0.002, ceiling: 6000 },
-  reliefPersonal: 9000, reliefSpouse: 4000, reliefChild: 2000, reliefEpfMax: 4000,
+  // hr_statutory_rates.rates has these four NULL in production, so the engine defaults apply — and
+  // that includes v230's RM333/month EPF relief cap. Pinning reliefEpfMax here (it used to say 4000)
+  // tested a path no company runs and would have hidden the new default from every case below.
+  reliefPersonal: 9000, reliefSpouse: 4000, reliefChild: 2000,
 };
 
 const MONEY = ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "lindung", "pcb", "net", "employerCost"];
@@ -258,14 +261,20 @@ Deno.test("parity + rule — PCB method: payroll.my vs LHDN (v185)", () => {
   const bonus = [{ kind: "bonus", amount: 369, epf_subject: true }];
 
   // The operator's own side-by-side. This is the whole point of the change.
-  assertEquals(computePayrollMY(emp, MY, bonus, undefined, P).pcb, 31.10, "payroll.my figure");
+  // v230 moved both figures by one 5-sen step (31.10 -> 31.20, 11.90 -> 11.95): the EPF relief is now
+  // capped at RM333 a MONTH rather than RM4,000 a year, which is RM4 less relief over a full year.
+  // That is the change that made HR OS reproduce Kakitangan exactly — see tests/pcb_kakitangan_test.ts.
+  assertEquals(computePayrollMY(emp, MY, bonus, undefined, P).pcb, 31.20, "payroll.my figure");
   // LHDN mode reads 11.90, not the 12.05 quoted before v184: adding SKBBK to the SOCSO/EIS relief pushed
   // this employee to the RM350 annual cap, which shaved ~15 sen off the monthly MTD. That the payroll.my
   // figure is UNCHANGED by v184 is itself the tell — that method grants no SOCSO/EIS relief at all.
+  // Unchanged by v230, and that is informative rather than an oversight: under the LHDN method this
+  // employee already hits the RM350 SOCSO/EIS relief cap, and the RM4 less EPF relief does not move him
+  // across a 5-sen step. Only payroll.my — which grants no SOCSO/EIS relief at all — shifts here.
   assertEquals(computePayrollMY(emp, LH, bonus, undefined, P).pcb, 11.90, "LHDN figure, still available");
 
   // Default must be payroll.my (cfg with no pcbMethod at all).
-  assertEquals(computePayrollMY(emp, CFG, bonus, undefined, P).pcb, 31.10, "default is payroll.my");
+  assertEquals(computePayrollMY(emp, CFG, bonus, undefined, P).pcb, 31.20, "default is payroll.my");
 
   // Without a bonus the two methods differ ONLY by the SOCSO/EIS relief, and both stay nil here.
   assertEquals(computePayrollMY(emp, MY, [], undefined, P).pcb, 0);

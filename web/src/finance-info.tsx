@@ -673,8 +673,8 @@ function TreeNode({ parentId, depth, p }: { parentId: FolderId | null; depth: nu
         const isActive = sameId(f.id, p.activeFolderId);
         const subCount = p.folders.filter((x) => sameId(x.parent_id || null, f.id)).length;
         const fileN = p.docs.filter((d) => sameId(d.folder_id || null, f.id)).length;
-        const bg = isActive ? 'rgba(232,93,60,.10)' : 'transparent';
-        const hoverBg = isActive ? 'rgba(232,93,60,.14)' : 'rgba(255,255,255,.04)';
+        const bg = isActive ? 'rgba(var(--coral-rgb),.10)' : 'transparent';
+        const hoverBg = isActive ? 'rgba(var(--coral-rgb),.14)' : 'rgba(255,255,255,.04)';
         const countText = (fileN ? fileN + '📄' : '') + (subCount ? (fileN ? ' · ' : '') + subCount + '📁' : '');
         return (
           <li key={String(f.id)}>
@@ -809,7 +809,7 @@ function DocsBody(p: DocsProps) {
           : null}
       </div>
       <div onClick={() => p.onFolderOpen(null)}
-           style={st('display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:' + (rootIsActive ? 'rgba(232,93,60,.10)' : 'transparent') + ';margin-bottom:4px')}>
+           style={st('display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;background:' + (rootIsActive ? 'rgba(var(--coral-rgb),.10)' : 'transparent') + ';margin-bottom:4px')}>
         <span style={st('font-size:14px')}>{rootIsActive ? '📂' : '📁'}</span>
         <span style={st('font-size:13px;color:var(--text);flex:1')}>All documents</span>
         <span className="muted" style={st('font-size:10px')}>{allDocs.length + ' total · ' + rootCount + ' in root'}</span>

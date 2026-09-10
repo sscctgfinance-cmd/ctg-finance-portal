@@ -114,10 +114,10 @@ export function icon(kind: unknown): string {
 
 /** `urgPill(u, days)` — app.html:6913-6919. */
 function UrgPill({ urgency, days }: { urgency: unknown; days: number }) {
-  if (urgency === 'overdue') return <span className="pill" style={{ background: 'rgba(239,68,68,.18)', color: 'var(--red-soft)', fontSize: '10px' }}>{'⚠ ' + Math.abs(days) + 'd overdue'}</span>;
-  if (urgency === 'critical') return <span className="pill" style={{ background: 'rgba(245,158,11,.18)', color: 'var(--amber)', fontSize: '10px' }}>{'⏰ ' + days + 'd'}</span>;
+  if (urgency === 'overdue') return <span className="pill" style={{ background: 'rgba(var(--red-rgb),.18)', color: 'var(--red-soft)', fontSize: '10px' }}>{'⚠ ' + Math.abs(days) + 'd overdue'}</span>;
+  if (urgency === 'critical') return <span className="pill" style={{ background: 'rgba(var(--amber-rgb),.18)', color: 'var(--amber)', fontSize: '10px' }}>{'⏰ ' + days + 'd'}</span>;
   if (urgency === 'warning') return <span className="pill" style={{ background: 'rgba(255,165,89,.16)', color: 'var(--coral-soft)', fontSize: '10px' }}>{days + 'd'}</span>;
-  if (urgency === 'upcoming') return <span className="pill" style={{ background: 'rgba(91,155,213,.14)', color: 'var(--sky-soft)', fontSize: '10px' }}>{days + 'd'}</span>;
+  if (urgency === 'upcoming') return <span className="pill" style={{ background: 'rgba(var(--sky-rgb),.14)', color: 'var(--sky-soft)', fontSize: '10px' }}>{days + 'd'}</span>;
   return <span className="muted" style={{ fontSize: '10.5px' }}>{days + 'd'}</span>;
 }
 
@@ -148,10 +148,10 @@ function Rows({ items }: { items: Deadline[] }) {
 
 /** The five section headers — app.html:6944-6948. Each is only written when its bucket is non-empty. */
 const SECTIONS: [Urgency, string, string, string][] = [
-  ['overdue', 'rgba(239,68,68,.06)', 'var(--red-soft)', '⚠ OVERDUE'],
-  ['critical', 'rgba(245,158,11,.06)', 'var(--amber)', '⏰ ≤ 14 DAYS'],
+  ['overdue', 'rgba(var(--red-rgb),.06)', 'var(--red-soft)', '⚠ OVERDUE'],
+  ['critical', 'rgba(var(--amber-rgb),.06)', 'var(--amber)', '⏰ ≤ 14 DAYS'],
   ['warning', 'rgba(255,165,89,.05)', 'var(--coral-soft)', '≤ 30 DAYS'],
-  ['upcoming', 'rgba(91,155,213,.05)', 'var(--sky-soft)', '≤ 90 DAYS'],
+  ['upcoming', 'rgba(var(--sky-rgb),.05)', 'var(--sky-soft)', '≤ 90 DAYS'],
   ['distant', 'rgba(255,255,255,.02)', 'var(--muted)', 'LATER'],
 ];
 

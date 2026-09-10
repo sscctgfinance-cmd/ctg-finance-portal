@@ -138,7 +138,7 @@ function TypesTable(p: HrExpensesSettingsProps) {
     <div className="panel">
       <div className="panel-hd"><h3>Claim Types</h3><button className="btn p sm" onClick={p.onTypeNew}>+ New type</button></div>
       {anyMissing ? (
-        <div style={{ background: 'rgba(245,158,11,.12)', border: '1px solid rgba(245,158,11,.35)', borderRadius: '8px', padding: '8px 11px', fontSize: '12px', color: 'var(--amber)', marginBottom: '10px' }}>
+        <div style={{ background: 'rgba(var(--amber-rgb),.12)', border: '1px solid rgba(var(--amber-rgb),.35)', borderRadius: '8px', padding: '8px 11px', fontSize: '12px', color: 'var(--amber)', marginBottom: '10px' }}>
           ⚠ Some active types have no GL account — claims of those types can’t post to Xero until you set one (click Edit).
         </div>
       ) : null}

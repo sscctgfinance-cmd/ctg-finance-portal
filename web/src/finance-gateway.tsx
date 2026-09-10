@@ -238,14 +238,16 @@ export default function FinanceGateway(p: GatewayProps): React.JSX.Element {
           </div>
           <div>
             <label className="muted" style={st('font-size:11px')}>Settlement / payout lines</label>
-            <div style={st('display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0')}>
+            {/* v231: a LABEL, not a div — the caption beside a checkbox has to toggle it. Measured
+                bare, these two rendered a 13x13 target with inert text next to them, below WCAG 2.5.8. */}
+            <label style={st('display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0;cursor:pointer')}>
               <input type="checkbox" id="gw-payout" defaultChecked style={st('accent-color:var(--coral)')} />
               <span>Payout to bank (−net)</span>
-            </div>
-            <div style={st('display:flex;align-items:center;gap:8px;font-size:13px')}>
+            </label>
+            <label style={st('display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer')}>
               <input type="checkbox" id="gw-fee" defaultChecked style={st('accent-color:var(--coral)')} />
               <span>Merchant fees (MDR / Atome)</span>
-            </div>
+            </label>
           </div>
         </div>
         <button className="btn p" id="gw-convert" style={st('margin-top:14px')} onClick={() => p.onConvert()}
@@ -322,8 +324,8 @@ function Result({ result, onDownload }: { result: GwResult | null; onDownload: G
         {chk ? (
           <div style={{
             ...st('border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;color:var(--text-soft)'),
-            background: chk.allOk ? 'rgba(61,220,151,.08)' : 'rgba(242,180,92,.1)',
-            border: '1px solid ' + (chk.allOk ? 'rgba(61,220,151,.3)' : 'rgba(242,180,92,.35)'),
+            background: chk.allOk ? 'rgba(var(--green-rgb),.08)' : 'rgba(242,180,92,.1)',
+            border: '1px solid ' + (chk.allOk ? 'rgba(var(--green-rgb),.3)' : 'rgba(242,180,92,.35)'),
           }}>
             <b style={{ color: chk.allOk ? 'var(--green-soft)' : 'var(--amber)' }}>{chk.allOk ? '✓ Data check passed — every input row accounted for' : '⚠ Data check — please review below'}</b>
             <div style={st('margin-top:4px;line-height:1.65')}>

@@ -44,7 +44,23 @@ function storageRemove(k){ try { if(STORAGE_OK) localStorage.removeItem(k); } ca
 // `localISO(d)` keeps its name because it is a global both apps expose; its ANSWER changed.
 function localISO(d){ return mytISO(d); }
 function inDaysLocalISO(days){ return mytISOPlusDays(days); }
-function toast(msg,isErr){ _toastQueue.push({msg,isErr}); if(!_toastPlaying) _playNextToast(); }
+// v231: where an incoming message belongs in the queue. The queue is strictly FIFO at 2400ms + 240ms
+// each, and toast() is the ONLY way either app reports the outcome of anything — so a failure could sit
+// behind two pieces of advice and reach the operator 5.3 SECONDS after the click that caused it.
+// Measured on the salary export: two "Tip:" messages, then the line saying the file was blocked.
+//
+// So an ERROR goes ahead of every advisory message, and errors keep their own order among themselves —
+// a first failure explains a second. Advice still queues behind everything, which is what advice is for.
+// The message already ON SCREEN is never swapped out from under the operator's eyes: this only reorders
+// what has not been shown yet, so nothing flickers and the worst case becomes one message, not three.
+function _toastInsertAt(q, item){
+  if(!item.isErr) return q.length;
+  var i=0; while(i<q.length && q[i].isErr) i++;
+  return i;
+}
+function toast(msg,isErr){ var item={msg:msg,isErr:!!isErr};
+  _toastQueue.splice(_toastInsertAt(_toastQueue,item),0,item);
+  if(!_toastPlaying) _playNextToast(); }
 function _playNextToast(){
   const next=_toastQueue.shift();
   if(!next){ _toastPlaying=false; return; }
@@ -575,3 +591,48 @@ const DocScanner = (function () {
       showCapture(); }
   };
 })();
+
+// ── A mouse wheel must never change a number ──────────────────────────────────────────────────────
+// Chrome and Firefox increment a FOCUSED <input type="number"> when the wheel turns over it. On the
+// Payroll grid that is 16 columns of money and the operator's normal motion is click a cell, scroll to
+// see another column, come back — with the pointer still resting on the cell they just clicked. The
+// change is silent: no error, and the statutory figures below simply re-compute. Since v231 the
+// "unsaved changes" chip is lit either way, so it cannot tell an accidental change from a deliberate
+// one. Nobody sets a salary by scrolling.
+//
+// blur(), NOT preventDefault() — and the distinction is the whole point. Cancelling the wheel stops the
+// PAGE scrolling while the pointer is over the field, which is a worse problem than the one being
+// fixed: it happens every day, and the operator has no idea why the page is stuck. `passive: true` is
+// the guarantee, not a hint — a passive listener CANNOT cancel the event, so this can never regress
+// into the version that freezes scrolling. Capture phase, so focus is gone before the default action
+// looks for it.
+//
+// Load-time code that reads no app state, which is the bar common.js's header sets. The typeof guard is
+// for tests/render_harness.ts, whose DOM shim has no global addEventListener; without it every test
+// that evaluates this file (the 51 render goldens included) throws on import.
+// ── Single-flight guard, shared by both apps ──
+// hros.html's hrOnce (v159) is the original; this is that function, moved here so app.html can use the
+// same one. It is a FLAG, not a disabled button, and the difference is the whole reason it exists:
+// app.html's runOnce() disables the trigger NODE, so it protects a mouse click on the button it can
+// find and nothing else — a keyboard activation, a handler called by name, or a re-rendered row whose
+// old node is gone all sail straight past it. Measured on the signed-in app: five real clicks on the
+// Self-Billed "→ Xero" button sent five sbi_post_xero requests. That handler creates an ACCPAY bill in
+// a live Xero ledger and the server's only dedupe is `if (v.xero_bill_id)` — read BEFORE the write, so
+// five concurrent requests all read null and all create. A duplicate SUBMITTED bill is the kind that
+// gets approved and paid twice.
+//
+// Keyed, so two different rows of the same table can post at once while one row cannot post twice.
+// Released in `finally`, so a network error does not strand the operator with a dead control.
+var CTG_INFLIGHT={};
+async function ctgOnce(key, fn){
+  if(CTG_INFLIGHT[key]){ toast('Still working on that — one moment…',true); return; }
+  CTG_INFLIGHT[key]=1;
+  try { return await fn(); } finally { delete CTG_INFLIGHT[key]; }
+}
+
+if (typeof addEventListener === 'function') {
+  addEventListener('wheel', function (e) {
+    var el = typeof document !== 'undefined' && document.activeElement;
+    if (el && el.type === 'number' && el === e.target) el.blur();
+  }, { passive: true, capture: true });
+}

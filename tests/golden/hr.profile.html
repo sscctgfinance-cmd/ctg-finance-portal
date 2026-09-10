@@ -60,15 +60,15 @@
 <div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Personal</div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">IC number</label>
+<label for="pf_ic" class="muted" style="font-size:11px;display:block;margin-bottom:3px">IC number</label>
 <input id="pf_ic" value="900314-10-5533" placeholder="e.g. 901231-07-1234" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Date of birth</label>
+<label for="pf_dob" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Date of birth</label>
 <input type="date" id="pf_dob" value="1990-03-14" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Gender</label>
+<label for="pf_gender" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Gender</label>
 <select id="pf_gender" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 <option value="" selected>—</option>
 <option>Male</option>
@@ -76,11 +76,11 @@
 </select>
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Nationality</label>
+<label for="pf_nat" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Nationality</label>
 <input id="pf_nat" value="" placeholder="e.g. Malaysian" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Marital status</label>
+<label for="pf_ms" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Marital status</label>
 <select id="pf_ms" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 <option value="single">Single</option>
 <option value="married" selected>Married</option>
@@ -89,7 +89,7 @@
 </select>
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Children</label>
+<label for="pf_kids" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Children</label>
 <input type="number" id="pf_kids" min="0" max="20" value="2" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
@@ -101,21 +101,21 @@
 <div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Contact</div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Phone</label>
+<label for="pf_phone" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Phone</label>
 <input id="pf_phone" value="" placeholder="e.g. 012-3456789" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Emergency contact name</label>
+<label for="pf_ename" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Emergency contact name</label>
 <input id="pf_ename" value="" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Emergency contact phone</label>
+<label for="pf_ephone" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Emergency contact phone</label>
 <input id="pf_ephone" value="" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 </div>
 <div style="margin-bottom:14px">
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Home address</label>
+<label for="pf_addr" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Home address</label>
 <textarea id="pf_addr" rows="2" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;resize:vertical">
 </textarea>
 </div>
@@ -123,7 +123,7 @@
 <div class="muted" style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Bank &amp; statutory</div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Bank</label>
+<label for="pf_bank" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Bank</label>
 <select id="pf_bank" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 <option value="">— select bank —</option>
 <option value="MAYBANK" selected>Malayan Banking Berhad (Maybank)</option>
@@ -132,23 +132,23 @@
 </select>
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Account holder name</label>
+<label for="pf_holder" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Account holder name</label>
 <input id="pf_holder" value="AHMAD BIN ISMAIL" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Account number</label>
+<label for="pf_acct" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Account number</label>
 <input id="pf_acct" value="162011223344" placeholder="digits only" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">EPF (KWSP) no</label>
+<label for="pf_epf" class="muted" style="font-size:11px;display:block;margin-bottom:3px">EPF (KWSP) no</label>
 <input id="pf_epf" value="" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">SOCSO (PERKESO) no</label>
+<label for="pf_socso" class="muted" style="font-size:11px;display:block;margin-bottom:3px">SOCSO (PERKESO) no</label>
 <input id="pf_socso" value="" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div>
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Income tax (TIN) no</label>
+<label for="pf_tax" class="muted" style="font-size:11px;display:block;margin-bottom:3px">Income tax (TIN) no</label>
 <input id="pf_tax" value="" placeholder="" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 </div>

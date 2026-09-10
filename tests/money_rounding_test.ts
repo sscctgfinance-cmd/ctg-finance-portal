@@ -29,7 +29,7 @@ async function load(file: string, names: string): Promise<any> {
   ));
 }
 
-const gw = await load("gateway.js", "gwConvertHitpay, gwConvertPayex, gwConvertAtome, gwConvertNttData, gwNewAudit, gwTotals, gwCSV");
+const gw = await load("gateway.js", "gwConvertHitpay, gwConvertPayex, gwConvertAtome, gwConvertNttData, gwNewAudit, gwTotals, gwCSV, gwAuditLines");
 const sr = await load("salesrecon.js", "srBuildLines, srSummary, srXeroRow, srPostChunks, srTally, SR_XERO_COLS");
 const pnl = await load("pnl.js", "pnlBuild, pnlCsvLines");
 
@@ -67,6 +67,58 @@ Deno.test("HitPay's derived fee rate is NOT computed on the rounded rows", () =>
   const A = gw.gwNewAudit();
   gw.gwConvertHitpay({ txn, payout }, A, "ymd", "ID", true, true);
   assertEquals(A.hpFeeRate, 1.5 / 100.004, "the fee rate moved onto the rounded gross");
+});
+
+Deno.test("HitPay's derived fee rate must LOOK like a discount rate, or it is not used", () => {
+  // v231. The rate is inferred, not read, and it multiplies EVERY payout — so a bad transaction export
+  // does not make the fee slightly wrong, it makes it a different order of magnitude. Driving the
+  // converter found both ends open, with only `feeRate<1` (a divide-by-zero check) in the way:
+  //
+  //     derived 99%  ->  net/(1-0.99)  ->  a RM1,000 payout wrote a fee line of RM 999,000
+  //     derived -3%  ->  net/(1.03)    ->  a fee line of +RM 29.13, i.e. a CREDIT labelled "MDR fee"
+  //
+  // and gwAuditLines — "the only thing on the screen that tells an operator the CSV is complete" — had
+  // no line for HitPay at all, so it reported ✓ over both. This is a bank statement imported into a real
+  // ledger with nothing downstream that re-derives it.
+  //
+  // The reachable input is ordinary: gross is Amount − Refunded per row, so a refund landing in an export
+  // window whose original charge sits outside it shrinks the denominator while the fees stay put.
+  const payout = { rows: [{ "Payout Date": "2026-08-02", "Net Payout Amount": "1000" }] };
+  const txn = (fee: string) => ({ rows: [{ "Completed Date": "2026-08-01", "Converted Amount in MYR": "1000", "Refunded Amount": "0", "All Inclusive Fee Amount in MYR": fee, "ID": "t1" }] });
+  const run = (fee: string) => {
+    const A = gw.gwNewAudit();
+    const rows = gw.gwConvertHitpay({ txn: txn(fee), payout }, A, "ymd", "ID", true, true);
+    // deno-lint-ignore no-explicit-any
+    return { A, fee: rows.find((r: any) => r.kind === "fee"), audit: gw.gwAuditLines("hitpay", A) };
+  };
+
+  // A rate in band is used, and the ordinary case is untouched — the guard must not change good months.
+  const ok = run("15");
+  assertEquals(ok.A.hpFeeRate, 0.015);
+  assertEquals(ok.fee.amount, -15.23);
+  assertEquals(ok.audit.allOk, true);
+  assertEquals(ok.audit.lines.some((l: string) => /HitPay fee rate: 1\.50% — derived/.test(l)), true);
+
+  // Both ends of the old hole, driven AT the boundary rather than deep inside it — a case that only
+  // moves the data to the other side proves the branch exists, not where the line is.
+  for (const [what, fee] of [["negative", "-30"], ["above the band", "990"], ["just outside", "251"]] as const) {
+    const r = run(fee);
+    assertEquals(r.A.hpFeeRate, 0.015, `${what}: a rate that is not a rate was used anyway`);
+    assertEquals(r.A.hpFeeRejected, true, `${what}: not reported as rejected`);
+    assertEquals(r.fee.amount < 0, true, `${what}: the fee line is a CREDIT`);
+    assertEquals(r.audit.allOk, false, `${what}: the data-check block still says the CSV is complete`);
+    assertEquals(r.audit.lines.some((l: string) => /DERIVED RATE REJECTED/.test(l)), true, `${what}: the operator is not told`);
+  }
+  // Just INSIDE the band is still used — otherwise the guard is a blanket, not a band.
+  assertEquals(run("249").A.hpFeeRejected, false, "a 24.9% rate is implausible but in band; do not reject it");
+
+  // No transaction file is the DOCUMENTED fallback and is not a rejection — the two must stay separable,
+  // because one is a normal way to run the screen and the other is a bad export.
+  const A2 = gw.gwNewAudit();
+  gw.gwConvertHitpay({ payout }, A2, "ymd", "ID", true, true);
+  const a2 = gw.gwAuditLines("hitpay", A2);
+  assertEquals([A2.hpFeeRate, A2.hpFeeRejected, a2.allOk], [0.015, false, true]);
+  assertEquals(a2.lines.some((l: string) => /no Transaction file/.test(l)), true);
 });
 
 Deno.test("Payex, Atome and NTT Data store sen figures too", () => {
