@@ -78,15 +78,34 @@
     brand.appendChild(bt);
     var rail = el('button', 'ctg-side-rail', '⟨');
     rail.type = 'button';
-    rail.title = 'Collapse navigation';
-    rail.setAttribute('aria-label', 'Collapse navigation');
+    // The label has to track the STATE, not the initial one: this same control expands once the rail
+    // is collapsed, and it used to go on announcing itself as "Collapse navigation" either way.
+    var railLabel = function (on) {
+      var t = on ? 'Expand navigation' : 'Collapse navigation';
+      rail.title = t;
+      rail.setAttribute('aria-label', t);
+      rail.setAttribute('aria-expanded', on ? 'false' : 'true');
+    };
+    railLabel(false);
     rail.onclick = function () {
       var on = side.classList.toggle('collapsed');
       rail.textContent = on ? '⟩' : '⟨';
+      railLabel(on);
       try { localStorage.setItem('ctg_rail', on ? '1' : '0'); } catch (e) {}
     };
     brand.appendChild(rail);
     side.appendChild(brand);
+
+    /* ── company tile, visible ONLY while collapsed ──────────────────────
+       Collapsing used to hide `.ctg-side-company` outright, and that wrapper holds the REAL company
+       <select> — so the rail removed both the answer to "which company am I in" and the only way to
+       change it. With seven companies and actions that post into a live Xero ledger, that is the
+       expensive thing to lose. This is the org tile the Xero benchmark in the design notes describes:
+       two or three letters, the full name on hover, and clicking it opens the rail back up. */
+    var coTile = el('button', 'ctg-side-cotile');
+    coTile.type = 'button';
+    coTile.onclick = function () { if (side.classList.contains('collapsed')) rail.onclick(); };
+    side.appendChild(coTile);
     try { if (localStorage.getItem('ctg_rail') === '1') rail.onclick(); } catch (e) {}
 
     /* ── company switcher (moved, not cloned — keeps its inline onchange) ── */
@@ -102,6 +121,25 @@
       side.appendChild(co);
       var label = document.querySelector('#cobar .co-label');
       if (label) label.remove();
+    }
+
+    /* ── keep the collapsed company tile in step with the real <select> ──
+       The option list is filled asynchronously once the companies load, so a one-shot read would
+       leave the tile blank on every cold start; watch the select's children as well as its value. */
+    if (sel) {
+      var paintTile = function () {
+        var opt = sel.options[sel.selectedIndex];
+        var full = (opt && opt.textContent || '').trim();
+        coTile.textContent = ctgCoInitials(full);
+        // The all-companies option is itself written with decorative dashes, so appending another
+        // separator reads as "- All Companies - - click to ...". Trim them off the name first.
+        var clean = full.replace(/^[\s—–-]+|[\s—–-]+$/g, '');
+        coTile.title = clean ? clean + ' · click to open the navigation' : 'Pick a company';
+        coTile.setAttribute('aria-label', coTile.title);
+      };
+      paintTile();
+      sel.addEventListener('change', paintTile);
+      try { new MutationObserver(paintTile).observe(sel, { childList: true }); } catch (e) {}
     }
 
     /* ── nav, grouped by the existing categories ───────────────────────── */
@@ -122,6 +160,11 @@
         b.innerHTML = '<span class="ic" aria-hidden="true"></span><span class="lbl"></span>';
         b.querySelector('.ic').textContent = parts.ic;
         b.querySelector('.lbl').textContent = parts.lbl;
+        // Collapsed, `.lbl` is display:none and `.ic` is aria-hidden, which left the button with NO
+        // accessible name and no tooltip — eighteen icons a mouse could not identify and a screen
+        // reader read as "button". Set both here so they hold in either state.
+        b.title = parts.lbl;
+        b.setAttribute('aria-label', parts.lbl);
         b.onclick = function () { if (typeof window.tab === 'function') window.tab(id); };
         nav.appendChild(b);
         links[id] = b;
@@ -207,3 +250,19 @@
     }
   }
 })();
+
+/* The 2-3 letter org tile shown while the rail is collapsed.
+   Drops the "SDN BHD"/"BHD" suffix and a leading group prefix ("CTG4U"), then takes the first three
+   letters of what actually distinguishes the company — DRSMILE -> DRS, ZEERO -> ZEE, WELLNESS -> WEL.
+   The all-companies option becomes ALL rather than an empty tile. Exported for tests. */
+function ctgCoInitials(name) {
+  var s = String(name == null ? '' : name).replace(/[\u2014\u2013-]/g, ' ').trim();
+  if (!s) return '';
+  if (/^all\b|\ball companies\b/i.test(s)) return 'ALL';
+  s = s.replace(/\b(sdn|bhd|berhad)\b/gi, ' ').trim();
+  var words = s.split(/\s+/).filter(Boolean);
+  if (words.length > 1 && /^ctg4u$/i.test(words[0])) words = words.slice(1);
+  var w = words[0] || '';
+  return w.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+}
+if (typeof module !== 'undefined' && module.exports) { module.exports.ctgCoInitials = ctgCoInitials; }

@@ -27,7 +27,7 @@
 // Each is mirrored from the legacy source line for line; what the parity test proves is the branch the
 // golden DOES hold.
 
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 /** One step of a request's approval chain — `hrLeaveStepPills()`, hros.html:3159. */
 export interface LeaveStep {
@@ -51,6 +51,10 @@ export interface LeaveRequest {
   current_step?: number | null;
   steps?: LeaveStep[] | null;
   hr_employees?: { name?: string | null } | null;
+  /** What the employee typed when applying — stored by `hr_leave_apply`, capped at 500 chars, and
+      returned by `hr_leave_admin`'s `select("*")`. It was never rendered until the detail panel. */
+  reason?: string | null;
+  created_at?: string | null;
 }
 
 export interface LeaveEmployee {
@@ -107,6 +111,10 @@ export interface HrLeaveProps {
   applyOpen: boolean;
   onApplyToggle: () => void;
   onApplyClose: () => void;
+  /** `LVA.open` — hros.html. Ids whose reason/trail panel is expanded. The golden holds none. */
+  openIds?: Record<string, unknown>;
+  /** `hrLeaveToggle()` — the legacy calls hrRender(); here the route owns the set. */
+  onToggleDetail?: (id: string) => void;
   /** `hrMyEmpId()` — hros.html:3502. Decides the caption under the employee picker. */
   myEmpId: string;
   /** `todayLocalISO()` — hros.html reads the clock; this component must not. */
@@ -241,7 +249,16 @@ export default function HrLeave(props: HrLeaveProps) {
               </tr>
             </thead>
             <tbody>
-              {requests.length ? requests.map((x) => <RequestRow key={x.id} x={x} viewer={viewer} onDecide={props.onDecide} />) : (
+              {requests.length ? requests.map((x) => (
+                <RequestRow
+                  key={x.id}
+                  x={x}
+                  viewer={viewer}
+                  onDecide={props.onDecide}
+                  open={!!(props.openIds && props.openIds[x.id])}
+                  onToggle={props.onToggleDetail}
+                />
+              )) : (
                 <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: '20px' }}>No leave requests</td></tr>
               )}
             </tbody>
@@ -253,7 +270,10 @@ export default function HrLeave(props: HrLeaveProps) {
 }
 
 /** hros.html:3475 */
-function RequestRow({ x, viewer, onDecide }: { x: LeaveRequest; viewer?: boolean; onDecide: HrLeaveProps['onDecide'] }) {
+function RequestRow({ x, viewer, onDecide, open, onToggle }: {
+  x: LeaveRequest; viewer?: boolean; onDecide: HrLeaveProps['onDecide'];
+  open?: boolean; onToggle?: (id: string) => void;
+}) {
   const st = x.status;
   const fin = FINAL.indexOf(String(st)) >= 0;
   const col = st === 'Approved' ? 'var(--green-soft)'
@@ -262,8 +282,21 @@ function RequestRow({ x, viewer, onDecide }: { x: LeaveRequest; viewer?: boolean
     : 'var(--amber)';
 
   return (
+    <>
     <tr>
-      <td>{(x.hr_employees && x.hr_employees.name) || '—'}</td>
+      {/* The whole name cell toggles, not a bare caret — a 9px target is a miss on a phone, and this
+          is the cell an approver reaches for. The caret is decorative, hence aria-hidden. */}
+      <td>
+        <a
+          onClick={() => onToggle && onToggle(x.id)}
+          title="Show the reason and the approval trail"
+          aria-expanded={open ? 'true' : 'false'}
+          style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+        >
+          <span aria-hidden="true" style={{ color: 'var(--muted)', fontSize: '9px', width: '8px', display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
+          <span>{(x.hr_employees && x.hr_employees.name) || '—'}</span>
+        </a>
+      </td>
       <td>{x.leave_type ?? ''}</td>
       <td className="muted">{x.date_from ?? ''} → {x.date_to ?? ''}</td>
       <td className="amt">{x.days}</td>
@@ -277,6 +310,54 @@ function RequestRow({ x, viewer, onDecide }: { x: LeaveRequest; viewer?: boolean
             {' '}
             <button className="btn xs d" onClick={() => onDecide(x.id, 'reject')}>Reject</button>
           </>
+        ) : null}
+      </td>
+    </tr>
+    {open ? <DetailRow x={x} /> : null}
+    </>
+  );
+}
+
+/** `hrLeaveDetailRow()` — every field is already on the row `hr_leave_admin` returns. */
+function DetailRow({ x }: { x: LeaveRequest }) {
+  const reason = String(x.reason ?? '').trim();
+  const steps = (x.steps || []).slice().sort((a, b) => (a.step_order || 0) - (b.step_order || 0));
+  const Box = ({ label, children }: { label: string; children: ReactNode }) => (
+    <div style={{ marginBottom: '10px' }}>
+      <div className="muted" style={{ fontSize: '10px', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: '3px' }}>{label}</div>
+      {children}
+    </div>
+  );
+  return (
+    <tr className="lv-detail">
+      <td colSpan={7} style={{ background: 'rgba(var(--surface2-rgb),.55)', padding: '14px 16px 12px' }}>
+        <Box label="Reason">
+          {/* Said out loud when absent: a blank panel reads as "failed to load", and the approver
+              cannot tell "they gave no reason" from "the app did not show it". */}
+          {reason
+            ? <div style={{ fontSize: '12.5px', lineHeight: '1.55', whiteSpace: 'pre-wrap' }}>{reason}</div>
+            : <div className="muted" style={{ fontSize: '12px', fontStyle: 'italic' }}>No reason was given when this was applied for.</div>}
+        </Box>
+        {x.created_at ? <Box label="Applied on"><div style={{ fontSize: '12.5px' }}>{hrDT(x.created_at)}</div></Box> : null}
+        {steps.length ? (
+          <Box label="Approval trail">
+            {steps.map((s, i) => {
+              const done = s.status === 'Approved', rej = s.status === 'Rejected';
+              const col = done ? 'var(--green-soft)' : rej ? 'var(--coral-soft)' : 'var(--muted)';
+              const who = done || rej ? (s.decided_by_name || '') : (s.assignee_name || '');
+              const when = s.decided_at ? hrDT(s.decided_at) : '';
+              const tail = (who ? ' \u00b7 ' + who : '') + (when ? ' \u00b7 ' + when : '');
+              return (
+                <div key={i} style={{ fontSize: '12px', marginBottom: '3px' }}>
+                  <span style={{ color: col }}>{done ? '\u2713' : rej ? '\u2715' : '\u25cb'}</span>{' '}
+                  <span className="muted">{String(s.step_order || '')}.</span>{' '}
+                  {s.name || s.approver_role || ('Level ' + (s.step_order || ''))}{' '}
+                  <span style={{ color: col }}>{done ? 'Approved' : rej ? 'Rejected' : 'Waiting'}</span>
+                  <span className="muted">{tail}</span>
+                </div>
+              );
+            })}
+          </Box>
         ) : null}
       </td>
     </tr>

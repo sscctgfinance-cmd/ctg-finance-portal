@@ -92,6 +92,12 @@ function AdminLeavePage() {
   const [today] = useState(todayLocalISO);
 
   const [applyOpen, setApplyOpen] = useState(false);
+  // `LVA.open` — which requests have their reason/trail panel expanded. State lives here because
+  // the screen is a pure component; the legacy calls hrRender() instead.
+  const [openIds, setOpenIds] = useState<Record<string, unknown>>({});
+  const toggleDetail = useCallback((id: string) => {
+    setOpenIds((m) => { const n = { ...m }; if (n[id]) delete n[id]; else n[id] = 1; return n; });
+  }, []);
   const [apply, setApply] = useState<LeaveApplyForm>(BLANK_APPLY);
   const [myEmpId, setMyEmpId] = useState('');
 
@@ -260,6 +266,8 @@ function AdminLeavePage() {
               flow={flow}
               companyName={company.tenant_name}
               applyOpen={applyOpen}
+      openIds={openIds}
+      onToggleDetail={toggleDetail}
               onApplyToggle={() => setApplyOpen((v) => !v)}
               onApplyClose={() => setApplyOpen(false)}
               myEmpId={myEmpId}

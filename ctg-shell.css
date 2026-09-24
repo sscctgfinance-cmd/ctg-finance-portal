@@ -115,8 +115,37 @@ body.ctg-shell .ctg-page-title small{
 .ctg-side.collapsed .ctg-side-who > div:last-child,
 .ctg-side.collapsed .ctg-side-link .lbl{ display:none; }
 .ctg-side.collapsed .ctg-side-link{ justify-content:center; padding:9px 0; }
+/* MEASURED BUG, not a tidy-up: `.ctg-side-brand` is a flex ROW with 18px side padding, so a 66px rail
+   leaves 30px of content box for a 36px logo that cannot shrink. The expand button was laid out at
+   x=72..92 — entirely outside the 66px sidebar — and `elementFromPoint` at its centre returned nothing.
+   Collapsed, there was no reachable way back at all; clearing localStorage was the only escape.
+   Stacking the row gives the control the full width of the rail and a 32px height. */
+.ctg-side.collapsed .ctg-side-brand{ flex-direction:column; gap:8px; padding:14px 8px 12px; }
+.ctg-side.collapsed .ctg-side-rail{
+  margin-left:0; width:100%; min-height:32px;
+  display:flex; align-items:center; justify-content:center;
+}
 .ctg-side.collapsed .ctg-side-foot .btn{ text-align:center; padding:9px 6px; font-size:0; }
 .ctg-side.collapsed .ctg-side-foot .btn::first-letter{ font-size:13px; }
+
+/* The company tile — the ONLY thing that says which company you are in while the rail is collapsed.
+   Hidden when the rail is open, because the real <select> is right there and says it better. The
+   sizing is deliberate: 40px clears WCAG 2.5.8's 24x24 with room to spare, because this control both
+   identifies the company and is the way back to the full navigation. */
+.ctg-side-cotile{ display:none; }
+.ctg-side.collapsed .ctg-side-cotile{
+  display:flex; align-items:center; justify-content:center;
+  width:40px; height:40px; margin:2px auto 8px;
+  border:1px solid var(--border-strong, rgba(16,24,39,.18));
+  border-radius:10px; background:var(--surface2, rgba(127,127,127,.08));
+  color:var(--text, #101827); cursor:pointer;
+  font-size:11px; font-weight:750; letter-spacing:.4px;
+  font-variant-numeric:tabular-nums;
+}
+.ctg-side.collapsed .ctg-side-cotile:hover{ border-color:var(--coral, #C4492A); }
+.ctg-side.collapsed .ctg-side-cotile:focus-visible{
+  outline:2px solid var(--coral, #C4492A); outline-offset:2px;
+}
 .ctg-side-rail{
   margin-left:auto; border:1px solid var(--border, rgba(16,24,39,.12));
   background:transparent; border-radius:8px; cursor:pointer;

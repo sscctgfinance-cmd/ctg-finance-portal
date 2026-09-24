@@ -86,6 +86,7 @@ function screen(over: Partial<Parameters<typeof HrLeave>[0]> = {}) {
       onFlowSave={noop}
       onRefresh={noop}
       onDecide={noop}
+      onToggleDetail={noop}
       {...over}
     />
   );
@@ -144,6 +145,7 @@ function recordedHandlers(over: Partial<Parameters<typeof HrLeave>[0]> = {}): Re
     onFlowSave: record('flowSave') as never,
     onRefresh: record('refresh') as never,
     onDecide: record('decide') as never,
+    onToggleDetail: record('toggleDetail') as never,
     ...over,
   }));
   got.forEach((h) => h.invoke());
@@ -264,6 +266,7 @@ function recordedHandlersMiswiredDecide(id: string): Recorded[] {
     onFlowSave: record('flowSave') as never,
     onRefresh: record('refresh') as never,
     onDecide: ((_id: string, d: string) => decide(id, d)) as never,   // ← mis-wired: always the first request
+    onToggleDetail: record('toggleDetail') as never,
   }));
   got.forEach((h) => h.invoke());
   return calls;
@@ -284,6 +287,7 @@ function recordedHandlersMiswiredFlowDel(): Recorded[] {
     onFlowSave: record('flowSave') as never,
     onRefresh: record('refresh') as never,
     onDecide: record('decide') as never,
+    onToggleDetail: record('toggleDetail') as never,
   }));
   got.forEach((h) => h.invoke());
   return calls;

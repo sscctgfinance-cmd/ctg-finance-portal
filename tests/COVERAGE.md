@@ -1,7 +1,7 @@
 # Render-golden coverage — what is actually covered, and what is not
 
-`tests/render_golden_test.ts` renders all **51** surfaces of the two apps and diffs each one against a
-committed golden under `tests/golden/`. This file is the honest accounting of what those 51 goldens do
+`tests/render_golden_test.ts` renders all **52** surfaces of the two apps and diffs each one against a
+committed golden under `tests/golden/`. This file is the honest accounting of what those 52 goldens do
 and do not hold, because a coverage number nobody has qualified is worse than no number.
 
 Regenerate deliberately, then read the diff before committing:
@@ -23,13 +23,14 @@ git diff tests/golden/
 | …plus `expenses` again, in EMPLOYEE mode: two tabs and four different scopes | +1 | `RC.me.isAdmin===false` — `hros.html:1785`, `:1821` |
 | …plus `expenses` admin: the Dashboard and Settings' five tabs | +6 | `hrRCDash()` / `hrRCSettings()` — `hros.html:2611`, `:2619` |
 | …plus `payroll` EXPANDED, a table that exists in no other state | +1 | `HR.pay.runsOpen` — `hrRunsPanel()`, `hros.html` |
-| **total surfaces** | **51** | |
+| …plus `leave` EXPANDED — the panel carrying the reason an approver decides on | +1 | `hrLeaveDetailRow()` — `hros.html` |
+| **total surfaces** | **52** | |
 
-All 51 render real, populated content — no surface is covered by an empty state or an error panel, and
+All 52 render real, populated content — no surface is covered by an empty state or an error panel, and
 `renderSurface()` throws rather than capturing a golden if a screen asks for an action with no fixture.
 The line counts below are re-measured whenever the set changes; see the regenerate command above.
 
-## Covered: 51 / 51. Complete for the screen: 45 / 51
+## Covered: 52 / 52. Complete for the screen: 46 / 52
 
 Six goldens record a **narrower slice** than the screen can show. They are real coverage of the default
 state — the state an operator lands on — but the branch listed is not in the golden.

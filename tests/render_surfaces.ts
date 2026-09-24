@@ -82,6 +82,15 @@ export const SURFACES: Surface[] = [
   // is the whole of Leave for every non-admin employee. Captured as its own surface because a mode the
   // goldens never reach is a mode nothing protects: the React port of the employee branch was missing
   // entirely while `hr.leave` stayed green.
+  // The REASON an approver decides on lives in an expanding panel, and `LVA.open` starts empty — so
+  // every golden captures this table CLOSED and the panel carrying the reason, the applied-on stamp and
+  // the ordered approval trail is in no golden at all. Same gap as `hr.leave.emp` below, one level down:
+  // a state the goldens never reach is a state nothing protects.
+  {
+    id: "hr.leave.detail", app: "hros.html" as const, title: "Leave · a request expanded",
+    setup: "HR.view='leave'; LVA.open={lv1:1};",
+    render: "hrRender()",
+  },
   {
     id: "hr.leave.emp", app: "hros.html" as const, title: "Leave (employee)",
     setup: EMP_MODE + "HR.view='leave';",

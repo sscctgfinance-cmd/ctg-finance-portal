@@ -138,22 +138,55 @@ is `1-56/5 * * * *`, so the window between inserting such a row and the first fa
 failure — nothing there deletes, but a company that was never in Xero was reported as `removed` every
 time an admin refreshed company names, which reads as "a company vanished".
 
-⚠️ **Adding ANY sixth company — Xero or not — silently demotes every full-scope admin.**
-`portal_allowed_tenants` treats an admin as unrestricted on 0 assignments **or** assignments >= the
-company count. All six full-scope admins here hold exactly the five that existed, so a sixth company
-drops them to 5/6: they lose the new company AND the group-wide view of the other five (Dashboard,
-consolidated P&L, CFO Cockpit). Grant the new tenant to them in the SAME transaction as the insert.
-The check before you add one:
+✅ **The "adding a company demotes every full-scope admin" trap is CLOSED (2026-09-07).**
+`portal_allowed_tenants` treats an admin as unrestricted on **0 assignments** or on assignments >= the
+company count. The six full-scope admins used to hold exactly the companies that existed, so each new
+company dropped them below the bar: they lost the new company AND the group-wide views (Dashboard,
+consolidated P&L, CFO Cockpit). Their explicit assignments are now **cleared to zero**, which reads as
+full scope by the same rule and is immune to every future addition. `isFullScopeAdmin()` (lib.ts)
+derives from this same RPC, so zero also reads as full scope on the group-wide ACTIONS, not just the
+tenant filter — verified before applying.
+
+Two things follow from that, and the second is the one that will bite:
+
+- The old advice, "grant the new tenant in the SAME transaction as the insert", is **impossible on the
+  Xero path** — the row is written asynchronously by the OAuth reconnect (below), so there is always a
+  window in which every admin is demoted. That is why the zero-assignment fix replaced it.
+- With zero rows these admins show **no companies ticked** on the Users screen. `ufTenants()` sends only
+  TICKED rows and the server replaces the whole set, so saving one of those admins from that screen
+  re-restricts them. Rollback, and the 36-row snapshot it restores, is
+  `data/decisions/2026-09-07-fullscope-admin-assignments-restore.sql`.
+
+The check, which should now return only company-SCOPED admins (that is correct — they are scoped by
+design) and none of the six:
 
 ```sql
-select u.email, count(uc.tenant_id) assigned, (select count(*) from xero_tenants) total
+select u.email, u.role, count(uc.tenant_id) assigned, (select count(*) from xero_tenants) total
 from portal_users u left join portal_user_companies uc on uc.user_id = u.id
-group by u.id, u.email having count(uc.tenant_id) >= (select count(*) from xero_tenants);
+group by u.id, u.email, u.role order by assigned desc;
 ```
 
-A non-Xero company still needs `hr_employer_info` (its `doc_code` prefixes claim numbers and is
-globally UNIQUE — DRS / IPC / ZRO / SCH / SKD / YCT are taken; absent falls back to `CLM`). Every
-Xero-fed Finance screen is legitimately EMPTY for it, which is the data, not a fault.
+⚠️ **A company that HAS a Xero organisation must NOT be hand-inserted into `xero_tenants`.** That table
+is written in exactly one place — the OAuth reconnect, from Xero's own `/connections` (`lib.ts:88`) —
+so a hand-made `tenant_id` shows up in every picker and then fails every Xero call. Hand-inserting is
+correct ONLY for a company with no Xero org at all (YUAN CHUAN TANG CTG4U, `xero_connected = false`).
+And note what the reconnect does: it inserts EVERY org the connection grants, so authorising one new
+organisation while another is also in scope adds BOTH. Check the connection's org list first.
+
+A non-Xero company still needs `hr_employer_info` (its `doc_code` prefixes claim numbers, is
+globally UNIQUE — `hr_employer_info_doc_code_key` — and absent falls back to `CLM`).
+DRS / IPC / SCH / SKD / WLN / YCT / ZRO are taken. **`IPC` is on CTG4U ILADY SDN BHD, which TRADES as
+I PROCARE** — its own contact address is `iprocare105@gmail.com`, so the code is not a mismatch and
+there is no separate I PROCARE tenant to look for. Every Xero-fed Finance screen is legitimately EMPTY
+for a non-Xero company, which is the data, not a fault.
+
+**The employer's own statutory numbers are blank on ALL SEVEN companies**, and it is worth knowing what
+that does and does not break. `employer_no` (the LHDN E number) is read only by the EA form
+(`hr-docs.js:162`) and Form E (`:209`), both of which print `(to be filled — LHDN E number)` rather
+than failing — loud, not silent. `epf_employer_no` / `socso_employer_no` are read by **no file builder
+at all**; they are stored and displayed by the Company panel and nothing else. Do not confuse them with
+the per-EMPLOYEE `epf`/`socso` category fields, whose NULLs DO block the KWSP and PERKESO uploads. And
+`address` prints on every payslip and EA form, so a guessed one is worse than a blank.
 
 ## Shared frontend code lives in the root `.js` files
 
@@ -2102,7 +2135,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 340 cases, incl. all 51 render goldens
+deno test --allow-read tests/          # 355 cases, incl. all 52 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
@@ -2234,7 +2267,7 @@ RM5,000) and are pinned as deliberate so nobody smooths a statutory rule out of 
 
 ### If a `tests/golden/` test fails
 
-All 51 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
+All 52 rendered surfaces of the two apps are rendered offline and diffed against a committed baseline
 (`tests/render_golden_test.ts`; `tests/COVERAGE.md` says what that does and does not hold). A failure
 means you changed what an operator sees. If that was the point:
 

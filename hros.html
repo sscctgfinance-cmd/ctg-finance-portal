@@ -3331,6 +3331,48 @@ async function hrEmpLeaveApply(){
 }
 async function hrEmpLeaveCancel(id){ return hrOnce('hrEmpLeaveCancel:'+(id), async function(){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 // Step-pills used by both admin + employee views (needs x.steps + x.current_step + x.status).
+function hrLeaveToggle(id){
+  if(!LVA.open) LVA.open={};
+  if(LVA.open[id]) delete LVA.open[id]; else LVA.open[id]=1;
+  hrRender();
+}
+// The expanded panel. Every field here is ALREADY on the row hr_leave_admin returns — none of it
+// needed a server change, it was simply never rendered. Times go through hrDT(), the same Malaysian
+// formatter the pills use, so the two cannot disagree about when something happened.
+function hrLeaveDetailRow(x){
+  var reason=String(x.reason||'').trim();
+  var box=function(label,body){
+    return '<div style="margin-bottom:10px"><div class="muted" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px">'+label+'</div>'+body+'</div>';
+  };
+  // An absent reason is said out loud. A blank panel reads as "failed to load", and the approver is
+  // left unable to tell "they gave no reason" from "the app did not show it".
+  var reasonHtml = reason
+    ? '<div style="font-size:12.5px;line-height:1.55;white-space:pre-wrap">'+esc(reason)+'</div>'
+    : '<div class="muted" style="font-size:12px;font-style:italic">No reason was given when this was applied for.</div>';
+
+  var applied = x.created_at ? box('Applied on','<div style="font-size:12.5px">'+esc(hrDT(x.created_at))+'</div>') : '';
+
+  var steps=(x.steps||[]).slice().sort(function(a,b){ return (a.step_order||0)-(b.step_order||0); });
+  var trail='';
+  if(steps.length){
+    trail=box('Approval trail', steps.map(function(s){
+      var done=s.status==='Approved', rej=s.status==='Rejected';
+      var col=done?'var(--green-soft)':rej?'var(--coral-soft)':'var(--muted)';
+      var ic=done?'\u2713':rej?'\u2715':'\u25cb';
+      var level=esc(s.name||s.approver_role||('Level '+(s.step_order||'')));
+      var what=done?'Approved':rej?'Rejected':'Waiting';
+      var who=done||rej ? (s.decided_by_name||'') : (s.assignee_name||'');
+      var when=s.decided_at?hrDT(s.decided_at):'';
+      var tail=(who?(' \u00b7 '+esc(who)):'')+(when?(' \u00b7 '+esc(when)):'');
+      return '<div style="font-size:12px;margin-bottom:3px"><span style="color:'+col+'">'+ic+'</span> '+
+        '<span class="muted">'+esc(String(s.step_order||''))+'.</span> '+level+
+        ' <span style="color:'+col+'">'+what+'</span><span class="muted">'+tail+'</span></div>';
+    }).join(''));
+  }
+
+  return '<tr class="lv-detail"><td colspan="7" style="background:rgba(var(--surface2-rgb),.55);padding:14px 16px 12px">'+
+    box('Reason', reasonHtml)+applied+trail+'</td></tr>';
+}
 function hrLeaveStepPills(x){
   var steps=x.steps||[]; if(!steps.length) return '<span class="muted" style="font-size:10.5px">—</span>';
   var cur=x.current_step||1, fin=['Approved','Rejected','Cancelled'].indexOf(x.status)>=0;
@@ -3655,7 +3697,11 @@ function hrLeaveAdminRender(){
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0;
     var col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--coral-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
     var act=(!fin)?hrRW('<button class="btn xs" onclick="hrDecideLeave(\''+x.id+'\',\'approve\')">Approve</button> <button class="btn xs d" onclick="hrDecideLeave(\''+x.id+'\',\'reject\')">Reject</button>'):'';
-    return '<tr><td>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</td><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>';}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
+    var open=!!(LVA.open&&LVA.open[x.id]);
+    // The whole name cell is the toggle, not a bare caret: this is the cell an approver reaches for,
+    // and a 9px caret is a miss on a phone. The caret itself is decorative, hence aria-hidden.
+    var nameCell='<td><a onclick="hrLeaveToggle(\''+x.id+'\')" title="Show the reason and the approval trail" aria-expanded="'+(open?'true':'false')+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px"><span aria-hidden="true" style="color:var(--muted);font-size:9px;width:8px;display:inline-block">'+(open?'\u25be':'\u25b8')+'</span><span>'+esc((x.hr_employees&&x.hr_employees.name)||'—')+'</span></a></td>';
+    return '<tr>'+nameCell+'<td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td style="white-space:nowrap">'+act+'</td></tr>'+(open?hrLeaveDetailRow(x):'');}).join('')||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No leave requests</td></tr>';
   var table='<div class="panel"><div class="panel-hd"><h3>Leave requests</h3><button class="btn xs" onclick="LVA.data=null;hrRender()">↻</button></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   return (HR_VIEWER ? '' : (bar+applyPanel+balPanel+flowPanel)) + table;
 }
