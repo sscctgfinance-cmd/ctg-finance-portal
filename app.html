@@ -2763,6 +2763,7 @@ function showHrOnlyGate(){
     '</div>';
 }
 function enterApp(){
+  ctgErgoInstall();   // common.js — phone ergonomics for every screen this app renders
   if(ME && HR_ONLY_ROLES_FE.indexOf(ME.role)>=0){ showHrOnlyGate(); return; }
   if(ME && ME.must_change_pw){
     document.getElementById('login').classList.add('hide');

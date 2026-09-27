@@ -1087,6 +1087,11 @@ textarea{ min-height:82px; border-radius:var(--r-sm); }
     min-height:44px; font-size:16px;
   }
   .fld select,.fld input:not([type=file]),.fld textarea{ width:100%; }
+  /* A claim line on a phone: type, date and description each take a full row — at their desktop widths
+     the date was cut to "26-Sep-20" — and the amount shares the last row with ⋯ and ✕. */
+  .rc-line > select[id$="_type"], .rc-line > input[id$="_date"], .rc-line > input[id$="_desc"]{ width:100% !important; flex:1 1 100% !important; min-width:0 !important; }
+  .rc-line > input[id$="_amt"], .rc-line > input[id$="_km"]{ flex:1 1 auto; }
+  .rc-line > .btn.xs{ min-width:44px; min-height:44px; }
 
   /* Trim oversized desktop paddings on phones */
   .page-head{ margin-bottom:16px; padding-bottom:14px; }
@@ -1471,6 +1476,7 @@ async function hrPwSave(){
   fail((r&&r.error)||'Current password is incorrect');
 }
 function enterApp(){
+  ctgErgoInstall();   // common.js — phone ergonomics for every screen this app renders
   var l=document.getElementById('login'); if(l) l.classList.add('hide');
   // First login with a temporary password → must set their own before anything else.
   if(ME && ME.must_change_pw){ var a0=document.getElementById('app'); if(a0) a0.classList.add('hide'); hrPwModal(true); return; }
@@ -2128,7 +2134,11 @@ function hrRCItemMore(i){ hrRCSyncItems(); RC.form.items[i]._open=!RC.form.items
 function hrRCForm(){
   var f=RC.form||{}; var cfg=RC.cfg||{};
   if(!Array.isArray(f.items)||!f.items.length){ f.items=[{claim_type_id:'',item_date:(f.claim_date||todayLocalISO()),description:'',amount:'',total_km:'',mileage_rate:hrRCDefRate()}]; RC.form=f; }
-  var empOpts='<option value="">— select —</option>'+(cfg.employees||[]).map(function(e){return '<option value="'+e.id+'"'+(f.employee_id===e.id?' selected':'')+'>'+esc(e.emp_no+' — '+e.name)+'</option>';}).join('');
+  // The claimant defaults to whoever is filing. For an employee hr_rc_config sends ONLY themselves, and the
+  // form used to open on "— select —" anyway, so every claim began with finding your own name in a list of
+  // one. An admin filing for someone else still picks; their own record is merely the starting point.
+  if(!f.employee_id && cfg.me && cfg.me.employee && (cfg.employees||[]).some(function(e){ return e.id===cfg.me.employee.id; })) f.employee_id=cfg.me.employee.id;
+  var empOpts=((cfg.employees||[]).length===1?'':'<option value="">— select —</option>')+(cfg.employees||[]).map(function(e){return '<option value="'+e.id+'"'+(f.employee_id===e.id?' selected':'')+'>'+esc(e.emp_no+' — '+e.name)+'</option>';}).join('');
   var typeOptsFor=function(sel){ return '<option value="">— type —</option>'+(cfg.claim_types||[]).filter(function(t){return t.active;}).map(function(t){return '<option value="'+t.id+'"'+(sel===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join(''); };
   var rateOptsFor=function(sel){ return (cfg.mileage_rates||[]).filter(function(r){return r.active;}).map(function(r){return '<option value="'+r.rate+'"'+(Number(sel)===Number(r.rate)?' selected':'')+'>'+esc('RM'+r.rate)+'</option>';}).join(''); };
   var inp=function(id,ph,val,extra){return '<input id="rc_'+id+'" placeholder="'+ph+'" value="'+esc(val==null?'':val)+'" '+(extra||'')+' style="'+RC_SEL+'">';};
@@ -2146,8 +2156,8 @@ function hrRCForm(){
     var t=(cfg.claim_types||[]).find(function(x){return x.id===it.claim_type_id;}); var mile=t&&t.is_mileage;
     var amt=hrRCItemAmt(it,mile); total+=amt;
     var amtCell=mile
-      ? '<input id="rc_it_'+i+'_km" type="number" step="0.1" placeholder="km" value="'+esc(it.total_km||'')+'" oninput="hrRCItemCalc()" style="width:62px;'+RC_TD+'"> <select id="rc_it_'+i+'_rate" onchange="hrRCItemCalc()" style="width:78px;'+RC_TD+'">'+rateOptsFor(it.mileage_rate)+'</select> <b style="width:82px;display:inline-block;text-align:right" id="rc_it_'+i+'_amtL">'+M(amt)+'</b>'
-      : '<input id="rc_it_'+i+'_amt" type="number" step="0.01" placeholder="0.00" value="'+esc(it.amount||'')+'" oninput="hrRCItemCalc()" style="width:100px;text-align:right;'+RC_TD+'">';
+      ? '<input id="rc_it_'+i+'_km" type="number" step="0.1" placeholder="km" aria-label="Distance (km)" value="'+esc(it.total_km||'')+'" oninput="hrRCItemCalc()" style="width:62px;'+RC_TD+'"> <select id="rc_it_'+i+'_rate" onchange="hrRCItemCalc()" aria-label="Mileage rate" style="width:78px;'+RC_TD+'">'+rateOptsFor(it.mileage_rate)+'</select> <b style="width:82px;display:inline-block;text-align:right" id="rc_it_'+i+'_amtL">'+M(amt)+'</b>'
+      : '<input id="rc_it_'+i+'_amt" type="number" step="0.01" placeholder="0.00" aria-label="Amount (RM)" value="'+esc(it.amount||'')+'" oninput="hrRCItemCalc()" style="width:100px;text-align:right;'+RC_TD+'">';
     var more='';
     if(it._open){
       var extra = mile
@@ -2159,10 +2169,10 @@ function hrRCForm(){
         dg('Cost center','<select id="rc_it_'+i+'_cc" style="width:100%;'+RC_TD+'">'+hrRCCcOpts(it.cost_center)+'</select>')+
         dg('Line remarks',di(i,'rem','',it.remarks))+'</div>';
     }
-    return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border)">'+
-      '<select id="rc_it_'+i+'_type" onchange="hrRCItemType('+i+')" style="width:158px;'+RC_TD+'">'+typeOptsFor(it.claim_type_id)+'</select>'+
-      '<input id="rc_it_'+i+'_date" type="date" value="'+esc((it.item_date||f.claim_date||'').slice(0,10))+'" style="width:132px;'+RC_TD+'">'+
-      '<input id="rc_it_'+i+'_desc" placeholder="Description" value="'+esc(it.description||'')+'" style="flex:1;min-width:130px;'+RC_TD+'">'+
+    return '<div class="rc-line" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border)">'+
+      '<select id="rc_it_'+i+'_type" onchange="hrRCItemType('+i+')" aria-label="Expense type" style="width:158px;'+RC_TD+'">'+typeOptsFor(it.claim_type_id)+'</select>'+
+      '<input id="rc_it_'+i+'_date" type="date" aria-label="Date of expense" value="'+esc((it.item_date||f.claim_date||'').slice(0,10))+'" style="width:132px;'+RC_TD+'">'+
+      '<input id="rc_it_'+i+'_desc" placeholder="Description" aria-label="Description" value="'+esc(it.description||'')+'" style="flex:1;min-width:130px;'+RC_TD+'">'+
       amtCell+
       (it.is_einvoice?'<span class="pill" title="MyInvois e-invoice captured" style="font-size:9px;color:var(--green-soft);border:1px solid var(--green-soft);border-radius:5px;padding:1px 5px">e-Inv</span>':'')+
       '<button class="btn xs'+(it._open?' p':'')+'" title="'+(mile?'trip / parking / toll / cost center':'vendor / receipt / e-invoice / tax / cost center')+'" onclick="hrRCItemMore('+i+')">⋯</button>'+
@@ -2184,7 +2194,7 @@ function hrRCForm(){
     g('Purpose / title',inp('desc','e.g. Client visit KL — Jun trip',f.description))+
     '<div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span></div>'+
     '<div>'+rows+'</div>'+
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px"><div style="display:flex;gap:8px;align-items:center"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><button class="btn sm" onclick="hrRCScanTrigger()" title="Point the camera at the receipt — edges are found and it shoots by itself, then Claude reads it and fills a line">📷 Scan receipt / e-invoice</button><button class="btn sm" onclick="hrRCScanPickFile()" title="Attach a PDF e-invoice or an existing photo — Claude reads it and fills a line">📄 PDF / photo</button><input type="file" id="rc_scan_fi" accept="image/*,.pdf" style="display:none" onchange="hrRCScanFile(this)"><span id="rc_scan_status" class="muted" style="font-size:11px"></span></div><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button><button class="btn sm" onclick="hrRCScanTrigger()" title="Point the camera at the receipt — edges are found and it shoots by itself, then Claude reads it and fills a line">📷 Scan receipt / e-invoice</button><button class="btn sm" onclick="hrRCScanPickFile()" title="Attach a PDF e-invoice or an existing photo — Claude reads it and fills a line">📄 PDF / photo</button><input type="file" id="rc_scan_fi" accept="image/*,.pdf" style="display:none" onchange="hrRCScanFile(this)"><span id="rc_scan_status" class="muted" style="font-size:11px"></span></div><div style="font-size:15px;font-weight:750">Total: <span id="rc_total" style="color:var(--green-soft)">'+M(total)+'</span></div></div>'+
     '<div style="margin:14px 0 4px">'+g('Remarks',inp('remarks','',f.remarks))+'</div>'+
     '<div style="margin:12px 0"><label class="muted" style="font-size:11px">Receipts (attach one or more)</label><input type="file" id="rc_file" multiple accept="image/*,.pdf" onchange="hrRCPickReceipts(this)" style="display:block;margin-top:5px;font-size:12px;color:var(--text-soft)">'+hrRCPendingHtml()+'</div>'+
     scanPanel+
@@ -3293,15 +3303,20 @@ function hrEmpLeaveRender(){
   var balCards='<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:14px">'+bals.filter(function(b){return b.paid;}).map(function(b){ return '<div class="card"><div class="n" style="color:'+(b.color||'var(--green-soft)')+'">'+b.remaining+'</div><div class="l">'+esc(b.type)+' left <span class="muted">/ '+b.entitled+'</span></div></div>'; }).join('')+'</div>';
   var typeOpts=types.map(function(t){return '<option value="'+esc(t.id)+'">'+esc(t.name)+(t.paid?'':' (unpaid)')+'</option>';}).join('');
   var g=function(l,el){return '<div style="margin-bottom:10px"><label class="muted" style="font-size:11px;display:block;margin-bottom:3px">'+l+'</label>'+el+'</div>';};
+  // The form is laid out in the order a person fills it: what kind, which days, why. The live preview
+  // (hr-docs.js hrLeavePreview — the server's own day count) answers "how many days is this and what
+  // will I have left" BEFORE submitting; that used to arrive only in the toast afterwards.
+  var today=hrNextWorkingDay(todayLocalISO()), pv=hrLeavePreview(types,bals,(types[0]&&types[0].id)||'',today,today,false);
   var form='<div class="panel" style="margin-bottom:14px;max-width:560px"><div class="panel-hd"><h3>Apply for leave</h3></div>'+
+    g('Leave type','<select id="lv_type" onchange="hrEmpLeaveSync(\'type\')" style="'+S+'">'+typeOpts+'</select>')+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-      g('Leave type','<select id="lv_type" style="'+S+'">'+typeOpts+'</select>')+
-      g('&nbsp;','<label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding-top:7px"><input type="checkbox" id="lv_half" style="accent-color:var(--coral)"> Half day (single day)</label>')+
-      g('From','<input type="date" id="lv_from" value="'+esc(todayLocalISO())+'" style="'+S+'">')+
-      g('To','<input type="date" id="lv_to" value="'+esc(todayLocalISO())+'" style="'+S+'">')+
+      g('From','<input type="date" id="lv_from" value="'+esc(today)+'" onchange="hrEmpLeaveSync(\'from\')" style="'+S+'">')+
+      g('To','<input type="date" id="lv_to" value="'+esc(today)+'" onchange="hrEmpLeaveSync(\'to\')" style="'+S+'">')+
     '</div>'+
-    g('Reason','<input id="lv_reason" placeholder="e.g. family matters" style="'+S+'">')+
-    '<button class="btn p sm" id="lv_submit" style="margin-top:4px" onclick="hrEmpLeaveApply()">Submit application</button>'+
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 12px;min-height:40px"><input type="checkbox" id="lv_half" onchange="hrEmpLeaveSync(\'half\')"> Half day (a single date)</label>'+
+    g('Reason <span style="text-transform:none">(optional)</span>','<input id="lv_reason" placeholder="e.g. family matters" style="'+S+'">')+
+    '<div id="lv_preview" role="status" aria-live="polite" style="font-size:13px;font-weight:600;margin:4px 0 12px;color:'+HR_LEAVE_TONE[pv.tone]+'">'+esc(pv.text)+'</div>'+
+    '<button class="btn p" id="lv_submit" onclick="hrEmpLeaveApply()"'+(pv.ok?'':' disabled')+'>Submit application</button>'+
     '<div class="muted" style="font-size:11px;margin-top:8px">Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). Routed through the approval levels (e.g. Manager → HR → Director) — approvers are notified by email at each step.</div>'+
   '</div>';
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
@@ -3315,6 +3330,20 @@ function hrEmpLeaveRender(){
     apprCard='<div class="panel" style="margin-bottom:14px;border-color:rgba(var(--amber-rgb),.35)"><div class="panel-hd"><h3>🔔 Pending your approval <span class="pill" style="color:var(--amber);font-size:10px">'+pend.length+'</span></h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Level</th><th>Reason</th><th></th></tr></thead><tbody>'+pr+'</tbody></table></div></div>';
   }
   return apprCard+balCards+form+list;
+}
+// Keeps the leave form consistent as it is filled in, then repaints the preview line. `src` is which
+// control changed: moving From past To drags To along (the usual case is a one-day request), and a half
+// day is by definition one date, so To is locked to From while it is ticked.
+function hrEmpLeaveSync(src){
+  var el=function(id){ return document.getElementById(id); };
+  var f=el('lv_from'), t=el('lv_to'), h=el('lv_half'), box=el('lv_preview'), btn=el('lv_submit');
+  if(!f||!t||!h||!box||!ELV.data) return;
+  if(src==='from' && f.value && (!t.value || t.value<f.value || h.checked)) t.value=f.value;
+  if(h.checked) t.value=f.value;
+  t.disabled=h.checked;
+  var pv=hrLeavePreview(ELV.data.types,ELV.data.balances,el('lv_type').value,f.value,t.value,h.checked);
+  box.textContent=pv.text; box.style.color=HR_LEAVE_TONE[pv.tone];
+  if(btn && btn.textContent!=='Submitting…') btn.disabled=!pv.ok;
 }
 async function hrEmpLeaveApply(){
   var type=document.getElementById('lv_type').value; if(!type){ toast('Select a leave type',true); return; }

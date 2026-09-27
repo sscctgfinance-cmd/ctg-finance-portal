@@ -109,34 +109,33 @@
 <div class="panel-hd">
 <h3>Apply for leave</h3>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
 <div style="margin-bottom:10px">
 <label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Leave type</label>
-<select id="lv_type" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+<select id="lv_type" onchange="hrEmpLeaveSync('type')" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 <option value="lt1">Annual leave</option>
 <option value="lt2">Medical leave</option>
 <option value="lt3">Unpaid leave (unpaid)</option>
 </select>
 </div>
-<div style="margin-bottom:10px">
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">&nbsp;</label>
-<label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding-top:7px">
-<input type="checkbox" id="lv_half" style="accent-color:var(--coral)"> Half day (single day)</label>
-</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
 <div style="margin-bottom:10px">
 <label class="muted" style="font-size:11px;display:block;margin-bottom:3px">From</label>
-<input type="date" id="lv_from" value="2026-08-18" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+<input type="date" id="lv_from" value="2026-08-18" onchange="hrEmpLeaveSync('from')" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 <div style="margin-bottom:10px">
 <label class="muted" style="font-size:11px;display:block;margin-bottom:3px">To</label>
-<input type="date" id="lv_to" value="2026-08-18" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+<input type="date" id="lv_to" value="2026-08-18" onchange="hrEmpLeaveSync('to')" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
 </div>
+<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 12px;min-height:40px">
+<input type="checkbox" id="lv_half" onchange="hrEmpLeaveSync('half')"> Half day (a single date)</label>
 <div style="margin-bottom:10px">
-<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Reason</label>
+<label class="muted" style="font-size:11px;display:block;margin-bottom:3px">Reason <span style="text-transform:none">(optional)</span>
+</label>
 <input id="lv_reason" placeholder="e.g. family matters" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 </div>
-<button class="btn p sm" id="lv_submit" style="margin-top:4px" onclick="hrEmpLeaveApply()">Submit application</button>
+<div id="lv_preview" role="status" aria-live="polite" style="font-size:13px;font-weight:600;margin:4px 0 12px;color:var(--green-soft)">1 working day · 11 left → 10 after this</div>
+<button class="btn p" id="lv_submit" onclick="hrEmpLeaveApply()">Submit application</button>
 <div class="muted" style="font-size:11px;margin-top:8px">Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). Routed through the approval levels (e.g. Manager → HR → Director) — approvers are notified by email at each step.</div>
 </div>
 <div class="panel">

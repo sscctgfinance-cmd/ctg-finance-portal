@@ -135,3 +135,16 @@ export function hrSubmissionSpecs(
   files: { name: string; text: string }[];
   zipName: string;
 };
+
+/** Mon–Fri days in [from, to] (YYYY-MM-DD), half day only when from === to — hr_leave_apply's own count. */
+export function hrWorkingDays(from: string, to: string, half?: boolean): number;
+/** The live line under the leave form: what the application will use and what is left after it. */
+export function hrLeavePreview(
+  types: { id: string; name: string; paid?: boolean }[] | null | undefined,
+  balances: { type: string; remaining: number | string }[] | null | undefined,
+  typeId: string, from: string, to: string, half?: boolean,
+): { ok: boolean; tone: 'green' | 'amber' | 'red' | 'muted'; text: string };
+/** Tone → colour token for hrLeavePreview. */
+export const HR_LEAVE_TONE: Record<'green' | 'amber' | 'red' | 'muted', string>;
+/** Today, or the following Monday when `iso` (YYYY-MM-DD) is a Saturday or Sunday. */
+export function hrNextWorkingDay(iso: string): string;

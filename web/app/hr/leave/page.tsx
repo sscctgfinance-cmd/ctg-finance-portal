@@ -25,6 +25,7 @@ import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
 import { hrRole } from '../../../src/nav';
 import { mytISO } from '../../../../myt.js';
+import { HR_LEAVE_TONE, hrLeavePreview } from '../../../../hr-docs.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
 /** hros.html:1410 — the fallback company when the account has no Xero orgs. */
@@ -368,6 +369,24 @@ function EmpLeavePage() {
   }, [load]);
 
   /**
+   * `hrEmpLeaveSync(src)` — hros.html. The form is uncontrolled, so this is the legacy's own DOM dance by
+   * the same ids: From dragging To along, a half day locking To to From, then the preview line and the
+   * Submit button repainted from the shared `hrLeavePreview()`.
+   */
+  const onFormChange = useCallback((src: 'type' | 'from' | 'to' | 'half') => {
+    const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
+    const f = el<HTMLInputElement>('lv_from'), t = el<HTMLInputElement>('lv_to'), h = el<HTMLInputElement>('lv_half');
+    const box = el<HTMLDivElement>('lv_preview'), btn = el<HTMLButtonElement>('lv_submit'), ty = el<HTMLSelectElement>('lv_type');
+    if (!f || !t || !h || !box || !ty || !d) return;
+    if (src === 'from' && f.value && (!t.value || t.value < f.value || h.checked)) t.value = f.value;
+    if (h.checked) t.value = f.value;
+    t.disabled = h.checked;
+    const pv = hrLeavePreview(d.types || [], d.balances || [], ty.value, f.value, t.value, h.checked);
+    box.textContent = pv.text; box.style.color = HR_LEAVE_TONE[pv.tone];
+    if (btn && btn.textContent !== 'Submitting…') btn.disabled = !pv.ok;
+  }, [d]);
+
+  /**
    * hros.html:3117 — confirmed, because the request and its approval chain are gone afterwards.
    *
    * The OK label is "Yes, cancel it" and not "Cancel": the dialog's own dismiss button is Cancel
@@ -416,6 +435,7 @@ function EmpLeavePage() {
             today={today}
             formKey={formKey}
             onApply={() => void onApply()}
+            onFormChange={onFormChange}
             onCancel={(id) => void onCancel(id)}
             onDecide={(id, decision) => void onDecide(id, decision)}
           />

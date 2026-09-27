@@ -27,7 +27,7 @@
 <label for="rc_emp" class="muted" style="font-size:11px">Employee *</label>
 <select id="rc_emp" style="width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
 <option value="">— select —</option>
-<option value="e1">E001 — AHMAD BIN ISMAIL</option>
+<option value="e1" selected>E001 — AHMAD BIN ISMAIL</option>
 <option value="e2">E002 — SITI NURHALIZA BINTI OMAR</option>
 <option value="e3">E003 — RAJESH A/L KUMAR</option>
 </select>
@@ -64,22 +64,22 @@
 <div style="margin:14px 0 6px;font-weight:700;font-size:13px">Expense lines <span class="muted" style="font-weight:400;font-size:11px">· click ⋯ on a line for vendor / receipt no. / tax / mileage details</span>
 </div>
 <div>
-<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border)">
-<select id="rc_it_0_type" onchange="hrRCItemType(0)" style="width:158px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
+<div class="rc-line" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border)">
+<select id="rc_it_0_type" onchange="hrRCItemType(0)" aria-label="Expense type" style="width:158px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
 <option value="">— type —</option>
 <option value="ct1">Travel &amp; transport</option>
 <option value="ct2">Meals &amp; entertainment</option>
 <option value="ct3">Mileage</option>
 </select>
-<input id="rc_it_0_date" type="date" value="2026-08-18" style="width:132px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
-<input id="rc_it_0_desc" placeholder="Description" value="" style="flex:1;min-width:130px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
-<input id="rc_it_0_amt" type="number" step="0.01" placeholder="0.00" value="" oninput="hrRCItemCalc()" style="width:100px;text-align:right;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
+<input id="rc_it_0_date" type="date" aria-label="Date of expense" value="2026-08-18" style="width:132px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
+<input id="rc_it_0_desc" placeholder="Description" aria-label="Description" value="" style="flex:1;min-width:130px;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
+<input id="rc_it_0_amt" type="number" step="0.01" placeholder="0.00" aria-label="Amount (RM)" value="" oninput="hrRCItemCalc()" style="width:100px;text-align:right;padding:6px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px">
 <button class="btn xs" title="vendor / receipt / e-invoice / tax / cost center" onclick="hrRCItemMore(0)">⋯</button>
 <button class="btn xs d" title="remove" onclick="hrRCItemDel(0)">✕</button>
 </div>
 </div>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px">
-<div style="display:flex;gap:8px;align-items:center">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <button class="btn sm" onclick="hrRCItemAdd()">+ Add expense line</button>
 <button class="btn sm" onclick="hrRCScanTrigger()" title="Point the camera at the receipt — edges are found and it shoots by itself, then Claude reads it and fills a line">📷 Scan receipt / e-invoice</button>
 <button class="btn sm" onclick="hrRCScanPickFile()" title="Attach a PDF e-invoice or an existing photo — Claude reads it and fills a line">📄 PDF / photo</button>

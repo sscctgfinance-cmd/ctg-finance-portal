@@ -2249,6 +2249,29 @@ opposed to a one-off shadow tint), every `--x-rgb` equal to the solid token it t
 `--coral-rgb` exception, AA for every text/surface pairing, white-on-`--coral`, and no `--accent*` token
 declaring an orange of its own. All six were verified by introducing the defect.
 
+### Ergonomics: phone fixes are ONE layer, applied after render — `ctgErgo()` + `ctg-shell.css` §6
+
+Both apps build ~50 screens as HTML strings, so fixing "a 13px field", "a table that squeezes" or "Save is
+two screens down" per renderer is 50 edits and 50 moved goldens. Instead `enterApp()` in each app calls
+`ctgErgoInstall()` (common.js), whose MutationObserver decorates whatever a renderer just wrote — it only
+ADDS attributes (`data-label`, `aria-label`, `inputmode`, and the classes `ctg-stack` / `ctg-sticky-act` /
+`ctg-hit`), so no golden moves. `tests/ergonomics_test.ts` pins it. Measure with `tools/ergo_probe.js`
+(load it as a `<script>` — app.html's CSP forbids eval) under `tools/qa_serve.ts`; a `qa_role=employee`
+cookie signs the harness in as another role. Four traps it cost a diagnosis each to find:
+
+- **Renderers set `font-size:13px` INLINE**, so the existing 16px mobile rules never won; iOS zooms the page
+  on every such field. §6 uses `!important` under `pointer:coarse` for exactly that reason.
+- **Both apps' mobile rules give EVERY input `min-height:44px`** (app.html also `width:100%`), checkboxes
+  included — the square was drawn at the bottom of a 44px box, under the sentence it confirms.
+- **`.btn.p` sets `position:relative` at higher specificity**, so `position:sticky` needs `!important`.
+- **Decorate in the observer callback, never in `requestAnimationFrame`** — rAF is paused in a background
+  tab, and a screen rendered there stayed undecorated.
+
+A table with editable cells (the payroll grid) is deliberately NOT stacked into cards; its inputs get a
+name from `ctgHeadLabels()`, which reads a grouped header as a grid ("Earnings (RM) · Basic — E001 …").
+The web/ React app gets §6's CSS only where it lives in the HTML `<style>` (e.g. `.rc-line`); it does not
+run `ctgErgo()` yet.
+
 ### Money: round where it is STORED, not where it is printed
 
 Seven modules carried the same defect and it is the one the operator finds, because it is the one that

@@ -630,6 +630,142 @@ async function ctgOnce(key, fn){
   try { return await fn(); } finally { delete CTG_INFLIGHT[key]; }
 }
 
+// ── Ergonomics layer: what every screen needs on a PHONE, applied after the screen has rendered ──────
+// Both apps build their screens as HTML strings (~50 renderers, ~200 tables), so fixing these per
+// renderer would be 50 separate edits and 50 moved goldens. Instead each app calls ctgErgoInstall()
+// from enterApp(), and a MutationObserver decorates whatever a renderer just wrote. It only ADDS
+// attributes the markup lacks; it never changes text, values or handlers, so no golden can move and a
+// screen that already sets them is left alone. The CSS half lives in ctg-shell.css ("Ergonomics").
+//
+//  - A table becomes stackable cards on a phone (`ctg-stack` + a `data-label` per cell, copied from its
+//    own header). On 375px a 7-column approval table wrapped a date over five lines and pushed the
+//    Approve button off-screen to the right. Tables with editable cells (the payroll grid) are LEFT as
+//    tables — a stacked grid of inputs is harder to use than a scrolled one.
+//  - A number field gets `inputmode`, so a phone opens the number pad instead of the full keyboard.
+function ctgErgo(root){
+  if(!root || !root.querySelectorAll) return;
+  var nums = root.querySelectorAll('input[type="number"]:not([inputmode])');
+  for (var i = 0; i < nums.length; i++){
+    var st = nums[i].getAttribute('step');
+    nums[i].setAttribute('inputmode', (st && st !== 'any' && Number(st) % 1 === 0) ? 'numeric' : 'decimal');
+  }
+  var tables = root.querySelectorAll('table.bigtable');
+  for (var t = 0; t < tables.length; t++) ctgErgoTable(tables[t]);
+  // A field whose ONLY caption is its placeholder has no name once something is typed in it, and none at
+  // all to a screen reader. The placeholder is the best name the renderer gave it, so it becomes one.
+  var anon = root.querySelectorAll('input[placeholder]:not([aria-label]):not([type="hidden"]), textarea[placeholder]:not([aria-label])');
+  for (var a = 0; a < anon.length; a++){
+    var el = anon[a];
+    if ((el.id && root.querySelector && document.querySelector('label[for="' + el.id + '"]')) || el.closest('label')) continue;
+    var ph = el.getAttribute('placeholder').replace(/^[^A-Za-z0-9]+/, '').trim();
+    if (ph) el.setAttribute('aria-label', ph);
+  }
+  var panels = root.querySelectorAll('.panel');
+  for (var q = 0; q < panels.length; q++) ctgErgoStickyActions(panels[q]);
+  // Icon-only controls drawn smaller than a fingertip (the payroll row's ⋯ was 16x14) get a bigger HIT
+  // area via padding + an equal negative margin — nothing around them moves. Measured, so a control
+  // rendered while hidden (0x0) is left for a later pass rather than marked.
+  var icons = root.querySelectorAll('button:not(.btn):not(.ctg-hit), a[onclick]:not(.btn):not(.ctg-hit)');
+  for (var h = 0; h < icons.length; h++){
+    var rc = icons[h].getBoundingClientRect();
+    if (rc.width > 0 && rc.height > 0 && (rc.width < 24 || rc.height < 24)) icons[h].classList.add('ctg-hit');
+  }
+}
+// A form longer than the screen keeps its primary action in reach. The employee form's "Save changes"
+// sat ~1,450px down a 1,586px page, so fixing a phone number at the top meant scrolling two screens to
+// save it — and a user who does not scroll leaves without saving. The target is the panel's LAST button
+// if it is a primary one (`btn p`); when it shares a row with other controls the whole row is pinned so
+// Cancel/Draft stay beside it. Sticky, not fixed: it pins only while its own panel is on screen, and
+// settles back into place at the end of the form.
+function ctgErgoStickyActions(panel){
+  if (typeof innerHeight === 'undefined' || panel.getBoundingClientRect().height < innerHeight * 1.15) return;
+  var btns = panel.querySelectorAll('button');
+  var last = btns[btns.length - 1];
+  if (!last || !last.classList.contains('p') || last.closest('table')) return;
+  var row = last.parentElement;
+  var target = (row && row !== panel && row.children.length <= 4 && !row.querySelector('input:not([type="checkbox"]), select, textarea')) ? row : last;
+  if (!target.classList.contains('ctg-sticky-act')) target.classList.add('ctg-sticky-act');
+}
+function ctgErgoTable(tb){
+  var head = tb.tHead && tb.tHead.rows[0];
+  if (!head || !tb.tBodies.length) return;
+  var labels = ctgHeadLabels(tb.tHead);
+  var rows = tb.tBodies[0].rows;
+  // Editable cells stay a table (see above). A selection checkbox is not "editable" in that sense. Their
+  // inputs do get a NAME, though — "Allowance — AHMAD BIN ISMAIL" — because a grid input's only label is
+  // a column header a screen reader cannot connect it to, and 25 anonymous "edit text" boxes is the
+  // payroll grid to anyone not looking at it.
+  if (tb.querySelector('tbody input:not([type="checkbox"]):not([type="radio"]), tbody select, tbody textarea')) {
+    tb.classList.remove('ctg-stack');
+    for (var er = 0; er < rows.length; er++){
+      var who = ctgRowName(rows[er].cells[0]);
+      var ecol = 0;
+      for (var ek = 0; ek < rows[er].cells.length; ek++){
+        var ecell = rows[er].cells[ek];
+        var fields = ecell.querySelectorAll('input:not([aria-label]), select:not([aria-label]), textarea:not([aria-label])');
+        for (var ef = 0; ef < fields.length; ef++) if (labels[ecol]) fields[ef].setAttribute('aria-label', labels[ecol] + (who ? ' — ' + who : ''));
+        ecol += ecell.colSpan || 1;
+      }
+    }
+    return;
+  }
+  for (var r = 0; r < rows.length; r++){
+    var col = 0;
+    for (var k = 0; k < rows[r].cells.length; k++){
+      var cell = rows[r].cells[k];
+      // A cell spanning most of the row is a message or a detail panel, not a field: no caption.
+      var lbl = (cell.colSpan || 1) > 1 ? '' : (labels[col] || '');
+      if (cell.getAttribute('data-label') !== lbl) cell.setAttribute('data-label', lbl);
+      col += cell.colSpan || 1;
+    }
+  }
+  tb.classList.add('ctg-stack');
+}
+// One caption per COLUMN, from a header of any depth. A grouped header ("Earnings (RM)" spanning Basic /
+// Allowance / OT, over a second row) is laid out on a grid honouring rowspan and colspan, and a column's
+// caption joins its distinct texts top-down: "Earnings (RM) · Allowance". Reading only the first row
+// named every earnings box "Earnings (RM)".
+function ctgHeadLabels(thead){
+  var grid = [], out = [], r, c, k;
+  for (r = 0; r < thead.rows.length; r++){
+    var col = 0;
+    for (k = 0; k < thead.rows[r].cells.length; k++){
+      var cell = thead.rows[r].cells[k], txt = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+      while (grid[r] && grid[r][col] !== undefined) col++;
+      for (var rs = 0; rs < (cell.rowSpan || 1); rs++) for (var cs = 0; cs < (cell.colSpan || 1); cs++){
+        (grid[r + rs] = grid[r + rs] || [])[col + cs] = txt;
+      }
+      col += cell.colSpan || 1;
+    }
+  }
+  var width = 0; for (r = 0; r < grid.length; r++) width = Math.max(width, (grid[r] || []).length);
+  for (c = 0; c < width; c++){
+    var parts = [];
+    for (r = 0; r < grid.length; r++){ var t = grid[r] && grid[r][c]; if (t && parts.indexOf(t) < 0) parts.push(t); }
+    out.push(parts.join(' · '));
+  }
+  return out;
+}
+// The row's name as a reader would say it: the first line of its first cell that is words, not an icon
+// (the payroll row starts with a ⋯ menu and ends with "EPF 11% · SOC C1" chips).
+function ctgRowName(cell){
+  if (!cell) return '';
+  var lines = String(cell.innerText || cell.textContent || '').split('\n');
+  for (var i = 0; i < lines.length; i++){ var t = lines[i].replace(/\s+/g, ' ').trim(); if (t.length > 2) return t.slice(0, 40); }
+  return '';
+}
+var CTG_ERGO_ON = false;
+function ctgErgoInstall(){
+  if (CTG_ERGO_ON || typeof document === 'undefined' || !document.body || typeof MutationObserver === 'undefined') return;
+  CTG_ERGO_ON = true;
+  ctgErgo(document);
+  // The observer already delivers one batch per render, so decorate straight away — NOT in a
+  // requestAnimationFrame, which the browser pauses in a background tab (the first cut did that, and a
+  // screen rendered while the tab was hidden stayed undecorated). Attribute writes are not childList
+  // mutations, so decorating cannot re-trigger the observer.
+  new MutationObserver(function(){ ctgErgo(document); }).observe(document.body, { childList: true, subtree: true });
+}
+
 if (typeof addEventListener === 'function') {
   addEventListener('wheel', function (e) {
     var el = typeof document !== 'undefined' && document.activeElement;

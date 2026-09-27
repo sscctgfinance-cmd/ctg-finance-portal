@@ -157,8 +157,11 @@ body.ctg-shell .ctg-page-title small{
 @media(max-width:900px){
   body.ctg-shell #app > .ctg-app{ display:block; }
   body.ctg-shell #app > .ctg-app > .wrap{ padding:16px 14px 60px; }
+  /* NOT sticky. It was, and on a 375px phone the "strip" is the brand, the company picker, the tab row
+     and four account buttons — 364px, 45% of the screen, parked over every form while it was filled in.
+     It scrolls away with the page; scrolling back up reaches it, as on any site. */
   .ctg-side{
-    width:100%; height:auto; position:sticky; top:0; z-index:40;
+    width:100%; height:auto; position:static; z-index:40;
     border-right:none; border-bottom:1px solid var(--border, rgba(16,24,39,.09));
   }
   .ctg-side-brand{ padding:12px 14px; }
@@ -208,3 +211,74 @@ body.ctg-shell .ctg-page-title small{
 /* ── 5. Shared polish (both apps) ── */
 .ctg-num{ font-variant-numeric:tabular-nums; white-space:nowrap; }
 .bigtable td.num, .bigtable th.num{ font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right; }
+
+/* ── 6. Ergonomics (both apps) — what a thumb on a 375px phone needs ──────────────────────────────
+   Measured with tools/ergo_probe.js as an employee on a phone before this block existed: every form
+   field was 13px (iOS zooms the whole page on focus under 16px, and the user pinches back out after
+   EVERY field), inline "cancel"-style links were 36x14, checkboxes 13px, and approval tables pushed
+   their Approve button off-screen. `!important` only where renderers write inline styles. */
+
+/* 16px fields on touch screens: the threshold iOS Safari zooms at. Desktop keeps its denser 13px. */
+@media (pointer:coarse){
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select, textarea{ font-size:16px !important; }
+  /* A text link used as a button: grow the HIT AREA, not the layout (padding + equal negative margin). */
+  a[onclick]:not(.btn){ padding:10px 6px; margin:-10px -6px; }
+  .btn.sm{ min-height:40px; }
+}
+/* Both apps' mobile rules give EVERY input min-height:44px (app.html also width:100%), which drew a
+   checkbox's square at the bottom of a 44px box — below the sentence it confirms. The LABEL is the tap
+   target (see below); the box itself stays a box. */
+input[type="checkbox"], input[type="radio"]{ width:18px !important; height:18px; min-height:0 !important; margin:0; accent-color:var(--coral); cursor:pointer; flex-shrink:0; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]){ cursor:pointer; min-height:36px; align-items:center !important; }
+
+/* Keyboard users can see where they are. Mouse clicks do not get the ring (:focus-visible). */
+:is(button, a, input, select, textarea, [tabindex]):focus-visible{ outline:2px solid var(--coral-soft, var(--coral)); outline-offset:2px; }
+
+/* Tables → cards on a phone. `ctg-stack` and every cell's `data-label` are added by ctgErgo()
+   (common.js) from the table's own header, so a table it has not decorated is untouched. */
+@media (max-width:640px){
+  .tbl-wrap:has(> table.ctg-stack){ border:0; overflow:visible; background:none; }
+  table.ctg-stack, table.ctg-stack tbody, table.ctg-stack tr{ display:block; width:100%; }
+  table.ctg-stack thead{ display:none; }
+  table.ctg-stack tr{ border:1px solid var(--border); border-radius:12px; margin:0 0 10px; padding:4px 14px; background:var(--panel); }
+  table.ctg-stack td{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:8px 0 !important;
+    border:0 !important; border-bottom:1px solid var(--border) !important; text-align:right !important; white-space:normal; min-height:40px; }
+  table.ctg-stack td:last-child{ border-bottom:0 !important; }
+  table.ctg-stack td::before{ content:attr(data-label); color:var(--muted); font-size:10.5px; font-weight:700; letter-spacing:.5px;
+    text-transform:uppercase; text-align:left; flex:0 0 auto; max-width:42%; }
+  /* No header (an actions column) or a spanning message cell: full width, nothing to caption. */
+  table.ctg-stack td[data-label=""]::before{ display:none; }
+  table.ctg-stack td[data-label=""]{ justify-content:flex-end; flex-wrap:wrap; }
+  table.ctg-stack td[colspan]{ display:block; text-align:left !important; }
+  table.ctg-stack td:empty{ display:none; }
+}
+
+/* A long form's primary action stays on screen (the class is added by ctgErgoStickyActions, common.js,
+   only to a panel taller than the viewport). The pinned row gets the panel's own ground so fields do not
+   show through; a bare button just floats with a shadow. */
+.ctg-sticky-act{ position:sticky !important; bottom:12px; z-index:6; }   /* !important: `.btn.p` sets position:relative at higher specificity */
+div.ctg-sticky-act{ background:var(--panel); padding:10px 0; margin-top:6px; border-top:1px solid var(--border); box-shadow:0 -10px 18px -12px rgba(0,0,0,.35); }
+button.ctg-sticky-act{ box-shadow:0 8px 22px rgba(0,0,0,.28); }
+/* Employee mode on a phone has a fixed bottom tab bar (#emp-mobnav, ~64px + the home-indicator inset). */
+@media (max-width:640px){
+  body.hr-emp .ctg-sticky-act{ bottom:calc(76px + env(safe-area-inset-bottom,0px)); }
+  /* A pinned bar is permanent screen cost on a phone: its buttons share ONE row rather than stacking. */
+  div.ctg-sticky-act{ display:flex !important; gap:8px; align-items:center; flex-wrap:wrap; }
+  div.ctg-sticky-act > .btn{ flex:1 1 130px; width:auto !important; margin:0 !important; }
+}
+
+/* Icon-only controls under 24px (marked by ctgErgo): a fingertip-sized hit area, zero layout change. */
+.ctg-hit{ padding:8px !important; margin:-8px !important; }
+
+@media (max-width:640px){
+  /* Quick Invoice line (qiAddLine, app.html): a fixed 160/1fr/60/110/200/36 grid set inline, so on a
+     phone the description shrank to ~20px and the amount ran off the edge. Product, description and
+     account get full rows; quantity and amount share one. */
+  #qi_lines > div{ grid-template-columns:1fr 1fr !important; padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:10px !important; }
+  #qi_lines > div > .qi-prod, #qi_lines > div > .qi-desc, #qi_lines > div > .qi-acct{ grid-column:1 / -1; }
+  #qi_lines > div > button{ grid-column:1 / -1; justify-self:end; }
+  /* A table that stays a table (it has editable cells) scrolls sideways inside .tbl-wrap; its controls
+     must not be squeezed to nothing to avoid that — CTG Access's role dropdowns were 29px wide. */
+  table:not(.ctg-stack) select, table:not(.ctg-stack) input:not([type="checkbox"]):not([type="radio"]){ min-width:110px; }
+}

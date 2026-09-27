@@ -578,6 +578,50 @@ function hrAbToB64(ab){ var bytes=new Uint8Array(ab),bin='',chunk=0x8000; for(va
 function hrIcPassword(e){ return (String(e.ic||'').replace(/\D/g,''))||e.empNo; }
 function hrPayslipEmailHtml(e,period,companyName){ return '<div style="font-family:Arial,sans-serif;color:#17231f;max-width:520px"><p>Hi '+hrEsc(String(e.name||'').split(' ')[0])+',</p><p>Your payslip for <b>'+hrEsc(period.label)+'</b> is attached as a PDF.</p><p>For your privacy the file is <b>password-protected</b> — open it with your <b>IC number</b> (digits only, no dashes).</p><p>If anything looks wrong, please contact Finance.</p><p style="color:#5e6e67;font-size:13px;margin-top:22px">'+hrEsc(companyName)+' · Finance<br>This is an automated message from ProCare·HR.</p></div>'; }
 
+// ── Leave: what an application will cost, shown BEFORE it is submitted ─────────────────────────────
+// Employees used to learn how many days a request took only from the toast after submitting it, and
+// never saw what would be left. Both renderers (hros.html's hrEmpLeaveRender and web/src/hr-emp-leave.tsx)
+// draw this one answer, so they cannot disagree about a balance.
+//
+// hrWorkingDays is hr_leave_apply's count (supabase/functions/portal/hr.ts), transcribed exactly: Mon–Fri
+// inclusive, a half day ONLY when from === to (and then 0.5 whatever the weekday, as the server does),
+// public holidays not deducted. UTC arithmetic on a calendar date, so it is zone-free.
+function hrWorkingDays(from, to, half){
+  var re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!re.test(String(from || '')) || !re.test(String(to || '')) || to < from) return 0;
+  if (half && from === to) return 0.5;
+  var d = Date.parse(from + 'T00:00:00Z'), end = Date.parse(to + 'T00:00:00Z'), n = 0, guard = 0;
+  while (d <= end && guard < 400){ var w = new Date(d).getUTCDay(); if (w !== 0 && w !== 6) n++; d += 86400000; guard++; }
+  return n;
+}
+// The date the form opens on: today, or the next Monday when today is a weekend — someone applying on a
+// Saturday is booking Monday, and a form that OPENS in its "no working days" error state reads as broken.
+function hrNextWorkingDay(iso){
+  var d = Date.parse(String(iso || '') + 'T00:00:00Z'); if (!isFinite(d)) return iso;
+  while ([0, 6].indexOf(new Date(d).getUTCDay()) >= 0) d += 86400000;
+  return new Date(d).toISOString().slice(0, 10);
+}
+// `ok` false means the form cannot be submitted as it stands. `tone` picks the colour; the TEXT carries
+// the meaning on its own (a colour-blind reader loses nothing). Over-balance WARNS but does not block:
+// whether excess leave is allowed or goes unpaid is HR's decision, made on the server, not here.
+function hrLeavePreview(types, balances, typeId, from, to, half){
+  if (!from || !to) return { ok: false, tone: 'muted', text: 'Pick the dates.' };
+  if (to < from) return { ok: false, tone: 'red', text: 'The end date is before the start date.' };
+  var days = hrWorkingDays(from, to, half);
+  if (!days) return { ok: false, tone: 'red', text: 'No working days in that range — weekends are not counted.' };
+  var t = null, b = null, i;
+  for (i = 0; i < (types || []).length; i++) if (String(types[i].id) === String(typeId)) t = types[i];
+  if (t) for (i = 0; i < (balances || []).length; i++) if (balances[i].type === t.name) b = balances[i];
+  var txt = days + ' working day' + (days === 1 ? '' : 's');
+  if (t && t.paid && b && isFinite(Number(b.remaining))){
+    var left = Number(b.remaining), after = Math.round((left - days) * 10) / 10;
+    if (after < 0) return { ok: true, tone: 'amber', text: txt + ' — more than the ' + left + ' ' + t.name.toLowerCase() + ' day' + (left === 1 ? '' : 's') + ' you have left.' };
+    return { ok: true, tone: 'green', text: txt + ' · ' + left + ' left → ' + after + ' after this' };
+  }
+  return { ok: true, tone: 'muted', text: txt + (t && !t.paid ? ' · unpaid' : '') };
+}
+var HR_LEAVE_TONE = { green: 'var(--green-soft)', amber: 'var(--amber)', red: 'var(--red-soft)', muted: 'var(--muted)' };
+
 // Consumable by a bundler without touching this file again — see the note in payroll.js. The one thing
 // that does not survive the trip untouched is hrDrawPayslip's HR_EMPLOYER/HR_COMPANY read, described
 // above; every other export here is a pure function of its arguments.
@@ -589,4 +633,5 @@ if (typeof module !== 'undefined' && module.exports) module.exports = {
   hrBuildStatutory, hrBuildKwsp, hrBuildAssist, hrBuildCp39, hrBuildGiro, hrBuildBank,
   hrCrc32, hrZip, hrSubmissionSpecs,
   hrEsc, HR_HRDF_RATE, hrBuildSummary, hrAbToB64, hrIcPassword, hrPayslipEmailHtml,
+  hrWorkingDays, hrNextWorkingDay, hrLeavePreview, HR_LEAVE_TONE,
 };

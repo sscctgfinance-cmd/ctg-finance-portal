@@ -39,6 +39,21 @@ Deno.serve({ port: PORT, hostname: "127.0.0.1" }, async (req) => {
     // the flow continue) and recorded rather than silently 404'd.
     let data = api === "hr_companies" ? { ok: true, companies: COMPANIES } : (FIXTURES as Record<string, unknown>)[api];
     if (!data) { unfixtured.add(api); data = { ok: true, _stub: true }; }
+    // Sign in as another role: `document.cookie = "qa_role=employee"`, then reload. The fixtures are all
+    // captured as the Master Admin, and the screens the most people use — an employee on a phone — are
+    // unreachable without this. Only the two identity answers change; every other fixture is as captured.
+    const role = /(?:^|;\s*)qa_role=([a-z_]+)/.exec(req.headers.get("cookie") || "")?.[1];
+    if (role && (api === "me" || api === "my_perms" || api === "login")) {
+      const d = structuredClone(data) as { user?: { role?: string }; role?: string };
+      if (d.user) d.user.role = role;
+      if (typeof d.role === "string") d.role = role;
+      data = d;
+    }
+    if (role && role !== "admin" && role !== "hr_admin" && api === "hr_rc_config") {
+      const d = structuredClone(data) as { me?: { isAdmin?: boolean; roles?: string[] } };
+      if (d.me) { d.me.isAdmin = false; d.me.roles = []; }
+      data = d;
+    }
     console.log(`  POST ${api}${(data as { _stub?: boolean })._stub ? "   [stub]" : ""}`);
     return Response.json(data, { headers: { "cache-control": "no-store" } });
   }

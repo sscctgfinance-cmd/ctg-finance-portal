@@ -81,6 +81,18 @@ export interface RcConfig {
   mileage_rates?: RcMileageRate[];
   cost_centers?: RcCostCenter[];
   employees?: RcEmployeeOpt[];
+  /** `RC.cfg.me` — whose login this is; the claimant defaults to their own record (hros.html hrRCForm). */
+  me?: { employee?: { id?: string | null } | null } | null;
+}
+
+/**
+ * hrRCForm(): the claimant defaults to whoever is filing, and a list of ONE (an employee's own config)
+ * has no "— select —" to pick past. Pure, so the default is testable without the DOM.
+ */
+export function defaultClaimant(cfg: RcConfig, current?: string | null): string {
+  if (current) return current;
+  const mine = cfg.me && cfg.me.employee && cfg.me.employee.id;
+  return mine && (cfg.employees || []).some((e) => e.id === mine) ? String(mine) : '';
 }
 
 /** One row of `RC.form.items` — hros.html:2002. Every field is a STRING while it is in the form. */
@@ -386,8 +398,8 @@ export default function HrExpensesForm(p: HrExpensesFormProps) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '12px' }}>
         <G label="Employee *">
-          <select id="rc_emp" defaultValue={f.employee_id || ''} style={st(RC_SEL)}>
-            <option value="">— select —</option>
+          <select id="rc_emp" defaultValue={defaultClaimant(cfg, f.employee_id)} style={st(RC_SEL)}>
+            {(cfg.employees || []).length === 1 ? null : <option value="">— select —</option>}
             {(cfg.employees || []).map((e) => <option key={e.id} value={e.id}>{e.emp_no + ' — ' + e.name}</option>)}
           </select>
         </G>
@@ -412,7 +424,7 @@ export default function HrExpensesForm(p: HrExpensesFormProps) {
       <div>{items.map((it, i) => <Line key={i} i={i} it={it} p={p} claimDate={f.claim_date || ''} />)}</div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', flexWrap: 'wrap', gap: '8px' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn sm" onClick={p.onItemAdd}>+ Add expense line</button>
           <button className="btn sm" onClick={p.onScanTrigger} title="Point the camera at the receipt — edges are found and it shoots by itself, then Claude reads it and fills a line">📷 Scan receipt / e-invoice</button>
           <button className="btn sm" onClick={p.onScanPickFile} title="Attach a PDF e-invoice or an existing photo — Claude reads it and fills a line">📄 PDF / photo</button>
@@ -472,25 +484,25 @@ function Line({ i, it, p, claimDate }: { i: number; it: RcFormItem; p: HrExpense
   );
 
   return (
-    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
-      <select id={'rc_it_' + i + '_type'} defaultValue={it.claim_type_id || ''} onChange={() => p.onItemType(i)} style={{ width: '158px', ...st(RC_TD) }}>
+    <div className="rc-line" style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+      <select id={'rc_it_' + i + '_type'} defaultValue={it.claim_type_id || ''} onChange={() => p.onItemType(i)} aria-label="Expense type" style={{ width: '158px', ...st(RC_TD) }}>
         <option value="">— type —</option>
         {(cfg.claim_types || []).filter((t) => t.active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
       </select>
-      <input id={'rc_it_' + i + '_date'} type="date" defaultValue={(it.item_date || claimDate || '').slice(0, 10)} style={{ width: '132px', ...st(RC_TD) }} />
-      <input id={'rc_it_' + i + '_desc'} placeholder="Description" defaultValue={it.description || ''} style={{ flex: 1, minWidth: '130px', ...st(RC_TD) }} />
+      <input id={'rc_it_' + i + '_date'} type="date" aria-label="Date of expense" defaultValue={(it.item_date || claimDate || '').slice(0, 10)} style={{ width: '132px', ...st(RC_TD) }} />
+      <input id={'rc_it_' + i + '_desc'} placeholder="Description" aria-label="Description" defaultValue={it.description || ''} style={{ flex: 1, minWidth: '130px', ...st(RC_TD) }} />
       {mile ? (
         <>
-          <input id={'rc_it_' + i + '_km'} type="number" step="0.1" placeholder="km" defaultValue={String(it.total_km || '')} onInput={p.onItemCalc} style={{ width: '62px', ...st(RC_TD) }} />
+          <input id={'rc_it_' + i + '_km'} type="number" step="0.1" placeholder="km" aria-label="Distance (km)" defaultValue={String(it.total_km || '')} onInput={p.onItemCalc} style={{ width: '62px', ...st(RC_TD) }} />
           {' '}
-          <select id={'rc_it_' + i + '_rate'} defaultValue={String(it.mileage_rate ?? '')} onChange={p.onItemCalc} style={{ width: '78px', ...st(RC_TD) }}>
+          <select id={'rc_it_' + i + '_rate'} defaultValue={String(it.mileage_rate ?? '')} onChange={p.onItemCalc} aria-label="Mileage rate" style={{ width: '78px', ...st(RC_TD) }}>
             {(cfg.mileage_rates || []).filter((r) => r.active).map((r) => <option key={String(r.rate)} value={String(r.rate)}>{'RM' + r.rate}</option>)}
           </select>
           {' '}
           <b style={{ width: '82px', display: 'inline-block', textAlign: 'right' }} id={'rc_it_' + i + '_amtL'}>{M(amt)}</b>
         </>
       ) : (
-        <input id={'rc_it_' + i + '_amt'} type="number" step="0.01" placeholder="0.00" defaultValue={String(it.amount || '')} onInput={p.onItemCalc} style={{ width: '100px', textAlign: 'right', ...st(RC_TD) }} />
+        <input id={'rc_it_' + i + '_amt'} type="number" step="0.01" placeholder="0.00" aria-label="Amount (RM)" defaultValue={String(it.amount || '')} onInput={p.onItemCalc} style={{ width: '100px', textAlign: 'right', ...st(RC_TD) }} />
       )}
       {it.is_einvoice ? (
         <span className="pill" title="MyInvois e-invoice captured" style={{ fontSize: '9px', color: 'var(--green-soft)', border: '1px solid var(--green-soft)', borderRadius: '5px', padding: '1px 5px' }}>e-Inv</span>

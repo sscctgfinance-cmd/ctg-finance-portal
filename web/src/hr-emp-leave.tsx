@@ -24,6 +24,7 @@
 
 import type { CSSProperties } from 'react';
 
+import { HR_LEAVE_TONE, hrLeavePreview, hrNextWorkingDay } from '../../hr-docs.js';
 import { StepPills, type LeaveRequest, type LeaveType } from './hr-leave';
 
 /** One row of `hr_leave_my.balances` — hr.ts:1331. */
@@ -57,6 +58,9 @@ export interface HrEmpLeaveProps {
   /** Bumped by the route to re-mount the uncontrolled form after a successful apply. */
   formKey?: number;
   onApply: () => void;
+  /** `hrEmpLeaveSync(src)` — keeps To/half-day consistent and repaints `#lv_preview`. The form is
+   *  uncontrolled, so the route does that against the DOM by the legacy ids, exactly as hros.html does. */
+  onFormChange?: (src: 'type' | 'from' | 'to' | 'half') => void;
   onCancel: (id: string) => void;
   onDecide: (id: string, decision: 'approve' | 'reject') => void;
 }
@@ -122,6 +126,11 @@ function Field({ label, children }: { label: React.ReactNode; children: React.Re
 
 export default function HrEmpLeave(props: HrEmpLeaveProps) {
   const { companyName, types, balances, requests, pending, today, formKey, onApply, onCancel, onDecide } = props;
+  const onFormChange = props.onFormChange || (() => {});
+  // hros.html: `today=hrNextWorkingDay(todayLocalISO())` and the preview for that default — the same
+  // shared function (hr-docs.js), so the two apps cannot disagree about what a request costs.
+  const first = hrNextWorkingDay(today);
+  const pv = hrLeavePreview(types, balances, (types[0] && types[0].id) || '', first, first, false);
 
   return (
     <>
@@ -194,24 +203,21 @@ export default function HrEmpLeave(props: HrEmpLeaveProps) {
 
       <div className="panel" style={{ marginBottom: '14px', maxWidth: '560px' }} key={formKey}>
         <div className="panel-hd"><h3>Apply for leave</h3></div>
+        <Field label="Leave type">
+          <select id="lv_type" onChange={() => onFormChange('type')} style={S}>
+            {types.map((t) => <option value={t.id} key={t.id}>{t.name}{t.paid ? '' : ' (unpaid)'}</option>)}
+          </select>
+        </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <Field label="Leave type">
-            <select id="lv_type" style={S}>
-              {types.map((t) => <option value={t.id} key={t.id}>{t.name}{t.paid ? '' : ' (unpaid)'}</option>)}
-            </select>
-          </Field>
-          {/* hros.html:3083 writes the ENTITY `&nbsp;` here; the escape keeps it from looking like a stray
-              space in source. parity.ts's R2 canonicalises the character back to the entity. */}
-          <Field label={'\u00a0'}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', paddingTop: '7px' }}>
-              <input type="checkbox" id="lv_half" style={{ accentColor: 'var(--coral)' }} /> Half day (single day)
-            </label>
-          </Field>
-          <Field label="From"><input type="date" id="lv_from" defaultValue={today} style={S} /></Field>
-          <Field label="To"><input type="date" id="lv_to" defaultValue={today} style={S} /></Field>
+          <Field label="From"><input type="date" id="lv_from" defaultValue={first} onChange={() => onFormChange('from')} style={S} /></Field>
+          <Field label="To"><input type="date" id="lv_to" defaultValue={first} onChange={() => onFormChange('to')} style={S} /></Field>
         </div>
-        <Field label="Reason"><input id="lv_reason" placeholder="e.g. family matters" style={S} /></Field>
-        <button className="btn p sm" id="lv_submit" style={{ marginTop: '4px' }} onClick={onApply}>Submit application</button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', margin: '0 0 12px', minHeight: '40px' }}>
+          <input type="checkbox" id="lv_half" onChange={() => onFormChange('half')} /> Half day (a single date)
+        </label>
+        <Field label={<>Reason <span style={{ textTransform: 'none' }}>(optional)</span></>}><input id="lv_reason" placeholder="e.g. family matters" style={S} /></Field>
+        <div id="lv_preview" role="status" aria-live="polite" style={{ fontSize: '13px', fontWeight: 600, margin: '4px 0 12px', color: HR_LEAVE_TONE[pv.tone] }}>{pv.text}</div>
+        <button className="btn p" id="lv_submit" onClick={onApply} disabled={!pv.ok}>Submit application</button>
         <div className="muted" style={{ fontSize: '11px', marginTop: '8px' }}>Counted as working days (Mon–Fri; weekends excluded, public holidays not auto-deducted). Routed through the approval levels (e.g. Manager → HR → Director) — approvers are notified by email at each step.</div>
       </div>
 

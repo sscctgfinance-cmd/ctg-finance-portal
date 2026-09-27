@@ -239,6 +239,7 @@ function recordedHandlers(over: Partial<Parameters<typeof HrEmpLeave>[0]> = {}):
 
   const got = reactHandlers(screen({
     onApply: record('apply') as never,
+    onFormChange: record('form') as never,
     onCancel: record('cancel') as never,
     onDecide: record('decide') as never,
     ...over,
@@ -341,6 +342,8 @@ describe('the comparison still bites', () => {
     const decide = record('decide');
     const got = reactHandlers(screen({
       onApply: record('apply') as never,
+      onFormChange: record('form') as never,
+    onFormChange: record('form') as never,
       onCancel: record('cancel') as never,
       onDecide: ((id: string, d: string) => decide(id, d === 'approve' ? 'reject' : 'approve')) as never,
     }));
@@ -360,6 +363,7 @@ function miswired(which: 'decide' | 'cancel'): Recorded[] {
   const firstPend = PENDING[0].id;
   const got = reactHandlers(screen({
     onApply: record('apply') as never,
+    onFormChange: record('form') as never,
     onCancel: (which === 'cancel' ? (() => cancel(firstReq)) : cancel) as never,
     onDecide: (which === 'decide' ? ((_id: string, d: string) => decide(firstPend, d)) : decide) as never,
   }));
