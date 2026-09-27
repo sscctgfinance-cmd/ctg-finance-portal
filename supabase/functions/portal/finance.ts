@@ -341,6 +341,14 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // (dead Gmail refresh token) while the AP inbox received nothing, and three of the bookkeeping crons
       // have been failing on EVERY run against columns that no longer exist. All of it silent. This is the
       // alarm: one email when something breaks, one when it recovers, and nothing in between.
+      //
+      // ⚠️ This action has NO auth gate, unlike every other cron_*: the `portal-cron-health` pg_cron job
+      // (7,37 * * * *) posts without a cron_secret, so demanding one here would silence the alarm itself.
+      // Until that job is re-created WITH the secret, the only thing withheld from an anonymous caller is
+      // the health DETAIL — job names, their last error lines, failing HTTP targets. The check and its
+      // (summary-deduplicated) email still run for anyone, which is what keeps the alarm alive.
+      const { data: _hs } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      const _bySecret = !!(_hs && _hs.value && b.cron_secret === _hs.value);
       const win = Math.max(15, Math.min(1440, Number(b.window_min) || 60));
       const { data: h, error: eH } = await sb.rpc("portal_cron_health", { p_window_min: win });
       if (eH) return j({ ok:false, error:eH.message });
@@ -436,7 +444,7 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // still sees the outcome.
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work);
       else await work;
-      return j({ ok:true, problems: problems.length, streak, will_email: !!(shouldAlert||recovered), health: h });
+      return j({ ok:true, problems: problems.length, streak, will_email: !!(shouldAlert||recovered), ...(_bySecret ? { health: h } : {}) });
     }
     if (api === "cron_watchdog") {
       // v71 (Tier-1 reliability): the SILENT-FAILURE alarm. The real damage last time wasn't that
@@ -616,7 +624,13 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     }
     if (api === "pending") { const { data } = await sb.rpc("portal_pending_bills", { p_token: b.token||"" }); return j(data); }
     if (api === "approve") { const { data } = await sb.rpc("portal_approve_bill", { p_token: b.token||"", p_tenant: b.tenant, p_invoice: b.invoice, p_action: b.action }); return j(data); }
-    if (api === "collections") { const { data } = await sb.rpc("portal_trigger_collections", { p_token: b.token||"" }); return j(data); }
+    if (api === "collections") {
+      // A GROUP-WIDE run: the RPC totals every company's overdue AR and mails the dunning summary. It checks
+      // the role (admin/approver) but not the scope, so a single-company admin could send it and read back
+      // group-wide receivable totals. v148's rule for group-wide actions: full-scope admin only.
+      const me = await meFromToken(b.token); if (!(await isFullScopeAdmin(me, b.token))) return j({ ok:false, error:"unauthorized (full-scope admin only)" }, 401);
+      const { data } = await sb.rpc("portal_trigger_collections", { p_token: b.token||"" }); return j(data);
+    }
     if (api === "changepw") { const { data } = await sb.rpc("portal_change_password", { p_token: b.token||"", p_old: b.old||"", p_new: b.neu||"" }); return j(data); }
     if (api === "upload") {
       const me = await meFromToken(b.token); if (!me || !me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -1118,13 +1132,37 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       if (!b.user_id) return j({ ok:false, error:"no user_id" });
       if (!(await userWriteAllowed(b.token, me.user.id, b.user_id))) return j({ ok:false, error:"forbidden: that account belongs to a company outside your access" }, 403);
       // Reassigning companies must not widen a user past the caller's own scope.
+      // ZERO company rows is not "no access" for an admin — portal_allowed_tenants reads it as FULL SCOPE
+      // (the 2026-09-07 design). So an empty set is a grant of every company, and the three checks below
+      // all exist to stop a company-scoped admin reaching it: before them, {user_id:<self>, tenants:[]}
+      // passed userWriteAllowed (self is inside own scope) and tenantsAssignable([]) (vacuously true), and
+      // one request made the caller a full-scope admin of the whole group.
+      let reqIds: string[] | null = null;
       if (Array.isArray(b.tenants)){
-        const reqIds = b.tenants.map((t)=> typeof t==="string" ? t : (t&&t.tenant_id)).filter(Boolean);
+        reqIds = b.tenants.map((t)=> String(typeof t==="string" ? t : ((t&&t.tenant_id)||"")).trim());
+        // An entry naming no company used to be dropped from the check but kept for the insert, which then
+        // failed AFTER the delete had run — leaving the target with zero rows, i.e. the same escalation.
+        if (reqIds.some((t)=> !t)) return j({ ok:false, error:"every company entry needs a tenant_id" }, 400);
         if (!(await tenantsAssignable(b.token, me.user.id, reqIds))) return j({ ok:false, error:"forbidden: company outside your access" }, 403);
+        // user_create's rule: only a group-wide admin may leave an account group-wide.
+        if (!reqIds.length){
+          const { data: myCos } = await sb.from("portal_user_companies").select("tenant_id").eq("user_id", me.user.id);
+          if ((myCos||[]).length) return j({ ok:false, error:"forbidden: assign at least one of your companies" }, 403);
+        }
       }
       const upd = {}; if (b.role!==undefined) upd.role=b.role; if (b.active!==undefined) upd.active=b.active; if (b.name!==undefined) upd.name=b.name;
       if (Object.keys(upd).length){ const { error } = await sb.from("portal_users").update(upd).eq("id", b.user_id); if (error) return j({ ok:false, error:error.message }); }
-      if (Array.isArray(b.tenants)){ await sb.from("portal_user_companies").delete().eq("user_id", b.user_id); if (b.tenants.length){ const rows = b.tenants.map((t)=> typeof t==="string" ? { user_id:b.user_id, tenant_id:t, role:null } : { user_id:b.user_id, tenant_id:t.tenant_id, role:t.role||null }); const { error:e2 } = await sb.from("portal_user_companies").insert(rows); if (e2) return j({ ok:false, error:e2.message }); } }
+      if (reqIds){
+        // ADD then REMOVE, never remove-then-add: a failure between the two must leave a SUPERSET of
+        // rows (old ∪ new — both inside the caller's scope), never an empty set (= full scope).
+        const seen = new Set<string>();
+        const rows = b.tenants.map((t, i)=> ({ user_id:b.user_id, tenant_id:reqIds![i], role:(typeof t==="string" ? null : (t.role||null)) }))
+          .filter((r)=> seen.has(r.tenant_id) ? false : (seen.add(r.tenant_id), true));
+        if (rows.length){ const { error:e2 } = await sb.from("portal_user_companies").upsert(rows, { onConflict:"user_id,tenant_id" }); if (e2) return j({ ok:false, error:e2.message }); }
+        let del = sb.from("portal_user_companies").delete().eq("user_id", b.user_id);
+        if (reqIds.length) del = del.not("tenant_id", "in", "(" + [...seen].map((t)=> '"' + t.replace(/"/g, "") + '"').join(",") + ")");
+        const { error:e3 } = await del; if (e3) return j({ ok:false, error:e3.message });
+      }
       await logAudit(me, "user_update", b.user_id, { role: b.role, active: b.active, tenants: b.tenants });
       return j({ ok:true });
     }
@@ -1964,7 +2002,10 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // GL coding pattern rules — admin can review + add patterns to teach the engine.
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       const { data } = await sb.from("portal_gl_rules").select("*").eq("enabled", true).order("priority", { ascending:false }).order("id");
-      const filtered = b.tenant ? (data||[]).filter((r)=>r.tenant_id === b.tenant) : (data||[]);
+      // Omitting b.tenant used to return EVERY company's rules — the central guard only sees a tenant that
+      // is sent. Scope to the caller's companies first, then narrow.
+      const alw = await allowedTenants(b.token);
+      const filtered = (data||[]).filter((r)=> alw.indexOf(String(r.tenant_id)) >= 0 && (!b.tenant || r.tenant_id === b.tenant));
       return j({ ok:true, rules: filtered });
     }
     if (api === "ap_rule_save") {
@@ -1989,6 +2030,10 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
     if (api === "ap_rule_delete") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
       if (!b.id) return j({ ok:false, error:"id required" });
+      // By id, so the central tenant guard never sees a company: pin the RULE's own tenant (ap_rule_save's rule).
+      const { data: rule } = await sb.from("portal_gl_rules").select("tenant_id").eq("id", Number(b.id)).maybeSingle();
+      if (!rule) return j({ ok:false, error:"not found" });
+      if (!(await tenantPinned(b.token, String(rule.tenant_id)))) return denyTenant(me, "ap_rule_delete", String(rule.tenant_id));
       const { error } = await sb.from("portal_gl_rules").update({ enabled: false }).eq("id", Number(b.id));
       if (error) return j({ ok:false, error: error.message });
       await logAudit(me, "ap_rule_delete", String(b.id), {});

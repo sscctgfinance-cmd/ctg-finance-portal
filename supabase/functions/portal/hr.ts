@@ -520,9 +520,19 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
     const others = await stepEligibleApprovers(step, claim.tenant_id, [actorEmp].filter(Boolean), [actor].filter(Boolean));
     if(others > 0) return { ok:false, error:"You raised this claim, so you cannot also approve it. Another approver for this step must act.", forbidden:true };
   }
+  // CLAIM the step atomically before any side effect. The RC_ACTIONABLE check above reads the claim and
+  // every write below was unconditional, so two decisions in flight (two approvers, the email link plus
+  // the app, a retried request) both passed it and both advanced, emailed and audited. A pending step is
+  // always 'Pending' (resubmission resets it, see hr_rc_submit), so that is the WHERE that picks one winner.
+  const LOST = { ok:false, error:"Already handled — this step was decided a moment ago." };
+  const claimStep = async (patch:any) => {
+    if(!step) return true;
+    const { data: got } = await sb.from("hr_claim_approval_steps").update(patch).eq("id",step.id).eq("status","Pending").select("id");
+    return !!(got && got.length);
+  };
   if(decision==="reject"){
     if(!String(comment||"").trim()) return { ok:false, error:"a rejection reason is required" };
-    if(step) await sb.from("hr_claim_approval_steps").update({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
+    if(!(await claimStep({status:"Rejected",decision:"reject",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}))) return LOST;
     await sb.from("hr_claim_approval_instances").update({status:"rejected"}).eq("id",inst.id);
     await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
     await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
@@ -531,15 +541,17 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
   }
   if(decision==="request_info"){
     if(!String(comment||"").trim()) return { ok:false, error:"a message to the employee is required" };
-    if(step) await sb.from("hr_claim_approval_steps").update({status:"Info Requested",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
+    if(!(await claimStep({status:"Info Requested",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}))) return LOST;
     await sb.from("hr_claim_requests").update({status:"Need More Info"}).eq("id",id);
     await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"info_request"});
     await rcAuditLog(id,"request_info",me,fromS,"Need More Info",{comment});
     return { ok:true, status:"Need More Info", claim, comment };
   }
   const override = (overrideAmount!=null && overrideAmount!=="") ? Number(overrideAmount) : null;
-  if(override!=null){ if(!String(overrideReason||"").trim()) return { ok:false, error:"a reason is required to override the amount" }; await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:overrideReason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:overrideReason}); claim.amount=override; }
-  if(step) await sb.from("hr_claim_approval_steps").update({status:"Approved",decision:"approve",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}).eq("id",step.id);
+  if(override!=null && !String(overrideReason||"").trim()) return { ok:false, error:"a reason is required to override the amount" };
+  // Claimed BEFORE the override is written, so a losing request cannot change the amount it did not approve.
+  if(!(await claimStep({status:"Approved",decision:"approve",comment,acted_by:actor,acted_emp_id:actorEmp,acted_at:nowIso}))) return LOST;
+  if(override!=null){ await sb.from("hr_claim_requests").update({amount:override, override_amount:override, override_reason:overrideReason}).eq("id",id); await rcAuditLog(id,"override",me,fromS,fromS,{from:claim.amount,to:override,reason:overrideReason}); claim.amount=override; }
   const { data: allSteps } = await sb.from("hr_claim_approval_steps").select("*").eq("instance_id",inst.id).order("step_order");
   const next=(allSteps||[]).find((s:any)=>s.step_order>inst.current_step);
   if(next){
@@ -1711,16 +1723,25 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const actor=(me.user&&me.user.id)||null; const nowIso=new Date().toISOString(); const comment=String(b.comment||"").slice(0,500);
       const sodErr = await sodViolation("hr_leave_approval_steps","leave_request_id",id,step&&step.id,actor,who.employee&&who.employee.id,req.employee_id,"decided_by","decided_emp_id");
       if(sodErr) return j({ ok:false, error:sodErr }, 403);
+      // CLAIM the decision atomically before any side effect. The "Already handled" check above reads the
+      // status and every write below was unconditional, so two approvals in flight (two approvers, two tabs,
+      // a retried request) both passed it — and on the FINAL step each one deducted the leave balance and
+      // sent its own email. `status = 'Pending'` in the WHERE makes exactly one of them win.
+      {
+        const verdict = decision==="reject" ? "Rejected" : "Approved";
+        const { data: got } = step
+          ? await sb.from("hr_leave_approval_steps").update({ status:verdict, decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment }).eq("id",step.id).eq("status","Pending").select("id")
+          : await sb.from("hr_leave_requests").update({ status:verdict }).eq("id",id).eq("status",String(req.status)).select("id");   // no chain: claim the request itself
+        if(!got || !got.length) return j({ ok:false, error:"Already handled — this was decided a moment ago." });
+      }
       const { data: emp } = await sb.from("hr_employees").select("name,email").eq("id",req.employee_id).maybeSingle();
       if(decision==="reject"){
-        if(step) await sb.from("hr_leave_approval_steps").update({ status:"Rejected", decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment }).eq("id",step.id);
         await sb.from("hr_leave_requests").update({ status:"Rejected" }).eq("id",id);
         await logAudit(me,"hr_leave_decide",id,{ decision:"reject", step:step&&step.name });
         try{ if(emp&&emp.email) await rcSendEmail(emp.email, "[HR OS] Your leave request was not approved", "Hi "+((emp&&emp.name)||"")+",\n\nYour "+req.leave_type+" leave "+req.date_from+" → "+req.date_to+" was rejected"+(comment?(" — "+comment):".")+"\n\n— CTG HR OS (automated)"); }catch(_e){}
         return j({ ok:true, status:"Rejected" });
       }
       // approve current step
-      if(step) await sb.from("hr_leave_approval_steps").update({ status:"Approved", decided_by:actor, decided_emp_id:(who.employee&&who.employee.id)||null, decided_at:nowIso, comment }).eq("id",step.id);
       const { data: allSteps } = await sb.from("hr_leave_approval_steps").select("*").eq("leave_request_id",id).order("step_order");
       const next=(allSteps||[]).find((s:any)=>s.step_order>(req.current_step||1));
       if(next){
@@ -2360,9 +2381,14 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const who = await rcWhoForEmp(row.approver_employee_id);
       if(!who) return j({ ok:false, error:"approver profile not found" });
       const meE = { user: { id: (who.employee&&who.employee.user_id)||null, email: String(row.approver_email||who.employee.email||"approver")+" (via email)" } };
+      // CLAIM the link before deciding, atomically (`used_at is null` in the WHERE). It used to be read above
+      // and written only after the decision, so two presses in flight — a double-click, or a mail scanner
+      // plus the human — both passed the used_at check and both decided. Released again if the decision
+      // fails, so a refused attempt does not burn a still-valid link.
+      const { data: claimed } = await sb.from("hr_claim_email_actions").update({ used_at:new Date().toISOString() }).eq("id",row.id).is("used_at",null).select("id");
+      if(!claimed || !claimed.length) return j({ ok:false, error:"You already responded from this link." });
       const res = await rcDecideOne(who, meE, row.claim_id, decision, comment, null, "");
-      if(!res.ok) return j({ ok:false, error:res.error });
-      await sb.from("hr_claim_email_actions").update({ used_at:new Date().toISOString() }).eq("id",row.id);
+      if(!res.ok){ await sb.from("hr_claim_email_actions").update({ used_at:null }).eq("id",row.id); return j({ ok:false, error:res.error }); }
       await rcAuditLog(row.claim_id,"email_action",meE,null,res.status,{ decision, via:"email", approver: row.approver_email });
       try{ await rcNotifyDecision(res); }catch(_e){}
       return j({ ok:true, status:res.status });

@@ -156,6 +156,13 @@ Two things follow from that, and the second is the one that will bite:
   TICKED rows and the server replaces the whole set, so saving one of those admins from that screen
   re-restricts them. Rollback, and the 36-row snapshot it restores, is
   `data/decisions/2026-09-07-fullscope-admin-assignments-restore.sql`.
+- ⛔ **So an EMPTY company set is a GRANT, and every write path must treat it as one.** `user_update`
+  did not (fixed 2026-09-26): a company-scoped admin sending `{user_id:<self>, tenants:[]}` passed
+  `userWriteAllowed` and `tenantsAssignable([])` and became a full-scope admin in one request. It now
+  refuses an empty set from a non-group-wide caller (`user_create`'s rule), refuses an entry with no
+  `tenant_id`, and writes ADD-then-REMOVE so a failure part-way leaves a superset, never zero rows.
+  `tests/user_scope_escalation_test.ts` drives it against an in-memory PostgREST — copy that harness
+  for any other handler that writes `portal_user_companies`.
 
 The check, which should now return only company-SCOPED admins (that is correct — they are scoped by
 design) and none of the six:
@@ -2135,7 +2142,7 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 355 cases, incl. all 52 render goldens
+deno test --allow-read tests/          # 367 cases, incl. all 52 render goldens
 cd web && npm test                     # only if you touched web/ — the React parity tests
 ```
 
