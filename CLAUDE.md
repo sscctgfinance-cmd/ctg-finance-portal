@@ -2104,9 +2104,13 @@ which is stale: `{"api":"hr_dashboard","tenant":{"a":1}}` answers `bad tenant` 4
 retired action answers `unknown action`. Do not probe `login` / `changepw` / `client_error` — lockout
 counters and row inserts.
 
-**The static site and the edge function reach production by DIFFERENT paths, and only one is automatic.**
-A merge to `ctg/main` fires `deploy-supabase-portal.yml` in the private repo, so the **edge function is
-current the moment CI is green** — but Pages serves the *files* from the separate **public repo**
+**Neither the static site NOR the edge function moves on a merge — both move on the public push.**
+⚠️ This paragraph used to say a merge to `ctg/main` deploys the function "the moment CI is green". It
+does not: on 2026-09-27 the live `portal` function was still version 272 from **2026-09-10**, eight
+minutes after #138 merged, and it switched over ~30 s after `git push origin ctg/main:refs/heads/main`.
+Verify the FUNCTION by behaviour — an anonymous `{"api":"collections"}` answers
+`unauthorized (full-scope admin only)` [401] on #138+ (safe: no side effects) — and Supabase's
+`list_edge_functions` `updated_at`. Pages, meanwhile, serves the *files* from the separate **public repo**
 (`sscctgfinance-cmd.github.io/ctg-finance-portal` ⇒ Pages "deploy from branch main" on
 `sscctgfinance-cmd/ctg-finance-portal`), which a merge does **not** touch. Pages only moves when the
 operator runs the manual `git push origin main` above. So the two can — and do — drift: on 2026-08-24
@@ -2142,9 +2146,14 @@ by accident once already. Never `git add -A` here; stage named files only.
 ## Before you push
 
 ```bash
-deno test --allow-read tests/          # 367 cases, incl. all 52 render goldens
-cd web && npm test                     # only if you touched web/ — the React parity tests
+deno test --allow-read tests/          # 377 cases, incl. all 52 render goldens
+cd web && npm test && npx tsc --noEmit -p .   # only if you touched web/ (or a *.d.ts it imports)
 ```
+
+**`npm test` does not type-check — `tsc` is not optional.** vitest strips types, so a `.d.ts` stricter
+than the real data (or a duplicated object key) passes every test and then fails CI's "The app builds"
+step, which does. #139 merged red that way. `npm run build` cannot run on the Windows workstation
+(Turbopack: "failed to canonicalize path `/C:/…`"), so `tsc --noEmit` is the local stand-in for it.
 
 The two suites are deliberately separate and share no step: the Deno one is the gate on the code that is
 live for every user today, and it must not start needing npm to be reachable in order to report on

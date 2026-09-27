@@ -343,7 +343,6 @@ describe('the comparison still bites', () => {
     const got = reactHandlers(screen({
       onApply: record('apply') as never,
       onFormChange: record('form') as never,
-    onFormChange: record('form') as never,
       onCancel: record('cancel') as never,
       onDecide: ((id: string, d: string) => decide(id, d === 'approve' ? 'reject' : 'approve')) as never,
     }));

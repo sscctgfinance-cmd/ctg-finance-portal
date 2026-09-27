@@ -140,8 +140,8 @@ export function hrSubmissionSpecs(
 export function hrWorkingDays(from: string, to: string, half?: boolean): number;
 /** The live line under the leave form: what the application will use and what is left after it. */
 export function hrLeavePreview(
-  types: { id: string; name: string; paid?: boolean }[] | null | undefined,
-  balances: { type: string; remaining: number | string }[] | null | undefined,
+  types: { id: string; name?: string | null; paid?: boolean | null }[] | null | undefined,
+  balances: { type?: string | null; remaining?: number | string | null }[] | null | undefined,
   typeId: string, from: string, to: string, half?: boolean,
 ): { ok: boolean; tone: 'green' | 'amber' | 'red' | 'muted'; text: string };
 /** Tone → colour token for hrLeavePreview. */

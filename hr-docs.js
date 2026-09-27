@@ -611,11 +611,11 @@ function hrLeavePreview(types, balances, typeId, from, to, half){
   if (!days) return { ok: false, tone: 'red', text: 'No working days in that range — weekends are not counted.' };
   var t = null, b = null, i;
   for (i = 0; i < (types || []).length; i++) if (String(types[i].id) === String(typeId)) t = types[i];
-  if (t) for (i = 0; i < (balances || []).length; i++) if (balances[i].type === t.name) b = balances[i];
+  if (t) for (i = 0; i < (balances || []).length; i++) if (t.name && balances[i].type === t.name) b = balances[i];
   var txt = days + ' working day' + (days === 1 ? '' : 's');
   if (t && t.paid && b && isFinite(Number(b.remaining))){
     var left = Number(b.remaining), after = Math.round((left - days) * 10) / 10;
-    if (after < 0) return { ok: true, tone: 'amber', text: txt + ' — more than the ' + left + ' ' + t.name.toLowerCase() + ' day' + (left === 1 ? '' : 's') + ' you have left.' };
+    if (after < 0) return { ok: true, tone: 'amber', text: txt + ' — more than the ' + left + ' ' + String(t.name || 'leave').toLowerCase() + ' day' + (left === 1 ? '' : 's') + ' you have left.' };
     return { ok: true, tone: 'green', text: txt + ' · ' + left + ' left → ' + after + ' after this' };
   }
   return { ok: true, tone: 'muted', text: txt + (t && !t.paid ? ' · unpaid' : '') };
