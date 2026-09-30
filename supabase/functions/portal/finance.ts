@@ -1539,10 +1539,23 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       else {
         const nm = String((tn&&tn.tenant_name)||"").replace(/CTG4U|SDN BHD|MALAYSIA|HOLDING|WHITENING|SKINCARE/gi,"").replace(/[^A-Za-z]/g,"").toUpperCase().slice(0,7) || "CO";
         const yr = String((inv.invoice_date? new Date(inv.invoice_date): new Date()).getFullYear());
-        const { count } = await sb.from("portal_self_billed_invoices").select("id",{count:"exact",head:true}).eq("tenant_id", inv.tenant_id).gte("invoice_date", yr+"-01-01").lte("invoice_date", yr+"-12-31");
-        row.invoice_no = "SB-"+nm+"-"+yr+"-"+String((count||0)+1).padStart(4,"0");
+        // Next number = the HIGHEST existing number in this series + 1 — across the whole table, because
+        // `invoice_no` is globally UNIQUE. It used to be "this company's rows dated this year" + 1, and
+        // that count drifts from the series whenever an invoice changes paying company (it keeps its old
+        // number) or its date moves: on 2026-09-30 SB-ILADY-2026-0050 sat on a JEEROUL invoice, ILADY had
+        // 49 rows, and EVERY new ILADY invoice computed 0050 and died on the unique constraint.
+        // A gap is harmless; a reused number is what the constraint refuses.
+        const prefix = "SB-"+nm+"-"+yr+"-";
+        const { data: taken } = await sb.from("portal_self_billed_invoices").select("invoice_no").like("invoice_no", prefix+"%");
+        let seq = (taken||[]).reduce((m:number, r:any)=> { const n = Number(String(r.invoice_no).slice(prefix.length)); return Number.isInteger(n) && n > m ? n : m; }, 0);
         row.created_by = (me.user&&me.user.email)||null; row.status='draft';
-        res = await sb.from("portal_self_billed_invoices").insert(row).select().single();
+        // Two creates in the same instant can still pick the same number; the constraint refuses the
+        // second, and it simply takes the next one.
+        for (let attempt = 0; attempt < 5; attempt++){
+          row.invoice_no = prefix + String(++seq).padStart(4,"0");
+          res = await sb.from("portal_self_billed_invoices").insert(row).select().single();
+          if (!(res.error && res.error.code === "23505" && /invoice_no/.test(String(res.error.message)))) break;
+        }
       }
       if (res.error) return j({ ok:false, error:res.error.message });
       await logAudit(me, inv.id?"sbi_update":"sbi_create", String(res.data&&res.data.id), { invoice_no: res.data&&res.data.invoice_no, net });
