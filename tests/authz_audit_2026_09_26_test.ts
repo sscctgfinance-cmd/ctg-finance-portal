@@ -14,8 +14,9 @@
 //      every company's rules. The central tenant guard only sees a tenant that is SENT.
 //   3. collections is a group-wide dunning run (every company's overdue AR, one email). The RPC checks
 //      the role, not the scope — so a single-company admin could send it. v148's rule: full scope.
-//   4. cron_health has no auth gate (its pg_cron job sends no cron_secret), and it returned the whole
-//      health report — job names, their last error lines, failing HTTP targets — to anyone.
+//   4. cron_health had no auth gate (its pg_cron job sent no cron_secret), and it returned the whole
+//      health report — job names, their last error lines, failing HTTP targets — to anyone. The job was
+//      rebuilt to send the key on 2026-09-27, and the handler now demands it like every other cron_*.
 
 import { assertEquals } from "jsr:@std/assert@1";
 
@@ -102,11 +103,14 @@ Deno.test("collections is a group-wide run, so it needs a FULL-SCOPE admin befor
   assertEquals(gate > 0 && gate < rpc, true, "a single-company admin can trigger the group-wide dunning email again");
 });
 
-Deno.test("cron_health withholds the health DETAIL from a caller without the cron secret", () => {
+Deno.test("cron_health refuses a caller without the cron secret, before it reads or writes anything", () => {
+  // 2026-09-27: the pg_cron job now sends the key (read from portal_secrets at run time), so the interim
+  // "withhold only the detail" arrangement is replaced by the gate every other cron_* has.
   const h = handler(FIN, "cron_health");
-  assertEquals(/b\.cron_secret === _hs\.value/.test(h), true, "cron_health no longer checks the cron secret at all");
-  const ret = h.slice(h.lastIndexOf("return j({ ok:true, problems"));
-  assertEquals(/health: *h *\}/.test(ret.split("\n")[0]) && !/_bySecret \?/.test(ret.split("\n")[0]), false,
-    "cron_health returns `health` unconditionally again — job names and their error lines to anyone");
-  assertEquals(/\.\.\.\(_bySecret \? \{ health: h \} : \{\}\)/.test(ret), true, "the health report is not gated on the secret");
+  const gate = h.search(/if \(!sec \|\| !sec\.value \|\| b\.cron_secret !== sec\.value\) return j\(\{ ok:false, error:"forbidden" \}, 403\);/);
+  assertEquals(gate > 0, true, "cron_health no longer refuses a caller without the cron secret");
+  for (const side of ['rpc("portal_cron_health"', "portal_cron_alerts", "sendAlertEmail("]) {
+    const at = h.indexOf(side);
+    assertEquals(at > gate, true, `${side} runs before the secret is checked — an anonymous caller reaches it`);
+  }
 });

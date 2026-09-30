@@ -46,7 +46,7 @@
 {"api":"cron_clock_reminders","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"cron_delta","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"cron_drift_repair","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
-{"api":"cron_health","status":200,"body":"{\"ok\":true,\"problems\":0,\"streak\":0,\"will_email\":false}"}
+{"api":"cron_health","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"cron_retry","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"cron_sync","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}
 {"api":"cron_watchdog","status":403,"body":"{\"ok\":false,\"error\":\"forbidden\"}"}

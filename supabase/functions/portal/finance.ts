@@ -342,13 +342,14 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // have been failing on EVERY run against columns that no longer exist. All of it silent. This is the
       // alarm: one email when something breaks, one when it recovers, and nothing in between.
       //
-      // ⚠️ This action has NO auth gate, unlike every other cron_*: the `portal-cron-health` pg_cron job
-      // (7,37 * * * *) posts without a cron_secret, so demanding one here would silence the alarm itself.
-      // Until that job is re-created WITH the secret, the only thing withheld from an anonymous caller is
-      // the health DETAIL — job names, their last error lines, failing HTTP targets. The check and its
-      // (summary-deduplicated) email still run for anyone, which is what keeps the alarm alive.
-      const { data: _hs } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
-      const _bySecret = !!(_hs && _hs.value && b.cron_secret === _hs.value);
+      // Gated like every other cron_* (2026-09-27). It was the one that was not: its pg_cron job posted no
+      // cron_secret, so anyone could read the health report (job names, their last error lines, failing
+      // HTTP targets) and drive the alert state. `portal-cron-health` (jobid 24, 7,37 * * * *) now builds
+      // its body with `jsonb_build_object(… 'cron_secret',(select value from portal_secrets where key='cron'))`
+      // — read at run time, so the job's command holds no plaintext key. If this ever answers 403 to the
+      // job, the ALARM is silent: check cron.job_run_details / net._http_response for jobid 24 first.
+      const { data: sec } = await sb.from("portal_secrets").select("value").eq("key","cron").single();
+      if (!sec || !sec.value || b.cron_secret !== sec.value) return j({ ok:false, error:"forbidden" }, 403);
       const win = Math.max(15, Math.min(1440, Number(b.window_min) || 60));
       const { data: h, error: eH } = await sb.rpc("portal_cron_health", { p_window_min: win });
       if (eH) return j({ ok:false, error:eH.message });
@@ -444,7 +445,7 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       // still sees the outcome.
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work);
       else await work;
-      return j({ ok:true, problems: problems.length, streak, will_email: !!(shouldAlert||recovered), ...(_bySecret ? { health: h } : {}) });
+      return j({ ok:true, problems: problems.length, streak, will_email: !!(shouldAlert||recovered), health: h });
     }
     if (api === "cron_watchdog") {
       // v71 (Tier-1 reliability): the SILENT-FAILURE alarm. The real damage last time wasn't that
