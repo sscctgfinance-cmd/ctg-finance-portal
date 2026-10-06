@@ -566,6 +566,19 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
   await rcAuditLog(id,"approve",me,fromS,"Approved",{step:step&&step.name});
   return { ok:true, status:"Approved", final:true, claim };
 }
+// The Rejected tab (2026-10-06): each rejected claim carries WHY, WHO and WHEN — the latest remark on it.
+// Every rejection path writes one: hr_rc_decide / hr_rc_decide_bulk (reject), hr_rc_email_action, and
+// hr_rc_reject_approved (send back) all insert the remark into hr_claim_comments. One query for the page.
+export async function rcWithRejectReason(claims:any[]){
+  const ids = claims.map((c:any)=>c.id).filter(Boolean);
+  if(!ids.length) return claims;
+  const { data: com, error } = await sb.from("hr_claim_comments").select("claim_id,comment,author_name,created_at,kind").in("claim_id", ids).order("created_at",{ascending:false});
+  if(error) return claims;   // the list still loads; only the reason column is empty
+  const last:any = {};
+  for(const c of (com||[])) if(!last[c.claim_id] && c.kind!=="info_request" && String(c.comment||"").trim()) last[c.claim_id]=c;
+  return claims.map((c:any)=> last[c.id] ? { ...c, reject_reason:last[c.id].comment, rejected_by:last[c.id].author_name||null, rejected_at:last[c.id].created_at||c.decided_at||null }
+                                          : { ...c, reject_reason:null, rejected_by:null, rejected_at:c.decided_at||null });
+}
 export async function rcNotifyDecision(res:any){ try{
   const c=res && res.claim; if(!c) return;
   if(res.advanced){ await rcNotifyStepApprover(c.id); return; }
@@ -2750,15 +2763,17 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         if(scope==="pending") q=q.in("status",pend);
         else if(scope==="approved") q=q.eq("status","Approved");
         else if(scope==="paid") q=q.eq("status","Paid");
+        else if(scope==="rejected") q=q.eq("status","Rejected");
         else if(scope==="mine" && b.employee_id) q=q.eq("employee_id",b.employee_id);
-        const { data } = await q; return j({ ok:true, claims:data||[] });
+        const { data } = await q; return j({ ok:true, claims: scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[]) });
       }
       if(!who.employee) return j({ ok:false, error:"no employee profile" });
       const tenant=who.employee.tenant_id;
       if(scope==="approvals"||scope==="pending"){ const claims=await rcApproverQueue(tenant, who); return j({ ok:true, claims }); }
       let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).eq("employee_id",who.employee.id).order("created_at",{ascending:false}).limit(500);
       if(scope==="approved") q=q.eq("status","Approved"); else if(scope==="paid") q=q.eq("status","Paid");
-      const { data } = await q; return j({ ok:true, claims:data||[] });
+      else if(scope==="rejected") q=q.eq("status","Rejected");
+      const { data } = await q; return j({ ok:true, claims: scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[]) });
     }
     if (api === "hr_rc_get") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);

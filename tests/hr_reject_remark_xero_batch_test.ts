@@ -28,6 +28,8 @@ type World = {
   xeroLog?: { method: string; url: string; body: any }[];
   /** Make Xero refuse the next update (a paid bill is not editable). */
   xeroRefuse?: boolean;
+  /** hr_claim_comments rows (newest first is the server's own ORDER BY). */
+  comments?: { claim_id: string; comment: string; author_name: string; created_at: string; kind: string }[];
 };
 
 let handler: any = null;
@@ -88,6 +90,10 @@ async function withPortal(w: World, fn: (post: (body: Record<string, unknown>) =
         }
       }
       if (table === "hr_leave_requests" && method === "GET") return rows(w.leave ? [w.leave] : []);
+      if (table === "hr_claim_comments") {
+        const ids = (u.searchParams.get("claim_id") || "").replace(/^in\.\(|\)$/g, "").split(",").map((x) => x.replace(/"/g, ""));
+        return rows((w.comments || []).filter((c) => ids.includes(c.claim_id)).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+      }
       if (table === "xero_tokens") return rows([{ access_token: "x", access_token_expires_at: "2999-01-01T00:00:00Z" }]);
       if (table === "hr_claim_items") return rows([{ id: "i1", amount: 120, description: "Grab", item_date: "2026-10-01", hr_claim_types: { name: "Travel", gl_account: "903-0900" } }]);
       if (table === "hr_claim_attachments") return rows([{ id: "a1", file_path: "t/r.jpg", file_name: "r.jpg" }]);
@@ -216,5 +222,26 @@ Deno.test("when Xero refuses the reference update, the screen is told — not 'u
     const r = await post({ api: "hr_rc_post_xero", id: "c1" });
     assertEquals(r.ok, false);
     assertEquals(/not of valid status/.test(r.error) && /Reference was not changed/.test(r.error), true, r.error);
+  });
+});
+
+// ── The Rejected tab (2026-10-06) ───────────────────────────────────────────────────────────────────
+Deno.test("the Rejected tab lists only rejected claims, each with its latest remark — not an info request", async () => {
+  const w = world({ claims: [
+    { id: "r1", tenant_id: T_XERO, status: "Rejected", xero_bill_id: null, claim_no: "IPC-202610-0003", amount: 50 },
+    { id: "r2", tenant_id: T_XERO, status: "Rejected", xero_bill_id: null, claim_no: "IPC-202610-0004", amount: 70 },
+    { id: "a1", tenant_id: T_XERO, status: "Approved", xero_bill_id: null, claim_no: "IPC-202610-0005", amount: 90 },
+  ], comments: [
+    { claim_id: "r1", comment: "Please attach the receipt", author_name: "boss@ctg.test", created_at: "2026-10-01T01:00:00Z", kind: "info_request" },
+    { claim_id: "r1", comment: "Receipt date does not match", author_name: "boss@ctg.test", created_at: "2026-10-02T01:00:00Z", kind: "comment" },
+    { claim_id: "r1", comment: "Older remark", author_name: "fin@ctg.test", created_at: "2026-09-20T01:00:00Z", kind: "comment" },
+  ] });
+  await withPortal(w, async (post) => {
+    const r = await post({ api: "hr_rc_list", scope: "rejected", tenant: T_XERO });
+    assertEquals(r.ok, true, JSON.stringify(r));
+    assertEquals(r.claims.map((c: any) => c.id).sort(), ["r1", "r2"], "an Approved claim leaked into the Rejected tab");
+    const r1 = r.claims.find((c: any) => c.id === "r1"), r2 = r.claims.find((c: any) => c.id === "r2");
+    assertEquals([r1.reject_reason, r1.rejected_by], ["Receipt date does not match", "boss@ctg.test"]);
+    assertEquals(r2.reject_reason, null, "a claim with no remark must say so, not borrow another's");
   });
 });

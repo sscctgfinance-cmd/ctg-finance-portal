@@ -41,6 +41,7 @@
 import type { CSSProperties } from 'react';
 
 import { hrBankCode, hrCsv } from '../../hr-docs.js';
+import { hrDT } from './hr-leave';
 
 /** One row of `hr_rc_list` — only the fields `hrRCList()` and `hrRCExportBank()` actually read. */
 export interface RcClaim {
@@ -50,6 +51,10 @@ export interface RcClaim {
   amount?: number | string | null;
   status?: string | null;
   xero_bill_id?: string | null;
+  /** Rejected tab only — hr_rc_list → rcWithRejectReason(): the latest remark, its author, when. */
+  reject_reason?: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
   hr_employees?: {
     name?: string | null;
     bank_name?: string | null;
@@ -68,7 +73,7 @@ export interface RcMe {
   roles?: string[];
 }
 
-export type RcScope = 'pending' | 'approved' | 'paid' | 'all';
+export type RcScope = 'pending' | 'approved' | 'paid' | 'rejected' | 'all';
 export type RcPage = 'list' | 'detail' | 'form' | 'dashboard' | 'settings';
 
 export interface HrExpensesProps {
@@ -146,8 +151,8 @@ const BAR: CSSProperties = {
 const ADMIN_TABS: [string, string][] = [['list', '📋 Claims'], ['form', '➕ Submit'], ['dashboard', '📊 Dashboard'], ['settings', '⚙ Settings']];
 const EMP_TABS: [string, string][] = [['list', '📋 Claims'], ['form', '➕ Submit']];
 
-const ADMIN_SCOPES: [string, string][] = [['pending', 'Pending'], ['approved', 'Approved'], ['paid', 'Paid'], ['all', 'All']];
-const EMP_SCOPES: [string, string][] = [['all', 'My claims'], ['pending', '🔔 Approvals'], ['approved', 'Approved'], ['paid', 'Paid']];
+const ADMIN_SCOPES: [string, string][] = [['pending', 'Pending'], ['approved', 'Approved'], ['paid', 'Paid'], ['rejected', 'Rejected'], ['all', 'All']];
+const EMP_SCOPES: [string, string][] = [['all', 'My claims'], ['pending', '🔔 Approvals'], ['approved', 'Approved'], ['paid', 'Paid'], ['rejected', 'Rejected']];
 
 /**
  * The click on a selection cell must not also open the claim — `onclick="event.stopPropagation()"` on
@@ -186,6 +191,18 @@ export default function HrExpenses(p: HrExpensesProps) {
   );
 }
 
+/** `hrRCReasonCell()` — hros.html. */
+function ReasonCell({ c }: { c: RcClaim }) {
+  const r = String(c.reject_reason || '').trim();
+  const by = [c.rejected_by || '', c.rejected_at ? hrDT(c.rejected_at) : ''].filter(Boolean).join(' · ');
+  return (
+    <td style={{ maxWidth: '320px', whiteSpace: 'normal' }}>
+      {r ? <div style={{ fontSize: '12px' }}>{'“' + r + '”'}</div> : <span className="muted" style={{ fontSize: '11.5px' }}>No remark recorded</span>}
+      {by ? <div className="muted" style={{ fontSize: '11px', marginTop: '2px' }}>{by}</div> : null}
+    </td>
+  );
+}
+
 /** `hrRCList()` — hros.html:1813. */
 function ClaimsList(p: HrExpensesProps) {
   const me = p.me;
@@ -197,7 +214,9 @@ function ClaimsList(p: HrExpensesProps) {
   const n = Object.keys(p.sel).filter((k) => p.sel[k]).length;
   // hros.html: `rowAct=selecting` — the per-row Reject / Send back column rides with the selection column.
   const rowAct = selecting && p.scope !== 'paid';
-  const colspan = 6 + (selecting ? 1 : 0) + (rowAct ? 1 : 0);
+  // hros.html: the Rejected tab shows WHY — the latest remark, who wrote it, when.
+  const showReason = p.scope === 'rejected';
+  const colspan = 6 + (selecting ? 1 : 0) + (rowAct ? 1 : 0) + (showReason ? 1 : 0);
 
   return (
     <div className="panel">
@@ -244,6 +263,7 @@ function ClaimsList(p: HrExpensesProps) {
               <th>Date</th>
               <th className="amt">Amount</th>
               <th>Status</th>
+              {showReason ? <th>Reason</th> : null}
               {rowAct ? <th></th> : null}
             </tr>
           </thead>
@@ -264,6 +284,7 @@ function ClaimsList(p: HrExpensesProps) {
                 <td className="muted">{c.claim_date || ''}</td>
                 <td className="amt">{M(c.amount)}</td>
                 <td><StatusPill status={c.status} /></td>
+                {showReason ? <ReasonCell c={c} /> : null}
                 {rowAct ? (
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={stopRowClick}>
                     {p.scope === 'pending'

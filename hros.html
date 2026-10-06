@@ -1945,8 +1945,8 @@ async function hrRCLoadList(){ var r=await call({api:'hr_rc_list',tenant:HR.tena
 function hrRCList(){
   var me=RC.me||{}; var list=RC.list||[]; RC.sel=RC.sel||{};
   var scopes=(me.isAdmin===false)
-    ? [['all','My claims'],['pending','🔔 Approvals'],['approved','Approved'],['paid','Paid']]
-    : [['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
+    ? [['all','My claims'],['pending','🔔 Approvals'],['approved','Approved'],['paid','Paid'],['rejected','Rejected']]
+    : [['pending','Pending'],['approved','Approved'],['paid','Paid'],['rejected','Rejected'],['all','All']];
   var canApprove=!!(me.isAdmin || me.is_manager || (me.roles&&me.roles.length));
   var canFinance=!!(me.isAdmin || (me.roles&&me.roles.indexOf('finance')>=0));
   var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance) || (RC.scope==='paid'&&canFinance);
@@ -1965,7 +1965,9 @@ function hrRCList(){
       : '<button class="btn p xs" onclick="hrRCExportBank()">🏦 Bank file ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPay()">💵 Mark paid ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPostXero()">⇢ Post to Xero ('+n+')</button>';
     bar='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-bottom:10px"><span style="font-size:12px;font-weight:600">'+(n?(n+' selected'):(RC.scope==='pending'?'Select claims to approve in bulk':RC.scope==='paid'?'Select paid claims to put their claim number in Xero':'Select approved claims to pay'))+'</span>'+(n?btns:'')+(n?' <a onclick="hrRCSelClear()" style="cursor:pointer;font-size:11px;color:var(--muted)">clear</a>':'')+'</div>';
   }
-  var colspan=6+(selecting?1:0)+(rowAct?1:0);
+  // The Rejected tab shows WHY: the latest remark (hr_rc_list → rcWithRejectReason), who wrote it, when.
+  var showReason=RC.scope==='rejected';
+  var colspan=6+(selecting?1:0)+(rowAct?1:0)+(showReason?1:0);
   var rows=list.map(function(c){ var typ=(c.hr_claim_types&&c.hr_claim_types.name)||'—'; var emp=(c.hr_employees&&c.hr_employees.name)||'—';
     var xb=c.xero_bill_id?' <span title="Posted to Xero" style="color:var(--green-soft)">⇢X</span>':'';
     var cb=selecting?'<td style="width:26px" onclick="event.stopPropagation()"><input type="checkbox" '+(RC.sel[c.id]?'checked':'')+' onchange="hrRCSelToggle(\''+c.id+'\',this.checked)"></td>':'';
@@ -1976,10 +1978,16 @@ function hrRCList(){
         : ((c.status==='Approved'&&!c.xero_bill_id)?'<button class="btn xs" title="Return this approved claim to the employee with a remark" onclick="hrRCSendBack(\''+c.id+'\')">↩ Send back</button>':'');
       act='<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">'+btn+'</td>';
     }
-    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td>'+act+'</tr>';
+    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td>'+(showReason?hrRCReasonCell(c):'')+act+'</tr>';
   }).join('')||('<tr><td colspan="'+colspan+'" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>');
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
-  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th>'+(rowAct?'<th></th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+hrRCXeroBatchPanel()+'</div>';
+  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th>'+(showReason?'<th>Reason</th>':'')+(rowAct?'<th></th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+hrRCXeroBatchPanel()+'</div>';
+}
+function hrRCReasonCell(c){
+  var r=String(c.reject_reason||'').trim();
+  var by=[c.rejected_by||'', c.rejected_at?hrDT(c.rejected_at):''].filter(Boolean).join(' · ');
+  return '<td style="max-width:320px;white-space:normal">'+(r?('<div style="font-size:12px">“'+esc(r)+'”</div>'):'<span class="muted" style="font-size:11.5px">No remark recorded</span>')+
+    (by?('<div class="muted" style="font-size:11px;margin-top:2px">'+esc(by)+'</div>'):'')+'</td>';
 }
 function hrToday(){ return todayLocalISO(); } // MYT — toISOString() is UTC and dated claims "yesterday" before 8am
 function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
