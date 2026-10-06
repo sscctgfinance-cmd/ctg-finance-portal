@@ -4025,7 +4025,7 @@ function sbiRender(){
   var el=document.getElementById('selfbill'); if(!el) return;
   var head='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">'+
     '<div><h2 style="margin:0;font-size:19px">🧑 Personal (Self-Billed) Invoices</h2><div class="muted" style="font-size:12px">Issue an invoice on an individual&rsquo;s behalf to pay them &mdash; Malaysian tax &amp; audit format.</div></div>'+
-    '<div style="display:flex;gap:8px"><button class="btn sm" onclick="SBI.showPayees=!SBI.showPayees;sbiRender()">👤 Payees ('+SBI.payees.length+')</button><button class="btn p sm" onclick="sbiNewInvoice()">+ New self-billed invoice</button></div></div>';
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" onclick="sbiSyncAllXero()" title="Bring every bill already in Xero up to date: payee contact details, the self-billed number in Reference, and the MyInvois classification on each line">⇢ Sync all to Xero</button><button class="btn sm" onclick="SBI.showPayees=!SBI.showPayees;sbiRender()">👤 Payees ('+SBI.payees.length+')</button><button class="btn p sm" onclick="sbiNewInvoice()">+ New self-billed invoice</button></div></div>'+sbiXeroSyncPanel();
   var payees=SBI.showPayees?sbiPayeesPanel():'';
   var rows=SBI.list.map(function(x){
     var co=(COMPANIES.find(function(c){return c.tenant_id===x.tenant_id;})||{}).tenant_name||x.tenant_id;
@@ -4201,14 +4201,45 @@ async function sbiApprove(id){ return ctgOnce('sbiApprove:'+id, async function()
 async function sbiVoid(id){ return ctgOnce('sbiVoid:'+id, async function(){ if(!confirm('Void this draft?'))return; var r=await call({api:'sbi_void',id:id}); if(r&&r.ok){toast('Voided');renderSelfbill();} else toast((r&&r.error)||'Failed',true); }); }
 // v232: keyed per RECORD, so two different self-billed invoices can post at once and one cannot
 // post twice. This is the action the five-click test caught; see ctgOnce in common.js.
+// Every bill already in Xero, brought up to date in one pass: the payee's contact details, the
+// self-billed number in the Reference column and the MyInvois classification on each line (sbi_post_xero
+// with sync_only — no PDFs re-attached). One at a time, ~1.1 s apart, under Xero's 60-a-minute limit;
+// the outcome stays on screen until dismissed. A paid bill Xero will not edit is listed, not hidden.
+async function sbiSyncAllXero(){ return ctgOnce('sbiSyncAllXero', async function(){
+  var todo=(SBI.list||[]).filter(function(x){ return x.xero_bill_id && x.status!=='void'; });
+  if(!todo.length){ toast('No self-billed invoices are in Xero yet',true); return; }
+  if(!confirm('Update '+todo.length+' bill(s) already in Xero?\n\n· payee contact details (TIN, IC/ID, address, phone, email, bank account)\n· the self-billed number in the Reference column\n· the MyInvois classification on every line\n\nNothing is re-posted and no PDFs are re-attached.')) return;
+  var res={ ok:[], warn:[], failed:[], running:true, total:todo.length };
+  SBI.xeroSync=res; sbiRender();
+  for(var i=0;i<todo.length;i++){
+    var x=todo[i], no=x.invoice_no||('#'+x.id);
+    toast('Syncing to Xero '+(i+1)+' / '+todo.length+' — '+no+'…');
+    try{
+      var r=await call({api:'sbi_post_xero',id:x.id,sync_only:true});
+      if(r&&r.ok){ if((r.warnings||[]).length) res.warn.push(no+' — '+r.warnings.join(' ')); else res.ok.push(no+(r.classification?(' · '+String(r.classification).slice(0,3)):'')); }
+      else res.failed.push(no+' — '+((r&&r.error)||'failed'));
+    }catch(e){ res.failed.push(no+' — '+(e.message||e)); }
+    if(i<todo.length-1) await new Promise(function(ok){ setTimeout(ok,1100); });
+  }
+  res.running=false; sbiRender();
+  toast('Xero sync: '+res.ok.length+' updated'+(res.warn.length?(', '+res.warn.length+' with warnings'):'')+(res.failed.length?(', '+res.failed.length+' failed'):''), !!(res.failed.length||res.warn.length));
+}); }
+function sbiXeroSyncPanel(){
+  var x=SBI.xeroSync; if(!x) return '';
+  var sect=function(title,col,list){ return list.length?('<div style="margin-top:8px"><div style="font-size:12px;font-weight:650;color:'+col+'">'+title+' ('+list.length+')</div>'+list.map(function(t){return '<div class="muted" style="font-size:11.5px;padding-left:10px">'+esc(t)+'</div>';}).join('')+'</div>'):''; };
+  return '<div style="margin:0 0 14px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px">⇢ Xero sync '+(x.running?'— working…':'— done')+'</b>'+(x.running?'':'<a onclick="SBI.xeroSync=null;sbiRender()" style="cursor:pointer;font-size:11px;color:var(--muted)">dismiss</a>')+'</div>'+
+    sect('Updated','var(--green-soft)',x.ok)+sect('Updated, with warnings','var(--amber)',x.warn)+sect('Failed — bill not changed','var(--red-soft)',x.failed)+'</div>';
+}
 async function sbiPostXero(id,posted){ return ctgOnce('sbiPostXero:'+id, function(){ return _sbiPostXero(id,posted); }); }
 async function _sbiPostXero(id,posted){
-  var msg=posted?'Set the Reference and attach the invoice PDF to the existing Xero bill?':'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
+  var msg=posted?'Update the existing Xero bill — payee contact details, the Reference, the MyInvois classification — and attach the invoice PDF?':'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
   if(!confirm(msg))return;
   var r=await call({api:'sbi_post_xero',id:id});
   if(r&&r.ok){
-    var bits=[]; if(r.reference)bits.push('Ref '+r.reference); if(r.attached_pdf)bits.push('PDF attached'); if(r.attached_docs)bits.push(r.attached_docs+' doc'+(r.attached_docs>1?'s':''));
-    toast((posted?'Synced to Xero':'Posted to Xero (SUBMITTED)')+(bits.length?' · '+bits.join(' · '):''));
+    var bits=[]; if(r.reference)bits.push('Ref '+r.reference); if(r.classification)bits.push('MyInvois '+String(r.classification).slice(0,3)); if(r.attached_pdf)bits.push('PDF attached'); if(r.attached_docs)bits.push(r.attached_docs+' doc'+(r.attached_docs>1?'s':''));
+    var w=(r.warnings||[]);
+    toast((posted?'Synced to Xero':'Posted to Xero (SUBMITTED)')+(bits.length?' · '+bits.join(' · '):'')+(w.length?(' — ⚠ '+w.join(' ')):''), !!w.length);
     renderSelfbill();
   } else toast((r&&r.error)||'Xero post failed',true);
 }

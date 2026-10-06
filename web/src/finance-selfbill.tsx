@@ -395,6 +395,11 @@ export interface FinanceSelfbillProps {
 
   onTogglePayees: () => void;
   onNewInvoice: () => void;
+  /** `sbiSyncAllXero()` — every bill already in Xero: contact details, Reference, MyInvois classification. */
+  onSyncAllXero?: () => void;
+  /** `SBI.xeroSync` — the sync's outcome; `null` in the golden. */
+  xeroSync?: SbiXeroSync | null;
+  onXeroSyncDismiss?: () => void;
   onView: (id: number) => void;
   onEdit: (id: number) => void;
   onApprove: (id: number) => void;
@@ -435,16 +440,19 @@ export default function FinanceSelfbill(props: FinanceSelfbillProps) {
   }
   if (!props.list) return <Loading />;
 
+
   return (
     <>
       <div style={st('display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px')}>
         <div><h2 style={st('margin:0;font-size:19px')}>🧑 Personal (Self-Billed) Invoices</h2>
           <div className="muted" style={st('font-size:12px')}>Issue an invoice on an individual’s behalf to pay them — Malaysian tax &amp; audit format.</div></div>
-        <div style={st('display:flex;gap:8px')}>
+        <div style={st('display:flex;gap:8px;flex-wrap:wrap')}>
+          <button className="btn sm" onClick={props.onSyncAllXero} title="Bring every bill already in Xero up to date: payee contact details, the self-billed number in Reference, and the MyInvois classification on each line">⇢ Sync all to Xero</button>
           <button className="btn sm" onClick={props.onTogglePayees}>{'👤 Payees (' + props.payees.length + ')'}</button>
           <button className="btn p sm" onClick={props.onNewInvoice}>+ New self-billed invoice</button>
         </div>
       </div>
+      <XeroSyncPanel x={props.xeroSync || null} onDismiss={props.onXeroSyncDismiss} />
       {props.showPayees ? <PayeesPanel {...props} /> : null}
       <div id="sbi_form">{props.form ? <InvoiceForm {...props} inv={props.form} /> : null}</div>
       <InvoiceTable {...props} list={props.list} />
@@ -719,6 +727,31 @@ function InvoiceForm(props: FinanceSelfbillProps & { inv: Invoice }) {
         </div>
       </div>
       <div className="muted" style={st('font-size:11px;margin-top:10px;line-height:1.6')}>⚠️ Whether WHT applies (e.g. s.107D) and the MyInvois classification should be confirmed with your licensed tax agent. e-Invoice submission to IRBM is handled via Xero once posted.</div>
+    </div>
+  );
+}
+
+/** `SBI.xeroSync` — app.html sbiSyncAllXero(). */
+export interface SbiXeroSync { ok: string[]; warn: string[]; failed: string[]; running: boolean; total: number }
+
+/** `sbiXeroSyncPanel()` — app.html. Nothing until a sync has run. */
+function XeroSyncPanel({ x, onDismiss }: { x: SbiXeroSync | null; onDismiss?: () => void }) {
+  if (!x) return null;
+  const sect = (title: string, col: string, list: string[]) => list.length ? (
+    <div style={{ marginTop: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: 650, color: col }}>{title + ' (' + list.length + ')'}</div>
+      {list.map((t, i) => <div key={i} className="muted" style={{ fontSize: '11.5px', paddingLeft: '10px' }}>{t}</div>)}
+    </div>
+  ) : null;
+  return (
+    <div style={{ margin: '0 0 14px', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <b style={{ fontSize: '13px' }}>{'⇢ Xero sync ' + (x.running ? '— working…' : '— done')}</b>
+        {x.running ? null : <a onClick={onDismiss} style={{ cursor: 'pointer', fontSize: '11px', color: 'var(--muted)' }}>dismiss</a>}
+      </div>
+      {sect('Updated', 'var(--green-soft)', x.ok)}
+      {sect('Updated, with warnings', 'var(--amber)', x.warn)}
+      {sect('Failed — bill not changed', 'var(--red-soft)', x.failed)}
     </div>
   );
 }

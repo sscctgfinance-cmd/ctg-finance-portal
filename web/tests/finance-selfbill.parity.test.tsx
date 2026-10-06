@@ -139,6 +139,7 @@ function identArgs(raw: string): string[] {
 
 const LEGACY_TO_PROP: Record<string, string> = {
   'SBI.showPayees=!SBI.showPayees;sbiRender()': 'togglePayees',
+  sbiSyncAllXero: 'syncAllXero',
   sbiNewInvoice: 'newInvoice',
   sbiView: 'view',
   sbiEdit: 'edit',
@@ -164,6 +165,7 @@ function assertHandlerParity(over: Partial<Props> = {}) {
 
   const got = reactHandlers(screen({
     onTogglePayees: record('togglePayees') as never,
+    onSyncAllXero: record('syncAllXero') as never,
     onNewInvoice: record('newInvoice') as never,
     onView: record('view') as never,
     onEdit: record('edit') as never,

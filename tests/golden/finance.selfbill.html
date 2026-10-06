@@ -4,7 +4,8 @@
 <h2 style="margin:0;font-size:19px">🧑 Personal (Self-Billed) Invoices</h2>
 <div class="muted" style="font-size:12px">Issue an invoice on an individual&rsquo;s behalf to pay them &mdash; Malaysian tax &amp; audit format.</div>
 </div>
-<div style="display:flex;gap:8px">
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<button class="btn sm" onclick="sbiSyncAllXero()" title="Bring every bill already in Xero up to date: payee contact details, the self-billed number in Reference, and the MyInvois classification on each line">⇢ Sync all to Xero</button>
 <button class="btn sm" onclick="SBI.showPayees=!SBI.showPayees;sbiRender()">👤 Payees (2)</button>
 <button class="btn p sm" onclick="sbiNewInvoice()">+ New self-billed invoice</button>
 </div>

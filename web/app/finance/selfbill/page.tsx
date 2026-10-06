@@ -30,7 +30,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import FinanceSelfbill, {
   invoiceBody, invoiceDocHtml, payeeBody, saveRefusal, selfbillReachable,
   type Account, type Company, type Invoice, type InvoiceRow, type Line, type LineKey,
-  type Payee, type Perms,
+  type Payee, type Perms, type SbiXeroSync,
 } from '../../../src/finance-selfbill';
 import { showConfirm } from '../../../src/confirm';
 import { call, legacyUrl, token } from '../../../src/portal';
@@ -302,7 +302,7 @@ export default function FinanceSelfbillPage() {
   const onPostXero = useCallback((id: number, posted: boolean) => {
     // app.html:4421 — the two questions are different acts and the legacy asks the right one.
     const msg = posted
-      ? 'Set the Reference and attach the invoice PDF to the existing Xero bill?'
+      ? 'Update the existing Xero bill — payee contact details, the Reference, the MyInvois classification — and attach the invoice PDF?'
       : 'Post this invoice to Xero as a SUBMITTED bill (Awaiting Approval)? Payment stays manual.';
     void (async () => {
       if (!await showConfirm(posted ? 'Attach PDF to the Xero bill' : 'Post to Xero', msg,
@@ -311,6 +311,41 @@ export default function FinanceSelfbillPage() {
       if (r && r.ok) { setErr(null); await reload(); } else setErr((r && r.error) || 'Xero post failed');
     })();
   }, [reload]);
+
+  /**
+   * `sbiSyncAllXero()` — app.html. Every bill already in Xero, one at a time ~1.1 s apart: contact
+   * details, Reference, MyInvois classification (`sync_only` — no PDFs re-attached). A SYNCHRONOUS ref is
+   * the double-run guard (PR #112's rule), not state.
+   */
+  const [xeroSync, setXeroSync] = useState<SbiXeroSync | null>(null);
+  const syncRef = useRef(false);
+  const onSyncAllXero = useCallback(async () => {
+    if (syncRef.current) return;
+    const todo = (list || []).filter((x) => x.xero_bill_id && x.status !== 'void');
+    if (!todo.length) { setErr('No self-billed invoices are in Xero yet'); return; }
+    if (!await showConfirm('Sync all to Xero',
+      'Update ' + todo.length + ' bill(s) already in Xero?\n\n· payee contact details (TIN, IC/ID, address, phone, email, bank account)\n· the self-billed number in the Reference column\n· the MyInvois classification on every line\n\nNothing is re-posted and no PDFs are re-attached.', 'Sync', 'p')) return;
+    syncRef.current = true;
+    const res: SbiXeroSync = { ok: [], warn: [], failed: [], running: true, total: todo.length };
+    setXeroSync({ ...res });
+    try {
+      for (let i = 0; i < todo.length; i++) {
+        const x = todo[i]; const no = x.invoice_no || ('#' + x.id);
+        try {
+          const r = await call<{ ok?: boolean; error?: string; warnings?: string[]; classification?: string | null }>({ api: 'sbi_post_xero', id: x.id, sync_only: true });
+          if (r && r.ok) {
+            if ((r.warnings || []).length) res.warn.push(no + ' — ' + (r.warnings || []).join(' '));
+            else res.ok.push(no + (r.classification ? ' · ' + String(r.classification).slice(0, 3) : ''));
+          } else res.failed.push(no + ' — ' + ((r && r.error) || 'failed'));
+        } catch (e) { res.failed.push(no + ' — ' + (e instanceof Error ? e.message : String(e))); }
+        setXeroSync({ ...res });
+        if (i < todo.length - 1) await new Promise((ok) => setTimeout(ok, 1100));
+      }
+    } finally {
+      res.running = false; setXeroSync({ ...res }); syncRef.current = false;
+    }
+    await reload();
+  }, [list, reload]);
 
   // `sbiView()` — app.html:4431. The document is built in src/ so the test can pin it.
   const onView = useCallback((id: number) => {
@@ -345,6 +380,9 @@ export default function FinanceSelfbillPage() {
             showPayees={showPayees} payeeForm={payeeForm} form={form} editId={editId}
             lines={lines} accounts={accounts} whtType={whtType} customRate={customRate} saving={saving}
             onTogglePayees={() => setShowPayees((v) => !v)}
+            onSyncAllXero={() => void onSyncAllXero()}
+            xeroSync={xeroSync}
+            onXeroSyncDismiss={() => setXeroSync(null)}
             onNewInvoice={onNewInvoice}
             onView={onView} onEdit={onEdit} onApprove={onApprove} onPostXero={onPostXero} onVoid={onVoid}
             onPayeeForm={(id) => setPayeeForm(id ? (payees.find((p) => p.id === id) || {}) : {})}

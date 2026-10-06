@@ -21,6 +21,84 @@ import {
 } from "./hr.ts";
 
 
+
+// ── Self-billed invoice → Xero: the payee's contact details and the MyInvois classification (2026-10-06) ──
+// Both are what Xero's Malaysian e-invoicing (Invoici) reads when it submits to IRBM, and both used to be
+// missing: the bill named its contact by NAME only, so Xero's contact carried no TIN / ID / address, and
+// the classification code never left the portal.
+
+/** Xero's error body → one readable line. */
+async function xeroErr(r: Response): Promise<string> {
+  try {
+    const o: any = await r.json(); const el = o && o.Elements && o.Elements[0];
+    const v = (el && Array.isArray(el.ValidationErrors) && el.ValidationErrors.length) ? el.ValidationErrors
+      : (Array.isArray(o.ValidationErrors) ? o.ValidationErrors : []);
+    return v.length ? v.map((x: any) => x.Message).join(" · ") : String(o.Message || o.Detail || "").slice(0, 300);
+  } catch (_e) { return ""; }
+}
+
+/** The Xero contact fields the portal can fill for a payee — ONLY the ones it actually has, so a sync
+ *  never blanks a field someone filled in Xero. */
+export function sbiContactFields(v: any, payee: any): Record<string, unknown> {
+  const t = (x: unknown) => String(x ?? "").trim();
+  const f: Record<string, unknown> = {};
+  const tin = t(v.payee_tin || (payee && payee.tin)); if (tin) f.TaxNumber = tin.slice(0, 50);
+  const idno = t(v.payee_id_no || (payee && payee.id_no)); if (idno) f.CompanyNumber = idno.slice(0, 50);   // IC / passport / BRN
+  const email = t(payee && payee.email); if (email) f.EmailAddress = email.slice(0, 255);
+  const phone = t(payee && payee.phone); if (phone) f.Phones = [{ PhoneType: "DEFAULT", PhoneNumber: phone.slice(0, 50) }];
+  const addr = t(v.payee_address || (payee && payee.address));
+  if (addr) f.Addresses = [{ AddressType: "POBOX", AddressLine1: addr.slice(0, 500), Country: "Malaysia" }];
+  const acct = t(v.payee_bank_account || (payee && payee.bank_account)); if (acct) f.BankAccountDetails = acct.slice(0, 255);
+  return f;
+}
+
+/** Find the payee's Xero contact by name (create it if absent) and write the portal's details onto it.
+ *  Returns the ContactID to put on the bill, or a warning and the plain name to fall back to. */
+async function sbiLinkContact(xh: Record<string, string>, v: any, payee: any): Promise<{ contact: any; warn?: string }> {
+  const name = String(v.payee_name || (payee && payee.name) || "Individual").trim().slice(0, 500);
+  const fields = sbiContactFields(v, payee);
+  try {
+    const q = 'Name=="' + name.replace(/"/g, "") + '"';
+    const g = await fetch("https://api.xero.com/api.xro/2.0/Contacts?where=" + encodeURIComponent(q), { headers: xh });
+    const hit = g.ok ? (((await g.json()).Contacts || [])[0]) : null;
+    const body = hit && hit.ContactID ? { ContactID: hit.ContactID, ...fields } : { Name: name, ...fields };
+    const r = await fetch("https://api.xero.com/api.xro/2.0/Contacts", { method: "POST", headers: xh, body: JSON.stringify({ Contacts: [body] }) });
+    if (!r.ok) return { contact: hit && hit.ContactID ? { ContactID: hit.ContactID } : { Name: name }, warn: "Payee details not written to the Xero contact (" + (await xeroErr(r) || r.status) + ")." };
+    const c = ((await r.json()).Contacts || [])[0];
+    return { contact: c && c.ContactID ? { ContactID: c.ContactID } : { Name: name } };
+  } catch (e) {
+    return { contact: { Name: name }, warn: "Payee details not written to the Xero contact (" + String(e).slice(0, 120) + ")." };
+  }
+}
+
+/** The line Tracking that carries the MyInvois classification: the org's "MyInvois Classification"
+ *  tracking category (Invoici's), option whose name starts with the code — "036 - Self-billed - Others". */
+export function sbiPickClassification(categories: any[], code: string): { tracking?: any; warn?: string } {
+  const c = String(code || "").trim();
+  if (!c) return { warn: "No MyInvois classification code on this invoice." };
+  const cat = (categories || []).find((k: any) => /myinvois\s*classif/i.test(String(k.Name || "")) && String(k.Status || "ACTIVE") === "ACTIVE");
+  if (!cat) return { warn: "This company's Xero has no \"MyInvois Classification\" tracking category — classification " + c + " not set." };
+  const opt = (cat.Options || []).find((o: any) => String(o.Status || "ACTIVE") === "ACTIVE" &&
+    (String(o.Name || "").trim() === c || String(o.Name || "").trim().startsWith(c + " ")));
+  if (!opt) return { warn: "No option for classification " + c + " under \"" + cat.Name + "\" in this company's Xero." };
+  return { tracking: { TrackingCategoryID: cat.TrackingCategoryID, Name: cat.Name, TrackingOptionID: opt.TrackingOptionID, Option: opt.Name } };
+}
+
+async function sbiClassificationTracking(xh: Record<string, string>, code: string): Promise<{ tracking?: any; warn?: string }> {
+  if (!String(code || "").trim()) return { warn: "No MyInvois classification code on this invoice." };
+  try {
+    const r = await fetch("https://api.xero.com/api.xro/2.0/TrackingCategories", { headers: xh });
+    if (!r.ok) return { warn: "Could not read Xero tracking categories (" + (await xeroErr(r) || r.status) + ")." };
+    return sbiPickClassification((await r.json()).TrackingCategories || [], code);
+  } catch (e) { return { warn: "Could not read Xero tracking categories (" + String(e).slice(0, 120) + ")." }; }
+}
+
+/** A line's Tracking with the MyInvois category replaced (other categories, e.g. "Channel", are kept). */
+export function sbiWithTracking(existing: any[] | undefined, tracking: any): any[] {
+  const keep = (existing || []).filter((t: any) => !/myinvois\s*classif/i.test(String(t.Name || "")) && t.TrackingCategoryID !== tracking.TrackingCategoryID);
+  return [...keep, tracking];
+}
+
 /** Finance/platform handler chain. Returns undefined when no branch matched, exactly as falling
  *  off the end of this section of the original if-chain did. */
 export async function financeRoutes(b: any, api: string, ip: any, req: Request): Promise<Response | undefined> {
@@ -1589,11 +1667,32 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
       const xh = { "Authorization":"Bearer "+access, "Xero-Tenant-Id": v.tenant_id, "Content-Type":"application/json", "Accept":"application/json" };
 
       let billId = v.xero_bill_id || null;
+      const warnings: string[] = [];
+      const { data: payee } = v.individual_id ? await sb.from("portal_individuals").select("*").eq("id", v.individual_id).maybeSingle() : { data: null };
+      const linked = await sbiLinkContact(xh, v, payee); if (linked.warn) warnings.push(linked.warn);
+      const cls = await sbiClassificationTracking(xh, v.classification_code); if (cls.warn) warnings.push(cls.warn);
       if (billId){
-        // Already posted — don't error; sync the self-billed number onto the existing bill. It must go in
-        // `InvoiceNumber`: on a bill that IS the visible Reference column; `Reference` is ACCREC-only in
-        // Xero's API and is dropped (hr_rc_post_xero carries the full note, 2026-10-06).
-        try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, InvoiceNumber: reference, Reference: reference }] }) }); } catch(_e){}
+        // Already posted: bring the EXISTING bill up to date — its self-billed number in the Reference column
+        // (`InvoiceNumber`: on a bill that IS the visible Reference; the API's `Reference` is ACCREC-only and
+        // dropped), its contact (now carrying the payee's TIN / ID / address — linked above), and the MyInvois
+        // classification on every line. Lines are re-sent with their LineItemIDs, because a bill update that
+        // omits a line DELETES it. Xero's answer is read: a paid or locked bill refuses, and that is reported.
+        const upd: any = { InvoiceID: billId, InvoiceNumber: reference, Reference: reference, Contact: linked.contact };
+        if (cls.tracking) {
+          const g = await fetch("https://api.xero.com/api.xro/2.0/Invoices/" + billId, { headers: xh });
+          if (!g.ok) return j({ ok:false, error:"Xero "+g.status+": could not read the bill ("+(await xeroErr(g))+")" });
+          const cur = ((await g.json()).Invoices || [])[0] || {};
+          upd.LineItems = (cur.LineItems || []).map((l: any) => ({ LineItemID: l.LineItemID, Description: l.Description, Quantity: l.Quantity,
+            UnitAmount: l.UnitAmount, AccountCode: l.AccountCode, TaxType: l.TaxType, Tracking: sbiWithTracking(l.Tracking, cls.tracking) }));
+        }
+        const u = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[upd] }) });
+        if (!u.ok) return j({ ok:false, error:"Xero "+u.status+": "+(await xeroErr(u))+" — the bill was not changed.", warnings });
+        if (b.sync_only) {
+          // The batch sync: details only. The PDF and documents are attached when a bill is first posted or
+          // from the single button — re-uploading them for 77 bills at once would only duplicate them.
+          await logAudit(me, "sbi_xero_sync", String(v.id), { xero_bill_id: billId, reference, classification: cls.tracking ? cls.tracking.Option : null, warnings });
+          return j({ ok:true, synced:true, xero_bill_id: billId, reference, classification: cls.tracking ? cls.tracking.Option : null, warnings });
+        }
       } else {
         const gl = String(v.gl_account||"").trim();
         if(!gl) return j({ ok:false, error:"No expense account (GL) is set on this invoice. Open it → choose the GL account for the payment → Save, then post to Xero." });
@@ -1606,8 +1705,9 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
         });
         if (!lines.length) lines.push({ Description:"Payment to "+v.payee_name, Quantity:1, UnitAmount:Number(v.gross_amount)||0, AccountCode: gl });
         if (Number(v.wht_amount)>0){ lines.push({ Description:"Less: Withholding tax "+(v.wht_rate||0)+"% — to remit to LHDN", Quantity:1, UnitAmount:-(Number(v.wht_amount)||0), AccountCode: v.wht_gl_account || gl }); }
+        if (cls.tracking) for (const l of lines) l.Tracking = [cls.tracking];   // the MyInvois classification column
         // Safety red line: SUBMITTED (Awaiting Approval), never AUTHORISED — payment stays a human click in Xero.
-        const inv: any = { Type:"ACCPAY", Contact:{ Name:String(v.payee_name||"Individual").slice(0,500) },
+        const inv: any = { Type:"ACCPAY", Contact: linked.contact,   // the payee's Xero contact, details written above
           // v191: `|| undefined` dropped the field entirely when due_date was blank, and Xero rejects a
           // SUBMITTED bill with no due date ("Due Date cannot be empty") — same failure the reimbursement
           // path hit on every single attempt. Fall back rather than omit.
@@ -1652,8 +1752,8 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
           }
         }
       }
-      await logAudit(me, "sbi_post_xero", String(v.id), { xero_bill_id: billId, net: v.net_payable, reference, attached_pdf: attachedPdf, attached_docs: attachedDocs });
-      return j({ ok:true, xero_bill_id: billId, reference, attached_pdf: attachedPdf, attached_docs: attachedDocs });
+      await logAudit(me, "sbi_post_xero", String(v.id), { xero_bill_id: billId, net: v.net_payable, reference, attached_pdf: attachedPdf, attached_docs: attachedDocs, classification: cls.tracking ? cls.tracking.Option : null, warnings });
+      return j({ ok:true, xero_bill_id: billId, reference, attached_pdf: attachedPdf, attached_docs: attachedDocs, classification: cls.tracking ? cls.tracking.Option : null, warnings });
     }
     if (api === "set_webhook_key") {
       const me = await meFromToken(b.token); if (!superAdmin(me)) return j({ ok:false, error:"unauthorized" }, 401);
