@@ -1590,8 +1590,10 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
 
       let billId = v.xero_bill_id || null;
       if (billId){
-        // Already posted — don't error; sync the Reference onto the existing (editable) bill so it's never blank.
-        try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, Reference: reference }] }) }); } catch(_e){}
+        // Already posted — don't error; sync the self-billed number onto the existing bill. It must go in
+        // `InvoiceNumber`: on a bill that IS the visible Reference column; `Reference` is ACCREC-only in
+        // Xero's API and is dropped (hr_rc_post_xero carries the full note, 2026-10-06).
+        try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, InvoiceNumber: reference, Reference: reference }] }) }); } catch(_e){}
       } else {
         const gl = String(v.gl_account||"").trim();
         if(!gl) return j({ ok:false, error:"No expense account (GL) is set on this invoice. Open it → choose the GL account for the payment → Save, then post to Xero." });
@@ -1609,7 +1611,7 @@ export async function financeRoutes(b: any, api: string, ip: any, req: Request):
           // v191: `|| undefined` dropped the field entirely when due_date was blank, and Xero rejects a
           // SUBMITTED bill with no due date ("Due Date cannot be empty") — same failure the reimbursement
           // path hit on every single attempt. Fall back rather than omit.
-          Reference: reference, Date: v.invoice_date||undefined,
+          InvoiceNumber: reference, Reference: reference, Date: v.invoice_date||undefined,   // InvoiceNumber = a bill's visible Reference
           DueDate: v.due_date || new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10),
           Status:"SUBMITTED", LineAmountTypes:"Exclusive", LineItems: lines };
         const idem = "sbi-"+v.id+"-"+reference.replace(/[^A-Za-z0-9-]/g,"");

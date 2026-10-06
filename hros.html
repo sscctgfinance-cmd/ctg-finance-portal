@@ -1949,25 +1949,37 @@ function hrRCList(){
     : [['pending','Pending'],['approved','Approved'],['paid','Paid'],['all','All']];
   var canApprove=!!(me.isAdmin || me.is_manager || (me.roles&&me.roles.length));
   var canFinance=!!(me.isAdmin || (me.roles&&me.roles.indexOf('finance')>=0));
-  var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance);
+  var selecting=(RC.scope==='pending'&&canApprove) || (RC.scope==='approved'&&canFinance) || (RC.scope==='paid'&&canFinance);
+  // A per-row action, so one claim can be refused or sent back without opening it or ticking boxes:
+  // Reject (pending, for whoever may approve) and Send back (Approved, unpaid, not in Xero — Finance).
+  var rowAct=selecting && RC.scope!=='paid';
   var n=Object.keys(RC.sel).filter(function(k){return RC.sel[k];}).length;
   var scopeBtns=scopes.map(function(s){var on=RC.scope===s[0];var cnt=(on&&s[0]==='pending')?(' ('+list.length+')'):'';return '<button class="btn xs'+(on?' p':'')+'" onclick="hrRCScope(\''+s[0]+'\')">'+s[1]+cnt+'</button>';}).join('');
   var filt='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px"><div style="display:flex;gap:5px">'+scopeBtns+'</div><div style="display:flex;gap:6px">'+(canFinance?'<button class="btn xs" onclick="hrRCExportAcct()" title="Approved/Paid lines with GL · tax · SST · cost center — for accounting">📒 Accounting CSV</button>':'')+'<button class="btn xs" onclick="hrRCExportCsv()" title="Export this list to CSV">⬇ CSV</button><button class="btn p sm" onclick="hrRCNav(\'form\')">➕ New claim</button></div></div>';
   var bar='';
   if(selecting){
-    var btns=(RC.scope==='pending')
+    var btns=(RC.scope==='paid')
+      ? '<button class="btn p xs" onclick="hrRCBulkPostXero()" title="Write each claim number into its Xero bill’s Reference column">⇢ Update Xero reference ('+n+')</button>'
+      : (RC.scope==='pending')
       ? '<button class="btn p xs" onclick="hrRCBulkApprove()">✓ Approve ('+n+')</button> <button class="btn xs d" onclick="hrRCBulkReject()">✕ Reject</button> <button class="btn xs" onclick="hrRCBulkInfo()">↩ Request info</button>'
-      : '<button class="btn p xs" onclick="hrRCExportBank()">🏦 Bank file ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPay()">💵 Mark paid ('+n+')</button>';
-    bar='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-bottom:10px"><span style="font-size:12px;font-weight:600">'+(n?(n+' selected'):(RC.scope==='pending'?'Select claims to approve in bulk':'Select approved claims to pay'))+'</span>'+(n?btns:'')+(n?' <a onclick="hrRCSelClear()" style="cursor:pointer;font-size:11px;color:var(--muted)">clear</a>':'')+'</div>';
+      : '<button class="btn p xs" onclick="hrRCExportBank()">🏦 Bank file ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPay()">💵 Mark paid ('+n+')</button> <button class="btn xs" onclick="hrRCBulkPostXero()">⇢ Post to Xero ('+n+')</button>';
+    bar='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin-bottom:10px"><span style="font-size:12px;font-weight:600">'+(n?(n+' selected'):(RC.scope==='pending'?'Select claims to approve in bulk':RC.scope==='paid'?'Select paid claims to put their claim number in Xero':'Select approved claims to pay'))+'</span>'+(n?btns:'')+(n?' <a onclick="hrRCSelClear()" style="cursor:pointer;font-size:11px;color:var(--muted)">clear</a>':'')+'</div>';
   }
-  var colspan=selecting?7:6;
+  var colspan=6+(selecting?1:0)+(rowAct?1:0);
   var rows=list.map(function(c){ var typ=(c.hr_claim_types&&c.hr_claim_types.name)||'—'; var emp=(c.hr_employees&&c.hr_employees.name)||'—';
     var xb=c.xero_bill_id?' <span title="Posted to Xero" style="color:var(--green-soft)">⇢X</span>':'';
     var cb=selecting?'<td style="width:26px" onclick="event.stopPropagation()"><input type="checkbox" '+(RC.sel[c.id]?'checked':'')+' onchange="hrRCSelToggle(\''+c.id+'\',this.checked)"></td>':'';
-    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td></tr>';
+    var act='';
+    if(rowAct){
+      var btn=(RC.scope==='pending')
+        ? '<button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject(\''+c.id+'\')">✕ Reject</button>'
+        : ((c.status==='Approved'&&!c.xero_bill_id)?'<button class="btn xs" title="Return this approved claim to the employee with a remark" onclick="hrRCSendBack(\''+c.id+'\')">↩ Send back</button>':'');
+      act='<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">'+btn+'</td>';
+    }
+    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td>'+act+'</tr>';
   }).join('')||('<tr><td colspan="'+colspan+'" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>');
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
-  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th>'+(rowAct?'<th></th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+hrRCXeroBatchPanel()+'</div>';
 }
 function hrToday(){ return todayLocalISO(); } // MYT — toISOString() is UTC and dated claims "yesterday" before 8am
 function hrRCSelIds(){ RC.sel=RC.sel||{}; return Object.keys(RC.sel).filter(function(k){return RC.sel[k];}); }
@@ -1976,6 +1988,65 @@ function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.s
 function hrRCSelClear(){ RC.sel={}; hrRender(); }
 async function hrRCBulkApprove(){ return hrOnce('hrRCBulkApprove', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCBulkReject(){ return hrOnce('hrRCBulkReject', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
+// One claim, rejected from the list. The remark is required (the server refuses an empty one too) and
+// is what the employee reads in their email and on the claim.
+async function hrRCRowReject(id){ return hrOnce('hrRCRowReject:'+id, async function(){
+  var c=(RC.list||[]).find(function(x){return x.id===id;})||{};
+  var reason=prompt('Reject '+(c.claim_no||'this claim')+' — reason (the employee will see this):');
+  if(reason==null) return; if(!reason.trim()){ toast('Please give a reason for rejecting',true); return; }
+  var r=await call({api:'hr_rc_decide',id:id,decision:'reject',comment:reason.trim()});
+  if(r&&r.ok){ toast('Rejected '+(c.claim_no||'')+' ✓'); delete (RC.sel||{})[id]; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true);
+}); }
+// An APPROVED claim returned to the employee (hr_rc_reject_approved): only while unpaid and not in Xero.
+async function hrRCSendBack(id){ return hrOnce('hrRCSendBack:'+id, async function(){
+  var c=(RC.list||[]).find(function(x){return x.id===id;}) || (RC.detail&&RC.detail.claim&&RC.detail.claim.id===id?RC.detail.claim:{});
+  var reason=prompt('Send '+(c.claim_no||'this claim')+' back? It was approved; it will become Rejected and the employee is emailed this reason:');
+  if(reason==null) return; if(!reason.trim()){ toast('Please give a reason for sending it back',true); return; }
+  var r=await call({api:'hr_rc_reject_approved',id:id,comment:reason.trim()});
+  if(r&&r.ok){ toast(r.warning||'Sent back to the employee ✓', !!r.warning); delete (RC.sel||{})[id]; if(RC.page==='detail'&&RC.detail&&RC.detail.claim&&RC.detail.claim.id===id) await hrRCOpen(id); hrRCLoadList(); }
+  else toast((r&&r.error)||'Failed',true);
+}); }
+// Batch post: each selected claim goes through the SAME hr_rc_post_xero as the single button — its
+// GL coding, its duplicate guard (it adopts a bill already in Xero under the claim's reference) and its
+// receipt upload. One at a time, ~1s apart, under Xero's 60-calls-a-minute limit. Already-posted claims
+// are left alone (the single button would only re-sync their reference) and a company with no Xero
+// organisation is reported as SKIPPED, not failed. The outcome stays on screen until dismissed.
+async function hrRCBulkPostXero(){ return hrOnce('hrRCBulkPostXero', async function(){
+  var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;}
+  var byId={}; (RC.list||[]).forEach(function(c){ byId[c.id]=c; });
+  var todo=ids.filter(function(id){ return !!byId[id]; });
+  var fresh=todo.filter(function(id){ return !byId[id].xero_bill_id; }).length, inXero=todo.length-fresh;
+  if(!todo.length){ toast('Select claims first',true); return; }
+  // A claim already in Xero is not posted again: hr_rc_post_xero writes its claim number into the bill's
+  // Reference column (InvoiceNumber) and nothing else — which is also how the bills posted before
+  // 2026-10-06, when the number never reached that column, are put right.
+  if(!confirm((fresh?('Post '+fresh+' claim(s) to Xero as ACCPAY bills (SUBMITTED).'):'')+(fresh&&inXero?'\n':'')+(inXero?('Put the claim number into the Reference of '+inXero+' bill(s) already in Xero.'):'')+'\n\nClaims of a company without Xero are skipped. You still approve each payment inside Xero.\n\nContinue?')) return;
+  var res={ posted:[], resynced:[], skipped:[], failed:[], already:0, running:true, total:todo.length };
+  RC.xeroBatch=res; hrRender();
+  for(var i=0;i<todo.length;i++){
+    var c=byId[todo[i]], no=c.claim_no||c.id;
+    toast('Posting to Xero '+(i+1)+' / '+todo.length+' — '+no+'…');
+    try{
+      var r=await call({api:'hr_rc_post_xero',id:c.id});
+      if(r&&r.ok&&r.resynced) res.resynced.push(no);
+      else if(r&&r.ok) res.posted.push(no+(r.adopted?' (linked to existing bill)':''));
+      else if(r&&r.skipped) res.skipped.push(no+' — '+(r.error||'skipped'));
+      else res.failed.push(no+' — '+((r&&r.error)||'failed'));
+    }catch(e){ res.failed.push(no+' — '+(e.message||e)); }
+    if(i<todo.length-1) await new Promise(function(ok){ setTimeout(ok,1100); });
+  }
+  res.running=false; RC.sel={};
+  toast('Xero: '+res.posted.length+' posted'+(res.resynced.length?(', '+res.resynced.length+' reference(s) updated'):'')+(res.skipped.length?(', '+res.skipped.length+' skipped'):'')+(res.failed.length?(', '+res.failed.length+' failed'):''), !!res.failed.length);
+  hrRCLoadList();
+}); }
+function hrRCXeroBatchPanel(){
+  var x=RC.xeroBatch; if(!x) return '';
+  var sect=function(title,col,list){ return list.length?('<div style="margin-top:8px"><div style="font-size:12px;font-weight:650;color:'+col+'">'+title+' ('+list.length+')</div>'+list.map(function(t){return '<div class="muted" style="font-size:11.5px;padding-left:10px">'+esc(t)+'</div>';}).join('')+'</div>'):''; };
+  return '<div style="margin-top:12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px">⇢ Xero batch '+(x.running?'— posting…':'— done')+'</b>'+(x.running?'':'<a onclick="RC.xeroBatch=null;hrRender()" style="cursor:pointer;font-size:11px;color:var(--muted)">dismiss</a>')+'</div>'+
+    sect('Posted','var(--green-soft)',x.posted)+sect('Reference updated — claim number now in Xero','var(--green-soft)',x.resynced||[])+sect('Skipped — no Xero for this company','var(--amber)',x.skipped)+sect('Failed','var(--red-soft)',x.failed)+
+    (x.already?('<div class="muted" style="font-size:11.5px;margin-top:6px">'+x.already+' selected claim(s) were already in Xero and were left as they are.</div>'):'')+'</div>';
+}
 async function hrRCBulkInfo(){ return hrOnce('hrRCBulkInfo', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var msg=prompt('Message to employee(s) for '+ids.length+' claim(s):'); if(msg==null||!msg.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'request_info',comment:msg,ids:ids}); if(r&&r.ok){ toast('Sent back '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCBulkPay(){ return hrOnce('hrRCBulkPay', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var method=prompt('Payment method (applies to all):','Bank Transfer'); if(method==null)return; var ref=prompt('Payment reference (optional, same for all):',''); if(ref==null)ref=''; if(!confirm('Mark '+ids.length+' claim(s) as PAID?'))return; var r=await call({api:'hr_rc_mark_paid_bulk',ids:ids,payment_method:method||'Bank Transfer',payment_reference:ref}); if(r&&r.ok){ toast('Marked paid '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 function hrRCExportBank(){ var ids=hrRCSelIds(); var all=(RC.list||[]).filter(function(c){return c.status==='Approved' && (!ids.length || ids.indexOf(c.id)>=0);}); if(!all.length){ toast('Select Approved claims first',true); return; }
@@ -2722,7 +2793,7 @@ function hrRCDetail(){
   else if(c.status==='Paid'&&d.payment){ actions='<div class="panel"><div style="font-size:13px;color:var(--green-soft)">✓ Paid '+esc(d.payment.paid_date||'')+(d.payment.payment_method?(' · '+esc(d.payment.payment_method)):'')+(d.payment.payment_reference?(' · '+esc(d.payment.payment_reference)):'')+'</div></div>'; }
   var xeroBlock='';
   if(c.xero_bill_id){ xeroBlock='<div class="panel"><div style="font-size:13px;color:var(--green-soft);font-weight:650">✓ Posted to Xero</div><div class="muted" style="font-size:11.5px;margin-top:3px">ACCPAY bill · SUBMITTED (awaiting your payment approval in Xero) · ref '+esc(c.xero_reference||c.claim_no||'')+(c.xero_posted_at?(' · '+esc(String(c.xero_posted_at).slice(0,16).replace('T',' '))):'')+'</div>'+(d.can_post?'<button class="btn xs" style="margin-top:8px" onclick="hrRCPostXero()">Re-sync reference</button>':'')+'</div>'; }
-  else if(d.can_post){ xeroBlock='<div class="panel"><div class="panel-hd"><h3>📤 Post to Xero</h3></div><div class="muted" style="font-size:12px;margin-bottom:8px">Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.</div><button class="btn p sm" onclick="hrRCPostXero()">Post to Xero →</button></div>'; }
+  else if(d.can_post){ xeroBlock='<div class="panel"><div class="panel-hd"><h3>📤 Post to Xero</h3></div><div class="muted" style="font-size:12px;margin-bottom:8px">Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.</div><button class="btn p sm" onclick="hrRCPostXero()">Post to Xero →</button>'+(c.status==='Approved'?' <button class="btn sm d" title="Return it to the employee with a remark" onclick="hrRCSendBack(\''+c.id+'\')">↩ Send back…</button>':'')+'</div>'; }
   var decPanel='';
   if(d.declaration){ var dd=d.declaration; decPanel='<div class="panel"><div class="panel-hd"><h3>Declaration</h3></div>'+[['business_purpose','Claim is for business purpose'],['not_claimed_before','Not claimed before'],['receipts_valid','Receipts / invoices are valid'],['understand_disciplinary','Understands false claims → disciplinary action']].map(function(x){ return '<div style="font-size:12px;padding:2px 0;color:'+(dd[x[0]]?'var(--green-soft)':'var(--coral-soft)')+'">'+(dd[x[0]]?'✓':'✗')+' <span style="color:var(--text-soft)">'+x[1]+'</span></div>'; }).join('')+'<div class="muted" style="font-size:10.5px;margin-top:4px">Declared '+esc(String(dd.declared_at||'').slice(0,16).replace('T',' '))+'</div></div>'; }
   var editRow='<button class="btn xs" onclick="hrRCFormAndReceipts()">📄 Form + receipts (PDF)</button> <button class="btn xs" onclick="hrRCVoucher()">🖨 Voucher</button> ';
@@ -2743,7 +2814,7 @@ async function hrRCSetGl(itemId){
   var r=await call({api:'hr_rc_set_gl',id:RC.detail.claim.id,item_id:itemId||undefined,gl_account:gl.trim(),reason:reason.trim()});
   if(r&&r.ok){ toast('GL updated ('+r.updated+' line'+(r.updated>1?'s':'')+') ✓'); await hrRCOpen(RC.detail.claim.id); } else toast((r&&r.error)||'Failed',true);
 }
-async function hrRCPostXero(){ return hrOnce('hrRCPostXero', async function(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):'')); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }); }
+async function hrRCPostXero(){ return hrOnce('hrRCPostXero', async function(){ var posted=RC.detail&&RC.detail.claim&&RC.detail.claim.xero_bill_id; if(!confirm(posted?'Re-sync this bill’s reference in Xero?':'Post this claim to Xero as an ACCPAY bill (SUBMITTED)?\n\nEach line posts to its claim type’s GL account. You still approve the payment inside Xero.'))return; toast('Posting to Xero…'); var r=await call({api:'hr_rc_post_xero',id:RC.detail.claim.id}); if(r&&r.ok){ toast(r.resynced?'Xero reference updated to '+(r.reference||'')+' ✓':('Posted to Xero ✓'+(r.attached?(' · '+r.attached+' receipt(s) attached'):''))); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Post failed',true); }); }
 async function hrRCCancel(){ return hrOnce('hrRCCancel:'+(''), async function(){ if(!confirm('Cancel this claim?'))return; var r=await call({api:'hr_rc_cancel',id:RC.detail.claim.id}); if(r&&r.ok){ toast('Cancelled'); await hrRCOpen(RC.detail.claim.id); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 // v193: correct the amount on a claim that is past the approval step. Deliberately separate from
 // hrRCOverride, which approves at the same time and so only makes sense while a decision is pending.
@@ -3295,7 +3366,7 @@ async function hrEmpLeaveLoad(){
   finally{ ELV.loading=false; }
   if(HR.view==='leave' && HR_EMP_MODE) hrRender();
 }
-async function hrEmpLeaveDecide(id,decision){ return hrOnce('hrEmpLeaveDecide:'+(id), async function(){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Approved ✓':(r.advanced?'Approved → next level':'Done')); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
+async function hrEmpLeaveDecide(id,decision){ return hrOnce('hrEmpLeaveDecide:'+(id), async function(){ var comment=''; if(decision==='reject'){ comment=hrLeaveRejectReason(); if(comment==null)return; } var r=await call({api:'hr_leave_decide',id:id,decision:decision,comment:comment}); if(r&&r.ok){ toast(r.final?'Approved ✓':(r.advanced?'Approved → next level':'Done')); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 function hrEmpLeaveRender(){
   var d=ELV.data; if(!d) return '<div class="panel"><div class="empty"><div class="empty-ico">⚠️</div><div>'+esc(ELV.err||'Could not load leave')+' — <a onclick="ELV.data=null;ELV.err=null;ELV.loading=false;hrRender()" style="cursor:pointer;color:var(--sky)">retry</a></div></div></div>';
   var types=d.types||[], bals=d.balances||[], reqs=d.requests||[];
@@ -3321,7 +3392,7 @@ function hrEmpLeaveRender(){
   '</div>';
   var rows=reqs.map(function(x){ var st=x.status,fin=['Approved','Rejected','Cancelled'].indexOf(st)>=0,col=st==='Approved'?'var(--green-soft)':st==='Rejected'?'var(--red-soft)':st==='Cancelled'?'var(--muted)':'var(--amber)';
     var act=(!fin)?('<a onclick="hrEmpLeaveCancel(\''+x.id+'\')" style="cursor:pointer;color:var(--coral-soft);font-size:11.5px">cancel</a>'):'';
-    return '<tr><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span></td><td>'+act+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No leave requests yet</td></tr>';
+    return '<tr><td>'+esc(x.leave_type)+'</td><td class="muted">'+esc(x.date_from)+' → '+esc(x.date_to)+'</td><td class="amt">'+x.days+'</td><td>'+hrLeaveStepPills(x)+'</td><td><span class="pill" style="color:'+col+';font-size:10px">'+esc(st)+'</span>'+hrEmpLeaveRejectNote(x)+'</td><td>'+act+'</td></tr>'; }).join('')||'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">No leave requests yet</td></tr>';
   var list='<div class="panel"><div class="panel-hd"><h3>My leave</h3></div><div class="tbl-wrap"><table class="bigtable"><thead><tr><th>Type</th><th>Dates</th><th class="amt">Days</th><th>Approval</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
   // Approver queue — requests waiting on THIS employee's approval step (managers / HR / director see this).
   var pend=ELV.pending||[], apprCard='';
@@ -3360,6 +3431,19 @@ async function hrEmpLeaveApply(){
 }
 async function hrEmpLeaveCancel(id){ return hrOnce('hrEmpLeaveCancel:'+(id), async function(){ if(!confirm('Cancel this leave request?'))return; var r=await call({api:'hr_leave_cancel',id:id}); if(r&&r.ok){ toast('Cancelled'); ELV.data=null; hrEmpLeaveLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 // Step-pills used by both admin + employee views (needs x.steps + x.current_step + x.status).
+// On the employee's own list: WHY a request was rejected, from the step that rejected it.
+function hrEmpLeaveRejectNote(x){
+  if(String(x.status)!=='Rejected') return '';
+  var s=(x.steps||[]).filter(function(t){ return t.status==='Rejected' && String(t.comment||'').trim(); })[0];
+  return s?('<div class="muted" style="font-size:11px;font-style:italic;margin-top:3px;max-width:240px">“'+esc(String(s.comment).trim())+'”</div>'):'';
+}
+// The reason travels in the rejection email and shows on the request for the employee and HR. Required:
+// a bare "was rejected." told the employee nothing (hr_leave_decide refuses an empty one too).
+function hrLeaveRejectReason(){
+  var t=prompt('Reason for rejecting this leave (the employee will see this):');
+  if(t==null) return null; t=t.trim(); if(!t){ toast('Please give a reason for rejecting',true); return null; }
+  return t;
+}
 function hrLeaveToggle(id){
   if(!LVA.open) LVA.open={};
   if(LVA.open[id]) delete LVA.open[id]; else LVA.open[id]=1;
@@ -3393,9 +3477,11 @@ function hrLeaveDetailRow(x){
       var who=done||rej ? (s.decided_by_name||'') : (s.assignee_name||'');
       var when=s.decided_at?hrDT(s.decided_at):'';
       var tail=(who?(' \u00b7 '+esc(who)):'')+(when?(' \u00b7 '+esc(when)):'');
+      var rem=String(s.comment||'').trim();
       return '<div style="font-size:12px;margin-bottom:3px"><span style="color:'+col+'">'+ic+'</span> '+
         '<span class="muted">'+esc(String(s.step_order||''))+'.</span> '+level+
-        ' <span style="color:'+col+'">'+what+'</span><span class="muted">'+tail+'</span></div>';
+        ' <span style="color:'+col+'">'+what+'</span><span class="muted">'+tail+'</span>'+
+        (rem?('<div class="muted" style="font-size:11.5px;font-style:italic;margin:2px 0 0 18px">“'+esc(rem)+'”</div>'):'')+'</div>';
     }).join(''));
   }
 
@@ -3786,7 +3872,7 @@ function hrLeaveFlowSet(i,v){ if(!LVA.flowEdit[i])return;
 function hrLeaveFlowAdd(){ LVA.flowEdit=LVA.flowEdit||[]; var emps=(LVA.data&&LVA.data.employees)||[]; if(emps.length){ LVA.flowEdit.push({name:emps[0].name,approver_type:'employee',approver_employee_id:emps[0].id}); } else { LVA.flowEdit.push({name:'HR',approver_type:'role',approver_role:'hr'}); } hrRender(); }
 function hrLeaveFlowDel(i){ LVA.flowEdit.splice(i,1); hrRender(); }
 async function hrLeaveFlowSave(){ var r=await call({api:'hr_leave_flow_save',tenant:HR.tenant,steps:LVA.flowEdit||[]}); if(r&&r.ok){ toast('Approval flow saved ✓'); LVA.data=null; LVA.flowEdit=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }
-async function hrDecideLeave(id,decision){ return hrOnce('hrDecideLeave:'+(id), async function(){ if(decision==='reject'&&!confirm('Reject this leave request?'))return; var r=await call({api:'hr_leave_decide',id:id,decision:decision}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }); }
+async function hrDecideLeave(id,decision){ return hrOnce('hrDecideLeave:'+(id), async function(){ var comment=''; if(decision==='reject'){ comment=hrLeaveRejectReason(); if(comment==null)return; } var r=await call({api:'hr_leave_decide',id:id,decision:decision,comment:comment}); if(r&&r.ok){ toast(r.final?'Leave approved ✓':(r.advanced?'Approved → next level':'Leave '+decision+(decision==='reject'?'ed':'d'))); LVA.data=null; hrLeaveAdminLoad(); } else toast((r&&r.error)||'Failed',true); }); }
 // ===== 🔀 Approvals — unified multi-level approval control (leave + reimbursement) =====
 var APV={ tab:'leave', loading:false, err:null, leave:null, leaveFlow:null, rc:null, wfEdit:null };
 var APV_S='width:100%;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px';

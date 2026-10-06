@@ -537,7 +537,7 @@ export async function rcDecideOne(who:any, me:any, id:any, decision:string, comm
     await sb.from("hr_claim_requests").update({status:"Rejected",decided_at:nowIso}).eq("id",id);
     await sb.from("hr_claim_comments").insert({claim_id:id,author_id:actor,author_name:aname,comment,kind:"comment"});
     await rcAuditLog(id,"reject",me,fromS,"Rejected",{comment});
-    return { ok:true, status:"Rejected", claim };
+    return { ok:true, status:"Rejected", claim, comment };
   }
   if(decision==="request_info"){
     if(!String(comment||"").trim()) return { ok:false, error:"a message to the employee is required" };
@@ -570,7 +570,7 @@ export async function rcNotifyDecision(res:any){ try{
   const c=res && res.claim; if(!c) return;
   if(res.advanced){ await rcNotifyStepApprover(c.id); return; }
   if(res.status==="Approved") await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" is approved", "Good news — your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") has been fully approved and is now with Finance for payment.\n\n— CTG HR OS (automated)");
-  else if(res.status==="Rejected") await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" was rejected", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") was rejected.\n\nLog in to HR OS → Reimbursement to see the reason.\n\n— CTG HR OS (automated)");
+  else if(res.status==="Rejected") await rcNotifyEmployee(c, "[HR OS] Your reimbursement "+(c.claim_no||"")+" was rejected", "Your reimbursement claim "+(c.claim_no||"")+" ("+rcMoney(c.amount)+") was rejected"+(res.comment?(":\n\n  \""+String(res.comment).slice(0,500)+"\""):".")+"\n\nLog in to HR OS → Reimbursement for the details.\n\n— CTG HR OS (automated)");
   else if(res.status==="Need More Info") await rcNotifyEmployee(c, "[HR OS] More info needed on reimbursement "+(c.claim_no||""), "Your reimbursement claim "+(c.claim_no||"")+" needs more information before it can be approved:\n\n  \""+String(res.comment||"").slice(0,500)+"\"\n\nLog in to HR OS → Reimbursement, update it, and resubmit.\n\n— CTG HR OS (automated)");
 }catch(_e){} }
 // ── v151: SERVER-SIDE Malaysian payroll statutory engine (authoritative source of record) ──
@@ -1711,6 +1711,10 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       let decision = String(b.decision||"").toLowerCase();
       if(!decision && b.status){ const s=String(b.status); decision = s==="Approved"?"approve":(s==="Rejected"?"reject":""); }
       if(["approve","reject"].indexOf(decision)<0) return j({ ok:false, error:"invalid decision" });
+      // 2026-10-06: a rejection must carry its reason. The comment was always stored on the step and put in
+      // the employee's email, but no screen ever sent one, so every rejection read "was rejected." and
+      // nothing else. Refused here as well as in the UI so no caller can skip it.
+      if(decision==="reject" && !String(b.comment||"").trim()) return j({ ok:false, error:"Please give a reason for rejecting this leave." });
       const { data:req } = await sb.from("hr_leave_requests").select("*").eq("id",id).maybeSingle();
       if (!req) return j({ ok:false, error:"not found" });
       if(!await leaveTenantOk(b.token, req)) return j({ ok:false, error:"You do not have access to this company's leave." }, 403);
@@ -2568,6 +2572,40 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       }
       return j({ ok:true, done, total:ids.length, results });
     }
+    if (api === "hr_rc_reject_approved") {
+      // 2026-10-06: an Approved claim could not be sent back at all — a problem found AFTER approval (a
+      // receipt that does not match, a duplicate spotted at payment time) had no route but paying it or
+      // editing the database. Finance (or an admin) may now reject it with a remark, on three conditions:
+      //   - it is Approved and NOT Paid — money that has left is a refund, not a rejection;
+      //   - it is NOT in Xero — re-posting would adopt the old non-VOIDED bill by Reference and the two
+      //     would silently disagree, so the bill must be voided in Xero first (and unlinked);
+      //   - the remark is not empty — the employee is told why.
+      // The status write is conditional on all three, so two clicks or a racing payment cannot both win.
+      const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
+      const who = await rcMe(me); if(!superAdmin(me) && who.roles.indexOf("finance")<0) return j({ ok:false, error:"Only Finance or admin can send back an approved claim." }, 403);
+      const remark = String(b.comment||"").trim().slice(0,500);
+      if(!remark) return j({ ok:false, error:"Please give a reason for sending this claim back." });
+      const { data: c } = await sb.from("hr_claim_requests").select("*").eq("id", b.id).maybeSingle();
+      if(!c) return j({ ok:false, error:"claim not found" });
+      { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
+      if(c.status !== "Approved") return j({ ok:false, error:"Only an Approved, unpaid claim can be sent back (this one is "+c.status+")." });
+      if(c.xero_bill_id) return j({ ok:false, error:"This claim is already a bill in Xero. Void that bill in Xero first, then send the claim back." });
+      const nowIso = new Date().toISOString();
+      const { data: got } = await sb.from("hr_claim_requests").update({ status:"Rejected", decided_at:nowIso })
+        .eq("id", c.id).eq("status","Approved").is("xero_bill_id", null).select("id");
+      if(!got || !got.length) return j({ ok:false, error:"This claim changed a moment ago (paid, posted or already sent back) — refresh and check." });
+      // The claim IS rejected at this point; the two writes below are read, and a failure is reported
+      // to Finance rather than buried under "Sent back ✓" (tests/unchecked_writes_test.ts).
+      const { error: eInst } = await sb.from("hr_claim_approval_instances").update({ status:"rejected" }).eq("claim_id", c.id);
+      const actor=(me.user&&me.user.id)||null, aname=(me.user&&me.user.email)||null;
+      const { error: eCom } = await sb.from("hr_claim_comments").insert({ claim_id:c.id, author_id:actor, author_name:aname, comment:remark, kind:"comment" });
+      const warning = eCom ? "Sent back, but the remark could not be saved on the claim ("+eCom.message+") — the employee's email still carries it."
+        : eInst ? "Sent back, but its approval record could not be closed ("+eInst.message+")." : null;
+      await rcAuditLog(c.id, "reject_after_approval", me, "Approved", "Rejected", { comment:remark });
+      await logAudit(me, "hr_rc_reject_approved", String(c.id), { claim_no:c.claim_no, comment:remark });
+      try { await rcNotifyDecision({ ok:true, status:"Rejected", claim:c, comment:remark }); } catch(_e){}
+      return j({ ok:true, status:"Rejected", warning });
+    }
     if (api === "hr_rc_post_xero") {
       // Post an approved reimbursement to Xero as an ACCPAY bill (SUBMITTED, never AUTHORISED — payment stays a human click in Xero).
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -2578,6 +2616,10 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       { const alw = await allowedTenants(b.token); if (alw.length && alw.indexOf(c.tenant_id) < 0) return j({ ok:false, error:"forbidden: you do not have access to this company" }, 403); }
       if(["Approved","Paid"].indexOf(c.status)<0) return j({ ok:false, error:"Post to Xero only after the claim is fully Approved." });
       const tenant = c.tenant_id;
+      // A non-Xero company (YCT, WELLNESS, JEEROUL, JOURISH — xero_connected=false) has no ledger to post to;
+      // sending its id to Xero fails with an opaque 403. The batch post lists these as SKIPPED, not failed.
+      { const { data: xt } = await sb.from("xero_tenants").select("tenant_name,xero_connected").eq("tenant_id", tenant).maybeSingle();
+        if (xt && xt.xero_connected === false) return j({ ok:false, skipped:true, error:(xt.tenant_name||"This company")+" is not connected to Xero — nothing to post." }); }
       const empName = (c.hr_employees&&c.hr_employees.name) || "Employee";
       // claimer = e-invoice buyer. No personal TIN (e.g. E004) → IRBM general public TIN, so the buyer stays valid.
       const empTin = String((c.hr_employees&&c.hr_employees.tax_no)||"").trim() || "EI00000000010";
@@ -2607,8 +2649,25 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       const xh = { "Authorization":"Bearer "+access, "Xero-Tenant-Id": tenant, "Content-Type":"application/json", "Accept":"application/json" };
       let billId = c.xero_bill_id || null;
       if(billId){
-        // Already posted — refresh the Reference on the existing (editable) bill so it never goes blank.
-        try { await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, Reference: reference }] }) }); } catch(_e){}
+        // On a BILL (ACCPAY) the column Xero shows as "Reference" is `InvoiceNumber`. The API's `Reference` field
+        // is "ACCREC only" (Xero's own OpenAPI spec) and is silently dropped on a bill — so until 2026-10-06 no
+        // posted bill carried its number where Finance looks for it, and the duplicate guard below, which
+        // searched by Reference, could never find one. `Reference` is still sent; it is harmless on a bill.
+        // Already posted: write the claim number into that column and STOP. This branch used to fall through to
+        // the receipt upload below, so every re-sync attached every receipt to the bill again, and it ignored
+        // Xero's answer, so a refused update (a paid bill is not editable) still reported success.
+        let rs: Response;
+        try { rs = await fetch("https://api.xero.com/api.xro/2.0/Invoices", { method:"POST", headers: xh, body: JSON.stringify({ Invoices:[{ InvoiceID: billId, InvoiceNumber: reference, Reference: reference }] }) }); }
+        catch(e){ return j({ ok:false, error:"Xero: "+String(e).slice(0,200) }); }
+        if(!rs.ok){
+          let msg = ""; try { const o = await rs.json(); const el = o && o.Elements && o.Elements[0];
+            msg = (el && Array.isArray(el.ValidationErrors) && el.ValidationErrors.length) ? el.ValidationErrors.map((x:any)=>x.Message).join(" · ") : (o.Message || ""); } catch(_e){}
+          return j({ ok:false, error:"Xero "+rs.status+(msg?": "+String(msg).slice(0,300):"")+" — the bill's Reference was not changed." });
+        }
+        const { error: eRef } = await sb.from("hr_claim_requests").update({ xero_reference: reference }).eq("id", id);
+        await rcAuditLog(id,"xero_reference_sync",me,c.status,c.status,{ xero_bill_id:billId, reference });
+        return j({ ok:true, resynced:true, xero_bill_id:billId, reference,
+          ...(eRef ? { warning:"Xero now shows "+reference+", but the portal's copy of the reference could not be saved ("+eRef.message+")." } : {}) });
       } else {
         // Contact = the claimer; stamp their HR OS TIN so the e-invoice buyer identity flows to Xero/MyInvois.
         const contact:any = { Name:String(empName).slice(0,500) }; if(empTin) contact.TaxNumber = empTin.slice(0,50);
@@ -2620,7 +2679,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         // Same 30-day term the rest of the file uses, MYT-adjusted, and editable in Xero before payment.
         const dueDate = new Date(Date.now() + 30*86400000 + 8*3600*1000).toISOString().slice(0,10);
         const inv:any = { Type:"ACCPAY", Contact:contact,
-          Reference: reference, Date: c.claim_date||undefined, DueDate: dueDate, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };
+          InvoiceNumber: reference, Reference: reference, Date: c.claim_date||undefined, DueDate: dueDate, Status:"SUBMITTED", LineAmountTypes:"NoTax", LineItems: lines };   // InvoiceNumber = the bill's visible Reference — see the re-sync branch above
         // v192: the key used to be just claim id + reference, so it NEVER changed between attempts. Xero
         // remembers a key for 24 hours and rejects it if the body differs — so the moment a post failed
         // and the payload was then corrected (exactly what the missing-DueDate fix did), every retry died
@@ -2635,7 +2694,8 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         // previous attempt actually reached Xero and we lost the response, the bill already exists under
         // this Reference. Adopt it instead of creating a second one.
         try {
-          const q = 'Type=="ACCPAY" AND Reference=="' + reference.replace(/"/g,'') + '" AND Status!="VOIDED"';
+          const rq = reference.replace(/"/g,'');
+          const q = 'Type=="ACCPAY" AND (InvoiceNumber=="' + rq + '" OR Reference=="' + rq + '") AND Status!="VOIDED"';
           const ex = await fetch("https://api.xero.com/api.xro/2.0/Invoices?where="+encodeURIComponent(q), { headers: xh });
           if (ex.ok) {
             const exj = await ex.json();

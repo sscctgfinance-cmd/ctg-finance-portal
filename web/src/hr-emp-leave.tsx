@@ -114,6 +114,15 @@ export function applyBody(f: ApplyInput): { error: string } | Record<string, unk
   };
 }
 
+/** `hrEmpLeaveRejectNote()` — hros.html. Why a rejected request was rejected, from the step that did it. */
+function RejectNote({ x }: { x: LeaveRequest }) {
+  if (String(x.status) !== 'Rejected') return null;
+  const s = (x.steps || []).find((t) => t.status === 'Rejected' && String(t.comment || '').trim());
+  return s
+    ? <div className="muted" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '3px', maxWidth: '240px' }}>{'\u201c' + String(s.comment).trim() + '\u201d'}</div>
+    : null;
+}
+
 /** `g()` — hros.html:3081. Label above control. */
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -262,7 +271,7 @@ function MyRow({ x, onCancel }: { x: LeaveRequest; onCancel: (id: string) => voi
       <td className="muted">{x.date_from ?? ''} → {x.date_to ?? ''}</td>
       <td className="amt">{x.days}</td>
       <td><StepPills x={x} /></td>
-      <td><span className="pill" style={{ color: col, fontSize: '10px' }}>{st}</span></td>
+      <td><span className="pill" style={{ color: col, fontSize: '10px' }}>{st}</span><RejectNote x={x} /></td>
       <td>
         {/* hros.html:3093 — an `<a>`, not a button, and only while the request is still open. Cancelling
             a decided request is what the server refuses; hiding it is what the legacy does. */}

@@ -92,7 +92,7 @@ jobs:
           #    against shipping at all, and nothing said so out loud — the workflow simply went red in
           #    a place nobody was watching, in BOTH repos, since both run this deploy.
           # v225: 205 — hr_payroll_runs_list added (the payroll process list HR OS never had).
-          EXPECTED_ACTIONS=205
+          EXPECTED_ACTIONS=206
           actions=$(grep -ho 'api === "' "$d"/*.ts | wc -l | tr -d " ")
           echo "action branches: $actions (baseline $EXPECTED_ACTIONS)"
           if [ "$actions" -lt "$EXPECTED_ACTIONS" ]; then

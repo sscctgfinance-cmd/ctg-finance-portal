@@ -100,7 +100,19 @@ export interface HrExpensesProps {
   onBulkReject: () => void;
   onBulkInfo: () => void;
   onBulkPay: () => void;
+  /** `hrRCRowReject(id)` — one pending claim rejected from the list, with a remark. */
+  onRowReject?: (id: string) => void;
+  /** `hrRCSendBack(id)` — an Approved, unpaid, not-in-Xero claim returned to the employee. */
+  onSendBack?: (id: string) => void;
+  /** `hrRCBulkPostXero()` — the selected approved claims posted one by one through hr_rc_post_xero. */
+  onBulkPostXero?: () => void;
+  /** `RC.xeroBatch` — the batch's outcome, on screen until dismissed. `null` in every golden. */
+  xeroBatch?: XeroBatch | null;
+  onXeroBatchDismiss?: () => void;
 }
+
+/** `RC.xeroBatch` — hros.html hrRCBulkPostXero(). */
+export interface XeroBatch { posted: string[]; resynced: string[]; skipped: string[]; failed: string[]; already: number; running: boolean; total: number }
 
 /** `M()` — hros.html:1268. UI money formatting, so it lives with the UI. */
 const M = (n: unknown) =>
@@ -181,9 +193,11 @@ function ClaimsList(p: HrExpensesProps) {
   const scopes = me.isAdmin === false ? EMP_SCOPES : ADMIN_SCOPES;
   const canApprove = !!(me.isAdmin || me.is_manager || (me.roles && me.roles.length));
   const canFinance = !!(me.isAdmin || (me.roles && me.roles.indexOf('finance') >= 0));
-  const selecting = (p.scope === 'pending' && canApprove) || (p.scope === 'approved' && canFinance);
+  const selecting = (p.scope === 'pending' && canApprove) || (p.scope === 'approved' && canFinance) || (p.scope === 'paid' && canFinance);
   const n = Object.keys(p.sel).filter((k) => p.sel[k]).length;
-  const colspan = selecting ? 7 : 6;
+  // hros.html: `rowAct=selecting` — the per-row Reject / Send back column rides with the selection column.
+  const rowAct = selecting && p.scope !== 'paid';
+  const colspan = 6 + (selecting ? 1 : 0) + (rowAct ? 1 : 0);
 
   return (
     <div className="panel">
@@ -212,7 +226,7 @@ function ClaimsList(p: HrExpensesProps) {
       {selecting ? (
         <div style={BAR}>
           <span style={{ fontSize: '12px', fontWeight: 600 }}>
-            {n ? n + ' selected' : p.scope === 'pending' ? 'Select claims to approve in bulk' : 'Select approved claims to pay'}
+            {n ? n + ' selected' : p.scope === 'pending' ? 'Select claims to approve in bulk' : p.scope === 'paid' ? 'Select paid claims to put their claim number in Xero' : 'Select approved claims to pay'}
           </span>
           {n ? <BulkButtons {...p} n={n} /> : null}
           {n ? <>{' '}<a onClick={p.onSelClear} style={{ cursor: 'pointer', fontSize: '11px', color: 'var(--muted)' }}>clear</a></> : null}
@@ -230,6 +244,7 @@ function ClaimsList(p: HrExpensesProps) {
               <th>Date</th>
               <th className="amt">Amount</th>
               <th>Status</th>
+              {rowAct ? <th></th> : null}
             </tr>
           </thead>
           <tbody>
@@ -249,6 +264,15 @@ function ClaimsList(p: HrExpensesProps) {
                 <td className="muted">{c.claim_date || ''}</td>
                 <td className="amt">{M(c.amount)}</td>
                 <td><StatusPill status={c.status} /></td>
+                {rowAct ? (
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={stopRowClick}>
+                    {p.scope === 'pending'
+                      ? <button className="btn xs d" title="Reject with a remark the employee will see" onClick={() => p.onRowReject && p.onRowReject(c.id)}>✕ Reject</button>
+                      : (c.status === 'Approved' && !c.xero_bill_id)
+                        ? <button className="btn xs" title="Return this approved claim to the employee with a remark" onClick={() => p.onSendBack && p.onSendBack(c.id)}>↩ Send back</button>
+                        : null}
+                  </td>
+                ) : null}
               </tr>
             )) : (
               <tr>
@@ -260,12 +284,40 @@ function ClaimsList(p: HrExpensesProps) {
           </tbody>
         </table>
       </div>
+      <XeroBatchPanel x={p.xeroBatch || null} onDismiss={p.onXeroBatchDismiss} />
+    </div>
+  );
+}
+
+/** `hrRCXeroBatchPanel()` — hros.html. Nothing at all until a batch has run. */
+function XeroBatchPanel({ x, onDismiss }: { x: XeroBatch | null; onDismiss?: () => void }) {
+  if (!x) return null;
+  const sect = (title: string, col: string, list: string[]) => list.length ? (
+    <div style={{ marginTop: '8px' }}>
+      <div style={{ fontSize: '12px', fontWeight: 650, color: col }}>{title + ' (' + list.length + ')'}</div>
+      {list.map((t, i) => <div key={i} className="muted" style={{ fontSize: '11.5px', paddingLeft: '10px' }}>{t}</div>)}
+    </div>
+  ) : null;
+  return (
+    <div style={{ marginTop: '12px', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <b style={{ fontSize: '13px' }}>{'⇢ Xero batch ' + (x.running ? '— posting…' : '— done')}</b>
+        {x.running ? null : <a onClick={onDismiss} style={{ cursor: 'pointer', fontSize: '11px', color: 'var(--muted)' }}>dismiss</a>}
+      </div>
+      {sect('Posted', 'var(--green-soft)', x.posted)}
+      {sect('Reference updated — claim number now in Xero', 'var(--green-soft)', x.resynced || [])}
+      {sect('Skipped — no Xero for this company', 'var(--amber)', x.skipped)}
+      {sect('Failed', 'var(--red-soft)', x.failed)}
+      {x.already ? <div className="muted" style={{ fontSize: '11.5px', marginTop: '6px' }}>{x.already + ' selected claim(s) were already in Xero and were left as they are.'}</div> : null}
     </div>
   );
 }
 
 /** hros.html:1826-1828 — which bulk actions the bar offers depends on the scope, not on the role. */
 function BulkButtons(p: HrExpensesProps & { n: number }) {
+  if (p.scope === 'paid') {
+    return <button className="btn p xs" onClick={p.onBulkPostXero} title="Write each claim number into its Xero bill’s Reference column">⇢ Update Xero reference ({p.n})</button>;
+  }
   return p.scope === 'pending' ? (
     <>
       <button className="btn p xs" onClick={p.onBulkApprove}>✓ Approve ({p.n})</button>{' '}
@@ -275,7 +327,8 @@ function BulkButtons(p: HrExpensesProps & { n: number }) {
   ) : (
     <>
       <button className="btn p xs" onClick={p.onExportBank}>🏦 Bank file ({p.n})</button>{' '}
-      <button className="btn xs" onClick={p.onBulkPay}>💵 Mark paid ({p.n})</button>
+      <button className="btn xs" onClick={p.onBulkPay}>💵 Mark paid ({p.n})</button>{' '}
+      <button className="btn xs" onClick={p.onBulkPostXero}>⇢ Post to Xero ({p.n})</button>
     </>
   );
 }

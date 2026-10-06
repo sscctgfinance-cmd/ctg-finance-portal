@@ -38,7 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
-import HrExpenses, { accountingCsv, bankFile, listCsv, selectedIds, type RcAcctRow, type RcClaim, type RcMe, type RcScope } from '../../../src/hr-expenses';
+import HrExpenses, { accountingCsv, bankFile, listCsv, selectedIds, type RcAcctRow, type RcClaim, type RcMe, type RcScope, type XeroBatch } from '../../../src/hr-expenses';
 import HrExpensesDash, { DashLoading, type RcDash } from '../../../src/hr-expenses-dash';
 import HrExpensesSettings, {
   approverPrompt, approverRow, costCenterRow, mileageRateRow, typeRow,
@@ -233,6 +233,91 @@ export default function HrExpensesPage() {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, [refreshList, scope, sel]);
+
+  /** One native TEXT prompt for every remark on this screen (Reject from the list, Send back). Required:
+   *  the server refuses an empty one too. `null` = the user cancelled or gave nothing. */
+  const askReason = useCallback((question: string): string | null => {
+    const t = window.prompt(question);
+    if (t === null) return null;
+    if (!t.trim()) { toast('Please give a reason', true); return null; }
+    return t.trim();
+  }, []);
+
+  /** `hrRCRowReject(id)` — hros.html. One pending claim rejected straight from the list. */
+  const onRowReject = useCallback(async (id: string) => {
+    const c = (claims || []).find((x) => x.id === id);
+    const reason = askReason('Reject ' + ((c && c.claim_no) || 'this claim') + ' — reason (the employee will see this):');
+    if (reason === null) return;
+    try {
+      await call({ api: 'hr_rc_decide', id, decision: 'reject', comment: reason });
+      toast('Rejected ' + ((c && c.claim_no) || '') + ' ✓');
+      setSel((s) => { const n = { ...s }; delete n[id]; return n; });
+      await refreshList(scope);
+    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+  }, [askReason, claims, refreshList, scope]);
+
+  /** `hrRCSendBack(id)` — hros.html. An Approved, unpaid, not-in-Xero claim returned to the employee. */
+  const onSendBack = useCallback(async (id: string) => {
+    const c = (claims || []).find((x) => x.id === id);
+    const reason = askReason('Send ' + ((c && c.claim_no) || 'this claim') + ' back? It was approved; it will become Rejected and the employee is emailed this reason:');
+    if (reason === null) return;
+    try {
+      const r = await call<{ warning?: string | null }>({ api: 'hr_rc_reject_approved', id, comment: reason });
+      toast(r.warning || 'Sent back to the employee ✓', !!r.warning);
+      setSel((s) => { const n = { ...s }; delete n[id]; return n; });
+      if (page === 'detail') { setPage('list'); }
+      await refreshList(scope);
+    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+  }, [askReason, claims, page, refreshList, scope]);
+
+  /**
+   * `hrRCBulkPostXero()` — hros.html. Each claim goes through the SAME hr_rc_post_xero as the single
+   * button (its duplicate guard included), one at a time ~1.1 s apart under Xero's 60-a-minute limit.
+   * A SYNCHRONOUS ref guards it, not state — PR #112's lesson: five taps in one tick would otherwise
+   * start five batches over the same claims.
+   */
+  const [xeroBatch, setXeroBatch] = useState<XeroBatch | null>(null);
+  const xeroBatchRef = useRef(false);
+  const onBulkPostXero = useCallback(async () => {
+    if (xeroBatchRef.current) { toast('Still working on that — one moment…', true); return; }
+    const ids = selectedIds(sel);
+    if (!ids.length) { toast('Select claims first', true); return; }
+    const byId = new Map((claims || []).map((c) => [c.id, c]));
+    // hros.html: a claim already in Xero is not posted again — hr_rc_post_xero writes its claim number into
+    // the bill's Reference column (InvoiceNumber) and nothing else.
+    const todo = ids.filter((id) => byId.has(id));
+    const fresh = todo.filter((id) => !byId.get(id)!.xero_bill_id).length, inXero = todo.length - fresh;
+    if (!todo.length) { toast('Select claims first', true); return; }
+    if (!await showConfirm('Post to Xero',
+      (fresh ? 'Post ' + fresh + ' claim(s) to Xero as ACCPAY bills (SUBMITTED).' : '') + (fresh && inXero ? '\n' : '') +
+      (inXero ? 'Put the claim number into the Reference of ' + inXero + ' bill(s) already in Xero.' : '') +
+      '\n\nClaims of a company without Xero are skipped. You still approve each payment inside Xero.', 'Continue', 'p')) return;
+    xeroBatchRef.current = true;
+    const res: XeroBatch = { posted: [], resynced: [], skipped: [], failed: [], already: 0, running: true, total: todo.length };
+    setXeroBatch({ ...res });
+    try {
+      for (let i = 0; i < todo.length; i++) {
+        const c = byId.get(todo[i])!; const no = c.claim_no || c.id;
+        toast('Posting to Xero ' + (i + 1) + ' / ' + todo.length + ' — ' + no + '…');
+        try {
+          const r = await call<{ adopted?: boolean; resynced?: boolean }>({ api: 'hr_rc_post_xero', id: c.id });
+          if (r.resynced) res.resynced.push(no);
+          else res.posted.push(no + (r.adopted ? ' (linked to existing bill)' : ''));
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          // portal.ts turns `{ok:false, skipped:true}` into a thrown message; the server's own words say which.
+          (/not connected to Xero/.test(msg) ? res.skipped : res.failed).push(no + ' — ' + msg);
+        }
+        setXeroBatch({ ...res });
+        if (i < todo.length - 1) await new Promise((ok) => setTimeout(ok, 1100));
+      }
+    } finally {
+      res.running = false; setXeroBatch({ ...res }); xeroBatchRef.current = false;
+    }
+    toast('Xero: ' + res.posted.length + ' posted' + (res.resynced.length ? ', ' + res.resynced.length + ' reference(s) updated' : '') + (res.skipped.length ? ', ' + res.skipped.length + ' skipped' : '') + (res.failed.length ? ', ' + res.failed.length + ' failed' : ''), !!res.failed.length);
+    setSel({});
+    await refreshList(scope);
+  }, [claims, refreshList, scope, sel]);
 
   /** `hrRCExportBank()` — hros.html:1855. The rows come out of the pure half; this is only the button. */
   const onExportBank = useCallback(() => {
@@ -768,7 +853,7 @@ export default function HrExpensesPage() {
         posted ? 'Re-sync' : 'Post to Xero', 'p')) return;
       toast('Posting to Xero…');
       void detailRun('xero', { api: 'hr_rc_post_xero', id: detail!.claim.id },
-        (r) => 'Posted to Xero ✓' + (r.attached ? (' · ' + r.attached + ' receipt(s) attached') : ''));
+        (r) => r.resynced ? 'Xero reference updated to ' + (r.reference || '') + ' ✓' : 'Posted to Xero ✓' + (r.attached ? (' · ' + r.attached + ' receipt(s) attached') : ''));
     })();
   }, [detail, detailRun]);
 
@@ -895,6 +980,11 @@ export default function HrExpensesPage() {
                 const msg = window.prompt(`Message to employee(s) for ${selectedIds(sel).length} claim(s):`);
                 if (msg && msg.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'request_info', comment: msg }, 'Sent back');
               }}
+              onRowReject={(id) => void onRowReject(id)}
+              onSendBack={(id) => void onSendBack(id)}
+              onBulkPostXero={() => void onBulkPostXero()}
+              xeroBatch={xeroBatch}
+              onXeroBatchDismiss={() => setXeroBatch(null)}
               onBulkPay={() => {
                 // The two `prompt()`s stay native — so are hros.html:1854's, and a text prompt is not one
                 // of the two controls this shell ported. The CONFIRM is the app's own dialog now.
@@ -1004,6 +1094,7 @@ export default function HrExpensesPage() {
                     onMarkPaid={onMarkPaid}
                     onGlEdit={onGlEdit}
                     onPostXero={onPostXero}
+                    onSendBack={(id) => void onSendBack(id)}
                     onFormAndReceipts={onFormAndReceipts}
                     onVoucher={onVoucher}
                     onEdit={onEdit}

@@ -38,6 +38,8 @@ export interface LeaveStep {
   assignee_name?: string | null;
   decided_by_name?: string | null;
   decided_at?: string | null;
+  /** The approver's remark — required on a rejection since 2026-10-06. */
+  comment?: string | null;
 }
 
 /** One row of `hr_leave_admin.requests` — hros.html:3475. */
@@ -354,6 +356,9 @@ function DetailRow({ x }: { x: LeaveRequest }) {
                   {s.name || s.approver_role || ('Level ' + (s.step_order || ''))}{' '}
                   <span style={{ color: col }}>{done ? 'Approved' : rej ? 'Rejected' : 'Waiting'}</span>
                   <span className="muted">{tail}</span>
+                  {String(s.comment || '').trim()
+                    ? <div className="muted" style={{ fontSize: '11.5px', fontStyle: 'italic', margin: '2px 0 0 18px' }}>{'\u201c' + String(s.comment).trim() + '\u201d'}</div>
+                    : null}
                 </div>
               );
             })}

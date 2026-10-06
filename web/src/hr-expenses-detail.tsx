@@ -196,6 +196,8 @@ export interface HrExpensesDetailProps {
   onMarkPaid: () => void;
   onGlEdit: (itemId: string | null) => void;
   onPostXero: () => void;
+  /** `hrRCSendBack(id)` — an Approved, unpaid claim returned to the employee with a remark. */
+  onSendBack?: (id: string) => void;
   onFormAndReceipts: () => void;
   onVoucher: () => void;
   onEdit: () => void;
@@ -577,6 +579,9 @@ function XeroBlock({ p }: { p: HrExpensesDetailProps }) {
         Creates an ACCPAY bill (<b>SUBMITTED</b> — you still approve the payment inside Xero). Each line is coded to its claim type’s GL account, with receipts attached.
       </div>
       <button className="btn p sm" disabled={p.busy === 'xero'} onClick={p.onPostXero}>Post to Xero →</button>
+      {c.status === 'Approved'
+        ? <>{' '}<button className="btn sm d" title="Return it to the employee with a remark" onClick={() => p.onSendBack && p.onSendBack(c.id)}>↩ Send back…</button></>
+        : null}
     </div>
   );
 }

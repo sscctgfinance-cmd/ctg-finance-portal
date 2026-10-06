@@ -84,6 +84,18 @@ export default function HrLeavePage() {
   return empMode ? <EmpLeavePage /> : <AdminLeavePage />;
 }
 
+/**
+ * `hrLeaveRejectReason()` — hros.html. A rejection carries its reason: the employee reads it in the email
+ * and on their request, and `hr_leave_decide` refuses an empty one. A native TEXT prompt, as the legacy
+ * asks it (see tests/shell-chrome.test.tsx's prompt count). `null` = cancelled, or nothing given.
+ */
+function leaveRejectReason(): string | null {
+  const t = window.prompt('Reason for rejecting this leave (the employee will see this):');
+  if (t === null) return null;
+  if (!t.trim()) { toast('Please give a reason for rejecting', true); return null; }
+  return t.trim();
+}
+
 function AdminLeavePage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [data, setData] = useState<LeaveAdmin | null>(null);
@@ -191,8 +203,9 @@ function AdminLeavePage() {
    * uses the browser's `confirm()`; this now asks with the app's own dialog (src/confirm.tsx).
    */
   const onDecide = useCallback(async (id: string, decision: 'approve' | 'reject') => {
-    if (decision === 'reject' && !await showConfirm('Reject leave request', 'Reject this leave request?', 'Reject')) return;
-    void run({ api: 'hr_leave_decide', id, decision }, `Leave ${decision}${decision === 'reject' ? 'ed' : 'd'} ✓`);
+    let comment = '';
+    if (decision === 'reject') { const t = leaveRejectReason(); if (t === null) return; comment = t; }
+    void run({ api: 'hr_leave_decide', id, decision, comment }, `Leave ${decision}${decision === 'reject' ? 'ed' : 'd'} ✓`);
   }, [run]);
 
   /** hros.html:3499 */
@@ -407,9 +420,10 @@ function EmpLeavePage() {
 
   /** hros.html:3073 — only a REJECTION is confirmed, and the toast names which of the three outcomes. */
   const onDecide = useCallback(async (id: string, decision: 'approve' | 'reject') => {
-    if (decision === 'reject' && !await showConfirm('Reject leave request', 'Reject this leave request?', 'Reject', 'd')) return;
+    let comment = '';
+    if (decision === 'reject') { const t = leaveRejectReason(); if (t === null) return; comment = t; }
     try {
-      const r = await call<{ final?: boolean; advanced?: boolean }>({ api: 'hr_leave_decide', id, decision });
+      const r = await call<{ final?: boolean; advanced?: boolean }>({ api: 'hr_leave_decide', id, decision, comment });
       toast(r.final ? 'Approved ✓' : r.advanced ? 'Approved → next level' : 'Done');
       await load();
     } catch (e) {

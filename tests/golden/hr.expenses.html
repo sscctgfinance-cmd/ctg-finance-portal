@@ -50,6 +50,8 @@
 <th>Date</th>
 <th class="amt">Amount</th>
 <th>Status</th>
+<th>
+</th>
 </tr>
 </thead>
 <tbody>
@@ -67,6 +69,9 @@
 <td>
 <span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">pending_approval</span>
 </td>
+<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">
+<button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject('rc1')">✕ Reject</button>
+</td>
 </tr>
 <tr onclick="hrRCOpen('rc2')" style="cursor:pointer">
 <td style="width:26px" onclick="event.stopPropagation()">
@@ -82,6 +87,9 @@
 <td>
 <span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">approved</span>
 </td>
+<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">
+<button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject('rc2')">✕ Reject</button>
+</td>
 </tr>
 <tr onclick="hrRCOpen('rc3')" style="cursor:pointer">
 <td style="width:26px" onclick="event.stopPropagation()">
@@ -96,6 +104,9 @@
 <td class="amt">RM 0.00</td>
 <td>
 <span class="pill" style="color:var(--muted);background:rgba(255,255,255,.06)">paid</span>
+</td>
+<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">
+<button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject('rc3')">✕ Reject</button>
 </td>
 </tr>
 </tbody>

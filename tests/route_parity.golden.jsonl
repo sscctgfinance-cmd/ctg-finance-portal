@@ -113,6 +113,7 @@
 {"api":"hr_rc_mark_paid_bulk","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rc_ocr","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rc_post_xero","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
+{"api":"hr_rc_reject_approved","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rc_save","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rc_set_gl","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}
 {"api":"hr_rc_submit","status":401,"body":"{\"ok\":false,\"error\":\"unauthorized\"}"}

@@ -99,6 +99,9 @@ function assertHandlerParity(over: Partial<Parameters<typeof HrExpenses>[0]> = {
     onSelToggle: record('selToggle') as never,
     onExportAcct: record('exportAcct') as never,
     onExportCsv: record('exportCsv') as never,
+    // hrRCRowReject(id) — the per-row ✕ Reject. Its id is the row's, so a button wired to another row
+    // (or to Approve) shows up as a different argument at that position.
+    onRowReject: record('rowReject') as never,
     ...over,
   }));
 
