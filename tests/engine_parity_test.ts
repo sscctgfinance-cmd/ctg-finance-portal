@@ -516,3 +516,42 @@ Deno.test("rule — pcb_set overrides the computed MTD, identically in both engi
   assertEquals(asEarn.socsoEe, bare.socsoEe);
   assertEquals(asEarn.epfEe, bare.epfEe);
 });
+
+Deno.test("rule — lindung_set overrides LINDUNG 24, identically in both engines, BEFORE the PCB relief (2026-10-08)", () => {
+  // The operator asked to adjust LINDUNG 24 on the payroll grid — for a month that has to match PERKESO's
+  // own statement or a previous payroll. Same contract as pcb_set: blank = computed, any entry wins.
+  const emp = baseEmp({ basic_salary: 3050 });
+  const set = (amount: number) => [{ kind: "lindung_set", amount, epf_subject: false }];
+  const plain = computePayrollMY(emp, CFG, [], undefined, PERIOD);
+  assertEquals(plain.lindung > 0, true, "the test is worthless if LINDUNG is not active in PERIOD");
+
+  for (const amt of [0, 0.01, 12.5, 22.85, 40]) {
+    const a = hrCompute(emp, CFG, set(amt), PERIOD);
+    const b = computePayrollMY(emp, CFG, set(amt), undefined, PERIOD);
+    for (const k of MONEY) {
+      assertEquals(Math.abs(Number(a[k]) - Number(b[k])) <= 0.01, true, `lindung_set ${amt}: ${k} — frontend ${a[k]} vs backend ${b[k]}`);
+    }
+    assertEquals(b.lindung, amt, `lindung_set ${amt} must survive verbatim`);
+    // It is the employee's own contribution: no employer share, no other contribution moves.
+    for (const k of ["gross", "epfEe", "epfEr", "socsoEe", "socsoEr", "eisEe", "eisEr", "employerCost"]) {
+      assertEquals(b[k], plain[k], `lindung_set must not change ${k}`);
+    }
+  }
+  // ZERO is a real override (e.g. not covered that month), not "unset".
+  assertEquals(computePayrollMY(emp, CFG, set(0), undefined, PERIOD).lindung, 0);
+  assertEquals(hrCompute(emp, CFG, set(0), PERIOD).lindung, 0);
+  // Last row wins, on both sides.
+  const dup = [{ kind: "lindung_set", amount: 10 }, { kind: "lindung_set", amount: 20 }];
+  assertEquals([computePayrollMY(emp, CFG, dup, undefined, PERIOD).lindung, hrCompute(emp, CFG, dup, PERIOD).lindung], [20, 20]);
+  // Net absorbs it: plain net + plain LINDUNG = overridden net + overridden LINDUNG (+ any PCB movement).
+  const o = computePayrollMY(emp, CFG, set(5), undefined, PERIOD);
+  assertEquals(Math.round((o.net + o.lindung + o.pcb) * 100), Math.round((plain.net + plain.lindung + plain.pcb) * 100));
+
+  // ORDER. The MTD SOCSO/EIS relief counts LINDUNG (v184), so the override must land BEFORE that line in
+  // BOTH engines — after it, PCB is computed on a figure the payslip no longer shows. The annual RM350
+  // cap usually hides the difference in the numbers, which is why this is pinned on the source.
+  for (const [name, src] of [["payroll.js (frontend)", feSrc], ["hr.ts (backend)", ts]] as const) {
+    const set_ = src.indexOf("lindung_set"), relief = src.indexOf("projSocsoEis");
+    assertEquals(set_ > 0 && relief > 0 && set_ < relief, true, `${name}: lindung_set is applied after the PCB relief that counts it`);
+  }
+});

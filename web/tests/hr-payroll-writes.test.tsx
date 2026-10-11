@@ -105,7 +105,7 @@ describe('gridSaveAdjustments — hrGridSave()\'s delta (hros.html:4305)', () =>
     const legacyKinds = new Set([...slice.matchAll(/kind:'([a-z_]+)'/g)].map((m) => m[1]));
     // Exercise every branch so the output covers the full kind set.
     const grid = {
-      e1: row({ basic: 6000, allow: 500, bonus: 1, ot: 1, allowance: 1, unpaid: 1, pcbSet: 5, deductions: [{ label: 'x', amount: 1 }] }),
+      e1: row({ basic: 6000, allow: 500, bonus: 1, ot: 1, allowance: 1, unpaid: 1, pcbSet: 5, linSet: 3, deductions: [{ label: 'x', amount: 1 }] }),
       e2: row({ basic: 3400, allow: 250, skip: true }),
     };
     const kinds = new Set(gridSaveAdjustments(DATA, grid).map((a) => a.kind));

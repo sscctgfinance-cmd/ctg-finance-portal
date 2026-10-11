@@ -124,6 +124,8 @@ export interface GridRow {
   deductions: Deduction[];
   unpaid: number;
   pcbSet: number | null;
+  /** `lindung_set` — a typed LINDUNG 24 for this period (hros.html hrGLinCell). */
+  linSet?: number | null;
   skip: boolean;
   _att: { hours?: number; days?: number };
   _autoBasic: number | null;
@@ -171,6 +173,7 @@ export function gridSaveAdjustments(data: PayData, grid: Record<string, GridRow>
     (g.deductions || []).forEach((x) => { if (Number(x.amount)) out.push({ employee_id: e.id, kind: 'deduction', label: x.label || 'Other deduction', amount: Number(x.amount), epf_subject: false }); });
     if (Number(g.unpaid)) out.push({ employee_id: e.id, kind: 'unpaid_leave', amount: Number(g.unpaid), epf_subject: false });
     if (g.pcbSet != null) out.push({ employee_id: e.id, kind: 'pcb_set', amount: Number(g.pcbSet) || 0, epf_subject: false });
+    if (linOn(g)) out.push({ employee_id: e.id, kind: 'lindung_set', amount: Number(g.linSet) || 0, epf_subject: false });
     if (g.skip) out.push({ employee_id: e.id, kind: 'skip', amount: 0, epf_subject: false });
   });
   return out;
@@ -238,7 +241,7 @@ export function gridInit(data: PayData): Record<string, GridRow> {
       basic: baseVal, allow: aset != null ? aset : Number(e.fixed_allowance || 0),
       bonus: sumK('bonus'), ot: sumK('ot'),
       allowance: sumKe('allowance', true), allowanceNs: sumKe('allowance', false), deductions: deds,
-      unpaid: sumK('unpaid_leave'), pcbSet: setK('pcb_set'),
+      unpaid: sumK('unpaid_leave'), pcbSet: setK('pcb_set'), linSet: setK('lindung_set'),
       skip: mine.some((a) => a.kind === 'skip'),
       _att: att, _autoBasic: autoBasic, _payType: String(e.pay_type || 'monthly'),
     };
@@ -283,6 +286,7 @@ export function gridRowCompute(
   // v195: blank = let the engine compute. 0 is a REAL override (some staff genuinely have nil MTD), so
   // this must test for null/'' — not falsiness.
   if (g.pcbSet != null && (g.pcbSet as unknown) !== '') adj.push({ kind: 'pcb_set', amount: Number(g.pcbSet) || 0, epf_subject: false });
+  if (linOn(g)) adj.push({ kind: 'lindung_set', amount: Number(g.linSet) || 0, epf_subject: false });
   return hrCompute(synth, rates, adj, period, (ytd as Record<string, unknown> | undefined)) as PayQuote;
 }
 
@@ -562,6 +566,9 @@ export interface HrPayrollProps {
   onCell: (empId: string, field: CellField, v: string) => void;
   onPcbCell: (empId: string, v: string) => void;
   onPcbAuto: (empId: string) => void;
+  /** `hrGridLinCell()` / `hrGridLinAuto()` — the LINDUNG 24 override, PCB's twin. */
+  onLinCell?: (empId: string, v: string) => void;
+  onLinAuto?: (empId: string) => void;
   onDedOpen: (empId: string) => void;
   onDedAdd: (empId: string, label?: string) => void;
   onDedDel: (empId: string, i: number) => void;
@@ -819,7 +826,7 @@ export default function HrPayroll(p: HrPayrollProps) {
                 <th className="amt">EPF</th>
                 <th className="amt">SOCSO</th>
                 <th className="amt">EIS</th>
-                <th className="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026">LIND24</th>
+                <th className="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026. Type over it to set the real figure for this month">LIND24 <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>✎</span></th>
                 <th className="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style={{ fontWeight: '400', textTransform: 'none', letterSpacing: '0' }}>✎</span></th>
                 <th className="amt">Net</th>
               </tr>
@@ -939,6 +946,41 @@ function PcbCell({ p, id, computed }: { p: HrPayrollProps; id: string; computed:
   );
 }
 
+/** `hrGLinCell()` — hros.html. The LINDUNG 24 override; same rules as PcbCell. */
+function LinCell({ p, id, computed }: { p: HrPayrollProps; id: string; computed: number }) {
+  const g = p.grid[id] || ({} as GridRow);
+  const ov = linOn(g);
+  const shown = (ov ? Number(g.linSet) : Number(computed) || 0).toFixed(2);
+  const style: CSSProperties = {
+    width: '76px', padding: '4px 6px', background: 'var(--panel-2)',
+    border: '1px solid ' + (ov ? 'var(--amber)' : 'var(--border)'), borderRadius: '5px',
+    color: ov ? 'var(--amber)' : 'var(--text)', fontSize: '11.5px', textAlign: 'right',
+    fontWeight: ov ? '700' : '400',
+    ...(p.locked ? { opacity: '.6', cursor: 'not-allowed' } : null),
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', justifyContent: 'flex-end' }}>
+      <input
+        type="number" step="0.01" min="0" id={'lin_' + id} value={shown} disabled={p.locked || undefined}
+        onInput={(e) => p.onLinCell && p.onLinCell(id, val(e))} onFocus={selectAll}
+        title={ov ? 'Manual LINDUNG 24 for this month. ↺ goes back to the calculated figure.' : 'Calculated from the LINDUNG 24 table. Type over it to set the real figure for this month.'}
+        style={style}
+      />
+      {p.locked ? null : (
+        <button
+          id={'linu_' + id} onClick={() => p.onLinAuto && p.onLinAuto(id)} title="Back to the calculated figure"
+          style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontSize: '12px', padding: '0 1px', lineHeight: '1', display: ov ? 'inline' : 'none' }}
+        >↺</button>
+      )}
+    </span>
+  );
+}
+
+/** `hrGridLinOn()` — hros.html. Empty = calculated; anything else, including 0, is the real figure. */
+export function linOn(g: Partial<GridRow> | undefined): boolean {
+  return !!g && g.linSet != null && (g.linSet as unknown) !== '';
+}
+
 /** `hrGridPcbOn()` — hros.html:4228. */
 export function pcbOn(g: Partial<GridRow> | undefined): boolean {
   return !!g && g.pcbSet != null && (g.pcbSet as unknown) !== '';
@@ -985,7 +1027,7 @@ function GridTr({ p, r }: { p: HrPayrollProps; r: PayRow }) {
       {amt('epf_' + id, q.epfEe)}
       {amt('soc_' + id, q.socsoEe)}
       {amt('eis_' + id, q.eisEe)}
-      {amt('lin_' + id, q.lindung)}
+      <td className="amt"><LinCell p={p} id={id} computed={q.lindung} /></td>
       <td className="amt"><PcbCell p={p} id={id} computed={q.pcb} /></td>
       {amt('net_' + id, q.net, { fontWeight: '700', color: 'var(--green-soft)' })}
     </tr>

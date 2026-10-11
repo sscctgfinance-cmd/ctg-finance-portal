@@ -132,6 +132,12 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   // ---- LINDUNG 24 Jam (SKBBK) — employee-only, no employer share. Must mirror computePayrollMY. ----
   var lindungOn = myLindungActive(period) && (nonCitizen ? true : emp.lindung24!==false) && socsoOn;
   var lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
+  // 2026-10-08: an explicit LINDUNG 24 figure for this period wins (`lindung_set`), exactly like pcb_set —
+  // for a figure that has to match PERKESO's own statement or a previous payroll. Applied HERE, before the
+  // PCB step, because the MTD SOCSO/EIS relief below counts LINDUNG: applying it later would leave PCB
+  // computed on the old figure. 0 is a real figure, not "unset". Must mirror computePayrollMY exactly.
+  var linSetRows=adj.filter(function(a){return a.kind==='lindung_set';});
+  if(linSetRows.length){ lindung=Math.max(0, hrRound2(Number(linSetRows[linSetRows.length-1].amount)||0)); }
   // ---- PCB / MTD (annualised chargeable-income estimate) ----
   // Bonus = ADDITIONAL remuneration (LHDN method): annualising it ×12 massively over-deducts in bonus
   // months (RM4k salary + RM4k Dec bonus was taxed as RM96k/yr instead of RM52k + bonus-once).

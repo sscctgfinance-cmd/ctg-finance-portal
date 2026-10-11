@@ -203,6 +203,13 @@ export default function HrPayrollPage() {
     });
   }, [mutate]);
   const onPcbAuto = useCallback((id: string) => mutate(id, (g) => ({ ...g, pcbSet: null })), [mutate]);
+  /** `hrGridLinCell()` / `hrGridLinAuto()` — hros.html. Touching the box IS the override, 0 included. */
+  const onLinCell = useCallback((id: string, v: string) => mutate(id, (g) => {
+    if (v === '' || v == null) return { ...g, linSet: null };
+    const n = Number(v);
+    return { ...g, linSet: isFinite(n) ? Math.max(0, n) : null };
+  }), [mutate]);
+  const onLinAuto = useCallback((id: string) => mutate(id, (g) => ({ ...g, linSet: null })), [mutate]);
 
   const onDedAdd = useCallback((id: string, label?: string) =>
     mutate(id, (g) => ({ ...g, deductions: [...(g.deductions || []), { label: label || '', amount: 0 }] })), [mutate]);
@@ -778,6 +785,8 @@ export default function HrPayrollPage() {
             onCell={onCell}
             onPcbCell={onPcbCell}
             onPcbAuto={onPcbAuto}
+            onLinCell={onLinCell}
+            onLinAuto={onLinAuto}
             onDedOpen={(id) => setDedEmp((c) => (c === id ? null : id))}
             onDedAdd={onDedAdd}
             onDedDel={onDedDel}

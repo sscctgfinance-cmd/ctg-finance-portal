@@ -733,7 +733,10 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   // OUTSIDE work. 100% employee-borne, no employer share; same Act 4 wage definition as SOCSO, so bonus is
   // excluded and the RM6,000 ceiling applies.
   const lindungOn = myLindungActive(period) && (nonCitizen ? true : emp.lindung24!==false) && socsoOn;
-  const lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
+  let lindung = lindungOn ? myLindung24(statWageExBonus) : 0;
+  // 2026-10-08: lindung_set — an explicit LINDUNG 24 for this period wins, BEFORE the PCB relief that counts
+  // it. 0 is a real figure. Must mirror hrCompute (payroll.js) exactly or finalise 409s the whole run.
+  { const linSet=lastAdjAmt('lindung_set'); if(linSet!=null) lindung=Math.max(0, payRound2(linSet)); }
   const statWageNormal=statWageExBonus;   // same quantity — one definition only
 
   // v155/v156: PCB per the LHDN MTD net formula. Annualise over the employee's ACTUAL service months
