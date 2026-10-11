@@ -6,3 +6,5 @@ export declare function mytISOPlusDays(days: number): string;
 export declare function mytYMD(t?: number | string | Date | null): { year: number; month: number; day: number } | null;
 export declare function mytDtLocal(t?: number | string | Date | null): string;
 export declare function mytFromDtLocal(s: string): Date | null;
+/** "HH:MM" in Malaysia; '—' when there is no instant (never "now"). */
+export declare function mytHHMM(t?: number | string | Date | null): string;

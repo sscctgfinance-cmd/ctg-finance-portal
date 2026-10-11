@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import HrClock, { type ClockStatus } from '../../../src/hr-clock';
 import { call, legacyUrl, token } from '../../../src/portal';
+import { mytHHMM } from '../../../../myt.js';
 import FailedLoad from '../../../src/failed-load';
 
 /** `hrClkTick()` — hros.html:2910. Same arithmetic; here it feeds a prop instead of `el.textContent`. */
@@ -22,7 +23,8 @@ function elapsedSince(iso: string, now: number): string {
 }
 
 /** `hrClkNow()` — hros.html:2909. */
-const clkNow = (ms: number) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+/** `hrClkNow()` — the face shows MALAYSIAN wall time, read off the SERVER's clock (now + skew). */
+const clkNow = (ms: number) => mytHHMM(ms);
 
 /**
  * `hrGetGeo()` — hros.html:2911. Resolves `{}` rather than rejecting on refusal or timeout, because a
@@ -57,6 +59,9 @@ export default function HrClockPage() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [acting, setActing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // `CLK.skew` (hros.html): how far this device's clock is from the server's. A phone running fast or
+  // slow otherwise shows the wrong time on the face and the wrong elapsed figure since clock-in.
+  const skewRef = useRef(0);
   const schedRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -66,7 +71,10 @@ export default function HrClockPage() {
       const co = await call<{ companies?: { tenant_id: string; tenant_name: string }[] }>({ api: 'hr_companies' });
       const list = co.companies || [];
       setCompany((list.find((c) => c.tenant_id === saved) || list[0])?.tenant_name || '');
-      setData(await call<ClockStatus>({ api: 'clock_status' }));
+      const st = await call<ClockStatus>({ api: 'clock_status' });
+      const sn = Date.parse(st.server_now || '');
+      if (isFinite(sn)) { skewRef.current = sn - Date.now(); setNow(Date.now() + skewRef.current); }
+      setData(st);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -82,7 +90,7 @@ export default function HrClockPage() {
   // `hrClock()` (hros.html:2913) starts one interval and never clears it; an effect owns its own, which
   // is the whole difference. Re-rendering once a second is what advances the elapsed counter.
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => setNow(Date.now() + skewRef.current), 1000);
     return () => clearInterval(id);
   }, []);
 

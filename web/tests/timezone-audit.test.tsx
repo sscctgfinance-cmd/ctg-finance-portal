@@ -160,7 +160,7 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   // ---- HR routes ------------------------------------------------------------------------------
   { file: 'app/hr/attendance/page.tsx', n: 3, cat: 'a', legacy: 'hros.html:3040, :3085', note: 'v224: month default and the punch READ-BACK are MYT; the punch is still POSTED as an instant' },
   { file: 'app/hr/calculator/page.tsx', n: 2, cat: 'a', legacy: 'hros.html:4897-4898, :4906-4907', note: 'v224: the payslip/audit-log period is MYT — the clock read is still lifted out of the component' },
-  { file: 'app/hr/clock/page.tsx', n: 4, cat: 'a', legacy: 'hros.html:2909-2910', note: 'the ticking clock; elapsed is epoch arithmetic' },
+  { file: 'app/hr/clock/page.tsx', n: 4, cat: 'a', legacy: 'hros.html hrClkNowMs/hrClkTick', note: 'the ticking clock = device clock + server skew (2026-10-10); elapsed is epoch arithmetic' },
   { file: 'app/hr/dashboard/page.tsx', n: 1, cat: 'a', legacy: 'hros.html:1727', note: 'v224: first-paint month/year default is MYT' },
   { file: 'app/hr/expenses/page.tsx', n: 2, cat: 'a', legacy: 'hros.html:1840 → :1271, :2684', note: 'v224: hrToday is MYT — the legacy comment already claimed it was and now it is. v226 adds one cat-c read: Date.now() handed to typeRow() for a NEW claim type\'s fallback CODE suffix (hros.html:2684), which is an id, not a date' },
   { file: 'app/hr/leave/page.tsx', n: 1, cat: 'a', legacy: 'hros.html:3437 → :1271', note: 'v224: the apply-on-behalf date default is MYT' },
@@ -178,8 +178,6 @@ const INVENTORY: { file: string; n: number; cat: 'a' | 'b' | 'c'; legacy: string
   { file: 'src/finance-users-xero.tsx', n: 2, cat: 'a', legacy: 'app.html:4973, :4978', note: 'bare toLocaleString() on an instant; one is a NUMBER formatter' },
   { file: 'src/finance-users.tsx', n: 2, cat: 'a', legacy: 'app.html:4739-4744', note: 'relTime — epoch arithmetic, then toLocaleDateString with no zone' },
   // ---- HR screens -----------------------------------------------------------------------------
-  { file: 'src/hr-attendance.tsx', n: 2, cat: 'a', legacy: 'hros.html:2908', note: 'v224: only hhmm/clkTime are left — dtLocal now delegates to myt.js and reads no clock here' },
-  { file: 'src/hr-clock.tsx', n: 2, cat: 'a', legacy: 'hros.html:2908', note: 'hrClkTime — toLocaleTimeString, read under the harness zone override in its test' },
   { file: 'src/hr-leave.tsx', n: 6, cat: 'a', legacy: 'hros.html:1246', note: 'hrDT — +8h then getUTC*, MYT without a timezone database' },
   { file: 'src/hr-payroll.tsx', n: 8, cat: 'a', legacy: 'hros.html:3831, :4303-4304, :4309, :4450', note: 'dueInfo subtracts two LOCAL midnights but anchors "today" in MYT; fmt and runDate are BARE toLocale*' },
   { file: 'src/hr-profile.tsx', n: 6, cat: 'a', legacy: 'hros.html:1246', note: 'hrDT again — the second copy, identical' },
@@ -198,6 +196,10 @@ const DELEGATED: { file: string; uses: string; was: string }[] = [
   { file: 'src/finance-info.tsx', uses: 'mytISO', was: 'TWO clocks in one comparison — MYT vs the machine, common.js:27-28' },
   { file: 'src/finance-o2o.tsx', uses: 'mytISO', was: "LOCAL — app.html:2771's o2oToday(), the date on a batch posted into Xero" },
   { file: 'src/hr-calculator.tsx', uses: 'mytYMD', was: 'LOCAL — hros.html:4898, the month printed on an ad-hoc payslip' },
+  // 2026-10-10 — the Time Clock's punch times. BARE toLocaleTimeString until the operator found staff
+  // seeing a clock-in hours off the recorded one; both renderers moved together, goldens regenerated.
+  { file: 'src/hr-clock.tsx', uses: 'mytHHMM', was: "BARE — hros.html hrClkTime(), the clock-in on an employee's own clock" },
+  { file: 'src/hr-attendance.tsx', uses: 'mytHHMM', was: 'BARE — hros.html hrClkTime(), the punch TABLE beside the MYT punch EDITOR' },
 ];
 
 /**
@@ -474,7 +476,9 @@ describe('The timezone audit — the derivations are pinned at the source', () =
  * passed the whole suite. Every entry below is one of them, or its sibling. See the PR.
  */
 const SNIPPETS: { file: string; code: string; legacy: string; why: string }[] = [
-  { file: 'app/hr/clock/page.tsx', code: "new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })", legacy: 'hros.html:2909', why: 'the running clock an employee punches against' },
+  { file: 'app/hr/clock/page.tsx', code: 'const clkNow = (ms: number) => mytHHMM(ms);', legacy: 'hros.html hrClkNow', why: 'the running clock an employee punches against — Malaysian wall time' },
+  { file: 'app/hr/clock/page.tsx', code: 'setNow(Date.now() + skewRef.current)', legacy: 'hros.html hrClkNowMs', why: "the SERVER's now, not the phone's — a fast or slow phone showed the wrong time and elapsed" },
+  { file: 'app/hr/clock/page.tsx', code: 'skewRef.current = sn - Date.now()', legacy: 'hros.html hrClockLoad', why: 'the skew is measured from clock_status.server_now' },
   { file: 'src/finance-users.tsx', code: "d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })", legacy: 'app.html:4744', why: 'when a user was last seen' },
   // v224 turned these five from the machine's zone into Malaysia's. They stay in SNIPPETS because they
   // are inline reads with no function body to slice — which is exactly the shape the first cut of this
@@ -487,8 +491,8 @@ const SNIPPETS: { file: string; code: string; legacy: string; why: string }[] = 
   { file: 'src/finance-overview.tsx', code: "new Date(data.as_of).toLocaleString('en-GB', {", legacy: 'app.html:2107', why: 'how fresh the consolidated figures are' },
   { file: 'src/finance-overview.tsx', code: "new Date(now).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })", legacy: 'app.html:2143', why: 'the #last-refresh clock in the shell' },
   { file: 'src/finance-cfo.tsx', code: "new Date(r.generated_at).toLocaleString('en-GB', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })", legacy: 'app.html:2080', why: 'when the analytics cache was built' },
-  { file: 'src/hr-attendance.tsx', code: "d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })", legacy: 'hros.html:2908', why: 'the clock-in time on the attendance table — BARE, and pinned by the golden; see the header' },
-  { file: 'src/hr-clock.tsx', code: "d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })", legacy: 'hros.html:2908', why: 'the clock-in time on the employee clock' },
+  { file: 'src/hr-attendance.tsx', code: "return iso ? mytHHMM(iso) : '—';", legacy: 'hros.html hrClkTime', why: 'the clock-in time on the attendance table — Malaysian since 2026-10-10' },
+  { file: 'src/hr-clock.tsx', code: "return iso ? mytHHMM(iso) : '—';", legacy: 'hros.html hrClkTime', why: 'the clock-in time on the employee clock — Malaysian since 2026-10-10' },
 ];
 
 describe('The timezone audit — the inline reads are pinned too', () => {

@@ -22,7 +22,7 @@
 
 import type { CSSProperties } from 'react';
 
-import { mytDtLocal } from '../../myt.js';
+import { mytDtLocal, mytHHMM } from '../../myt.js';
 
 /** One row of `attendance_list.summary` — hros.html:3058. */
 export interface AttSummary {
@@ -89,15 +89,11 @@ function M(n: number): string {
 }
 
 /**
- * `hrClkTime()` — hros.html:2908. Same call, so the same string: the punch is stored in UTC and shown in
- * the viewer's zone, which is what an operator checking a timesheet expects. The parity test pins that
- * zone so the comparison is read the way the golden was written.
+ * `hrClkTime()` — hros.html. A punch is stored in UTC and shown in MALAYSIAN time (2026-10-10), so the
+ * punch TABLE now agrees with the punch EDITOR beside it (`mytDtLocal`) for an admin in any zone.
  */
 export function clkTime(iso?: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return iso ? mytHHMM(iso) : '—';
 }
 
 /**

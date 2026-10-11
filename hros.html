@@ -3209,10 +3209,17 @@ async function hrSaveEmp(){
   toast('Employee saved'); HR.editEmp=null; renderHR();
 }
 // ===== ⏱ Time Clock (employee self-service) + 🕐 Attendance (admin) =====
-var CLK={ data:null, loading:false, acting:false, err:null };
-function hrClkTime(iso){ if(!iso) return '—'; var d=new Date(iso); if(isNaN(d)) return '—'; return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
-function hrClkNow(){ return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
-function hrClkTick(){ var el=document.getElementById('clk_elapsed'); if(!el||!CLK.data||!CLK.data.open) return; var ms=Date.now()-new Date(CLK.data.open.clock_in).getTime(); if(ms<0)ms=0; var h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000); var p=function(n){return(n<10?'0':'')+n;}; el.textContent=p(h)+':'+p(m)+':'+p(s); }
+var CLK={ data:null, loading:false, acting:false, err:null, skew:0 };
+// 2026-10-10: the Time Clock is ALWAYS Malaysian time. A punch is stamped by the SERVER (hr.ts clock_in /
+// clock_out) and was correct all along; what drifted was the DISPLAY — toLocaleTimeString() printed it in
+// the device's own zone, and the clock face / elapsed timer read the device's own clock. So a phone set to
+// another zone, or simply running fast/slow, showed a clock-in hours or minutes away from the recorded one.
+// Punch times now go through mytHHMM() (myt.js), and "now" is the SERVER's now: clock_status returns
+// server_now, and CLK.skew is how far this device's clock is from it.
+function hrClkTime(iso){ return iso ? mytHHMM(iso) : '—'; }
+function hrClkNowMs(){ return Date.now()+(Number(CLK.skew)||0); }
+function hrClkNow(){ return mytHHMM(hrClkNowMs()); }
+function hrClkTick(){ var f=document.getElementById('clk_now'); if(f) f.textContent=hrClkNow(); var el=document.getElementById('clk_elapsed'); if(!el||!CLK.data||!CLK.data.open) return; var ms=hrClkNowMs()-new Date(CLK.data.open.clock_in).getTime(); if(ms<0)ms=0; var h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000); var p=function(n){return(n<10?'0':'')+n;}; el.textContent=p(h)+':'+p(m)+':'+p(s); }
 function hrGetGeo(){ return new Promise(function(res){ if(!navigator.geolocation){res({});return;} var done=false,t=setTimeout(function(){if(!done){done=true;res({});}},4000); try{ navigator.geolocation.getCurrentPosition(function(pos){if(done)return;done=true;clearTimeout(t);res({lat:pos.coords.latitude,lng:pos.coords.longitude});},function(){if(done)return;done=true;clearTimeout(t);res({});},{enableHighAccuracy:false,timeout:3500,maximumAge:60000}); }catch(_e){ if(!done){done=true;clearTimeout(t);res({});} } }); }
 function hrClock(){
   if(!HR._clkTimer){ HR._clkTimer=setInterval(hrClkTick,1000); }
@@ -3221,7 +3228,7 @@ function hrClock(){
   return hrClockRender();
 }
 async function hrClockLoad(){
-  try{ var r=await call({api:'clock_status'}); if(r&&r.ok){ CLK.data=r; CLK.err=null; } else { CLK.err=(r&&r.error)||'Failed to load'; } }
+  try{ var r=await call({api:'clock_status'}); if(r&&r.ok){ CLK.data=r; CLK.err=null; var sn=Date.parse(r.server_now||''); if(isFinite(sn)) CLK.skew=sn-Date.now(); } else { CLK.err=(r&&r.error)||'Failed to load'; } }
   catch(e){ CLK.err=e.message||e; }
   finally{ CLK.loading=false; }
   if(HR.view==='clock') hrRender();
@@ -3242,7 +3249,7 @@ function hrClockRender(){
   } else {
     statusCard='<div class="panel" style="text-align:center;padding:30px 20px">'+
       '<div class="muted" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em">Not clocked in</div>'+
-      '<div style="font-size:36px;font-weight:800;margin:10px 0;color:var(--text)">'+esc(hrClkNow())+'</div>'+
+      '<div id="clk_now" style="font-size:36px;font-weight:800;margin:10px 0;color:var(--text)">'+esc(hrClkNow())+'</div>'+
       '<button class="btn p" '+(CLK.acting?'disabled':'')+' style="margin-top:6px;font-size:16px;padding:14px 46px" onclick="hrClockAction(\'in\')">▶ Clock In</button>'+
     '</div>';
   }

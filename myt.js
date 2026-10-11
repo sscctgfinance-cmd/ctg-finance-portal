@@ -73,6 +73,18 @@ function mytFromDtLocal(s){
   return new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5]) - 8*3600000);
 }
 
+/**
+ * "HH:MM" of an instant, in Malaysia — a punch time, the Time Clock face. 2026-10-10: the Time Clock used
+ * to format these in the DEVICE's zone, so a phone or PC not set to Malaysia showed every clock-in hours
+ * away from the time the server recorded. Unlike mytDate(), NO instant means NO time ('—'), never
+ * "now": an open punch's clock_out is null, and printing the current time there invents a clock-out.
+ */
+function mytHHMM(t){
+  if (t === undefined || t === null || t === '') return '—';
+  var d = mytDate(t); if(!d) return '—';
+  return mytPad(d.getUTCHours())+':'+mytPad(d.getUTCMinutes());
+}
+
 if (typeof module !== 'undefined' && module.exports) module.exports = {
-  mytDate, mytISO, mytISOPlusDays, mytYMD, mytDtLocal, mytFromDtLocal
+  mytDate, mytISO, mytISOPlusDays, mytYMD, mytDtLocal, mytFromDtLocal, mytHHMM
 };

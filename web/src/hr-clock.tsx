@@ -20,6 +20,8 @@
 
 import type { CSSProperties } from 'react';
 
+import { mytHHMM } from '../../myt.js';
+
 /** One row of `clock_status.today`. */
 export interface Punch {
   id: string;
@@ -47,6 +49,8 @@ export interface ClockStatus {
   stale_open?: boolean;
   week_hours?: number | null;
   today?: Punch[];
+  /** The server's clock when it answered — the route measures this device's skew from it. */
+  server_now?: string | null;
 }
 
 export interface HrClockProps {
@@ -70,14 +74,11 @@ function M(n: number): string {
 }
 
 /**
- * `hrClkTime()` — hros.html:2908. Same call, so the same string: the punch is stored in UTC and shown in
- * the viewer's zone, which is what an operator checking their own punches expects.
+ * `hrClkTime()` — hros.html. A punch is stored in UTC and shown in MALAYSIAN time (2026-10-10), whatever
+ * zone the phone is set to — the viewer's own zone showed some staff a clock-in hours off the recorded one.
  */
 export function clkTime(iso?: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return iso ? mytHHMM(iso) : '—';
 }
 
 /** `hrNeedsClock()` — hros.html:1503. The schedule card is for part-timers only. */
@@ -142,7 +143,7 @@ export default function HrClock({ data, companyName, elapsed, now, acting = fals
         ) : (
           <div className="panel" style={{ textAlign: 'center', padding: '30px 20px' }}>
             <div className="muted" style={{ fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '.06em' }}>Not clocked in</div>
-            <div style={{ fontSize: '36px', fontWeight: '800', margin: '10px 0', color: 'var(--text)' }}>{now}</div>
+            <div id="clk_now" style={{ fontSize: '36px', fontWeight: '800', margin: '10px 0', color: 'var(--text)' }}>{now}</div>
             <button className="btn p" disabled={acting} style={{ marginTop: '6px', fontSize: '16px', padding: '14px 46px' }}
               onClick={() => onClockAction('in')}>▶ Clock In</button>
           </div>
