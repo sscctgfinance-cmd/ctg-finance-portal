@@ -1432,7 +1432,7 @@ the fixture sits on**, and drive the other one.
 what staff use, and the module below is loaded by both, so what changed is what staff see today.
 
 `myt.js` (+ `myt.d.ts`) is the sixth-and-a-half shared root script: `mytDate` / `mytISO` /
-`mytISOPlusDays` / `mytYMD` / `mytDtLocal` / `mytFromDtLocal`, loaded by `app.html` and `hros.html`
+`mytISOPlusDays` / `mytYMD` / `mytDtLocal` / `mytFromDtLocal` / `mytHHMM`, loaded by `app.html` and `hros.html`
 BEFORE `common.js` and imported by `web/` the way `payroll.js` is. Malaysia is UTC+8 with no DST, so
 `+8h` read back through `getUTC*` is Malaysian wall time in every browser **with no timezone database**
 — which is why it is arithmetic and not `timeZone: 'Asia/Kuala_Lumpur'`. Read its header before adding
@@ -1450,12 +1450,27 @@ it **today**, before and after v224), and `myLindungActive()`'s no-period fallba
 `web/tests/timezone-audit.test.tsx` pins all three as carve-outs, so "finishing the job" is a red test
 rather than a silent filing change.
 
-**What is deliberately still not Malaysian, and why it CANNOT be here:** the BARE `toLocale*` calls that
-display an INSTANT (a punch time, a password-reset stamp). `tests/render_harness.ts` makes the local
-getters read as UTC and forces `timeZone:'UTC'` on every `toLocale*`, so shifting one by 8 hours moves a
-committed golden — and regenerating 51 goldens is a bigger, separate change. The consequence is real and
-worth knowing: an admin abroad sees a Malaysian hour in the punch EDITOR and their own in the punch
-TABLE beside it. Fixing that means regenerating goldens on purpose.
+**The Time Clock is Malaysian too — 2026-10-11 (#146), after the operator saw staff with a clock-in
+hours off the recorded one.** The server always stamped punches correctly (UTC, `work_date` in MYT —
+0 of 191 punches on the wrong day); the DISPLAY was the defect, in two independent ways:
+
+- **Zone.** `hrClkTime()` and React's `clkTime()` (`hr-clock.tsx`, `hr-attendance.tsx`) were BARE
+  `toLocaleTimeString`, i.e. the device's zone. They now call `mytHHMM()`, which returns `'—'` for no
+  instant — never "now", because an OPEN punch's `clock_out` is null.
+- **Clock.** The face and the elapsed timer read the device's clock, so a phone running fast or slow
+  was wrong by its drift even in Malaysia. `clock_status` returns `server_now`; `CLK.skew` (legacy) and
+  `skewRef` (React route) hold `server_now − Date.now()`, and every "now" on that screen is
+  `Date.now() + skew`. A zone fix alone does not cover this half.
+
+That move regenerated `hr.clock` / `hr.attendance` on purpose — punch times +8h and nothing else — and
+the punch TABLE now agrees with the MYT punch EDITOR beside it.
+
+**What is deliberately still not Malaysian:** the remaining BARE `toLocale*` calls that display an
+INSTANT (a password-reset stamp, the audit log, payroll run times — the BARE row below).
+`tests/render_harness.ts` makes the local getters read as UTC and forces `timeZone:'UTC'` on every
+`toLocale*`, so moving one shifts a committed golden. Do it the way #146 did: BOTH renderers in one
+commit, regenerate the affected goldens and read that the diff is exactly +8h, and reclassify the call
+in `web/tests/timezone-audit.test.tsx` (BARE → MYT_SHARED, the file moves to `DELEGATED`).
 
 ### Every date read in `web/` is inventoried and pinned — `web/tests/timezone-audit.test.tsx`
 
