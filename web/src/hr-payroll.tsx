@@ -75,6 +75,8 @@ export interface PayEmployee {
   name?: string | null;
   basic_salary?: number | null;
   fixed_allowance?: number | null;
+  /** 2026-11-02: monthly travel allowance — not statutory wages; PCB-exempt to RM6,000 a year. */
+  travel_allowance?: number | null;
   pay_type?: string | null;
   hourly_rate?: number | null;
   daily_rate?: number | null;
@@ -121,6 +123,8 @@ export interface GridRow {
   /** v225: the NON-statutory half of the ad-hoc allowance — it reaches gross and attracts no
       EPF / SOCSO / EIS. Split from `allowance` because one bucket cannot answer both. */
   allowanceNs: number;
+  /** 2026-11-02: travel allowance — the profile figure, or this period's `travel_set`. */
+  travel?: number;
   deductions: Deduction[];
   unpaid: number;
   pcbSet: number | null;
@@ -167,6 +171,8 @@ export function gridSaveAdjustments(data: PayData, grid: Record<string, GridRow>
     const mb = Number(e.basic_salary || 0), ma = Number(e.fixed_allowance || 0);
     if (Number(g.basic) !== mb) out.push({ employee_id: e.id, kind: 'basic_set', amount: Number(g.basic) || 0, epf_subject: true });
     if (Number(g.allow) !== ma) out.push({ employee_id: e.id, kind: 'allow_set', amount: Number(g.allow) || 0, epf_subject: true });
+    // 2026-11-02: hrGridSave() — the profile's travel figure, overridden for this month only when it differs.
+    if ((Number(g.travel) || 0) !== (Number(e.travel_allowance) || 0)) out.push({ employee_id: e.id, kind: 'travel_set', amount: Number(g.travel) || 0, epf_subject: false });
     if (Number(g.bonus)) out.push({ employee_id: e.id, kind: 'bonus', amount: Number(g.bonus), epf_subject: true });
     if (Number(g.ot)) out.push({ employee_id: e.id, kind: 'ot', amount: Number(g.ot), epf_subject: true });
     if (Number(g.allowance)) out.push({ employee_id: e.id, kind: 'allowance', amount: Number(g.allowance), epf_subject: true });
@@ -228,7 +234,7 @@ export function gridInit(data: PayData): Record<string, GridRow> {
       .filter((a) => a.kind === k && ((a.epf_subject !== false) === stat))
       .reduce((s, a) => s + Number(a.amount || 0), 0);
     const setK = (k: string) => { const f = mine.filter((a) => a.kind === k); return f.length ? Number(f[f.length - 1].amount) : null; };
-    const bset = setK('basic_set'), aset = setK('allow_set');
+    const bset = setK('basic_set'), aset = setK('allow_set'), tset = setK('travel_set');
     const deds = mine.filter((a) => a.kind === 'deduction').map((a) => ({ label: a.label || 'Other deduction', amount: Number(a.amount) || 0 }));
     // Part-timers (hourly/daily): auto-fill Basic from this month's clocked hours × rate unless the
     // admin set a manual basic override. Monthly staff keep their fixed basic_salary.
@@ -239,6 +245,7 @@ export function gridInit(data: PayData): Record<string, GridRow> {
     const baseVal = bset != null ? bset : (autoBasic != null ? autoBasic : Number(e.basic_salary || 0));
     grid[e.id] = {
       basic: baseVal, allow: aset != null ? aset : Number(e.fixed_allowance || 0),
+      travel: tset != null ? tset : Number(e.travel_allowance || 0),
       bonus: sumK('bonus'), ot: sumK('ot'),
       allowance: sumKe('allowance', true), allowanceNs: sumKe('allowance', false), deductions: deds,
       unpaid: sumK('unpaid_leave'), pcbSet: setK('pcb_set'), linSet: setK('lindung_set'),
@@ -268,7 +275,7 @@ export function gridRowCompute(
   // of staff happened to be a citizen. tests/engine_parity_test.ts derives the required list from
   // hrCompute's own source, so the next field added to the engine fails the build instead of payroll.
   const synth = {
-    basic_salary: Number(g.basic) || 0, fixed_allowance: Number(g.allow) || 0,
+    basic_salary: Number(g.basic) || 0, fixed_allowance: Number(g.allow) || 0, travel_allowance: Number(g.travel) || 0,
     epf_eligible: e.epf_eligible, socso_eligible: e.socso_eligible, eis_eligible: e.eis_eligible,
     resident: e.resident, date_of_birth: e.date_of_birth, epf_ee_rate: e.epf_ee_rate,
     epf_er_rate: e.epf_er_rate, socso_category: e.socso_category, marital_status: e.marital_status,
@@ -305,9 +312,9 @@ export function gridAll(
   emps.forEach((e) => {
     const g = grid[e.id] || ({} as GridRow);
     const q = gridRowCompute(e, g, data.rates, period, (data.ytd || {})[e.id]);
-    const eff = Object.assign({}, e, { basic_salary: Number(g.basic) || 0, fixed_allowance: Number(g.allow) || 0 });
+    const eff = Object.assign({}, e, { basic_salary: Number(g.basic) || 0, fixed_allowance: Number(g.allow) || 0, travel_allowance: Number(g.travel) || 0 });
     const d = {
-      basic: Number(g.basic) || 0, allow: Number(g.allow) || 0, bonus: Number(g.bonus) || 0,
+      basic: Number(g.basic) || 0, allow: Number(g.allow) || 0, travel: Number(g.travel) || 0, bonus: Number(g.bonus) || 0,
       ot: Number(g.ot) || 0, allowance: Number(g.allowance) || 0,
       allowanceNs: Number(g.allowanceNs) || 0,
       deductions: (g.deductions || []).slice(), deduction: dedTot(g), unpaid: Number(g.unpaid) || 0,
@@ -484,7 +491,7 @@ export interface PayrollRun {
 }
 
 /** The grid cells `hrGCell()` draws — hros.html:4081. */
-export type CellField = 'basic' | 'allow' | 'bonus' | 'ot' | 'allowance' | 'allowanceNs' | 'unpaid';
+export type CellField = 'basic' | 'allow' | 'bonus' | 'ot' | 'allowance' | 'allowanceNs' | 'travel' | 'unpaid';
 
 /** The raw-csv exports — hros.html:4053. */
 export type StatFile = 'epf' | 'socso' | 'eis' | 'pcb';
@@ -808,7 +815,7 @@ export default function HrPayroll(p: HrPayrollProps) {
             <thead>
               <tr style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.03em' }}>
                 <th></th>
-                <th colSpan={6} className="muted" style={GRP_TH}>Earnings (RM)</th>
+                <th colSpan={7} className="muted" style={GRP_TH}>Earnings (RM)</th>
                 <th colSpan={2} className="muted" style={GRP_TH}>Deductions (RM)</th>
                 <th colSpan={7} className="muted" style={{ textAlign: 'center', borderBottom: '1px solid var(--coral-soft)', paddingBottom: '3px', color: 'var(--coral)' }}>Statutory · auto-calculated</th>
               </tr>
@@ -820,6 +827,7 @@ export default function HrPayroll(p: HrPayrollProps) {
                 <th className="amt">OT</th>
                 <th className="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th>
                 <th className="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th>
+                <th className="amt" title="Travel allowance — pre-filled from the employee profile; type over it for this month only. No EPF, SOCSO or EIS. PCB: the first RM6,000 a year is exempt (LHDN, official-duty travel / petrol / toll); only the excess is taxed.">Travel allow</th>
                 <th className="amt">Deduct</th>
                 <th className="amt">Unpaid</th>
                 <th className="amt">Gross</th>
@@ -843,12 +851,12 @@ export default function HrPayroll(p: HrPayrollProps) {
                       <span><b>{e.emp_no}</b> {e.name}<div style={{ fontSize: '9.5px', marginTop: '1px', color: 'var(--amber)' }}>Skipped — no payslip this month</div></span>
                     </span>
                   </td>
-                  <td colSpan={14} className="muted" style={{ fontSize: '11px' }}>Not in this run. {rw(<button className="btn xs" onClick={() => p.onSkip(e.id, false)}>Include</button>)}</td>
+                  <td colSpan={15} className="muted" style={{ fontSize: '11px' }}>Not in this run. {rw(<button className="btn xs" onClick={() => p.onSkip(e.id, false)}>Include</button>)}</td>
                 </tr>
               ))}
               <tr style={{ fontWeight: '700', borderTop: '2px solid var(--border)' }}>
                 <td>{'Total (' + p.rows.length + (p.skipped.length ? (' · ' + p.skipped.length + ' skipped') : '') + ')'}</td>
-                <td colSpan={8} className="muted" style={{ fontSize: '11px', fontWeight: '400', textAlign: 'right' }}>variable items →</td>
+                <td colSpan={9} className="muted" style={{ fontSize: '11px', fontWeight: '400', textAlign: 'right' }}>variable items →</td>
                 <td className="amt" id="t_g">{M(p.tot.gross)}</td>
                 <td className="amt" id="t_epf">{M(p.tot.epfEe)}</td>
                 <td className="amt" id="t_soc">{M(p.tot.socsoEe)}</td>
@@ -1016,6 +1024,7 @@ function GridTr({ p, r }: { p: HrPayrollProps; r: PayRow }) {
       <td><Cell p={p} id={id} field="ot" /></td>
       <td><Cell p={p} id={id} field="allowance" /></td>
       <td><Cell p={p} id={id} field="allowanceNs" /></td>
+      <td><Cell p={p} id={id} field="travel" /></td>
       {/* `hrDedCell()` — hros.html:3791 */}
       <td>
         <button className="btn xs" id={'ded_' + id} onClick={() => p.onDedOpen(id)} title="Itemise deductions" style={dedOpen ? { minWidth: '74px', borderColor: 'var(--coral)' } : { minWidth: '74px' }}>

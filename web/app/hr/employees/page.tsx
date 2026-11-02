@@ -84,7 +84,7 @@ export default function HrEmployeesPage() {
     const emp = {
       id: (editEmp && (editEmp as Employee).id) || undefined, name, ic: v('ic'), email: v('email'), dept: v('dept'),
       position: v('position'), phone: v('phone'), employmentType: v('empType') || 'Full-time',
-      basic: v('basic'), allowance: v('allowance'), bankCode, bankName, bankHolder: holder, bankAccount: acct,
+      basic: v('basic'), allowance: v('allowance'), travel: v('travel'), bankCode, bankName, bankHolder: holder, bankAccount: acct,
       epfNo: v('epfNo'), socsoNo: v('socsoNo'), taxNo: v('taxNo'), dob: v('dob') || null, joinDate: v('joinDate') || null,
       epfEeRate: v('epfEeRate'), epfErRate: v('epfErRate'), socsoCategory: v('socsoCategory'),
       maritalStatus: v('maritalStatus'), numChildren: v('numChildren'),

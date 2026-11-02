@@ -704,7 +704,15 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   const bSet=lastAdjAmt('basic_set'), aSet=lastAdjAmt('allow_set');
   const base = (baseOverride!=null) ? Number(baseOverride)
              : ((bSet!=null?bSet:Number(emp.basic_salary||0)) + (aSet!=null?aSet:Number(emp.fixed_allowance||0)));
-  const gross=payRound2(base+addEarn-unpaid);
+  // 2026-11-02: TRAVEL ALLOWANCE. A fixed monthly figure on the employee (travel_allowance), overridable
+  // for one period by a `travel_set` adjustment (allow_set's twin). It is NOT statutory wages: the EPF Act
+  // 1991, Act 4 (SOCSO, LINDUNG 24) and Act 800 (EIS) all exclude "travelling allowance" from wages — so it
+  // reaches gross and net and nothing else on that side. For PCB, LHDN exempts up to RM6,000 a year of
+  // travel / petrol / toll allowance (cfg.travelExemptMax); only the excess is income. ytd.travel is what
+  // was already paid this year, so the cap is spent in calendar order. Must mirror the other engine exactly
+  // or hr_payroll_finalise 409s the whole run.
+  const travel=payTravel(emp, adj);
+  const gross=payRound2(base+addEarn-unpaid+travel);
   const statWage=Math.max(0, base+addEarnStat-unpaid);
   const bonusStat=earn.filter((a:any)=>a.kind==='bonus' && a.epf_subject!==false).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
   // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
@@ -759,8 +767,15 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   const N=myServiceMonths(emp, period);
   const yg=Number(ytd&&ytd.gross)||0, ye=Number(ytd&&ytd.epf)||0, yp=Number(ytd&&ytd.pcb)||0, ym=Number(ytd&&ytd.months)||0;
   const remain=Math.max(1, N - ym);           // this month + remaining months of the year
+  // Travel: this month's taxable part, and the taxable part projected to December at this month's rate.
+  // ytd.gross already carries past travel IN FULL, so its exempt share is taken back out of it.
+  const tCap=cfg.travelExemptMax!=null?Number(cfg.travelExemptMax):6000;
+  const yt=Math.max(0, Number(ytd&&ytd.travel)||0);
+  const travelTaxable=payRound2(Math.max(0, travel - Math.max(0, tCap - yt)));
+  const projTravelTax=Math.max(0, yt + travel*remain - tCap) - Math.max(0, yt - tCap);
+  const ygTax=yg - Math.min(yt, tCap);
   let pcb:number;
-  if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); }
+  if(emp.resident===false){ pcb=myPcbRoundUp5((statWage+travelTaxable)*0.30); }
   else {
     const ms=String(emp.marital_status||'single').toLowerCase();
     const cat2=(ms==='married' && emp.spouse_working===false);
@@ -775,7 +790,7 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
     // sets it explicitly, so an operator who has pinned an annual figure keeps it.
     const rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:rEpfMth*N;
     const kids=Number(emp.num_children||0);
-    const projGross=yg + statWageNormal*remain;   // prior-actual + (current + future estimated) months
+    const projGross=ygTax + statWageNormal*remain + projTravelTax;   // prior-actual + (current + future estimated) months
     const projEpf=ye + epfEe*remain;
     // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year. Leaving
     // it out over-deducted PCB from every employee — small per month, but it is a rule LHDN's own
@@ -838,7 +853,13 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   const net=payRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   const employerCost=payRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, lindung, pcb, net, employerCost };
+  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, lindung, pcb, net, employerCost, travel, travelTaxable };
+}
+// The period's travel allowance: a `travel_set` adjustment (last one wins) or the employee's fixed figure.
+// Exported because hr_payroll_finalise needs it to back an hourly worker's base out of the submitted gross.
+export function payTravel(emp:any, adj:any[]):number{
+  const m=(adj||[]).filter((a:any)=>a.kind==='travel_set');
+  return payRound2(Math.max(0, m.length ? (Number(m[m.length-1].amount)||0) : (Number(emp&&emp.travel_allowance)||0)));
 }
 // v156: PCB-YTD per employee for the current period — go-live opening balances (emp.ytd_* when ytd_year
 // matches the payroll year) PLUS every finalised HR payslip earlier this tax year. Used IDENTICALLY by
@@ -846,8 +867,8 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
 export async function payBuildYtd(tenant:string, mo:number, yr:number, emps:any[]){
   const out:any = {};
   for(const e of (emps||[])) out[String(e.id)] = (Number(e.ytd_year)===Number(yr))
-    ? { gross:Number(e.ytd_gross)||0, epf:Number(e.ytd_epf)||0, pcb:Number(e.ytd_pcb)||0, months:Number(e.ytd_months)||0 }
-    : { gross:0, epf:0, pcb:0, months:0 };
+    ? { gross:Number(e.ytd_gross)||0, epf:Number(e.ytd_epf)||0, pcb:Number(e.ytd_pcb)||0, months:Number(e.ytd_months)||0, travel:0 }
+    : { gross:0, epf:0, pcb:0, months:0, travel:0 };
   const { data: runs } = await sb.from("hr_payroll_runs").select("id").eq("tenant_id",tenant).eq("period_year",yr).lt("period_month",mo);
   const runIds = (runs||[]).map((r:any)=>r.id);
   if(runIds.length){
@@ -857,7 +878,7 @@ export async function payBuildYtd(tenant:string, mo:number, yr:number, emps:any[
     // month's PCB would come out too LOW for everyone, on a figure that is remitted to LHDN.
     const ps:any[] = [];
     for(let off=0; off<100000; off+=1000){
-      const { data: pg } = await sb.from("hr_payslips").select("employee_id,gross,epf_ee,pcb,run_id")
+      const { data: pg } = await sb.from("hr_payslips").select("employee_id,gross,epf_ee,pcb,travel,run_id")
         .in("run_id", runIds).order("id").range(off, off+999);
       for(const r of (pg||[])) ps.push(r);
       if(!pg || pg.length < 1000) break;
@@ -865,6 +886,7 @@ export async function payBuildYtd(tenant:string, mo:number, yr:number, emps:any[
     const monthsSeen:any = {};
     for(const p of (ps||[])){ const id=String(p.employee_id); if(!out[id]) continue;
       out[id].gross += Number(p.gross)||0; out[id].epf += Number(p.epf_ee)||0; out[id].pcb += Number(p.pcb)||0;
+      out[id].travel += Number(p.travel)||0;   // 2026-11-02: travel allowance — see computePayrollMY
       (monthsSeen[id]=monthsSeen[id]||new Set()).add(p.run_id);
     }
     for(const id of Object.keys(monthsSeen)) out[id].months += (monthsSeen[id] as Set<any>).size;
@@ -1292,6 +1314,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         (["Full-time","Part-time","Contract","Intern","Probation"].indexOf(String(f.employmentType))>=0 ? f.employmentType : "Full-time"));
       keepIfSent("basic",    "basic_salary",    Number(f.basic)||0);
       keepIfSent("allowance","fixed_allowance", Number(f.allowance)||0);
+      keepIfSent("travel",   "travel_allowance", Math.max(0, Number(f.travel)||0));   // 2026-11-02
       // Bank details move as one unit — a caller that sends any one of them is editing the payment
       // instruction, and a caller that sends none must not blank an account salaries are paid into.
       if (f.bankCode!==undefined || f.bankName!==undefined || f.bankAccount!==undefined || f.bankHolder!==undefined || !f.id){
@@ -1451,8 +1474,8 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         return { month:r.period_month, year:r.period_year, run_date:r.run_date,
           // v196: lindung was stored on the payslip but never returned, so the employee's own payslip
           // listed deductions that did not add up to their net pay — short by exactly the LINDUNG amount.
-          p:{ gross:Number(s.gross)||0, epfEe:Number(s.epf_ee)||0, epfEr:Number(s.epf_er)||0, socsoEe:Number(s.socso_ee)||0, socsoEr:Number(s.socso_er)||0, eisEe:Number(s.eis_ee)||0, eisEr:Number(s.eis_er)||0, lindung:Number(s.lindung24)||0, pcb:Number(s.pcb)||0, net:Number(s.net)||0, employerCost:Number(s.employer_cost)||0, _meta:{} },
-          d:{ bonus:sumK(adj,"bonus"), ot:sumK(adj,"ot"), allowance:sumK(adj,"allowance"), unpaid:sumK(adj,"unpaid_leave"), deductions:(adj.filter((a:any)=>a.kind==="deduction").map((a:any)=>({ label:a.label||"Deduction", amount:Number(a.amount)||0 }))) } };
+          p:{ gross:Number(s.gross)||0, epfEe:Number(s.epf_ee)||0, epfEr:Number(s.epf_er)||0, socsoEe:Number(s.socso_ee)||0, socsoEr:Number(s.socso_er)||0, eisEe:Number(s.eis_ee)||0, eisEr:Number(s.eis_er)||0, lindung:Number(s.lindung24)||0, travel:Number(s.travel)||0, pcb:Number(s.pcb)||0, net:Number(s.net)||0, employerCost:Number(s.employer_cost)||0, _meta:{} },
+          d:{ bonus:sumK(adj,"bonus"), ot:sumK(adj,"ot"), allowance:sumK(adj,"allowance"), travel:Number(s.travel)||0, unpaid:sumK(adj,"unpaid_leave"), deductions:(adj.filter((a:any)=>a.kind==="deduction").map((a:any)=>({ label:a.label||"Deduction", amount:Number(a.amount)||0 }))) } };
       }).sort((a:any,b:any)=> (b.year-a.year) || (b.month-a.month));
       // paid-leave balances (current year) for the payslip footer
       const yr2 = new Date(Date.now()+8*3600*1000).getUTCFullYear();
@@ -1961,7 +1984,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         if (payType==="hourly" || payType==="daily"){
           const earnSum=adjE.filter((a:any)=>['allowance','bonus','ot'].indexOf(a.kind)>=0).reduce((s:number,a:any)=>s+Number(a.amount||0),0);
           const unpaidSum=adjE.filter((a:any)=>a.kind==='unpaid_leave').reduce((s:number,a:any)=>s+Number(a.amount||0),0);
-          baseOverride=Math.max(0, Number(r.gross||0) - earnSum + unpaidSum);
+          baseOverride=Math.max(0, Number(r.gross||0) - earnSum + unpaidSum - payTravel(emp, adjE));
         }
         const c = computePayrollMY(emp, cfg, adjE, baseOverride, { month: mo, year: yr }, ytdMap[eid]);
         server.push({ eid, c });
@@ -1983,7 +2006,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       if (e1) return j({ ok:false, error:e1.message });
       await sb.from("hr_payslips").delete().eq("run_id",run.id);
       // Write the SERVER-recomputed figures (authoritative), not the client's.
-      const payload = server.map((s:any)=>({ run_id:run.id, employee_id:s.eid, gross:s.c.gross, epf_ee:s.c.epfEe, epf_er:s.c.epfEr, socso_ee:s.c.socsoEe, socso_er:s.c.socsoEr, eis_ee:s.c.eisEe, eis_er:s.c.eisEr, lindung24:s.c.lindung, pcb:s.c.pcb, net:s.c.net, employer_cost:s.c.employerCost }));
+      const payload = server.map((s:any)=>({ run_id:run.id, employee_id:s.eid, gross:s.c.gross, epf_ee:s.c.epfEe, epf_er:s.c.epfEr, socso_ee:s.c.socsoEe, socso_er:s.c.socsoEr, eis_ee:s.c.eisEe, eis_er:s.c.eisEr, lindung24:s.c.lindung, travel:s.c.travel, pcb:s.c.pcb, net:s.c.net, employer_cost:s.c.employerCost }));
       if (payload.length){ const { error:e2 } = await sb.from("hr_payslips").insert(payload); if (e2) return j({ ok:false, error:e2.message }); }
       await logAudit(me,"hr_payroll_finalise",String(run.id),{ month:mo, year:yr, n:payload.length, server_recomputed:true });
       return j({ ok:true, runId:run.id, server_recomputed:true });
@@ -3197,12 +3220,19 @@ if(kind==="claim_type"){ if(row.id){ ck(await sb.from("hr_claim_types").update({
         const k = s.employee_id;
         // v196: lindung was dropped here, so the EA form and CP8D under-reported the employee's PERKESO
         // contribution for the whole year — and with it the RM350 SOCSO/EIS relief they can claim.
-        const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, lindung:0, pcb:0, net:0, months:0 });
+        const t = map[k] || (map[k] = { gross:0, epfEe:0, epfEr:0, socsoEe:0, socsoEr:0, eisEe:0, eisEr:0, lindung:0, pcb:0, net:0, months:0, travel:0 });
+        t.travel+=Number(s.travel)||0;
         t.gross+=Number(s.gross); t.epfEe+=Number(s.epf_ee); t.epfEr+=Number(s.epf_er);
         t.socsoEe+=Number(s.socso_ee); t.socsoEr+=Number(s.socso_er); t.lindung+=Number(s.lindung24)||0;
         t.eisEe+=Number(s.eis_ee); t.eisEr+=Number(s.eis_er);
         t.pcb+=Number(s.pcb); t.net+=Number(s.net); t.months+=1;
       });
+      // 2026-11-02: travel allowance up to RM6,000 a year is EXEMPT (petrol / travel / toll for official
+      // duties), so it is not employment income on the EA form or CP8D. Payslip gross carries it in full;
+      // the exempt share comes off here, once, for the year. `travel` / `travelExempt` stay visible.
+      { const { data: rr } = await sb.from("hr_statutory_rates").select("rates").eq("id",1).maybeSingle();
+        const cap = (rr && rr.rates && rr.rates.travelExemptMax!=null) ? Number(rr.rates.travelExemptMax) : 6000;
+        for(const k of Object.keys(map)){ const t=map[k]; t.travelExempt=payRound2(Math.min(t.travel, cap)); t.gross=payRound2(t.gross - t.travelExempt); } }
       return j({ ok:true, annual:map, employer:ei.data||{ name:"I PROCARE MALAYSIA SDN BHD", employer_no:"", address:"" } });
     }
     if (api === "hr_post_xero") {

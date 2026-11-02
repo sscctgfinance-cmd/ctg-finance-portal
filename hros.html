@@ -3180,7 +3180,7 @@ function hrEmpForm(){
     '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">'+
       g('Name *',inp('name','Full name',x.name))+g('IC / Passport',inp('ic','',x.ic_no))+g('Email',inp('email','',x.email))+
       g('Department',sel('dept',[['','— Select team —'],['Online Team','Online Team'],['Offline Team','Offline Team']],(x.dept==='Online Team'||x.dept==='Offline Team')?x.dept:''))+g('Position / role',inp('position','Select or type…',x.position,'list="hr_pos_dl"')+'<datalist id="hr_pos_dl">'+hrPositionList().map(function(p){return '<option value="'+esc(p)+'"></option>';}).join('')+'</datalist>')+g('Employment type',sel('empType',etOpts,x.employment_type||'Full-time'))+
-      g('Phone',inp('phone','',x.phone))+g('Basic salary (RM) *',inp('basic','0',x.basic_salary,'type="number" step="0.01"'))+g('Fixed allowance (RM)',inp('allowance','0',x.fixed_allowance,'type="number" step="0.01"'))+
+      g('Phone',inp('phone','',x.phone))+g('Basic salary (RM) *',inp('basic','0',x.basic_salary,'type="number" step="0.01"'))+g('Fixed allowance (RM)',inp('allowance','0',x.fixed_allowance,'type="number" step="0.01"'))+g('Travel allowance (RM / month)',inp('travel','0',x.travel_allowance,'type="number" step="0.01" min="0" title="No EPF / SOCSO / EIS. PCB-exempt up to RM6,000 a year; the excess is taxed."'))+
       g('Date of birth',inp('dob','',dob,'type="date"'))+g('Join date',inp('joinDate','',joinDate,'type="date"'))+
       g('Bank name *',hrBankPicker(x))+g('Bank account no. *',inp('bankAccount','digits only',x.bank_account,'inputmode="numeric" maxlength="20" oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,20)"'))+g('Account holder name *',inp('bankHolder','As per bank statement',(x.bank_holder!=null?x.bank_holder:(x.name||''))))+
       g('EPF no.',inp('epfNo','',x.epf_no))+g('SOCSO no.',inp('socsoNo','',x.socso_no))+g('Tax no. (TIN)',inp('taxNo','',x.tax_no))+
@@ -3233,7 +3233,7 @@ async function hrSaveEmp(){
   var holder=v('bankHolder').trim(); if(!holder){ toast('Account holder name is required',true); return; }
   var acct=String(v('bankAccount')||'').replace(/[^0-9]/g,'').slice(0,20); if(!acct){ toast('Bank account number is required (digits only)',true); return; }
   var emp={ id:(HR.editEmp&&HR.editEmp.id)||undefined, name:name, ic:v('ic'), email:v('email'), dept:v('dept'), position:v('position'), phone:v('phone'), employmentType:v('empType')||'Full-time',
-    basic:v('basic'), allowance:v('allowance'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
+    basic:v('basic'), allowance:v('allowance'), travel:v('travel'), bankCode:bankCode, bankName:bankName, bankHolder:holder, bankAccount:acct, epfNo:v('epfNo'), socsoNo:v('socsoNo'), taxNo:v('taxNo'),
     dob:v('dob')||null, joinDate:v('joinDate')||null, epfEeRate:v('epfEeRate'), epfErRate:v('epfErRate'), socsoCategory:v('socsoCategory'), maritalStatus:v('maritalStatus'), numChildren:v('numChildren'),
     ytdYear:v('ytdYear'), ytdMonths:v('ytdMonths'), ytdGross:v('ytdGross'), ytdEpf:v('ytdEpf'), ytdPcb:v('ytdPcb'),
     payType:v('payType')||'monthly', hourlyRate:v('hourlyRate'), dailyRate:v('dailyRate'), shiftStart:v('shiftStart')||null, shiftEnd:v('shiftEnd')||null, clockReminder:chk('clockReminder'),
@@ -4118,7 +4118,7 @@ function hrGridInit(){
     var sumKe=function(k,stat){ return mine.filter(function(a){ return a.kind===k && ((a.epf_subject!==false)===stat); })
       .reduce(function(s,a){ return s+Number(a.amount||0); },0); };
     var setK=function(k){ var f=mine.filter(function(a){return a.kind===k;}); return f.length?Number(f[f.length-1].amount):null; };
-    var bset=setK('basic_set'), aset=setK('allow_set');
+    var bset=setK('basic_set'), aset=setK('allow_set'), tset=setK('travel_set');
     var deds=mine.filter(function(a){return a.kind==='deduction';}).map(function(a){ return { label:a.label||'Other deduction', amount:Number(a.amount)||0 }; });
     // Part-timers (hourly/daily): auto-fill Basic from this month's clocked hours × rate (unless the admin
     // set a manual basic override). Monthly staff keep their fixed basic_salary.
@@ -4126,7 +4126,7 @@ function hrGridInit(){
     if(e.pay_type==='hourly') autoBasic=Math.round((Number(att.hours)||0)*(Number(e.hourly_rate)||0)*100)/100;
     else if(e.pay_type==='daily') autoBasic=Math.round((Number(att.days)||0)*(Number(e.daily_rate)||0)*100)/100;
     var baseVal=(bset!=null?bset:(autoBasic!=null?autoBasic:Number(e.basic_salary||0)));
-    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumKe('allowance',true), allowanceNs:sumKe('allowance',false), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), linSet:setK('lindung_set'), skip:mine.some(function(a){return a.kind==='skip';}), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
+    p.grid[e.id]={ basic:baseVal, allow:(aset!=null?aset:Number(e.fixed_allowance||0)), travel:(tset!=null?tset:Number(e.travel_allowance||0)), bonus:sumK('bonus'), ot:sumK('ot'), allowance:sumKe('allowance',true), allowanceNs:sumKe('allowance',false), deductions:deds, unpaid:sumK('unpaid_leave'), pcbSet:setK('pcb_set'), linSet:setK('lindung_set'), skip:mine.some(function(a){return a.kind==='skip';}), _att:att, _autoBasic:autoBasic, _payType:e.pay_type||'monthly' };
   });
   p.gridPeriod=p.month+'-'+p.year;
 }
@@ -4137,7 +4137,7 @@ function hrGridRowCompute(e,g){
   // worker is 2%+2% EPF and no EIS on the server, but full Malaysian rates on screen. Latent only because
   // all 19 staff are citizens today. tests/engine_parity_test.ts now derives the required list from
   // hrCompute's own source, so the next field added to the engine fails the build instead of payroll.
-  var synth={ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, epf_eligible:e.epf_eligible, socso_eligible:e.socso_eligible, eis_eligible:e.eis_eligible, resident:e.resident,
+  var synth={ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, travel_allowance:Number(g.travel)||0, epf_eligible:e.epf_eligible, socso_eligible:e.socso_eligible, eis_eligible:e.eis_eligible, resident:e.resident,
     date_of_birth:e.date_of_birth, epf_ee_rate:e.epf_ee_rate, epf_er_rate:e.epf_er_rate, socso_category:e.socso_category, marital_status:e.marital_status, spouse_working:e.spouse_working, num_children:e.num_children,
     citizen_status:e.citizen_status, lindung24:e.lindung24,
     join_date:e.join_date, resign_date:e.resign_date };   // v155: needed for MTD service-month annualisation
@@ -4164,8 +4164,8 @@ function hrGridAll(){
   var p=HR.pay, emps=(p.data.employees||[]).filter(function(e){ return !((p.grid[e.id]||{}).skip); }); var rows=[];
   var tot={gross:0,epfEe:0,epfEr:0,socsoEe:0,socsoEr:0,eisEe:0,eisEr:0,lindung:0,pcb:0,net:0,cost:0};
   emps.forEach(function(e){ var g=p.grid[e.id]||{}; var q=hrGridRowCompute(e,g);
-    var eff=Object.assign({},e,{ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0 });
-    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, allowanceNs:Number(g.allowanceNs)||0, deductions:(g.deductions||[]).slice(), deduction:hrDedTot(g), unpaid:Number(g.unpaid)||0 };
+    var eff=Object.assign({},e,{ basic_salary:Number(g.basic)||0, fixed_allowance:Number(g.allow)||0, travel_allowance:Number(g.travel)||0 });
+    var d={ basic:Number(g.basic)||0, allow:Number(g.allow)||0, travel:Number(g.travel)||0, bonus:Number(g.bonus)||0, ot:Number(g.ot)||0, allowance:Number(g.allowance)||0, allowanceNs:Number(g.allowanceNs)||0, deductions:(g.deductions||[]).slice(), deduction:hrDedTot(g), unpaid:Number(g.unpaid)||0 };
     rows.push({e:eff,p:q,d:d});
     tot.gross+=q.gross;tot.epfEe+=q.epfEe;tot.epfEr+=q.epfEr;tot.socsoEe+=q.socsoEe;tot.socsoEr+=q.socsoEr;tot.eisEe+=q.eisEe;tot.eisEr+=q.eisEr;tot.lindung+=(q.lindung||0);tot.pcb+=q.pcb;tot.net+=q.net;tot.cost+=q.employerCost;
   });
@@ -4493,7 +4493,7 @@ function hrPayroll(){
   var trs=A.rows.map(function(r){ var e=r.e,q=r.p,id=e.id,mt=q._meta||{};
     var badge='<div class="muted" style="font-size:9.5px;margin-top:1px">EPF '+Math.round((mt.epfEeRate||0)*1000)/10+'% · SOC C'+(mt.socsoCat||1)+(mt.senior?' · <span style="color:var(--amber)">60+</span>':'')+(e.resident===false?' · <span style="color:var(--amber)">non-res</span>':'')+'</div>';
     return '<tr><td style="white-space:nowrap"><span style="display:inline-flex;align-items:baseline;gap:6px">'+hrGRowMenuBtn(id)+'<span><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+badge+'</span></span></td>'+
-      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrGCell(id,'allowanceNs')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
+      '<td>'+hrGCell(id,'basic')+'</td><td>'+hrGCell(id,'allow')+'</td><td>'+hrGCell(id,'bonus')+'</td><td>'+hrGCell(id,'ot')+'</td><td>'+hrGCell(id,'allowance')+'</td><td>'+hrGCell(id,'allowanceNs')+'</td><td>'+hrGCell(id,'travel')+'</td><td>'+hrDedCell(id)+'</td><td>'+hrGCell(id,'unpaid')+'</td>'+
       ec('g_'+id,q.gross)+ec('epf_'+id,q.epfEe)+ec('soc_'+id,q.socsoEe)+ec('eis_'+id,q.eisEe)+'<td class="amt">'+hrGLinCell(id,q.lindung)+'</td>'+'<td class="amt">'+hrGPcbCell(id,q.pcb)+'</td>'+ec('net_'+id,q.net,' style="font-weight:700;color:var(--green-soft)"')+'</tr>';
   }).join('');
   // Skipped staff are out of A.rows (hrGridAll drops them), so they get their own greyed rows here. An
@@ -4502,12 +4502,12 @@ function hrPayroll(){
   var skipRows=skipped.map(function(e){
     return '<tr style="opacity:.55"><td style="white-space:nowrap"><span style="display:inline-flex;align-items:baseline;gap:6px">'+hrGRowMenuBtn(e.id)+'<span><b>'+esc(e.emp_no)+'</b> '+esc(e.name)+
       '<div style="font-size:9.5px;margin-top:1px;color:var(--amber)">Skipped — no payslip this month</div></span></span></td>'+
-      '<td colspan="13" class="muted" style="font-size:11px">Not in this run. '+hrRW('<button class="btn xs" onclick="hrGridSkip(\''+e.id+'\',false)">Include</button>')+'</td></tr>';
+      '<td colspan="15" class="muted" style="font-size:11px">Not in this run. '+hrRW('<button class="btn xs" onclick="hrGridSkip(\''+e.id+'\',false)">Include</button>')+'</td></tr>';
   }).join('');
-  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+(skipped.length?(' · '+skipped.length+' skipped'):'')+')</td><td colspan="8" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
+  var totRow='<tr style="font-weight:700;border-top:2px solid var(--border)"><td>Total ('+A.rows.length+(skipped.length?(' · '+skipped.length+' skipped'):'')+')</td><td colspan="9" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>'+
     ec('t_g',tot.gross)+ec('t_epf',tot.epfEe)+ec('t_soc',tot.socsoEe)+ec('t_eis',tot.eisEe)+ec('t_lin',tot.lindung)+ec('t_pcb',tot.pcb)+ec('t_net',tot.net,' style="color:var(--green-soft)"')+'</tr>';
   var grpHd='<tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em"><th></th>'+
-    '<th colspan="6" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
+    '<th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>'+
     '<th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>'+
     '<th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th></tr>';
   // v181: once finalised the grid is READ-ONLY until the operator deliberately unlocks it. Payslips are
@@ -4519,7 +4519,7 @@ function hrPayroll(){
     '<span style="display:flex;gap:6px;flex-wrap:wrap">'+hrRW('<button class="btn sm" onclick="hrEmployerToggle()" title="Company details + logo (printed on payslips, forms, year-end)">🏢 Company</button>')+'<button class="btn sm" onclick="hrRatesToggle()" title="View / edit statutory rates">⚙️ Rates</button>'+actions+'</span></div>'+
     (locked?'<div class="muted" style="font-size:11.5px;padding:0 2px 8px;color:var(--amber)">This month is finalised — payslips are written, so the entries are locked. Click <b>✏️ Edit entries</b> to change them, then re-finalise so the payslips match.</div>':'')+
     '<div class="muted" style="font-size:11px;padding:0 2px 8px">Type in any white cell — Gross / EPF / SOCSO / EIS / PCB / Net recalculate live using the Malaysian statutory tables. Basic &amp; Allowance pre-fill from each profile. Bonus / OT / Extra allow are EPF-subject earnings; <b>Unpaid</b> lowers the wage (so it reduces statutory too); <b>Deduct</b> reduces net only. <b>PCB is editable</b> — it calculates from the MTD tables, and typing over it pins the real figure for this month (turns amber; ↺ goes back to auto). Each employee\'s EPF rate / SOCSO category / age rules come from their profile.</div>'+
-    '<div class="tbl-wrap"><table class="bigtable pay-grid" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th><th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026. Type over it to set the real figure for this month">LIND24 <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
+    '<div class="tbl-wrap"><table class="bigtable pay-grid" style="font-size:12px"><thead>'+grpHd+'<tr><th>Employee</th><th class="amt">Basic</th><th class="amt">Allow</th><th class="amt">Bonus</th><th class="amt">OT</th><th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th><th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th><th class="amt" title="Travel allowance — pre-filled from the employee profile; type over it for this month only. No EPF, SOCSO or EIS. PCB: the first RM6,000 a year is exempt (LHDN, official-duty travel / petrol / toll); only the excess is taxed.">Travel allow</th><th class="amt">Deduct</th><th class="amt">Unpaid</th><th class="amt">Gross</th><th class="amt">EPF</th><th class="amt">SOCSO</th><th class="amt">EIS</th><th class="amt" title="PERKESO LINDUNG 24 Jam (SKBBK) — employee-only, since 1 Jun 2026. Type over it to set the real figure for this month">LIND24 <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt" title="Calculated from the MTD tables — type over it to set the real figure for this month">PCB <span style="font-weight:400;text-transform:none;letter-spacing:0">✎</span></th><th class="amt">Net</th></tr></thead><tbody>'+trs+skipRows+totRow+'</tbody></table></div></div>';
   var ratesPanel = p.showRates ? hrRatesPanel(cfg) : '';
   var employerPanel = p.showEmployer ? hrEmployerPanel() : '';
   var sum='<div id="hr_paysum" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:14px">'+hrPaySumHtml(tot)+'</div>';
@@ -4815,6 +4815,8 @@ async function hrGridSave(){ return hrOnce('hrGridSave', async function(){
     var mb=Number(e.basic_salary||0), ma=Number(e.fixed_allowance||0);
     if(Number(g.basic)!==mb) out.push({employee_id:e.id,kind:'basic_set',amount:Number(g.basic)||0,epf_subject:true});
     if(Number(g.allow)!==ma) out.push({employee_id:e.id,kind:'allow_set',amount:Number(g.allow)||0,epf_subject:true});
+    // 2026-11-02: travel allowance — the profile figure, overridden for this month only when it differs.
+    if((Number(g.travel)||0)!==(Number(e.travel_allowance)||0)) out.push({employee_id:e.id,kind:'travel_set',amount:Number(g.travel)||0,epf_subject:false});
     if(Number(g.bonus)) out.push({employee_id:e.id,kind:'bonus',amount:Number(g.bonus),epf_subject:true});
     if(Number(g.ot)) out.push({employee_id:e.id,kind:'ot',amount:Number(g.ot),epf_subject:true});
     if(Number(g.allowance)) out.push({employee_id:e.id,kind:'allowance',amount:Number(g.allowance),epf_subject:true});

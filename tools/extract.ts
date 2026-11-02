@@ -148,7 +148,7 @@ export const FRONTEND_TABLES = ["MY_SOCSO_CAT1", "MY_SOCSO_CAT2", "MY_EIS", "HR_
 export const BACKEND_ENGINE = [
   "myStatLookup", "myPcbRoundUp5", "myServiceMonths", "myLindung24", "myLindungActive",
   "payRoundUp", "payRound2", "payRound5", "payBandMid",
-  "payEpfParts", "payTableParts", "payProgTax", "payAge", "computePayrollMY",
+  "payEpfParts", "payTableParts", "payProgTax", "payAge", "payTravel", "computePayrollMY",
 ];
 export const BACKEND_TABLES = ["MY_SOCSO_CAT1", "MY_SOCSO_CAT2", "MY_EIS", "MY_DEFAULT_TAX_BANDS"];
 

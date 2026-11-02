@@ -25,6 +25,7 @@ const src = inlineScript(await Deno.readTextFile(new URL("../hros.html", import.
 // defect is introduced in the shared builder or in the button.
 const HELPERS = ["hrCsv", "hrPadL", "hrPadR", "hrCents", "hrAscii", "hrMissingIds", "hrEmpView",
   "hrCurRows", "hrPeriod", "hrBankCode", "hrSwift", "hrFitReset", "hrFitNote",
+  "hrStatWageOf", "hrTaxRemOf",
   "hrBuildStatutory", "hrBuildKwsp", "hrBuildAssist", "hrBuildCp39", "hrBuildGiro", "hrBuildBank",
   "hrExpStatutory", "hrExpKwsp", "hrExpCp39", "hrExpBank",
   // v231: every outward-facing export now asks hrDraftOk() first when the month is not finalised, so the

@@ -92,7 +92,16 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var unpaid=adj.filter(function(a){return a.kind==='unpaid_leave';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
   var otherDed=adj.filter(function(a){return a.kind==='deduction';}).reduce(function(s,a){return s+Number(a.amount||0);},0);
   var base=Number(emp.basic_salary||0)+Number(emp.fixed_allowance||0);
-  var gross=hrRound2(base+addEarn-unpaid);
+  // 2026-11-02: TRAVEL ALLOWANCE. A fixed monthly figure on the employee (travel_allowance), overridable
+  // for one period by a `travel_set` adjustment (allow_set's twin). It is NOT statutory wages: the EPF Act
+  // 1991, Act 4 (SOCSO, LINDUNG 24) and Act 800 (EIS) all exclude "travelling allowance" from wages — so it
+  // reaches gross and net and nothing else on that side. For PCB, LHDN exempts up to RM6,000 a year of
+  // travel / petrol / toll allowance (cfg.travelExemptMax); only the excess is income. ytd.travel is what
+  // was already paid this year, so the cap is spent in calendar order. Must mirror the other engine exactly
+  // or hr_payroll_finalise 409s the whole run.
+  var tSetRows=adj.filter(function(a){return a.kind==='travel_set';});
+  var travel=hrRound2(Math.max(0, tSetRows.length ? (Number(tSetRows[tSetRows.length-1].amount)||0) : (Number(emp.travel_allowance)||0)));
+  var gross=hrRound2(base+addEarn-unpaid+travel);
   var statWage=Math.max(0, base+addEarnStat-unpaid);   // unpaid leave lowers the statutory wage too
   var bonusStat=earn.filter(function(a){return a.kind==='bonus' && a.epf_subject!==false;}).reduce(function(s,a){return s+Number(a.amount||0);},0);
   // v180: SOCSO and EIS were computed on statWage, which INCLUDES bonus — so a bonus month over-deducted
@@ -148,8 +157,15 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   var N=myServiceMonths(emp, period);
   var yg=Number(ytd&&ytd.gross)||0, ye=Number(ytd&&ytd.epf)||0, yp=Number(ytd&&ytd.pcb)||0, ym=Number(ytd&&ytd.months)||0;
   var remain=Math.max(1, N - ym);
+  // Travel: this month's taxable part, and the taxable part projected to December at this month's rate.
+  // ytd.gross already carries past travel IN FULL, so its exempt share is taken back out of it.
+  var tCap=cfg.travelExemptMax!=null?Number(cfg.travelExemptMax):6000;
+  var yt=Math.max(0, Number(ytd&&ytd.travel)||0);
+  var travelTaxable=hrRound2(Math.max(0, travel - Math.max(0, tCap - yt)));
+  var projTravelTax=Math.max(0, yt + travel*remain - tCap) - Math.max(0, yt - tCap);
+  var ygTax=yg - Math.min(yt, tCap);
   var pcb, pcbCat=1;
-  if(emp.resident===false){ pcb=myPcbRoundUp5(statWage*0.30); pcbCat=0; }
+  if(emp.resident===false){ pcb=myPcbRoundUp5((statWage+travelTaxable)*0.30); pcbCat=0; }
   else {
     var ms=String(emp.marital_status||'single').toLowerCase();
     var cat2=(ms==='married' && emp.spouse_working===false);   // married, spouse not working -> spouse relief + rebate
@@ -165,7 +181,7 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
     // sets it explicitly, so an operator who has pinned an annual figure keeps it.
     var rEpf=cfg.reliefEpfMax!=null?cfg.reliefEpfMax:rEpfMth*N;
     var kids=Number(emp.num_children||0);
-    var projGross=yg + statWageNormal*remain, projEpf=ye + epfEe*remain;
+    var projGross=ygTax + statWageNormal*remain + projTravelTax, projEpf=ye + epfEe*remain;
     // v165: SOCSO + EIS employee contributions are an allowable MTD relief, capped at RM350 a year.
     // Must mirror computePayrollMY exactly. Leaving it out over-deducted PCB from every employee.
     // v184: SKBBK is an Act 4 contribution, so it shares the RM350 SOCSO/EIS MTD relief.
@@ -213,7 +229,7 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
+  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, travel:travel, travelTaxable:travelTaxable, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
 }
 
 // Consumable by a bundler without touching this file again: everything above is a declaration, so

@@ -60,7 +60,7 @@
 <tr style="font-size:10px;text-transform:uppercase;letter-spacing:.03em">
 <th>
 </th>
-<th colspan="6" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>
+<th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Earnings (RM)</th>
 <th colspan="2" class="muted" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:3px">Deductions (RM)</th>
 <th colspan="7" class="muted" style="text-align:center;border-bottom:1px solid var(--coral-soft);padding-bottom:3px;color:var(--coral)">Statutory · auto-calculated</th>
 </tr>
@@ -72,6 +72,7 @@
 <th class="amt">OT</th>
 <th class="amt" title="Ad-hoc allowance that IS statutory wages — EPF, SOCSO and EIS are charged on it.">Extra allow</th>
 <th class="amt" title="Ad-hoc allowance that is NOT statutory wages: it reaches gross pay, but no EPF, SOCSO or EIS. Reimbursed claims are the usual case. NOTE: it is currently left out of the PCB base too — correct for a reimbursement, but NOT for commission, which LHDN taxes. Put taxable commission in Extra allow until the two flags are separated.">Non-EPF allow</th>
+<th class="amt" title="Travel allowance — pre-filled from the employee profile; type over it for this month only. No EPF, SOCSO or EIS. PCB: the first RM6,000 a year is exempt (LHDN, official-duty travel / petrol / toll); only the excess is taxed.">Travel allow</th>
 <th class="amt">Deduct</th>
 <th class="amt">Unpaid</th>
 <th class="amt">Gross</th>
@@ -112,6 +113,9 @@
 </td>
 <td>
 <input type="number" step="0.01" value="0" oninput="hrGridCell('e1','allowanceNs',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e1','travel',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
 </td>
 <td>
 <button class="btn xs" id="ded_e1" onclick="hrDedOpen('e1')" title="Itemise deductions" style="min-width:74px">RM 150.00 · 1 ▾</button>
@@ -165,6 +169,9 @@
 <input type="number" step="0.01" value="0" oninput="hrGridCell('e2','allowanceNs',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
 </td>
 <td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e2','travel',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
 <button class="btn xs" id="ded_e2" onclick="hrDedOpen('e2')" title="Itemise deductions" style="min-width:74px">RM 0.00 ▾</button>
 </td>
 <td>
@@ -216,6 +223,9 @@
 <input type="number" step="0.01" value="0" oninput="hrGridCell('e3','allowanceNs',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
 </td>
 <td>
+<input type="number" step="0.01" value="0" oninput="hrGridCell('e3','travel',this.value)" onfocus="this.select()" style="width:74px;padding:4px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11.5px;text-align:right">
+</td>
+<td>
 <button class="btn xs" id="ded_e3" onclick="hrDedOpen('e3')" title="Itemise deductions" style="min-width:74px">RM 0.00 ▾</button>
 </td>
 <td>
@@ -241,7 +251,7 @@
 </tr>
 <tr style="font-weight:700;border-top:2px solid var(--border)">
 <td>Total (3)</td>
-<td colspan="8" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>
+<td colspan="9" class="muted" style="font-size:11px;font-weight:400;text-align:right">variable items →</td>
 <td class="amt" id="t_g">RM 10,956.25</td>
 <td class="amt" id="t_epf">RM 1,209.00</td>
 <td class="amt" id="t_soc">RM 52.25</td>

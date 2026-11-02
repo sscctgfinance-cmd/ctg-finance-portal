@@ -59,6 +59,7 @@ export interface Employee {
   resign_date?: string | null;
   basic_salary?: number | null;
   fixed_allowance?: number | null;
+  travel_allowance?: number | null;
   user_id?: string | null;
   ic_no?: string | null;
   bank_code?: string | null;
@@ -497,6 +498,7 @@ function EmpForm(p: HrEmployeesProps & { x: Employee }) {
         <G lbl="Phone"><Inp k="phone" ph="" val={x.phone} /></G>
         <G lbl="Basic salary (RM) *"><Inp k="basic" ph="0" val={x.basic_salary} type="number" step="0.01" /></G>
         <G lbl="Fixed allowance (RM)"><Inp k="allowance" ph="0" val={x.fixed_allowance} type="number" step="0.01" /></G>
+        <G lbl="Travel allowance (RM / month)"><Inp k="travel" ph="0" val={x.travel_allowance} type="number" step="0.01" min="0" title="No EPF / SOCSO / EIS. PCB-exempt up to RM6,000 a year; the excess is taxed." /></G>
         <G lbl="Date of birth"><Inp k="dob" ph="" val={dob} type="date" /></G>
         <G lbl="Join date"><Inp k="joinDate" ph="" val={joinDate} type="date" /></G>
         <G lbl="Bank name *"><BankPicker x={x} banks={p.banks || []} onBankInput={p.onBankInput} onBankBlur={p.onBankBlur} /></G>

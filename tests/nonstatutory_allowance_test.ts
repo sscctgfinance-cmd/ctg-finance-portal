@@ -90,10 +90,10 @@ Deno.test("the two allowance columns sit inside the Earnings group and the total
   const hd = html.match(/grpHd\+'<tr><th>Employee<\/th>([\s\S]*?)<\/tr>/);
   assertEquals(hd !== null, true, "could not find the payroll grid header row");
   const headers = [...hd![1].matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
-  // Employee + 7 editable earning/deduction columns before the statutory block.
-  assertEquals(headers.slice(0, 7), ["Basic", "Allow", "Bonus", "OT", "Extra allow", "Non-EPF allow", "Deduct"]);
-  assertEquals(/colspan="6"[^>]*>Earnings \(RM\)/.test(html), true, "the Earnings group header must span 6 columns");
-  assertEquals(/<td colspan="8"[^>]*>variable items/.test(html), true, "the totals row must skip 8 input columns");
+  // Employee + 8 editable earning/deduction columns before the statutory block (2026-11-02: + Travel allow).
+  assertEquals(headers.slice(0, 8), ["Basic", "Allow", "Bonus", "OT", "Extra allow", "Non-EPF allow", "Travel allow", "Deduct"]);
+  assertEquals(/colspan="7"[^>]*>Earnings \(RM\)/.test(html), true, "the Earnings group header must span 7 columns");
+  assertEquals(/<td colspan="9"[^>]*>variable items/.test(html), true, "the totals row must skip 9 input columns");
 });
 
 // ── The generalised guard: every earning the grid records must appear on the payslip ────────────────

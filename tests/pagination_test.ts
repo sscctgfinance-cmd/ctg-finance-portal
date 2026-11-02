@@ -38,7 +38,7 @@ Deno.test("wht_list totals every line, not the first thousand", () => {
 });
 
 Deno.test("the year-to-date map behind PCB reads every earlier payslip", () => {
-  const block = around(HR, 'select("employee_id,gross,epf_ee,pcb,run_id")');
+  const block = around(HR, 'select("employee_id,gross,epf_ee,pcb,travel,run_id")');   // 2026-11-02: + travel (RM6,000 cap)
   assertEquals(/\.range\(off, off\+999\)/.test(block), true, "the YTD accumulator is unpaginated again");
   assertEquals(/if\(!pg \|\| pg\.length < 1000\) break;/.test(block), true, "no short-page break");
   // And it must still accumulate into the same shape the MTD calculation reads.
