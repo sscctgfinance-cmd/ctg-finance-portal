@@ -25,7 +25,7 @@ const src = inlineScript(await Deno.readTextFile(new URL("../hros.html", import.
 // defect is introduced in the shared builder or in the button.
 const HELPERS = ["hrCsv", "hrPadL", "hrPadR", "hrCents", "hrAscii", "hrMissingIds", "hrEmpView",
   "hrCurRows", "hrPeriod", "hrBankCode", "hrSwift", "hrFitReset", "hrFitNote",
-  "hrStatWageOf", "hrTaxRemOf",
+  "hrStatWageOf", "hrTaxRemOf", "hrEpfWageOf", "hrSocsoWageOf",
   "hrBuildStatutory", "hrBuildKwsp", "hrBuildAssist", "hrBuildCp39", "hrBuildGiro", "hrBuildBank",
   "hrExpStatutory", "hrExpKwsp", "hrExpCp39", "hrExpBank",
   // v231: every outward-facing export now asks hrDraftOk() first when the month is not finalised, so the
@@ -151,4 +151,33 @@ Deno.test("the SOCSO CSV declares LINDUNG 24 and its employee total", () => {
   assertEquals(total[5], eeSecond.toFixed(2), "Second-Schedule employee total moved");
   assertEquals(total[6], lind.toFixed(2), "LINDUNG total moved");
   assertEquals(total[7], (eeSecond + lind).toFixed(2), "employee total is not the sum of the two");
+});
+
+// ── 2026-11-02: the wage COLUMNS declare the wage each contribution was charged on ─────────────────────
+// They used to print GROSS, so a non-EPF allowance was declared as EPF / SOCSO / EIS wages, and a bonus as
+// SOCSO / EIS wages, while the contribution beside it was computed without them — a file that disagrees
+// with itself. The engine now returns epfWage / socsoWage; a row without them (built before the field
+// existed) still falls back to gross-less-travel, which the four tests above rely on.
+const WROW = { e: m.hrEmpView(EMPS[0]), p: P({ gross: 5300, epfWage: 4800, socsoWage: 4000, epfEe: 528, epfEr: 576,
+    socsoEe: 19.75, socsoEr: 69.15, eisEe: 7.9, eisEr: 7.9, lindung: 29.65, pcb: 100, net: 4600 }),
+  d: { basic: 4000, allow: 0, bonus: 800, ot: 0, allowance: 0, allowanceNs: 500, unpaid: 0, deductions: [] } };
+const col = (f: { text: string }, n: number) => f.text.split(/\r?\n/).filter(Boolean)[1].split(",")[n];
+
+Deno.test("EPF CSV and KWSP declare the EPF wage (bonus in, non-EPF allowance out), not gross", () => {
+  assertEquals(col(m.hrBuildStatutory([WROW], { label: "July 2026" }, "epf"), 4), "4800.00");
+  const k = m.hrBuildKwsp([WROW], { label: "July 2026" });
+  assertEquals(k.text.slice(64, 75), "00000480000", "KWSP wage field (cents) — gross would be 530000");
+});
+
+Deno.test("SOCSO, EIS and ASSIST declare the SOCSO wage (bonus and non-EPF allowance out)", () => {
+  assertEquals(col(m.hrBuildStatutory([WROW], { label: "July 2026" }, "socso"), 4), "4000.00");
+  assertEquals(col(m.hrBuildStatutory([WROW], { label: "July 2026" }, "eis"), 4), "4000.00");
+  const a = m.hrBuildAssist([WROW], { label: "July 2026" });
+  assertEquals(col(a, 4), "4000.00");
+});
+
+Deno.test("a row without the engine's wage fields still reads gross-less-travel", () => {
+  assertEquals(m.hrEpfWageOf({ gross: 3500 }), 3500);
+  assertEquals(m.hrSocsoWageOf({ gross: 3500, travel: 300 }), 3200);
+  assertEquals(m.hrEpfWageOf({ gross: 3500, epfWage: 0 }), 0, "a real zero wage is not 'missing'");
 });

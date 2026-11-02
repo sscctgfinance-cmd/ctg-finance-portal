@@ -229,7 +229,11 @@ function hrCompute(emp,cfg,adj,period,ytd){ adj=adj||[];
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   var net=hrRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   var employerCost=hrRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, travel:travel, travelTaxable:travelTaxable, _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
+  // 2026-11-02: the WAGE each contribution was computed on, returned so the statutory files can declare it
+  // instead of re-deriving it from gross. EPF wage = statWage (bonus IN; non-EPF allowance, travel OUT);
+  // SOCSO / EIS / LINDUNG wage = statWageExBonus (bonus OUT too — Act 4 / Act 800). Must mirror the other
+  // engine exactly.
+  return { gross:gross, epfEe:epfEe, epfEr:epfEr, socsoEe:socsoEe, socsoEr:socsoEr, eisEe:eisEe, eisEr:eisEr, lindung:lindung, pcb:pcb, net:net, employerCost:employerCost, travel:travel, travelTaxable:travelTaxable, epfWage:hrRound2(statWage), socsoWage:hrRound2(statWageExBonus), _meta:{age:age,epfEeRate:eeRate,epfErRate:erRate,socsoCat:scat,pcbCat:pcbCat,senior:senior,lindungOn:lindungOn} };
 }
 
 // Consumable by a bundler without touching this file again: everything above is a declaration, so

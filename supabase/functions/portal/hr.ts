@@ -853,7 +853,12 @@ export function computePayrollMY(emp:any, cfg:any, adj:any[], baseOverride?:numb
   // LINDUNG 24 has no employer share, so it reduces net pay without changing employer cost.
   const net=payRound2(gross-epfEe-socsoEe-eisEe-lindung-pcb-otherDed);
   const employerCost=payRound2(gross+epfEr+socsoEr+eisEr);
-  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, lindung, pcb, net, employerCost, travel, travelTaxable };
+  // 2026-11-02: the WAGE each contribution was computed on, returned so the statutory files can declare it
+  // instead of re-deriving it from gross. EPF wage = statWage (bonus IN; non-EPF allowance, travel OUT);
+  // SOCSO / EIS / LINDUNG wage = statWageExBonus (bonus OUT too — Act 4 / Act 800). Must mirror the other
+  // engine exactly.
+  return { gross, epfEe, epfEr, socsoEe, socsoEr, eisEe, eisEr, lindung, pcb, net, employerCost, travel, travelTaxable,
+           epfWage: payRound2(statWage), socsoWage: payRound2(statWageExBonus) };
 }
 // The period's travel allowance: a `travel_set` adjustment (last one wins) or the employee's fixed figure.
 // Exported because hr_payroll_finalise needs it to back an hourly worker's base out of the submitted gross.
