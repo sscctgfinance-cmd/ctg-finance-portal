@@ -575,9 +575,21 @@ export async function rcWithRejectReason(claims:any[]){
   const { data: com, error } = await sb.from("hr_claim_comments").select("claim_id,comment,author_name,created_at,kind").in("claim_id", ids).order("created_at",{ascending:false});
   if(error) return claims;   // the list still loads; only the reason column is empty
   const last:any = {};
-  for(const c of (com||[])) if(!last[c.claim_id] && c.kind!=="info_request" && String(c.comment||"").trim()) last[c.claim_id]=c;
+  for(const c of (com||[])) if(!last[c.claim_id] && c.kind!=="info_request" && c.kind!=="question" && c.kind!=="reply" && String(c.comment||"").trim()) last[c.claim_id]=c;
   return claims.map((c:any)=> last[c.id] ? { ...c, reject_reason:last[c.id].comment, rejected_by:last[c.id].author_name||null, rejected_at:last[c.id].created_at||c.decided_at||null }
                                           : { ...c, reject_reason:null, rejected_by:null, rejected_at:c.decided_at||null });
+}
+// 2026-10-21: "💬 Ask a question" — an approver asks, the claimant replies, and the claim does NOT move
+// (unlike request_info, which sends it back as Need More Info). A claim has an OPEN question while the
+// latest question/reply comment on it is a question. The list shows that as a pill on both sides.
+export async function rcWithQuestionState(claims:any[]){
+  const ids = claims.map((c:any)=>c.id).filter(Boolean);
+  if(!ids.length) return claims;
+  const { data: com, error } = await sb.from("hr_claim_comments").select("claim_id,comment,author_name,created_at,kind").in("claim_id", ids).in("kind", ["question","reply"]).order("created_at",{ascending:false});
+  if(error) return claims;   // the list still loads; only the pill is missing
+  const last:any = {};
+  for(const c of (com||[])) if(!last[c.claim_id]) last[c.claim_id]=c;
+  return claims.map((c:any)=>{ const l=last[c.id]; return (l && l.kind==="question") ? { ...c, open_question:l.comment, open_question_by:l.author_name||null, open_question_at:l.created_at } : { ...c, open_question:null }; });
 }
 export async function rcNotifyDecision(res:any){ try{
   const c=res && res.claim; if(!c) return;
@@ -2499,14 +2511,44 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
     if (api === "hr_rc_comment") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
       const who = await rcMe(me);
-      if(!String(b.comment||"").trim()) return j({ ok:false, error:"empty comment" });
+      const text = String(b.comment||"").trim();
+      if(!text) return j({ ok:false, error:"empty comment" });
       // Tenant pin: a scoped hr_admin (or a role-approver whose role name collides across companies) must
       // not comment on another company's claim by id. Same guard hr_rc_get uses.
-      { const { data:cc } = await sb.from("hr_claim_requests").select("tenant_id").eq("id",b.id).maybeSingle(); if(!cc) return j({ ok:false, error:"claim not found" }); const alw = await allowedTenants(b.token); if(alw.length && alw.indexOf(cc.tenant_id)<0) return j({ ok:false, error:"forbidden" }, 403); }
-      if(!who.isAdmin){ if(!who.employee) return j({ ok:false, error:"forbidden" }, 403); const { data:oc } = await sb.from("hr_claim_requests").select("employee_id").eq("id",b.id).maybeSingle(); const { data:st } = await sb.from("hr_claim_approval_steps").select("approver_role,approver_employee_id").eq("claim_id",b.id); const isAppr=(st||[]).some((s:any)=>s.approver_employee_id===who.employee.id||who.roles.indexOf(s.approver_role)>=0); if(!(oc&&oc.employee_id===who.employee.id)&&!isAppr) return j({ ok:false, error:"forbidden" }, 403); }
-      await sb.from("hr_claim_comments").insert({claim_id:b.id,author_id:(me.user&&me.user.id)||null,author_name:(me.user&&me.user.email)||null,comment:b.comment,kind:"comment"});
-      await rcAuditLog(b.id,"comment",me,null,null,{});
-      return j({ ok:true });
+      const { data:cc } = await sb.from("hr_claim_requests").select("tenant_id,employee_id,claim_no,amount,status").eq("id",b.id).maybeSingle();
+      if(!cc) return j({ ok:false, error:"claim not found" });
+      { const alw = await allowedTenants(b.token); if(alw.length && alw.indexOf(cc.tenant_id)<0) return j({ ok:false, error:"forbidden" }, 403); }
+      const isOwner = !!(who.employee && cc.employee_id===who.employee.id);
+      if(!who.isAdmin){ if(!who.employee) return j({ ok:false, error:"forbidden" }, 403); const { data:st } = await sb.from("hr_claim_approval_steps").select("approver_role,approver_employee_id").eq("claim_id",b.id); const isAppr=(st||[]).some((s:any)=>s.approver_employee_id===who.employee.id||who.roles.indexOf(s.approver_role)>=0); if(!isOwner&&!isAppr) return j({ ok:false, error:"forbidden" }, 403); }
+      // 2026-10-21 "💬 Ask a question": the claimant's words are a REPLY, anyone else's a QUESTION. Decided
+      // here from who is writing, never from the request, so a client cannot file a question as a reply.
+      // Neither changes the claim's status — that is request_info's job (hr_rc_decide), which sends it back.
+      const kind = isOwner ? "reply" : "question";
+      const author = (me.user&&me.user.email)||null;
+      const { error: eIns } = await sb.from("hr_claim_comments").insert({claim_id:b.id,author_id:(me.user&&me.user.id)||null,author_name:author,comment:text,kind});
+      if(eIns) return j({ ok:false, error:"Could not save the message: "+eIns.message });
+      await rcAuditLog(b.id,kind,me,cc.status,cc.status,{});
+      const who_name = (who.employee&&who.employee.name) || author || "Someone";
+      const ref = (cc.claim_no||"")+" ("+rcMoney(cc.amount)+")";
+      let notified = 0;
+      try{
+        if(kind==="question"){
+          const e = await rcEmpEmail(cc.employee_id);
+          if(e && e.email){ await rcSendEmail(e.email, "[HR OS] Question about your reimbursement "+(cc.claim_no||""),
+            "Hi "+(e.name||"")+",\n\n"+who_name+" has a question about your reimbursement claim "+ref+":\n\n  \""+text.slice(0,1000)+"\"\n\n"+
+            "Please reply in HR OS → Reimbursement → open the claim → Questions & comments:\n  "+HROS_URL+"\n\n"+
+            "Your claim has NOT been sent back — it stays in the approval queue while you answer.\n\n— CTG HR OS (automated)"); notified++; }
+        } else {
+          // Everyone who asked a question on this claim hears the answer (their login email is the author).
+          const { data: qs } = await sb.from("hr_claim_comments").select("author_name").eq("claim_id",b.id).eq("kind","question");
+          const seen:any = {};
+          for(const q of (qs||[])){ const to=String(q.author_name||"").trim().toLowerCase(); if(!to || to.indexOf("@")<0 || seen[to] || to===String(author||"").toLowerCase()) continue; seen[to]=1;
+            await rcSendEmail(to, "[HR OS] Reply on reimbursement "+(cc.claim_no||""),
+              who_name+" replied about reimbursement claim "+ref+":\n\n  \""+text.slice(0,1000)+"\"\n\n"+
+              "Open it in HR OS → Reimbursement:\n  "+HROS_URL+"\n\n— CTG HR OS (automated)"); notified++; }
+        }
+      }catch(_e){}
+      return j({ ok:true, kind, notified });
     }
     if (api === "hr_rc_cancel") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -2768,15 +2810,15 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
         else if(scope==="paid") q=q.eq("status","Paid");
         else if(scope==="rejected") q=q.eq("status","Rejected");
         else if(scope==="mine" && b.employee_id) q=q.eq("employee_id",b.employee_id);
-        const { data } = await q; return j({ ok:true, claims: scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[]) });
+        const { data } = await q; return j({ ok:true, claims: await rcWithQuestionState(scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[])) });
       }
       if(!who.employee) return j({ ok:false, error:"no employee profile" });
       const tenant=who.employee.tenant_id;
-      if(scope==="approvals"||scope==="pending"){ const claims=await rcApproverQueue(tenant, who); return j({ ok:true, claims }); }
+      if(scope==="approvals"||scope==="pending"){ const claims=await rcApproverQueue(tenant, who); return j({ ok:true, claims: await rcWithQuestionState(claims||[]) }); }
       let q:any = sb.from("hr_claim_requests").select("*, hr_claim_types(name,code,is_mileage), hr_employees(emp_no,name,dept)").eq("tenant_id",tenant).eq("employee_id",who.employee.id).order("created_at",{ascending:false}).limit(500);
       if(scope==="approved") q=q.eq("status","Approved"); else if(scope==="paid") q=q.eq("status","Paid");
       else if(scope==="rejected") q=q.eq("status","Rejected");
-      const { data } = await q; return j({ ok:true, claims: scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[]) });
+      const { data } = await q; return j({ ok:true, claims: await rcWithQuestionState(scope==="rejected" ? await rcWithRejectReason(data||[]) : (data||[])) });
     }
     if (api === "hr_rc_get") {
       const me = await meFromToken(b.token); if (!me||!me.ok) return j({ ok:false, error:"unauthorized" }, 401);
@@ -2814,6 +2856,11 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       // that then 403 on click. hr_admin = "full HR write, NO finance".
       const canFinance = superAdmin(me) || who.roles.indexOf("finance")>=0;
       const canPost = canFinance && ["Approved","Paid"].indexOf(cl&&cl.status)>=0;
+      // "💬 Questions & comments": the same people hr_rc_comment accepts — an admin, the claimant, or anyone
+      // named on one of this claim's approval steps. The owner's button reads "Reply"; everyone else "Ask".
+      const isOwner = !!(cl && who.employee && cl.employee_id===who.employee.id);
+      const isStepAppr = !!who.employee && allSteps.some((s:any)=>s.approver_employee_id===who.employee.id || who.roles.indexOf(s.approver_role)>=0);
+      const canComment = !!cl && cl.status!=="Draft" && (who.isAdmin || isOwner || isStepAppr);
       const attsOut:any[]=[];
       for(const a of (atts.data||[])){ let url:any=null; if(a.file_path){ try{ const s=await sb.storage.from("hr-claim-receipts").createSignedUrl(a.file_path,3600); url=s.data&&s.data.signedUrl; }catch(_e){} } attsOut.push({...a, url}); }
       const { data: rcEmployer } = cl ? await sb.from("hr_employer_info").select("*").eq("tenant_id",cl.tenant_id).maybeSingle() : { data:null } as any;
@@ -2826,7 +2873,7 @@ export async function hrRoutes(b: any, api: string): Promise<Response | undefine
       // (e.g. E004). So a missing TIN is NOT an error; the buyer is still valid on the e-invoice.
       const GENERAL_TIN = "EI00000000010";
       const buyer = { name:rcEmp.name||"", tin:rcEmp.tax_no||"", tin_effective:(rcEmp.tax_no||GENERAL_TIN), tin_general:!rcEmp.tax_no, ic:rcEmp.ic_no||"", address:rcEmp.address||"", email:rcEmp.email||"", phone:rcEmp.phone||"", complete: !!(rcEmp.name && rcEmp.ic_no) };
-      return j({ ok:true, claim:cl, buyer, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin });
+      return j({ ok:true, claim:cl, buyer, employer: rcEmployer||null, signer_sig:(rcSigner&&rcSigner.signature)||null, mileage:mileage.data, items:itemsR.data||[], attachments:attsOut, steps:allSteps, comments:comments.data||[], payment:payment.data, audit:audit.data||[], declaration:(decR.data&&decR.data[0])||null, can_act:canAct, can_post:canPost, can_finance:canFinance, is_admin:who.isAdmin, is_owner:isOwner, can_comment:canComment });
     }
     if (api === "hr_rc_admin_save") {
       const me = await meFromToken(b.token); if (!hrManage(me)) return j({ ok:false, error:"unauthorized" }, 401);

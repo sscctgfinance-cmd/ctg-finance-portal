@@ -51,6 +51,7 @@ const OUTWARD = new Set([
   // sends mail
   "collections", "hr_send_payslip", "hr_leave_decide", "hr_claim_decide", "hr_rc_decide",
   "hr_rc_decide_bulk", "hr_send_logins", "hr_rc_enable_login", "hr_rc_enable_login_bulk",
+  "hr_rc_comment",   // 2026-10-21: a question emails the claimant, a reply emails whoever asked
   // removes access or records
   "session_revoke", "role_delete", "pharmacy_delete", "hr_emp_delete", "ctg_access_revoke",
   "wht_payee_delete",

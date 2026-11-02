@@ -147,7 +147,7 @@ export interface RcStep {
   acted_at?: string | null;
 }
 export interface RcAttachment { id?: string; file_name?: string | null; url?: string | null }
-export interface RcComment { author_name?: string | null; created_at?: string | null; comment?: string | null }
+export interface RcComment { author_name?: string | null; created_at?: string | null; comment?: string | null; kind?: string | null }
 export interface RcPayment { paid_date?: string | null; payment_method?: string | null; payment_reference?: string | null }
 export interface RcBuyer {
   complete?: boolean; name?: string | null; tin?: string | null; tin_effective?: string | null;
@@ -177,6 +177,10 @@ export interface RcDetail {
   declaration?: RcDeclarationRow | null;
   can_finance?: boolean;
   can_post?: boolean;
+  /** hr_rc_get: may this viewer write in "💬 Questions & comments" (admin, claimant, a step approver)? */
+  can_comment?: boolean;
+  /** hr_rc_get: is the viewer the claimant? Their button replies; everyone else's asks. */
+  is_owner?: boolean;
   employer?: { name?: string | null; logo?: string | null; reg_no?: string | null; employer_no?: string | null; address?: string | null; phone?: string | null; email?: string | null } | null;
   signer_sig?: string | null;
 }
@@ -198,12 +202,55 @@ export interface HrExpensesDetailProps {
   onPostXero: () => void;
   /** `hrRCSendBack(id)` — an Approved, unpaid claim returned to the employee with a remark. */
   onSendBack?: (id: string) => void;
+  /** `hrRCAsk()` — posts #rc_q through hr_rc_comment. A question or a reply; the claim does not move. */
+  onAsk?: () => void;
   onFormAndReceipts: () => void;
   onVoucher: () => void;
   onEdit: () => void;
   onResubmit: () => void;
   onAdjustAmount: () => void;
   onCancel: () => void;
+}
+
+/** `RC_COM_TAG` — hros.html. */
+const COM_TAG: Record<string, [string, string]> = {
+  question: ['❓ Question', 'var(--amber)'],
+  reply: ['↩ Reply', 'var(--green-soft)'],
+  info_request: ['↩ Info requested', 'var(--coral-soft)'],
+};
+
+/** `hrRCThread(d)` — hros.html. The box is offered to exactly who hr_rc_comment accepts. */
+function Thread({ p }: { p: HrExpensesDetailProps }) {
+  const d = p.detail;
+  const list = d.comments || [];
+  if (!list.length && !d.can_comment) return null;
+  const own = !!d.is_owner;
+  return (
+    <div className="panel">
+      <div className="panel-hd"><h3>💬 Questions &amp; comments</h3></div>
+      {list.length ? list.map((x, i) => {
+        const t = x.kind ? COM_TAG[x.kind] : undefined;
+        return (
+          <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '12.5px' }}>
+            <b>{x.author_name || '—'}</b>{' '}
+            {t ? <><span style={{ fontSize: '10.5px', fontWeight: '650', color: t[1] }}>{t[0]}</span>{' '}</> : null}
+            <span className="muted" style={{ fontSize: '10.5px' }}>{String(x.created_at).slice(0, 16).replace('T', ' ')}</span>
+            <div style={{ marginTop: '2px', whiteSpace: 'pre-wrap' }}>{x.comment}</div>
+          </div>
+        );
+      }) : <div className="muted" style={{ fontSize: '12px', padding: '4px 0' }}>No questions yet.</div>}
+      {d.can_comment ? (
+        <>
+          <textarea id="rc_q" placeholder={own ? 'Your answer…' : 'Your question for the employee…'}
+            style={{ width: '100%', minHeight: '52px', marginTop: '10px', padding: '8px 10px', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text)', fontSize: '12.5px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '8px' }}>
+            <button className={'btn sm' + (own ? ' p' : '')} disabled={p.busy === 'ask'} onClick={() => p.onAsk && p.onAsk()}>{own ? '↩ Send reply' : '💬 Ask a question'}</button>
+            <span className="muted" style={{ fontSize: '11px' }}>{own ? 'Whoever asked is emailed your answer. Your claim stays where it is.' : 'The employee is emailed and replies here. The claim is not sent back.'}</span>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 export default function HrExpensesDetail(p: HrExpensesDetailProps) {
@@ -284,19 +331,8 @@ export default function HrExpensesDetail(p: HrExpensesDetailProps) {
         </div>
       ) : null}
 
-      {/* comments — hros.html:2544 */}
-      {(d.comments && d.comments.length) ? (
-        <div className="panel">
-          <div className="panel-hd"><h3>Comments</h3></div>
-          {d.comments.map((x, i) => (
-            <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '12.5px' }}>
-              <b>{x.author_name || '—'}</b>{' '}
-              <span className="muted" style={{ fontSize: '10.5px' }}>{String(x.created_at).slice(0, 16).replace('T', ' ')}</span>
-              <div style={{ marginTop: '2px' }}>{x.comment}</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {/* `hrRCThread(d)` — hros.html: questions & comments */}
+      <Thread p={p} />
 
       <Actions p={p} pending={pending} />
       <XeroBlock p={p} />

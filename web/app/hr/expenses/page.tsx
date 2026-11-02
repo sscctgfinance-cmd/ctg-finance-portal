@@ -256,6 +256,24 @@ export default function HrExpensesPage() {
     } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
   }, [askReason, claims, refreshList, scope]);
 
+  /** `hrRCRowAsk(id)` — hros.html. A question to the claimant from the list; the claim does not move. */
+  const askBusyRef = useRef<Record<string, boolean>>({});
+  const onRowAsk = useCallback(async (id: string) => {
+    if (askBusyRef.current[id]) return;
+    const c = (claims || []).find((x) => x.id === id);
+    const who = (c && c.hr_employees && c.hr_employees.name) || 'the employee';
+    const q = window.prompt('Question for ' + who + ' about ' + ((c && c.claim_no) || 'this claim') + ' — they are emailed and reply on the claim. The claim stays in your queue:');
+    if (q === null) return;
+    if (!q.trim()) { toast('Please type a question', true); return; }
+    askBusyRef.current[id] = true;
+    try {
+      const r = await call<{ notified?: number }>({ api: 'hr_rc_comment', id, comment: q.trim() });
+      toast('Question sent' + (r.notified ? (' — ' + who + ' has been emailed') : '') + ' ✓');
+      await refreshList(scope);
+    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+    finally { delete askBusyRef.current[id]; }
+  }, [claims, refreshList, scope]);
+
   /** `hrRCSendBack(id)` — hros.html. An Approved, unpaid, not-in-Xero claim returned to the employee. */
   const onSendBack = useCallback(async (id: string) => {
     const c = (claims || []).find((x) => x.id === id);
@@ -781,6 +799,14 @@ export default function HrExpensesPage() {
     void detailRun('decide', { api: 'hr_rc_decide', id: detail!.claim.id, decision: dec, comment: com }, (r) => 'Done → ' + (r.status || ''));
   }, [detail, detailRun]);
 
+  /** `hrRCAsk()` — hros.html. Posts #rc_q; the server decides question vs reply from who is writing. */
+  const onAsk = useCallback(() => {
+    const txt = ((document.getElementById('rc_q') as HTMLTextAreaElement | null)?.value || '').trim();
+    if (!txt) { toast(detail && detail.is_owner ? 'Please type your answer' : 'Please type a question', true); return; }
+    void detailRun('ask', { api: 'hr_rc_comment', id: detail!.claim.id, comment: txt },
+      (r) => (r.kind === 'reply' ? 'Reply sent' : 'Question sent') + (r.notified ? ' — emailed ✓' : ' ✓'));
+  }, [detail, detailRun]);
+
   /** `hrRCOverride()` — hros.html:2597. Two native prompts, as the legacy has them. */
   const onOverride = useCallback(() => {
     const amt = window.prompt('Override amount (RM):', String(detail!.claim.amount ?? ''));
@@ -981,6 +1007,7 @@ export default function HrExpensesPage() {
                 if (msg && msg.trim()) void bulk({ api: 'hr_rc_decide_bulk', decision: 'request_info', comment: msg }, 'Sent back');
               }}
               onRowReject={(id) => void onRowReject(id)}
+              onRowAsk={(id) => void onRowAsk(id)}
               onSendBack={(id) => void onSendBack(id)}
               onBulkPostXero={() => void onBulkPostXero()}
               xeroBatch={xeroBatch}
@@ -1095,6 +1122,7 @@ export default function HrExpensesPage() {
                     onGlEdit={onGlEdit}
                     onPostXero={onPostXero}
                     onSendBack={(id) => void onSendBack(id)}
+                    onAsk={onAsk}
                     onFormAndReceipts={onFormAndReceipts}
                     onVoucher={onVoucher}
                     onEdit={onEdit}

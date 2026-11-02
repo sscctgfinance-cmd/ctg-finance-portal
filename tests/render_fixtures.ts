@@ -553,7 +553,9 @@ Object.assign(FIXTURES, {
     { id: "rc1", claim_no: "RC-2026-0031", employee_id: "e2", employee_name: "SITI NURHALIZA BINTI OMAR", emp_no: "E002",
       claim_type_name: "Travel & transport", cost_center_code: "SLS", total_amount: 128.40, currency: "MYR",
       status: "pending_approval", submitted_at: "2026-08-09T03:20:00.000Z", claim_date: "2026-08-09",
-      current_step_name: "Manager", attachments: 2, description: "Grab to client meeting" },
+      current_step_name: "Manager", attachments: 2, description: "Grab to client meeting",
+      // 2026-10-21: an unanswered "💬 Ask a question" — reaches the list's "Awaiting reply" pill.
+      open_question: "Is the toll receipt for the same trip?", open_question_by: "ahmad@ctg.test", open_question_at: "2026-08-10T02:05:00.000Z" },
     { id: "rc2", claim_no: "RC-2026-0030", employee_id: "e1", employee_name: "AHMAD BIN ISMAIL", emp_no: "E001",
       claim_type_name: "Meals & entertainment", cost_center_code: "OPS", total_amount: 88.00, currency: "MYR",
       status: "approved", submitted_at: "2026-08-02T06:00:00.000Z", claim_date: "2026-08-02",
@@ -622,7 +624,7 @@ Object.assign(FIXTURES, {
       { id: "at2", file_name: "toll.jpg", url: "https://example.test/toll.jpg" },
     ],
     comments: [
-      { author_name: "AHMAD BIN ISMAIL", created_at: "2026-08-10T02:05:00.000Z", comment: "Please attach the toll receipt too." },
+      { author_name: "AHMAD BIN ISMAIL", created_at: "2026-08-10T02:05:00.000Z", comment: "Please attach the toll receipt too.", kind: "question" },
     ],
     payment: null,
     buyer: { complete: false, name: "SITI NURHALIZA BINTI OMAR", tin: null, tin_effective: "EI00000000010",
@@ -630,6 +632,8 @@ Object.assign(FIXTURES, {
     declaration: { business_purpose: true, not_claimed_before: true, receipts_valid: true,
                    understand_disciplinary: true, declared_at: "2026-08-09T03:20:00.000Z" },
     can_finance: false, can_post: false, employer: EMPLOYER, signer_sig: null,
+    // 2026-10-21: the viewer may write in the thread and is NOT the claimant → "💬 Ask a question".
+    can_comment: true, is_owner: false,
   },
 
   // The Reimbursement WRITES. No golden reaches any of them — they exist so `tools/serve_both.ts` can

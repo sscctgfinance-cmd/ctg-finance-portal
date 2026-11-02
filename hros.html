@@ -1974,14 +1974,22 @@ function hrRCList(){
     var act='';
     if(rowAct){
       var btn=(RC.scope==='pending')
-        ? '<button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject(\''+c.id+'\')">✕ Reject</button>'
+        ? '<button class="btn xs" title="Ask the employee a question — the claim stays in your queue" onclick="hrRCRowAsk(\''+c.id+'\')">💬 Ask</button> <button class="btn xs d" title="Reject with a remark the employee will see" onclick="hrRCRowReject(\''+c.id+'\')">✕ Reject</button>'
         : ((c.status==='Approved'&&!c.xero_bill_id)?'<button class="btn xs" title="Return this approved claim to the employee with a remark" onclick="hrRCSendBack(\''+c.id+'\')">↩ Send back</button>':'');
       act='<td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">'+btn+'</td>';
     }
-    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+'</td>'+(showReason?hrRCReasonCell(c):'')+act+'</tr>';
+    return '<tr onclick="hrRCOpen(\''+c.id+'\')" style="cursor:pointer">'+cb+'<td><b>'+esc(c.claim_no||'')+'</b>'+xb+'</td><td>'+esc(emp)+'</td><td class="muted">'+esc(typ)+'</td><td class="muted">'+esc(c.claim_date||'')+'</td><td class="amt">'+M(c.amount)+'</td><td>'+rcStatusPill(c.status)+hrRCQuestionPill(c)+'</td>'+(showReason?hrRCReasonCell(c):'')+act+'</tr>';
   }).join('')||('<tr><td colspan="'+colspan+'" class="muted" style="text-align:center;padding:24px">No claims'+(RC.scope!=='all'?(' — '+RC.scope):'')+' yet</td></tr>');
   var thCb=selecting?'<th style="width:26px"><input type="checkbox" onchange="hrRCSelAll(this.checked)"></th>':'';
   return '<div class="panel"><div class="panel-hd"><h3>Claims</h3></div>'+filt+bar+'<div class="tbl-wrap"><table class="bigtable"><thead><tr>'+thCb+'<th>Claim #</th><th>Employee</th><th>Type</th><th>Date</th><th class="amt">Amount</th><th>Status</th>'+(showReason?'<th>Reason</th>':'')+(rowAct?'<th></th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+hrRCXeroBatchPanel()+'</div>';
+}
+// 2026-10-21 "💬 Ask a question" (hr_rc_comment): a question does NOT send the claim back. While the latest
+// question/reply on a claim is a question, hr_rc_list marks it open_question and the row says so — to the
+// employee it is theirs to answer, to everyone else it is waiting on the employee.
+function hrRCQuestionPill(c){
+  if(!c || !c.open_question) return '';
+  var mine=!!(RC.me && RC.me.isAdmin===false && RC.scope!=='pending');
+  return ' <span class="pill pill-amber" style="font-size:9.5px" title="'+esc('“'+c.open_question+'”'+(c.open_question_by?(' — '+c.open_question_by):''))+'">💬 '+(mine?'Reply needed':'Awaiting reply')+'</span>';
 }
 function hrRCReasonCell(c){
   var r=String(c.reject_reason||'').trim();
@@ -1996,6 +2004,15 @@ function hrRCSelAll(on){ RC.sel={}; if(on)(RC.list||[]).forEach(function(c){RC.s
 function hrRCSelClear(){ RC.sel={}; hrRender(); }
 async function hrRCBulkApprove(){ return hrOnce('hrRCBulkApprove', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} if(!confirm('Approve '+ids.length+' claim(s)? Each still follows its remaining approval steps.'))return; toast('Approving '+ids.length+'…'); var r=await call({api:'hr_rc_decide_bulk',decision:'approve',ids:ids}); if(r&&r.ok){ toast('Approved '+r.done+' / '+r.total+(r.done<r.total?' (some not yours to approve)':'')); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
 async function hrRCBulkReject(){ return hrOnce('hrRCBulkReject', async function(){ var ids=hrRCSelIds(); if(!ids.length){toast('Select claims first',true);return;} var reason=prompt('Reason for rejecting '+ids.length+' claim(s):'); if(reason==null||!reason.trim())return; var r=await call({api:'hr_rc_decide_bulk',decision:'reject',comment:reason,ids:ids}); if(r&&r.ok){ toast('Rejected '+r.done+' / '+r.total); RC.sel={}; hrRCLoadList(); } else toast((r&&r.error)||'Failed',true); }); }
+// One question from the list. The claim stays where it is; the employee is emailed and answers on the claim.
+async function hrRCRowAsk(id){ return hrOnce('hrRCAsk:'+id, async function(){
+  var c=(RC.list||[]).find(function(x){return x.id===id;})||{};
+  var who=(c.hr_employees&&c.hr_employees.name)||'the employee';
+  var q=prompt('Question for '+who+' about '+(c.claim_no||'this claim')+' — they are emailed and reply on the claim. The claim stays in your queue:');
+  if(q==null) return; if(!q.trim()){ toast('Please type a question',true); return; }
+  var r=await call({api:'hr_rc_comment',id:id,comment:q.trim()});
+  if(r&&r.ok){ toast('Question sent'+(r.notified?(' — '+who+' has been emailed'):'')+' ✓'); hrRCLoadList(); } else toast((r&&r.error)||'Failed',true);
+}); }
 // One claim, rejected from the list. The remark is required (the server refuses an empty one too) and
 // is what the employee reads in their email and on the claim.
 async function hrRCRowReject(id){ return hrOnce('hrRCRowReject:'+id, async function(){
@@ -2733,6 +2750,31 @@ async function hrRCOpen(id){ RC.loading=true; if(HR.view==='expenses')hrRender()
   catch(e){ toast(e.message||e,true); }
   finally{ RC.loading=false; } // a throw here used to wedge loading=true → claim list frozen + tenant-reload guard disabled
   hrRender(); }
+// The claim's conversation: approval remarks, info requests, and "💬 Ask a question" questions and replies.
+// The box is offered to exactly who hr_rc_comment accepts (d.can_comment); the claimant's button replies,
+// everyone else's asks. Neither moves the claim — "↩ Request info" in Approver actions is the one that does.
+var RC_COM_TAG={question:['❓ Question','var(--amber)'],reply:['↩ Reply','var(--green-soft)'],info_request:['↩ Info requested','var(--coral-soft)']};
+function hrRCThread(d){
+  var list=d.comments||[];
+  if(!list.length && !d.can_comment) return '';
+  var items=list.map(function(x){ var t=RC_COM_TAG[x.kind]; return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px"><b>'+esc(x.author_name||'—')+'</b> '+(t?('<span style="font-size:10.5px;font-weight:650;color:'+t[1]+'">'+t[0]+'</span> '):'')+'<span class="muted" style="font-size:10.5px">'+esc(String(x.created_at).slice(0,16).replace('T',' '))+'</span><div style="margin-top:2px;white-space:pre-wrap">'+esc(x.comment)+'</div></div>';}).join('');
+  if(!list.length) items='<div class="muted" style="font-size:12px;padding:4px 0">No questions yet.</div>';
+  var box='';
+  if(d.can_comment){
+    var own=!!d.is_owner;
+    box='<textarea id="rc_q" placeholder="'+(own?'Your answer…':'Your question for the employee…')+'" style="width:100%;min-height:52px;margin-top:10px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px"></textarea>'+
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px"><button class="btn sm'+(own?' p':'')+'" onclick="hrRCAsk()">'+(own?'↩ Send reply':'💬 Ask a question')+'</button>'+
+      '<span class="muted" style="font-size:11px">'+(own?'Whoever asked is emailed your answer. Your claim stays where it is.':'The employee is emailed and replies here. The claim is not sent back.')+'</span></div>';
+  }
+  return '<div class="panel"><div class="panel-hd"><h3>💬 Questions &amp; comments</h3></div>'+items+box+'</div>';
+}
+async function hrRCAsk(){ var c=(RC.detail&&RC.detail.claim)||{}; return hrOnce('hrRCAsk:'+c.id, async function(){
+  var el=document.getElementById('rc_q'); var txt=((el&&el.value)||'').trim();
+  if(!txt){ toast(RC.detail&&RC.detail.is_owner?'Please type your answer':'Please type a question',true); return; }
+  var r=await call({api:'hr_rc_comment',id:c.id,comment:txt});
+  if(r&&r.ok){ toast((r.kind==='reply'?'Reply sent':'Question sent')+(r.notified?' — emailed ✓':' ✓')); await hrRCOpen(c.id); hrRCLoadList(); }
+  else toast((r&&r.error)||'Failed',true);
+}); }
 function hrRCDetail(){
   var d=RC.detail; if(!d||!d.claim) return '<div class="muted" style="padding:16px">Not found</div>';
   var c=d.claim; var emp=c.hr_employees; var typ=c.hr_claim_types;
@@ -2769,7 +2811,7 @@ function hrRCDetail(){
   }).join('')||'<div class="muted" style="font-size:12px;padding:6px 0">Not yet submitted</div>';
   var timeline='<div class="panel"><div class="panel-hd"><h3>Approval timeline</h3></div>'+steps+'</div>';
   var recs=(d.attachments&&d.attachments.length)?'<div class="panel"><div class="panel-hd"><h3>Receipts ('+d.attachments.length+')</h3></div>'+d.attachments.map(function(a){return '<div style="font-size:12.5px;padding:4px 0">📎 '+(a.url?('<a href="'+esc(a.url)+'" target="_blank" style="color:var(--sky-soft)">'+esc(a.file_name)+'</a>'):esc(a.file_name))+'</div>';}).join('')+'</div>':'';
-  var coms=(d.comments&&d.comments.length)?'<div class="panel"><div class="panel-hd"><h3>Comments</h3></div>'+d.comments.map(function(x){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px"><b>'+esc(x.author_name||'—')+'</b> <span class="muted" style="font-size:10.5px">'+esc(String(x.created_at).slice(0,16).replace('T',' '))+'</span><div style="margin-top:2px">'+esc(x.comment)+'</div></div>';}).join('')+'</div>':'';
+  var coms=hrRCThread(d);
   var actions='';
   // v226: the approver buttons follow `d.can_act` — the SERVER's answer — not the claim's status.
   // `pending` above is status-only, so every viewer who could open a claim saw a live "✓ Approve",

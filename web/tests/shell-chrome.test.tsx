@@ -638,9 +638,11 @@ describe('every React route asks with the app’s own controls', () => {
   // reads: `leaveRejectReason()` in app/hr/leave/page.tsx (a leave rejection must say why — the server
   // refuses one without) and `askReason()` in app/hr/expenses/page.tsx (✕ Reject from the list, ↩ Send
   // back an approved claim). The legacy asks both with the same native prompt.
+  // 2026-10-21 took it to 22: `onRowAsk()` in app/hr/expenses/page.tsx — 💬 Ask from the list, a free-text
+  // QUESTION for the claimant, asked with the same native prompt as hrRCRowAsk() in hros.html.
   it('prompt() is deliberately left native, and there are exactly the sites we know about', () => {
     const n = routes.reduce((a, p) => a + [...code(readFileSync(p, 'utf8')).matchAll(/(?<![\w.])(?:window\.)?prompt\s*\(/g)].length, 0);
-    expect(n).toBe(21);
+    expect(n).toBe(22);
   });
 });
 

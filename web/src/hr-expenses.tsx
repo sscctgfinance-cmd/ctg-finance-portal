@@ -55,6 +55,10 @@ export interface RcClaim {
   reject_reason?: string | null;
   rejected_by?: string | null;
   rejected_at?: string | null;
+  /** hr_rc_list → rcWithQuestionState(): the unanswered "💬 Ask a question", or null. */
+  open_question?: string | null;
+  open_question_by?: string | null;
+  open_question_at?: string | null;
   hr_employees?: {
     name?: string | null;
     bank_name?: string | null;
@@ -107,6 +111,8 @@ export interface HrExpensesProps {
   onBulkPay: () => void;
   /** `hrRCRowReject(id)` — one pending claim rejected from the list, with a remark. */
   onRowReject?: (id: string) => void;
+  /** `hrRCRowAsk(id)` — a question to the claimant; the claim stays in the queue. */
+  onRowAsk?: (id: string) => void;
   /** `hrRCSendBack(id)` — an Approved, unpaid, not-in-Xero claim returned to the employee. */
   onSendBack?: (id: string) => void;
   /** `hrRCBulkPostXero()` — the selected approved claims posted one by one through hr_rc_post_xero. */
@@ -192,6 +198,13 @@ export default function HrExpenses(p: HrExpensesProps) {
 }
 
 /** `hrRCReasonCell()` — hros.html. */
+/** `hrRCQuestionPill(c)` — hros.html. To the claimant (their own list) it is theirs to answer. */
+function QuestionPill({ c, mine }: { c: RcClaim; mine: boolean }) {
+  if (!c.open_question) return null;
+  const title = '“' + c.open_question + '”' + (c.open_question_by ? (' — ' + c.open_question_by) : '');
+  return <>{' '}<span className="pill pill-amber" style={{ fontSize: '9.5px' }} title={title}>{'💬 ' + (mine ? 'Reply needed' : 'Awaiting reply')}</span></>;
+}
+
 function ReasonCell({ c }: { c: RcClaim }) {
   const r = String(c.reject_reason || '').trim();
   const by = [c.rejected_by || '', c.rejected_at ? hrDT(c.rejected_at) : ''].filter(Boolean).join(' · ');
@@ -283,12 +296,15 @@ function ClaimsList(p: HrExpensesProps) {
                 <td className="muted">{(c.hr_claim_types && c.hr_claim_types.name) || '—'}</td>
                 <td className="muted">{c.claim_date || ''}</td>
                 <td className="amt">{M(c.amount)}</td>
-                <td><StatusPill status={c.status} /></td>
+                <td><StatusPill status={c.status} /><QuestionPill c={c} mine={me.isAdmin === false && p.scope !== 'pending'} /></td>
                 {showReason ? <ReasonCell c={c} /> : null}
                 {rowAct ? (
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} onClick={stopRowClick}>
                     {p.scope === 'pending'
-                      ? <button className="btn xs d" title="Reject with a remark the employee will see" onClick={() => p.onRowReject && p.onRowReject(c.id)}>✕ Reject</button>
+                      ? <>
+                          <button className="btn xs" title="Ask the employee a question — the claim stays in your queue" onClick={() => p.onRowAsk && p.onRowAsk(c.id)}>💬 Ask</button>{' '}
+                          <button className="btn xs d" title="Reject with a remark the employee will see" onClick={() => p.onRowReject && p.onRowReject(c.id)}>✕ Reject</button>
+                        </>
                       : (c.status === 'Approved' && !c.xero_bill_id)
                         ? <button className="btn xs" title="Return this approved claim to the employee with a remark" onClick={() => p.onSendBack && p.onSendBack(c.id)}>↩ Send back</button>
                         : null}
