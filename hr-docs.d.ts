@@ -114,7 +114,12 @@ export function hrBuildBank(rows: HrBuilderRow[], period: HrPeriod, bank: string
 /** CRC-32 of a byte array — the STORE-method ZIP's checksum. */
 export function hrCrc32(bytes: Uint8Array): number;
 /** Dependency-free STORE-method ZIP (no compression) of `{ name, text }` files → a Blob. */
-export function hrZip(files: { name: string; text: string }[]): Blob;
+export function hrZip(files: ({ name: string; text: string } | { name: string; bytes: Uint8Array })[]): Blob;
+/** 2026-11-04: "EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf" — every payslip file, both apps. */
+export function hrPayslipFileName(name: unknown, period: { month: number; year: number }): string;
+/** The same for a batch; a repeated name carries the employee number so the ZIP entries do not collide. */
+export function hrPayslipFileNames(emps: { name?: unknown; empNo?: unknown }[], period: { month: number; year: number }): string[];
+export function hrPayslipZipName(companyName: unknown, period: { month: number; year: number }): string;
 /** Payroll Summary (styled .xls that opens in Excel). Also the ONLY place HRDF (1% of basic) is computed. */
 export function hrBuildSummary(rows: HrBuilderRow[], period: HrPeriod, companyName: string): { name: string; text: string; mime: string };
 /** ArrayBuffer → base64 (chunked, for the encrypted payslip PDF attachment). */

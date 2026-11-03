@@ -3622,7 +3622,7 @@ function hrEmpPayslipDownload(i){
       var per={ month:s.month, year:s.year, label:HR_MONTHS[s.month]+' '+s.year };
       var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'});
       hrDrawPayslip(doc,e,s.p,per,s.d||{});
-      doc.save('Payslip_'+(e.empNo||'EMP')+'_'+per.label.replace(' ','')+'.pdf');
+      doc.save(hrPayslipFileName(e.name,per));   // 2026-11-04: EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf
       toast('Payslip downloaded ✓');
     }catch(err){ toast('Could not generate PDF: '+(err.message||err),true); }
   });
@@ -4715,6 +4715,9 @@ function hrGRowMenuPanel(empId){
   return '<div class="panel" id="hr_rowmenu" style="max-width:720px;margin-top:14px;border-color:var(--coral-soft)">'+
     '<div class="panel-hd"><h3>'+esc(e.emp_no||'')+' '+esc(e.name||'')+'</h3><button class="btn sm" onclick="hrGRowMenu(\''+empId+'\')">✕ Close</button></div>'+
     '<div style="display:grid;gap:10px">'+
+      (g.skip ? '' : box('Payslip',
+        '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Just this employee, as it stands on the grid now — '+esc(hrPayslipFileName(e.name,hrPeriod()))+'</div>'+
+        '<button class="btn sm" onclick="hrExpPayslipOne(\''+empId+'\')">⬇ Payslip PDF</button>'))+
       box('This month only',
         '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Keeps everything, just leaves them out of '+HR_MONTHS[HR.pay.month]+' '+HR.pay.year+' — no payslip, no bank line, out of every statutory total. Reversible.</div>'+
         (g.skip ? hrRW('<button class="btn sm" onclick="hrGridSkip(\''+empId+'\',false)">↩ Put back in this month</button>')
@@ -4988,7 +4991,18 @@ function hrPeriod(){ return { month:HR.pay.month, year:HR.pay.year, label:HR_MON
 var HR_COMPANY='I PROCARE MALAYSIA SDN BHD';
 var HR_EMPLOYER=null;   // { name, reg_no, employer_no, address, phone, email, logo(dataURI) } — printed on payslips/forms
 function hrCompanyName(){ var e=HR.data&&HR.data.employer; if(e&&e.name) return e.name; var c=(HR.companies||[]).find(function(x){return x.tenant_id===HR.tenant;}); return c?c.tenant_name:'I PROCARE MALAYSIA SDN BHD'; }
-function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); var per=hrPeriod(); rows.forEach(function(r,i){ if(i>0)doc.addPage(); hrDrawPayslip(doc,r.e,r.p,per,r.d); }); doc.save('Payslips_'+per.label.replace(' ','')+'.pdf'); toast('Payslips PDF generated'); }); }
+// 2026-11-04: one PDF PER EMPLOYEE, named "EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf" (hrPayslipFileName,
+// hr-docs.js). A browser will not let a page download a dozen files at once, so a batch arrives as ONE zip
+// of the individual PDFs; a single employee arrives as the PDF itself.
+function hrPayslipFiles(rows,per){ var names=hrPayslipFileNames(rows.map(function(r){return r.e;}),per);
+  return rows.map(function(r,i){ var doc=new window.jspdf.jsPDF({unit:'mm',format:'a4'}); hrDrawPayslip(doc,r.e,r.p,per,r.d); return { name:names[i], bytes:new Uint8Array(doc.output('arraybuffer')) }; }); }
+function hrExpPayslips(){ hrLoadJsPDF(function(){ var rows=hrCurRows(); if(!rows.length){toast('No payroll rows',true);return;} var per=hrPeriod(); var files=hrPayslipFiles(rows,per);
+  if(files.length===1){ hrDownload(files[0].name,files[0].bytes,'application/pdf'); toast('Payslip PDF generated — '+files[0].name); return; }
+  hrDownload(hrPayslipZipName(HR_COMPANY,per),hrZip(files),'application/zip'); toast(files.length+' payslips — one PDF per employee, in one ZIP'); }); }
+// The row menu's ⬇: just this employee's payslip, from the same rows the bulk export uses.
+function hrExpPayslipOne(empId){ hrLoadJsPDF(function(){ var all=HR.pay._rows||[], cur=hrCurRows(); var i=all.findIndex(function(r){return r.e&&r.e.id===empId;});
+  if(i<0){ toast('No payslip for this employee this month (skipped?)',true); return; }
+  var f=hrPayslipFiles([cur[i]],hrPeriod())[0]; hrDownload(f.name,f.bytes,'application/pdf'); toast('Payslip PDF generated — '+f.name); }); }
 function hrDownload(name,text,mime){ var blob=new Blob([text],{type:mime||'text/csv;charset=utf-8;'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},1500); }
 // v226: the raw CSVs, KWSP/PERKESO/CP39, the bank files and the ZIP are BUILT in hr-docs.js so React
 // emits the same bytes. These wrappers keep the I/O: the empty-rows guard, the download and the toast.
@@ -5153,7 +5167,7 @@ function hrEmailAll(){ return hrOnce('hrEmailAll:'+(''), async function(){
       if(i>=withEmail.length){ toast('Payslips emailed — '+sent+' sent'+(failed?(', '+failed+' failed'):'')+'.',failed>0); return; }
       var r=withEmail[i++]; var pdf;
       try{ pdf=hrPayslipBase64(r.e,r.p,per,r.d); }catch(err){ failed++; return next(); }
-      call({api:'hr_send_payslip',payload:{ to:r.e.email, subject:'Payslip — '+per.label, html:hrPayslipEmailHtml(r.e,per,HR_COMPANY), filename:'Payslip_'+r.e.empNo+'_'+per.label.replace(' ','')+'.pdf', pdfBase64:pdf, empNo:r.e.empNo }})
+      call({api:'hr_send_payslip',payload:{ to:r.e.email, subject:'Payslip — '+per.label, html:hrPayslipEmailHtml(r.e,per,HR_COMPANY), filename:hrPayslipFileName(r.e.name,per), pdfBase64:pdf, empNo:r.e.empNo }})
         .then(function(res){ if(res&&res.ok) sent++; else failed++; next(); })
         .catch(function(){ failed++; next(); });
     })();

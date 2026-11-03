@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import HrPayslip, { type MyPayslips } from '../../../src/hr-payslip';
 import { call, legacyUrl, token } from '../../../src/portal';
-import { hrDrawPayslip, hrEmpView } from '../../../../hr-docs.js';
+import { hrDrawPayslip, hrEmpView, hrPayslipFileName } from '../../../../hr-docs.js';
 
 const HR_MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -91,7 +91,7 @@ export default function HrPayslipPage() {
       const per = { month: s.month, year: s.year, label: HR_MONTHS[s.month] + ' ' + s.year };
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
       hrDrawPayslip(doc, e, s.p as unknown as Record<string, unknown>, per, (s.d || {}) as unknown as Record<string, unknown>);
-      doc.save('Payslip_' + ((e.empNo as string) || 'EMP') + '_' + per.label.replace(' ', '') + '.pdf');
+      doc.save(hrPayslipFileName(e.name, per));   // 2026-11-04: EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf
     } catch (x) {
       setErr('Could not generate PDF: ' + (x instanceof Error ? x.message : String(x)));
     }

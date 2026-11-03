@@ -507,14 +507,37 @@ function hrBuildBank(rows, period, bank, uobCfg){
 // ── Dependency-free STORE-method ZIP for the one-click submission pack (no compression needed for text) ──
 var HR_CRC_TBL=(function(){ var t=[],c,n,k; for(n=0;n<256;n++){ c=n; for(k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; } return t; })();
 function hrCrc32(bytes){ var crc=0xFFFFFFFF; for(var i=0;i<bytes.length;i++) crc=(crc>>>8)^HR_CRC_TBL[(crc^bytes[i])&0xFF]; return (crc^0xFFFFFFFF)>>>0; }
+// 2026-11-04 (operator): payslips are ONE FILE PER EMPLOYEE, named "EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf"
+// (e.g. "OOI YUIN ZHI_PAYROLL_NOVEMBER_2026.pdf"). One rule, used by the bulk export, the row-menu download,
+// the payslip email attachment and the employee's own download, in both apps — so the same month is never
+// filed under two names. Characters Windows refuses in a file name are dropped, never the name itself.
+var HR_MONTHS_UC=['','JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+function hrFileSafe(s){ return String(s==null?'':s).replace(/[\\/:*?"<>|\u0000-\u001f]+/g,' ').replace(/\s+/g,' ').trim(); }
+function hrPayslipFileName(name, period){
+  var mon=HR_MONTHS_UC[Number(period&&period.month)]||'';
+  return (hrFileSafe(name)||'EMPLOYEE')+'_PAYROLL_'+mon+'_'+((period&&period.year)||'')+'.pdf';
+}
+// For a batch: two staff with the SAME name would overwrite each other inside the ZIP, so a repeated name
+// carries the employee number in brackets. A unique name is left exactly as the rule says.
+function hrPayslipFileNames(emps, period){
+  var seen={}; (emps||[]).forEach(function(e){ var k=hrFileSafe(e&&e.name).toUpperCase(); seen[k]=(seen[k]||0)+1; });
+  return (emps||[]).map(function(e){ var nm=hrFileSafe(e&&e.name)||'EMPLOYEE';
+    if(seen[nm.toUpperCase()]>1 && e&&e.empNo) nm=nm+' ('+hrFileSafe(e.empNo)+')';
+    return hrPayslipFileName(nm, period); });
+}
+function hrPayslipZipName(companyName, period){
+  var co=hrFileSafe(companyName).replace(/\s+/g,'_');
+  return (co?co+'_':'')+'PAYSLIPS_'+(HR_MONTHS_UC[Number(period&&period.month)]||'')+'_'+((period&&period.year)||'')+'.zip';
+}
+// v2026-11-04: a file may carry `bytes` (a PDF) instead of `text` (a CSV / TXT). Stored, not deflated.
 function hrZip(files){
   var enc=new TextEncoder(), parts=[], central=[], offset=0;
   var u16=function(n){return [n&255,(n>>8)&255];}, u32=function(n){n>>>=0;return [n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];};
   files.forEach(function(f){
-    var nameB=enc.encode(f.name), dataB=enc.encode(f.text), crc=hrCrc32(dataB);
-    var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
+    var nameB=enc.encode(f.name), dataB=f.bytes?f.bytes:enc.encode(f.text), crc=hrCrc32(dataB);
+    var lh=[].concat(u32(0x04034b50),u16(20),u16(0x0800),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0));
     parts.push(new Uint8Array(lh),nameB,dataB);
-    var ch=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
+    var ch=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0x0800),u16(0),u16(0),u16(0),u32(crc),u32(dataB.length),u32(dataB.length),u16(nameB.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
     central.push(new Uint8Array(ch),nameB);
     offset+=lh.length+nameB.length+dataB.length;
   });
@@ -645,7 +668,7 @@ var HR_LEAVE_TONE = { green: 'var(--green-soft)', amber: 'var(--amber)', red: 'v
 // that does not survive the trip untouched is hrDrawPayslip's HR_EMPLOYER/HR_COMPANY read, described
 // above; every other export here is a pure function of its arguments.
 if (typeof module !== 'undefined' && module.exports) module.exports = {
-  hrEmpView, HR_money2, hrCsv, hrAscii, hrMissingIds, hrPadR, hrPadL, hrCents,
+  hrEmpView, HR_money2, hrCsv, hrPayslipFileName, hrPayslipFileNames, hrPayslipZipName, hrFileSafe, hrAscii, hrMissingIds, hrPadR, hrPadL, hrCents,
   hrFitReset, hrFitNote, HR_BANK_CODE, hrBankCode, hrSwift,
   hrDrawPayslip, hrDrawEA, hrDrawFormE, hrCp8dCategory, hrIntNoSen, hrDec2, hrFmtDMY,
   HR_EA_ZERO, hrYePaid, hrFormEStats, hrCp8dFile,

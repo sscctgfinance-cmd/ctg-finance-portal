@@ -15,7 +15,7 @@
 
 import {
   hrEmpView, hrBuildStatutory, hrBuildKwsp, hrBuildAssist, hrBuildCp39, hrBuildGiro, hrBuildBank,
-  hrSubmissionSpecs, hrZip, hrBuildSummary, hrPayslipEmailHtml,
+  hrSubmissionSpecs, hrZip, hrBuildSummary, hrPayslipEmailHtml, hrPayslipFileName,
   type HrBuilderRow, type HrPeriod, type HrBuiltFile,
 } from '../../hr-docs.js';
 import { HR_MONTHS, type PayRow, type StatFile, type UobCfg, type SubmitPack } from './hr-payroll';
@@ -155,7 +155,7 @@ export function payslipEmailBody(e: Record<string, unknown>, period: HrPeriod, c
       to: e.email,
       subject: 'Payslip — ' + period.label,
       html: hrPayslipEmailHtml(e, period, companyName),
-      filename: 'Payslip_' + e.empNo + '_' + period.label.replace(' ', '') + '.pdf',
+      filename: hrPayslipFileName(e.name, period),
       pdfBase64,
       empNo: e.empNo,
     },

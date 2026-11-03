@@ -28,7 +28,7 @@ import {
 import { showConfirm } from '../../../src/confirm';
 import { toast } from '../../../src/toast';
 import { useUnsavedGuard } from '../../../src/unsaved';
-import { hrDrawPayslip, hrIcPassword, hrAbToB64 } from '../../../../hr-docs.js';
+import { hrDrawPayslip, hrIcPassword, hrAbToB64, hrPayslipFileNames, hrPayslipZipName, hrZip } from '../../../../hr-docs.js';
 import { mytISO, mytYMD } from '../../../../myt.js';
 import { call, legacyUrl, token } from '../../../src/portal';
 
@@ -638,17 +638,28 @@ export default function HrPayrollPage() {
     } catch { g.HR_EMPLOYER = null; }   // the header just omits the employer's registration numbers
   }, [company]);
 
-  /** `hrExpPayslips()` — hros.html:4410. One PDF, one page per employee. */
+  /** `hrExpPayslips()` — hros.html. One PDF PER EMPLOYEE ("EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf"), in one ZIP. */
   const onExpPayslips = useCallback(async () => {
     if (!A || !A.rows.length) { toast('No payroll rows', true); return; }
     const JsPDF = await loadJsPDF();
     if (!JsPDF) { toast('Could not load the PDF engine (jspdf.umd.min.js).', true); return; }
     await setPayslipGlobals();
     const per = { month, year, label: HR_MONTHS[month] + ' ' + year };
-    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
-    A.rows.forEach((r, i) => { if (i > 0) doc.addPage(); hrDrawPayslip(doc, payslipEmp(r, data?.leaveBalances), r.p as unknown as Record<string, unknown>, per, r.d); });
-    doc.save('Payslips_' + per.label.replace(' ', '') + '.pdf');
-    toast('Payslips PDF generated');
+    const emps = A.rows.map((r) => payslipEmp(r, data?.leaveBalances));
+    const names = hrPayslipFileNames(emps as { name?: unknown; empNo?: unknown }[], per);
+    const files = A.rows.map((r, i) => {
+      const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+      hrDrawPayslip(doc, emps[i], r.p as unknown as Record<string, unknown>, per, r.d);
+      return { name: names[i], bytes: new Uint8Array(doc.output('arraybuffer') as ArrayBuffer) };
+    });
+    const save = (name: string, blob: Blob) => {
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    };
+    if (files.length === 1) { save(files[0].name, new Blob([files[0].bytes], { type: 'application/pdf' })); toast('Payslip PDF generated — ' + files[0].name); return; }
+    save(hrPayslipZipName((window as unknown as { HR_COMPANY?: string }).HR_COMPANY || '', per), hrZip(files));
+    toast(files.length + ' payslips — one PDF per employee, in one ZIP');
   }, [A, month, year, data, setPayslipGlobals]);
 
   /**

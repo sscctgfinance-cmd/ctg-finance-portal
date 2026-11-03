@@ -207,7 +207,8 @@ describe('payslipEmailBody — the hr_send_payslip payload shape (no golden sees
     expect(b.api).toBe('hr_send_payslip');
     expect(b.payload.to).toBe('t1@example.invalid');
     expect(b.payload.subject).toBe('Payslip — July 2026');
-    expect(b.payload.filename).toBe('Payslip_T001_July2026.pdf');
+    // 2026-11-04 (operator): EMPLOYEE NAME_PAYROLL_MONTH_YEAR.pdf — the same name the export uses.
+    expect(b.payload.filename).toBe('TEST ONE_PAYROLL_JULY_2026.pdf');
     expect(b.payload.empNo).toBe('T001');
     expect(b.payload.pdfBase64).toBe('BASE64PDF');
     expect(b.payload.html).toContain('Hi TEST,');                    // first name only
